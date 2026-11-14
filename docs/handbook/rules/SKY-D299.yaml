@@ -1,0 +1,191 @@
+id: SKY-D299
+title: Secret in a job outsiders can start, without an environment
+family: ci-cd
+severity: MEDIUM
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+  note: >-
+    A finding for a secret named after a location or setting, such as
+    `NETLIFY_SITE_URL`, is hidden from the default list, but the gate still
+    counts it.
+
+what_it_is: >-
+  A GitHub environment with required reviewers makes a job wait for a
+  person to approve it before it gets the environment's secrets. SKY-D299
+  reports a repository secret used in a job that someone without write
+  access can start, such as by commenting on an issue, when the job has no
+  `environment:`.
+
+why_it_matters: >-
+  Anyone with a GitHub account can open an issue or write a comment. If that
+  starts a job holding a deploy token, a bug in the job's checks or scripts
+  is enough to leak the token or misuse it, and nobody has to approve the
+  run first.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/preview.yml
+  expect_line: 19
+  code: |
+    name: Preview deploy
+    on:
+      issue_comment:
+        types: [created]
+    permissions:
+      contents: read
+    jobs:
+      deploy-preview:
+        if: github.event.issue.pull_request && github.event.comment.body == '/preview'
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - name: Deploy the preview
+            run: ./scripts/deploy-preview.sh "$PR_NUMBER"
+            env:
+              PR_NUMBER: ${{ github.event.issue.number }}
+              NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/preview.yml
+  code: |
+    name: Preview deploy
+    on:
+      issue_comment:
+        types: [created]
+    permissions:
+      contents: read
+    jobs:
+      deploy-preview:
+        if: >-
+          github.event.issue.pull_request &&
+          github.event.comment.body == '/preview' &&
+          github.event.comment.author_association == 'MEMBER'
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - name: Deploy the preview
+            run: ./scripts/deploy-preview.sh "$PR_NUMBER"
+            env:
+              PR_NUMBER: ${{ github.event.issue.number }}
+              NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+  why: >-
+    The job's `if:` only lets a comment through when its author is a member
+    of the organisation. Skylos evaluates the condition for an account
+    without write access, finds that it is false, and so treats the job as
+    one only trusted people can start.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows`, not composite actions.
+  - >-
+    Lists the workflow's triggers that an account without write access can
+    cause: `issues` (opened, edited, closed, reopened), `issue_comment`,
+    `pull_request_target` (opened, edited, closed, reopened, synchronize,
+    ready_for_review, converted_to_draft), `pull_request_review` (submitted,
+    edited), `pull_request_review_comment`, `discussion`,
+    `discussion_comment`, and `workflow_run` when the upstream workflow can
+    be started from a fork or cannot be found. A `types:` list with none of
+    those types drops the trigger. `push`, `schedule`, `workflow_dispatch`,
+    `release` and `pull_request` never count. With none left, the rule stops.
+  - >-
+    For each job, asks whether one of those events can still run it. The
+    job's `if:` is evaluated for an outsider: a check such as
+    `author_association == 'MEMBER'` or `github.actor == 'name'` keeps
+    outsiders out. So does a job listed in `needs:` that checks the actor's
+    permission (a permission or membership action, or a script that calls
+    the collaborator-permission API). A check inside the same job does not
+    count.
+  - >-
+    Skips jobs that have an `environment:` key, whatever its value, and jobs
+    that call a reusable workflow (`uses:`).
+  - >-
+    Reports every `${{ … secrets.NAME … }}` written anywhere in the job (run
+    scripts, `env:`, `with:`), except `GITHUB_TOKEN`. Secrets in the
+    workflow-level `env:` and the `secrets['NAME']` form are not read.
+  - >-
+    One MEDIUM finding per job and secret, on the first line of the file
+    that holds that text. A secret whose name ends in `URL`, `URI`, `HOST`,
+    `HOSTNAME`, `ENDPOINT`, `DOMAIN`, `REGION`, `MODEL` or `PORT` and has
+    no credential word (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `AUTH` and
+    others) is marked low risk and hidden from the default list.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_secrets_outside_env("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _names_non_credential_secret("
+    note: the low-risk name check.
+  - path: skylos/rules/config/cicd/ai_agents.py
+    symbol: "def outsider_job_events("
+    note: which triggers count and how `if:` and `needs:` are applied.
+  - path: skylos/rules/config/cicd/ai_agents.py
+    symbol: "UNTRUSTED_EVENT_TYPES: dict[str, frozenset[str] | None] = {"
+  - path: test/test_github_actions_security.py
+    symbol: "def test_secret_in_job_only_writers_can_start_is_not_reported("
+
+fix:
+  explanation: >-
+    Give the job an environment and move the secret into it. In the
+    repository settings, add required reviewers to the `preview`
+    environment, so a person approves each run before the job gets
+    `NETLIFY_AUTH_TOKEN`.
+  filename: .github/workflows/preview.yml
+  code: |
+    name: Preview deploy
+    on:
+      issue_comment:
+        types: [created]
+    permissions:
+      contents: read
+    jobs:
+      deploy-preview:
+        if: github.event.issue.pull_request && github.event.comment.body == '/preview'
+        runs-on: ubuntu-latest
+        environment: preview
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - name: Deploy the preview
+            run: ./scripts/deploy-preview.sh "$PR_NUMBER"
+            env:
+              PR_NUMBER: ${{ github.event.issue.number }}
+              NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Any `environment:` clears the finding, even one without required
+      reviewers in the repository settings, which Skylos cannot see.
+    - >-
+      The job's `if:` must keep outsiders out on its own or through `needs:`.
+      A step that checks the commenter's permission and exits early does not
+      clear the finding.
+    - >-
+      Settings stored as secrets, such as `NETLIFY_SITE_URL`, are reported
+      too, but hidden from the default list.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D299]` on the reported line or on the line
+        directly above it, one rule per marker.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D299] token can only create preview deploys
+        NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D299"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        A baseline works, but it records the absolute file path and the line,
+        so it stops matching when the checkout moves or lines above shift.
+
+related: [SKY-D290, SKY-D309, SKY-D298, SKY-D350]

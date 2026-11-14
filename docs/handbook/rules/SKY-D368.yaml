@@ -1,0 +1,160 @@
+id: SKY-D368
+title: MCP server launched from a hidden or temporary folder
+family: supply-chain
+severity: HIGH
+languages: [MCP configuration files]
+gate:
+  full: listed
+  diff: blocks
+  note: >-
+    A baseline scan treats the rule like a diff scan when the baseline's
+    `rule_coverage` lists it.
+
+what_it_is: >-
+  An MCP server entry can start a program that lives outside the
+  repository, such as `node ~/.dev-utils/server.js`. SKY-D368 reports a
+  committed server whose code comes from a hidden folder in the home
+  directory (one whose name starts with a dot, or `AppData`) or from a
+  temporary folder such as `/tmp`.
+
+why_it_matters: >-
+  Nothing in the repository shows what that file does, and malware drops
+  its payload in exactly such places. The SANDWORM_MODE campaign registered
+  rogue MCP servers pointing at `~/.dev-utils/server.js`, so every agent
+  session started the attacker's code.
+
+flagged_example:
+  language: json
+  filename: .cursor/mcp.json
+  expect_line: 3
+  code: |
+    {
+      "mcpServers": {
+        "dev-utils": {
+          "command": "node",
+          "args": ["~/.dev-utils/server.js"]
+        }
+      }
+    }
+
+not_flagged_example:
+  language: json
+  filename: .cursor/mcp.json
+  code: |
+    {
+      "mcpServers": {
+        "dev-utils": {
+          "command": "~/.nvm/versions/node/v22.11.0/bin/node",
+          "args": ["tools/mcp/server.js"]
+        }
+      }
+    }
+  why: >-
+    The program is in a hidden home folder, but it is Node from the nvm
+    version manager, which Skylos recognises as a toolchain launcher. The
+    code it runs, `tools/mcp/server.js`, is in the repository, where
+    reviewers can read it.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). The `ca9` library reads the same MCP
+    server blocks as SKY-D367: `.mcp.json`, `.cursor/mcp.json`,
+    `.vscode/mcp.json` and other `mcp.json` files, `mcpServers` in Claude
+    and Gemini settings, and `[mcp_servers.*]` in `.codex/config.toml`.
+  - >-
+    A path is hidden when it starts with a home directory (`~`, `$HOME`,
+    `/Users/<name>`, `/home/<name>`, `/root`, `C:\Users\<name>`) followed by
+    a folder whose name starts with a dot or is `AppData`, or with
+    `%APPDATA%`. It is temporary when it starts with `/tmp`, `/private/tmp`,
+    `/var/tmp`, `/dev/shm`, `/var/folders`, `$TMPDIR`, `%TEMP%` or a Windows
+    `Temp` folder.
+  - >-
+    Checks, in order, the program itself (unless it is a known launcher
+    such as `node`, `python`, `npx` or `uvx` in a version-manager folder
+    like `~/.nvm`, `~/.pyenv` or `~/.volta`, or in a `bin` folder under
+    `~/.local`, `~/.cargo` and similar), the inner command of `sh -c` or
+    `bash -c`, paths in the server's `NODE_OPTIONS`, `LD_PRELOAD`,
+    `DYLD_INSERT_LIBRARIES` and `PYTHONSTARTUP`, the script or package
+    path of a local, Git or URL launch, the value after `-r`, `--require`,
+    `--import`, `--loader`, `--from` or `--spec`, and the `cwd` of a local
+    or `python -m` launch.
+  - >-
+    Reports HIGH on the line of the server's name. Keeps the same files as
+    SKY-D365 (regular files in the scanned folder that Git lists, or every
+    file outside Git).
+  - >-
+    In the gate, a full scan lists the finding without counting it. In a
+    diff scan a server is new when its rule, file and a digest of its name
+    and command are not among the merge base's findings, and a new one fails
+    the gate on its own.
+
+source_refs:
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "\"mcp_server_hidden_path\": (\"SKY-D368\""
+    note: >-
+      ca9 `agent_config` decides the location (`_hidden_in_argv` in
+      `ca9/agent_config/scanner.py`, `hidden_location` and
+      `toolchain_launcher` in `ca9/agent_config/commands.py`); this page was
+      checked against ca9 0.7.0.
+  - path: skylos/core/gatekeeper.py
+    symbol: "CHANGE_BLOCKING_RULES = frozenset("
+  - path: skylos/commands/scan_cmd.py
+    symbol: "def _config_findings_new_since_base("
+    note: what makes a finding new in a diff scan.
+
+fix:
+  explanation: >-
+    Commit the server's code to the repository, or launch a published
+    package at an exact version, so reviewers can see what runs. Remove a
+    server nobody on the team added on purpose.
+  filename: .cursor/mcp.json
+  code: |
+    {
+      "mcpServers": {
+        "dev-utils": {
+          "command": "node",
+          "args": ["tools/mcp/server.js"]
+        }
+      }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A tool you installed on purpose in a hidden folder, such as a script
+      under `~/.config` or `~/.local/share`, is reported: only launchers in
+      known toolchain folders are trusted.
+    - >-
+      A server that is only a `url`, with no command, is never checked.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: json
+          filename: .cursor/mcp.json
+          code: |
+            {
+              "mcpServers": {
+                // skylos: ignore[SKY-D368] handbook check
+                "dev-utils": {
+                  "command": "node",
+                  "args": ["~/.dev-utils/server.js"]
+                }
+              }
+            }
+      text: >-
+        Skylos reads no inline marker for this rule, even where the file
+        allows comments.
+    - check: baseline
+      text: >-
+        Accept a reviewed server with a baseline: `skylos baseline .`, then
+        `--baseline`. The entry matches the rule, file, server name and
+        command, not the line. In pull-request CI (`SKYLOS_POLICY_BASE`),
+        the entry must also be in the base commit's `.skylos/baseline.json`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D368"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D367, SKY-D369, SKY-D365]

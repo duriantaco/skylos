@@ -1,0 +1,143 @@
+id: SKY-L032
+title: Mock or placeholder data
+family: logic
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. A test password under a credential name is
+  HIGH; placeholder emails, phone numbers, UUIDs and placeholder words are
+  MEDIUM; example domains and repeated characters under mock names are LOW.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  Sample data left in application code: an address at `example.com`, a
+  phone number such as `123-456-7890`, an all-zero UUID or a password like
+  `password123`. It usually comes from a tutorial, a generated scaffold or
+  a quick test and was meant to be replaced.
+
+why_it_matters: >-
+  The code runs with the sample value. In the example below every failed
+  payout alert goes to `example.com`, a domain reserved for documentation,
+  so the finance team never hears about a failed payout.
+
+flagged_example:
+  language: python
+  filename: payouts/alerts.py
+  expect_line: 5
+  code: |
+    """Send alerts when a payout fails."""
+
+    from payouts.notifications import send_email
+
+    ALERT_RECIPIENT = "finance-alerts@example.com"
+
+
+    def notify_failed_payout(payout):
+        send_email(
+            to=ALERT_RECIPIENT,
+            subject=f"Payout {payout.id} failed",
+            body=payout.failure_reason,
+        )
+
+not_flagged_example:
+  language: python
+  filename: payouts/alerts.py
+  code: |
+    """Send alerts when a payout fails."""
+
+    import os
+
+    from payouts.notifications import send_email
+
+    ALERT_RECIPIENT = os.environ["PAYOUT_ALERT_EMAIL"]
+    RECIPIENT_HINT = "Use a shared inbox, for example finance@example.com"
+
+
+    def notify_failed_payout(payout):
+        send_email(
+            to=ALERT_RECIPIENT,
+            subject=f"Payout {payout.id} failed",
+            body=payout.failure_reason,
+        )
+  why: >-
+    The hint mentions `example.com`, but inside a sentence shown to a user,
+    which is what the reserved domain is for. Skylos only reports a string
+    that is a whole placeholder address, and the real recipient now comes
+    from the environment.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Skips test files (`test_*.py`,
+    `*_test.py` and `conftest.py`). Looks at string literals assigned to a
+    name or attribute and at string default arguments.
+  - >-
+    Reports MEDIUM for a value that is a whole email address at
+    `example.com`, `example.org`, `example.net`, `test.com`, `test.org`,
+    `test.net`, `foo.com`, `bar.com`, `localhost` or `invalid`; a UUID made
+    of one or two repeated digits; or a phone number such as `123-456-7890`
+    or `000-000-0000`.
+  - >-
+    Reports HIGH for a credential name (`password`, `api_key`, `*_token`
+    and similar) holding a common test value such as `password123`,
+    `secret` or `testpassword`.
+  - >-
+    For names that contain mock, fake, dummy, placeholder, sample, example,
+    fixture, stub or demo, also reports a placeholder word such as
+    `changeme` or `dummy` (MEDIUM), a value containing an example domain
+    (LOW), or a short repeated value such as `xxxx` (LOW).
+  - >-
+    The finding is on the line of the literal.
+
+source_refs:
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "class MockPlaceholderDataRule"
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "def _classify_placeholder_value("
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "_PLACEHOLDER_EMAIL_RE = re.compile("
+
+fix:
+  explanation: >-
+    Take the real value from configuration, so each deployment sets its
+    own recipient and a missing setting fails at start-up.
+  filename: payouts/alerts.py
+  code: |
+    """Send alerts when a payout fails."""
+
+    import os
+
+    from payouts.notifications import send_email
+
+    ALERT_RECIPIENT = os.environ["PAYOUT_ALERT_EMAIL"]
+
+
+    def notify_failed_payout(payout):
+        send_email(
+            to=ALERT_RECIPIENT,
+            subject=f"Payout {payout.id} failed",
+            body=payout.failure_reason,
+        )
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Demo or seed scripts that are meant to use sample data, such as
+      `seed_demo.py`, are reported; only test files are skipped.
+    - >-
+      Placeholder data passed straight to a call, such as
+      `send_email(to="ops@example.com")`, is missed, because only
+      assignments and default arguments are read.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the literal.
+      language: python
+      code: |
+        DEMO_USER_EMAIL = "demo@example.com"  # skylos: ignore[SKY-L032] seed data
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L032"]` turns the rule off for the
+        project.
+
+related: [SKY-L014, SKY-L026]

@@ -1,0 +1,142 @@
+id: SKY-D361
+title: Dependabot cooldown under seven days
+family: ci-cd
+severity: LOW
+languages: [Dependabot configuration]
+gate:
+  full: counted
+
+what_it_is: >-
+  A Dependabot `cooldown` makes it wait a number of days after a release
+  before it opens a version update pull request. Without one, Dependabot
+  waits three days. SKY-D361 reports update entries whose shortest wait is
+  under seven days.
+
+why_it_matters: >-
+  Hijacked package releases are usually found and pulled within a few days.
+  A short wait lets Dependabot propose the bad version while it is still
+  live, and a busy reviewer may merge it. Security updates are never
+  delayed by a cooldown, so a longer wait costs little.
+
+flagged_example:
+  language: yaml
+  filename: .github/dependabot.yml
+  expect_line: 3
+  code: |
+    version: 2
+    updates:
+      - package-ecosystem: npm
+        directory: /
+        schedule:
+          interval: daily
+      - package-ecosystem: github-actions
+        directory: /
+        schedule:
+          interval: weekly
+        cooldown:
+          default-days: 7
+
+not_flagged_example:
+  language: yaml
+  filename: .github/dependabot.yml
+  code: |
+    version: 2
+    updates:
+      - package-ecosystem: npm
+        directory: /
+        schedule:
+          interval: daily
+        open-pull-requests-limit: 0
+      - package-ecosystem: github-actions
+        directory: /
+        schedule:
+          interval: weekly
+        cooldown:
+          default-days: 7
+  why: >-
+    The npm entry still has no cooldown, but `open-pull-requests-limit: 0`
+    turns its version updates off; only security updates run, and a
+    cooldown never delays those.
+
+how_skylos_decides:
+  - >-
+    Reads the one file GitHub reads: `.github/dependabot.yml` (or `.yaml`)
+    at the top of the scanned folder. The file must say `version: 2` and
+    have an `updates` list.
+  - >-
+    Skips an entry with `open-pull-requests-limit: 0`, which turns version
+    updates off.
+  - >-
+    Works out the shortest wait: three days when there is no `cooldown` or
+    no `default-days`; zero when `exclude` lists `"*"`; three days when an
+    `include` list leaves some packages out. For ecosystems with SemVer
+    settings (such as `npm`, `pip`, `cargo`, `maven`) the smallest of
+    `semver-major-days`, `semver-minor-days`, `semver-patch-days` and, when
+    one of them is missing, `default-days`. For `github-actions`, `docker`,
+    `terraform` and other days-only ecosystems, `default-days` alone.
+  - >-
+    An entry with a day value that is not a whole number of zero or more is
+    skipped.
+  - >-
+    When any entry waits under seven days, reports one LOW finding for the
+    file that lists every such entry, on the line of the first one's
+    setting, or of the entry itself when it has no cooldown.
+
+source_refs:
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _effective_cooldown("
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _report_cooldowns("
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _version_updates_off("
+  - path: test/test_github_actions_workflow_audits.py
+    symbol: "def test_cooldown_finding_lists_every_short_entry_once("
+
+fix:
+  explanation: >-
+    Give every entry a `cooldown` with `default-days` of 7 or more. Set the
+    SemVer-specific days, if you use them, to 7 or more as well.
+  filename: .github/dependabot.yml
+  code: |
+    version: 2
+    updates:
+      - package-ecosystem: npm
+        directory: /
+        schedule:
+          interval: daily
+        cooldown:
+          default-days: 7
+          semver-major-days: 14
+      - package-ecosystem: github-actions
+        directory: /
+        schedule:
+          interval: weekly
+        cooldown:
+          default-days: 7
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Internal packages your own team releases are delayed too unless you
+      list them under `cooldown.exclude`, which makes those packages wait
+      zero days; listing `"*"` there is reported.
+    - >-
+      Because there is one finding per file, its line moves to the next
+      short entry when you fix or silence the first one.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D361]` and a reason as a YAML comment on
+        the reported line, or as a comment line directly above it. It takes
+        that one entry out of the finding.
+      language: yaml
+      code: |
+        cooldown:
+          # skylos: ignore[SKY-D361] internal SDK, released by us
+          default-days: 1
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D361"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D360, SKY-SCA-AGE001]

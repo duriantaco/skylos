@@ -1,0 +1,238 @@
+id: SKY-CIRC
+title: Circular dependency
+family: quality
+severity: LOW
+severity_note: >-
+  The catalog gives no severity. Every cycle is reported LOW, whatever its
+  length.
+languages: [Python]
+run_with: every scan, including a plain `skylos .`; `check_circular = false` turns it off
+gate:
+  full: listed
+  note: >-
+    Reported by every scan, but no `[tool.skylos.gate]` limit counts it.
+    `skylos . --gate --strict` fails on it, as on any finding.
+
+what_it_is: >-
+  A circular dependency is a loop of imports: module A imports B and B
+  imports A, directly or through other modules. SKY-CIRC reports each loop
+  of module-level imports between the Python modules of the project once.
+
+why_it_matters: >-
+  Python runs a module while importing it, so in a loop one module is
+  used before it has finished loading: `ImportError: cannot import name
+  'Order' from partially initialized module`. Even when the import order
+  happens to work, the two modules can no longer be changed, tested or
+  moved apart from each other.
+
+flagged_example:
+  language: python
+  files:
+    - filename: shop/customers.py
+      code: |
+        """Customers and their order history."""
+
+        from shop.orders import Order
+
+
+        class Customer:
+            def __init__(self, email: str):
+                self.email = email
+                self.orders: list[Order] = []
+
+            def lifetime_value(self) -> float:
+                return sum(order.total for order in self.orders)
+    - filename: shop/orders.py
+      code: |
+        """Orders and their totals."""
+
+        from shop.customers import Customer
+
+
+        class Order:
+            def __init__(self, customer: Customer, total: float):
+                self.customer = customer
+                self.total = total
+    - filename: shop/__init__.py
+      code: |
+        """The shop package."""
+  expect_file: shop/customers.py
+  expect_line: 3
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: shop/customers.py
+      code: |
+        """Customers and their order history."""
+
+
+        class Customer:
+            def __init__(self, email: str):
+                self.email = email
+                self.orders = []
+
+            def place_order(self, total: float):
+                from shop.orders import Order
+
+                order = Order(self, total)
+                self.orders.append(order)
+                return order
+    - filename: shop/orders.py
+      code: |
+        """Orders and their totals."""
+
+        from shop.customers import Customer
+
+
+        class Order:
+            def __init__(self, customer: Customer, total: float):
+                self.customer = customer
+                self.total = total
+    - filename: shop/__init__.py
+      code: |
+        """The shop package."""
+  why: >-
+    `customers` imports `orders` only inside a function, which runs after
+    both modules have loaded, so importing either module cannot fail.
+    Skylos reads only the imports written at the top level of a module.
+
+how_skylos_decides:
+  - >-
+    Runs on every scan, with or without `--quality`, unless `check_circular
+    = false` is set under `[tool.skylos]`. Only `.py` files take part.
+  - >-
+    Collects the `import` and `from … import` statements written directly
+    at the top level of each module, resolving relative imports. Imports
+    inside functions, classes, `if TYPE_CHECKING:` blocks or `try` blocks
+    are not read.
+  - >-
+    Keeps imports that resolve to a module of the scanned project. Within
+    one top-level package each edge goes to the exact module; an import into
+    another top-level package of the project counts as an edge to that
+    package.
+  - >-
+    Finds every simple loop in that graph and reports each loop once, LOW.
+    The finding names the modules in order and suggests the module with
+    the fewest imports pointing at it, relative to its own imports, as the
+    place to break the loop.
+  - >-
+    Reports at the import that closes the loop with the lowest file path
+    and line number among the loop's imports.
+
+source_refs:
+  - path: skylos/analysis/circular_deps.py
+    symbol: "class CircularDependencyRule"
+  - path: skylos/analysis/circular_deps.py
+    symbol: "def _circular_import_targets("
+  - path: skylos/analysis/circular_deps.py
+    symbol: "def suggest_break_point("
+  - path: skylos/analysis/circular_deps.py
+    symbol: 'CIRCULAR_DEPENDENCY_SEVERITY = "LOW"'
+  - path: skylos/analysis/file_processing.py
+    symbol: "def collect_python_raw_imports("
+    note: only direct children of the module are read.
+  - path: skylos/reporting/architecture_result.py
+    symbol: "def attach_circular_and_architecture("
+  - path: skylos/core/gatekeeper.py
+    symbol: "def _check_strict_gate("
+    note: the only gate path that counts the findings.
+
+fix:
+  explanation: >-
+    When one side needs the other only for type hints, import it under
+    `if TYPE_CHECKING:` with postponed annotations. When both really need
+    each other at run time, move the shared part into a third module that
+    both import.
+  filename: shop/customers.py
+  code: |
+    """Customers and their order history."""
+
+    from __future__ import annotations
+
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from shop.orders import Order
+
+
+    class Customer:
+        def __init__(self, email: str):
+            self.email = email
+            self.orders: list[Order] = []
+
+        def lifetime_value(self) -> float:
+            return sum(order.total for order in self.orders)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A loop that works because the imports run in a safe order, or because
+      one side only imports names it uses later, is still reported.
+    - >-
+      It misses loops created by imports inside functions, `try` blocks or
+      conditional blocks, and loops that pass through TypeScript or other
+      languages.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: python
+          files:
+            - filename: shop/customers.py
+              code: |
+                """Customers and their order history."""
+
+                from shop.orders import Order
+
+
+                class Customer:
+                    def __init__(self, email: str):
+                        self.email = email
+                        self.orders: list[Order] = []
+            - filename: shop/orders.py
+              code: |
+                """Orders and their totals."""
+
+                from shop.customers import Customer
+
+
+                class Order:
+                    def __init__(self, customer: Customer, total: float):
+                        self.customer = customer
+                        self.total = total
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [tool.skylos]
+                check_circular = false
+      text: >-
+        `check_circular = false` under `[tool.skylos]` turns the check off
+        for the project:
+      language: toml
+      code: |
+        [tool.skylos]
+        check_circular = false
+    - check:
+        kind: config
+        expect: reported
+      text: >-
+        `[tool.skylos] ignore = ["SKY-CIRC"]` does **not** silence it: the
+        loop is still reported.
+    - check:
+        kind: inline
+        expect: reported
+      text: >-
+        An inline marker does not work either; with this comment on the
+        reported import, the loop is still reported:
+      language: python
+      code: |
+        from shop.orders import Order  # skylos: ignore[SKY-CIRC] tracked
+    - check:
+        kind: baseline
+        expect: reported
+      text: >-
+        A baseline does not hide it either: after `skylos baseline .`, a
+        scan with `--baseline` still reports the existing loop.
+
+related: [SKY-Q804, SKY-Q805, SKY-Q701]

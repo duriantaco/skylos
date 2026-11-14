@@ -1,0 +1,152 @@
+id: SKY-U006
+title: Unused parameter
+family: dead-code
+severity: UNRATED
+severity_note: >-
+  Unused-code findings carry no severity in JSON. The terminal report shows
+  them as LOW, SARIF as level `note` and GitLab as `minor`. Every unused
+  parameter is capped at confidence 50, below the default threshold of 60,
+  so it is only listed with `--confidence 50` or lower.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_dead_code`, which has no limit by default. At the
+    default threshold no parameter is listed, so none is counted.
+run_with: >-
+  `skylos . --confidence 50` (a default scan holds unused parameters back
+  and says how many)
+
+what_it_is: >-
+  A function parameter that the function body never reads. Callers still
+  have to pass a value for it, but the value changes nothing.
+
+why_it_matters: >-
+  An ignored parameter often means a missing feature: in the example below
+  callers ask for express shipping and are charged the normal rate. It also
+  keeps a misleading argument alive at every call site.
+
+flagged_example:
+  language: python
+  filename: shop/shipping.py
+  expect_line: 6
+  scan_flags: ["--confidence=50"]
+  code: |
+    """Shipping cost rules."""
+
+    RATES = {"DE": 4.5, "FR": 5.0, "US": 12.0}
+
+
+    def shipping_cost(weight_kg, country, express):
+        rate = RATES.get(country, 9.99)
+        return round(rate * weight_kg, 2)
+
+not_flagged_example:
+  language: python
+  filename: shop/carriers.py
+  scan_flags: ["--confidence=50"]
+  code: |
+    """Carrier price quotes."""
+
+    RATES = {"DE": 4.5, "FR": 5.0, "US": 12.0}
+
+
+    class Carrier:
+        def quote(self, weight_kg, country, express):
+            raise NotImplementedError
+
+
+    class PostalCarrier(Carrier):
+        def quote(self, weight_kg, country, express):
+            rate = RATES.get(country, 9.99) * weight_kg
+            if express:
+                rate += 15
+            return round(rate, 2)
+  why: >-
+    `Carrier.quote` only raises `NotImplementedError`: it declares the
+    signature that subclasses implement, so its parameters are not
+    definitions at all. The subclass reads all three.
+
+how_skylos_decides:
+  - >-
+    Runs on every scan of Python code; no flag is needed. Each positional,
+    keyword-only, `*args` and `**kwargs` parameter is a definition, except
+    names starting with one underscore (`_`, `_request`), which mark a
+    value as deliberately ignored.
+  - >-
+    Records no parameters for methods of a `Protocol` class, abstract or
+    `@overload` methods, methods marked `@override`, functions defined
+    under `if TYPE_CHECKING:`, and functions whose body is only a
+    docstring, `...`, `pass` or `raise NotImplementedError`.
+  - >-
+    Never reports `self` and `cls`, parameters of dunder methods, pytest
+    hook and fixture parameters, Django command handler parameters,
+    FastAPI `Depends()` and `Security()` parameters, parameters of known
+    framework hooks such as `emit(self, record)` on a logging `Handler`,
+    and parameters of methods in classes named `Base*`, `*Base`, `*ABC`,
+    `*Interface` or `*Adapter`.
+  - >-
+    Skips test, example and benchmark paths and lines marked
+    `# skylos: ignore[SKY-U006]`, then caps every remaining parameter at
+    confidence 50, because a callback or override protocol can require it.
+    With the default threshold of 60 none is listed and the summary says
+    how many were held back.
+
+source_refs:
+  - path: skylos/visitors/base.py
+    symbol: "def _is_intentional_discard_name(name: str)"
+  - path: skylos/visitors/base.py
+    symbol: "def _has_signature_stub_body("
+  - path: skylos/analysis/penalties.py
+    symbol: "def _check_hook_override_parameters(def_obj, framework)"
+  - path: skylos/analysis/penalties.py
+    symbol: "def _check_base_class_parameters(def_obj)"
+  - path: skylos/analysis/penalties.py
+    symbol: "def _check_dependency_injected_parameter(def_obj, analyzer, framework)"
+  - path: skylos/deadcode/confidence.py
+    symbol: "\"signature_parameter\": 50,"
+
+fix:
+  explanation: >-
+    Use the parameter, or remove it from the function and its callers. If
+    a caller's signature requires it (a callback, a framework hook), rename
+    it with a leading underscore, such as `_express`, to say it is ignored
+    on purpose.
+  filename: shop/shipping.py
+  scan_flags: ["--confidence=50"]
+  code: |
+    """Shipping cost rules."""
+
+    RATES = {"DE": 4.5, "FR": 5.0, "US": 12.0}
+
+
+    def shipping_cost(weight_kg, country, express):
+        rate = RATES.get(country, 9.99) * weight_kg
+        if express:
+            rate += 15
+        return round(rate, 2)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Callback parameters that a library passes positionally, such as
+      `def on_message(client, userdata, message)`, are reported when the
+      body ignores some of them; rename them with a leading underscore.
+    - >-
+      Unused parameters in TypeScript, JavaScript and other languages are
+      not reported.
+  suppress:
+    - check: inline
+      text: >-
+        On the line that holds the parameter (the `def` line for a one-line
+        signature), with a reason:
+      language: python
+      code: |
+        def shipping_cost(weight_kg, country, express):  # skylos: ignore[SKY-U006] v2 API
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-U006"]` turns the rule off for the
+        project. Leaving `--confidence` at its default of 60 hides every
+        unused parameter too.
+
+related: [SKY-U001, SKY-U003]

@@ -1,0 +1,157 @@
+id: SKY-D362
+title: GitHub Actions decoded secret printed unmasked
+family: ci-cd
+severity: MEDIUM
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  Some teams store several values in one secret as JSON and read a field
+  with `fromJSON(secrets.X).field`. GitHub hides only the exact text it
+  stored, so the decoded field is a new string the log does not mask.
+  SKY-D362 reports such a value when it sits where GitHub prints it.
+
+why_it_matters: >-
+  GitHub shows a step's `env:`, its `with:` inputs and its script in the job
+  log. A decoded API key in one of them appears in plain text, and anyone
+  who can read the logs, which for a public repository is anyone, can copy
+  it.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/deploy.yml
+  expect_line: 17
+  code: |
+    name: Deploy
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      deploy:
+        runs-on: ubuntu-latest
+        environment: production
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - name: Upload the site
+            env:
+              DEPLOY_KEY: ${{ fromJSON(secrets.DEPLOY_CONFIG).api_key }}
+              DEPLOY_HOST: ${{ fromJSON(secrets.DEPLOY_CONFIG).host }}
+            run: ./scripts/deploy.sh
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/deploy.yml
+  code: |
+    name: Deploy
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      deploy:
+        runs-on: ubuntu-latest
+        environment: production
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - name: Upload the site
+            if: fromJSON(secrets.DEPLOY_CONFIG).enabled
+            env:
+              DEPLOY_KEY: ${{ secrets.DEPLOY_API_KEY }}
+              DEPLOY_HOST: ${{ fromJSON(vars.DEPLOY_CONFIG).host }}
+            run: ./scripts/deploy.sh
+  why: >-
+    The key is its own secret, so GitHub masks it. The host is decoded from a
+    configuration variable (`vars`), which is not secret. The one decoded
+    secret sits in `if:`, which GitHub evaluates but never prints.
+
+how_skylos_decides:
+  - >-
+    Reads `*.yml` and `*.yaml` workflow files under `.github/workflows`.
+    Composite actions are not checked for this rule.
+  - >-
+    Looks at every `${{ … }}` in values GitHub prints: a step's `run`,
+    `with`, `env`, `name` and `working-directory`; a job's `env`, `outputs`,
+    `name`, `runs-on`, `environment` and `with`; matrix values; container
+    and service `image`, `env`, `options`, `entrypoint` and `args`; and the
+    workflow's `env`, `name` and `run-name`. Conditions, timeouts and a
+    reusable call's `secrets:` are skipped.
+  - >-
+    Reports a `fromJSON()` call whose input is a secret, when the decoded
+    value or one of its fields flows out of the expression. The input can be
+    `secrets.X` itself or `env.X` where `X` is set from a secret in the
+    step, job or workflow `env:` (followed up to four steps).
+    `secrets.GITHUB_TOKEN` passed through a shell variable does not count.
+  - >-
+    One MEDIUM finding per decoded value, on the line where the expression
+    appears.
+
+source_refs:
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _report_decoded_secrets("
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _decoded_secrets("
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _printed("
+  - path: test/test_github_actions_workflow_audits.py
+    symbol: "def test_decoded_secrets("
+
+fix:
+  explanation: >-
+    Store each value that must stay hidden as its own secret and read it
+    directly. Values that are not secret, such as a host name, can move to a
+    configuration variable (`vars`).
+  filename: .github/workflows/deploy.yml
+  code: |
+    name: Deploy
+    on:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      deploy:
+        runs-on: ubuntu-latest
+        environment: production
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - name: Upload the site
+            env:
+              DEPLOY_KEY: ${{ secrets.DEPLOY_API_KEY }}
+              DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+            run: ./scripts/deploy.sh
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A field that is not sensitive, such as a host name, is reported the
+      same as a key, because Skylos cannot see what the JSON holds.
+    - >-
+      A script that registers the decoded value with `::add-mask::` before
+      it is printed is still reported.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D362]` and a reason on the reported line or
+        on the line directly above it, one rule per marker. A marker on one
+        line also covers a finding on the line below it.
+      language: yaml
+      code: |
+        env:
+          # skylos: ignore[SKY-D362] field is a public host name
+          DEPLOY_HOST: ${{ fromJSON(secrets.DEPLOY_CONFIG).host }}
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D362"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D298, SKY-D299, SKY-D309]

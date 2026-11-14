@@ -1,0 +1,180 @@
+id: SKY-D211
+title: SQL injection
+family: security
+severity: CRITICAL
+severity_note: >-
+  CRITICAL needs outside data or a query string built in the call itself.
+  In Python, a query that is some other non-literal value and passes no
+  parameters is HIGH ("Likely unparameterized SQL execution"). In Go, Java,
+  Kotlin and C#, a query string-built from values with no proven outside
+  source is HIGH.
+languages: [Python, TypeScript/JavaScript, Java, Kotlin, Go, C#, PHP]
+gate:
+  full: critical_blocks
+cwe: [CWE-89]
+
+what_it_is: >-
+  SQL injection happens when text from outside the program becomes part of a
+  SQL statement instead of being passed as a separate value. Skylos reports
+  SKY-D211 when a query that is pasted together with an f-string, `+`, `%`
+  or `.format()`, or that carries outside input, reaches a database call
+  such as `cursor.execute()`.
+
+why_it_matters: >-
+  A visitor who types `' OR '1'='1` into a search box can read every row,
+  and other payloads can change or delete data. One string-built query on a
+  login or search route is enough to leak a whole table.
+
+flagged_example:
+  language: python
+  filename: app/users.py
+  expect_line: 13
+  code: |
+    import sqlite3
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/users")
+    def find_user():
+        name = request.args.get("name", "")
+        conn = sqlite3.connect("app.db")
+        cur = conn.cursor()
+        cur.execute(f"SELECT id, email FROM users WHERE name = '{name}'")
+        return {"rows": cur.fetchall()}
+
+not_flagged_example:
+  language: python
+  filename: app/users.py
+  code: |
+    import sqlite3
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/users")
+    def find_users():
+        ids = [int(value) for value in request.args.getlist("id")]
+        marks = ",".join("?" * len(ids))
+        conn = sqlite3.connect("app.db")
+        cur = conn.cursor()
+        cur.execute(f"SELECT id, email FROM users WHERE id IN ({marks})", ids)
+        return {"rows": cur.fetchall()}
+  why: >-
+    The f-string only inserts `marks`, a run of `?` placeholders built from
+    string literals and a count. Skylos treats text made only of literals and
+    numbers as safe, and the user's values travel separately as bound
+    parameters.
+
+how_skylos_decides:
+  - >-
+    Finds database calls: `.execute()`, `.executemany()` and
+    `.executescript()`, plus async driver calls such as asyncpg `fetch()`,
+    pandas `read_sql()` and SQLAlchemy `text()`.
+  - >-
+    Checks that the receiver looks like a database object: its name is
+    `cur`, `tx` or `transaction`, or contains `cursor`, `conn`, `session`,
+    `engine` or `db`, or it comes from a database call such as
+    `sqlite3.connect()` or `conn.cursor()`. A receiver that resolves to local
+    code with no database effect is skipped.
+  - >-
+    Takes the query text (the first argument, or `sql=`, `query=` or
+    `statement=`) and skips it when it cannot carry data: string literals,
+    numbers from `int()`, `float()` or `len()`, placeholder runs such as
+    `",".join("?" * len(ids))`, SQLAlchemy `select()`/`insert()` constructs,
+    psycopg `sql.SQL` composition and properly quoted identifiers.
+  - >-
+    Reports CRITICAL when the query argument is itself an f-string, `+`,
+    `%` or `.format()` expression that inserts a value Skylos cannot prove to
+    be fixed text, or holds tainted data: a function parameter, `request.*`, `input()`, `sys.argv`,
+    `sys.stdin` or the environment. A query built earlier into a variable
+    from untainted values falls to the next step.
+  - >-
+    Reports HIGH when the query is some other non-literal value and the call
+    passes no parameters.
+  - >-
+    For a chained call such as `sqlite3.connect(db).execute(q)` it is
+    stricter: `q` must carry data from a real outside source, not just a
+    helper's parameter.
+  - >-
+    The other languages have their own checks with the same idea: template
+    literals in TypeScript, concatenated SQL passed to `executeQuery()`,
+    `execute()` or `prepareStatement()` in Java, `fmt.Sprintf` in Go,
+    command text in C#. Go findings come from the Go engine as SKY-G211 and
+    are reported as SKY-D211.
+
+source_refs:
+  - path: skylos/rules/danger/danger_sql/sql_flow.py
+    symbol: "class _SQLFlowChecker"
+    note: Python detector; `visit_Call` holds the decision order.
+  - path: skylos/rules/danger/danger_sql/sql_flow.py
+    symbol: "def _sql_text_kind"
+    note: query text that cannot carry data.
+  - path: skylos/rules/danger/danger_sql/sql_flow.py
+    symbol: "def _check_chained_execute"
+  - path: skylos/rules/danger/taint.py
+    symbol: "def _taint_params"
+    note: function parameters start out tainted.
+  - path: skylos/visitors/languages/go/go.py
+    symbol: "_GO_RULE_REMAP"
+  - path: test/test_dangerous.py
+    symbol: "def test_sql_execute_parameterized_ok"
+
+fix:
+  explanation: >-
+    Keep the SQL text fixed and pass every value as a parameter. The driver
+    sends the value separately, so it can never change the statement.
+  filename: app/users.py
+  code: |
+    import sqlite3
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/users")
+    def find_user():
+        name = request.args.get("name", "")
+        conn = sqlite3.connect("app.db")
+        cur = conn.cursor()
+        cur.execute("SELECT id, email FROM users WHERE name = ?", (name,))
+        return {"rows": cur.fetchall()}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A helper that receives the SQL as a parameter, such as
+      `def run(cur, sql): cur.execute(sql)`, is reported even when every
+      caller passes a constant. Parameters count as untrusted.
+    - >-
+      A table or column name checked against an allowlist is still reported,
+      even when the check sits just above the query: the SQL check does not
+      recognise allowlist tests.
+    - >-
+      A non-database object named like one (for example an SSH `session`)
+      whose `.execute()` receives a built string can be reported.
+  suppress:
+    - check: inline
+      text: >-
+        Silence one line and say why. Only the listed rule is hidden. A bare
+        `# noqa` does not hide HIGH or CRITICAL security findings.
+      language: python
+      code: |
+        cur.execute(sql)  # skylos: ignore[SKY-D211] sql comes from REPORT_QUERIES
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed. The baseline
+        records the absolute file path and the line, so an entry stops
+        matching when the checkout moves or the line shifts.
+    - check: config
+      text: >-
+        Turning the rule off for the whole project with `[tool.skylos]
+        ignore = ["SKY-D211"]` is possible but hides real injections too.
+
+related: [SKY-D217, SKY-D281, SKY-D262, SKY-D212]

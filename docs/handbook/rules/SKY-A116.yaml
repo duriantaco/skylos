@@ -1,0 +1,237 @@
+id: SKY-A116
+title: Code detects the test run
+family: ai-defects
+severity: HIGH
+severity_note: >-
+  Reported as advice, not as a blocking finding, for environment switches
+  such as `os.environ["APP_ENV"] == "test"` or
+  `process.env.NODE_ENV === "test"`, and for a detection in generated code or
+  in a new file nothing imports or runs.
+languages: [Python, JavaScript, TypeScript]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` runs this rule, in its `test_special_casing` check.
+    That check blocks by default: a blocking SKY-A116 finding fails the
+    done verdict, and advice findings are listed without failing it. Set
+    the check to "advise" or "off" under `[tool.skylos.done.checks]` in the
+    base commit's `pyproject.toml` to change that.
+run_with: >-
+  `skylos done` after a change (default base `HEAD`, so uncommitted edits),
+  or `skylos done --base origin/main` for a pull request
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule; the handbook build checks examples
+    with `skylos .`, which never reports it. All four examples were run by
+    hand with `skylos done --no-tests`.
+
+what_it_is: >-
+  Code detects the test run when production code asks whether a test
+  runner is running it: it reads `PYTEST_CURRENT_TEST` or
+  `process.env.JEST_WORKER_ID`, checks `"pytest" in sys.modules` or
+  `typeof jest`, or opens the tests' own files. SKY-A116 reports such checks
+  on lines a change added outside the tests.
+
+why_it_matters: >-
+  Code that takes a different path under the test runner passes the tests
+  without doing the real work. An agent stuck on a failing test can add
+  `if running_under_pytest: return True`, and the suite turns green while
+  the real path is never tested.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: payments/charge.py
+  expect_line: 9
+  base_files:
+    - filename: payments/charge.py
+      code: |
+        """Card charges through the payment gateway."""
+
+        from payments.gateway import client
+
+
+        def charge(card_token, amount_cents):
+            response = client.charge(card_token, amount_cents)
+            return response["status"] == "succeeded"
+  files:
+    - filename: payments/charge.py
+      code: |
+        """Card charges through the payment gateway."""
+
+        import os
+
+        from payments.gateway import client
+
+
+        def charge(card_token, amount_cents):
+            if os.environ.get("PYTEST_CURRENT_TEST"):
+                return True
+            response = client.charge(card_token, amount_cents)
+            return response["status"] == "succeeded"
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: shop/settings.py
+      code: |
+        """Django settings for the shop project."""
+
+        import sys
+
+        DEBUG = False
+        PAYMENT_BACKEND = "payments.backends.Stripe"
+  files:
+    - filename: shop/settings.py
+      code: |
+        """Django settings for the shop project."""
+
+        import sys
+
+        DEBUG = False
+        TESTING = "pytest" in sys.modules
+        PAYMENT_BACKEND = "payments.backends.Stripe"
+        if TESTING:
+            PAYMENT_BACKEND = "payments.backends.Fake"
+  why: >-
+    The same `"pytest" in sys.modules` check sits in a settings file.
+    Settings, config and test setup files are where a project chooses
+    test doubles on purpose, so Skylos does not look for test detection
+    there.
+
+more_examples:
+  - flagged:
+      language: javascript
+      setup: git_diff
+      expect_file: src/charge.js
+      expect_line: 4
+      base_files:
+        - filename: src/charge.js
+          code: |
+            import { gateway } from "./gateway.js";
+
+            export async function charge(cardToken, amountCents) {
+              const response = await gateway.charge(cardToken, amountCents);
+              return response.status === "succeeded";
+            }
+      files:
+        - filename: src/charge.js
+          code: |
+            import { gateway } from "./gateway.js";
+
+            export async function charge(cardToken, amountCents) {
+              if (process.env.JEST_WORKER_ID) {
+                return true;
+              }
+              const response = await gateway.charge(cardToken, amountCents);
+              return response.status === "succeeded";
+            }
+    not_flagged:
+      language: javascript
+      setup: git_diff
+      base_files:
+        - filename: src/setupTests.js
+          code: |
+            import "@testing-library/jest-dom";
+      files:
+        - filename: src/setupTests.js
+          code: |
+            import "@testing-library/jest-dom";
+            import { gateway } from "./gateway.js";
+
+            if (process.env.JEST_WORKER_ID) {
+              gateway.useSandbox();
+            }
+      why: >-
+        `src/setupTests.js` is the test setup file Jest loads before the
+        tests. Reading `JEST_WORKER_ID` there is ordinary test plumbing, so
+        Skylos skips setup and config files for this rule.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done`, which compares the working tree (or a pull
+    request) with a base commit. Only lines the change added to non-test
+    Python, JavaScript and TypeScript files are read. Test files, test
+    helper folders (`fixtures`, `mocks`, `e2e` and similar) and setup or
+    config files are skipped: `conftest.py`, `settings.py`, `config.py`,
+    files under `settings` or `config` folders, `*.config.*` and
+    `setupTests` files, pytest plugins and JS files that import a test
+    library.
+  - >-
+    In Python, reports a read of a variable only pytest sets
+    (`PYTEST_CURRENT_TEST`, `PYTEST_VERSION`, the `PYTEST_XDIST_*`
+    variables), `"pytest" in sys.modules` or `sys.modules.get("pytest")`,
+    `sys._called_from_test`, a search of `sys.argv` for a runner name, and
+    a look at the call stack (`inspect.stack()`, `sys._getframe`) for a
+    test. Code inside a `pytest_*` hook function is left out.
+  - >-
+    In JavaScript and TypeScript, reports `process.env` or
+    `import.meta.env` variables a runner sets (`JEST_WORKER_ID`, `VITEST`,
+    `VITEST_WORKER_ID`, `NODE_TEST_CONTEXT` and similar), `typeof jest` or
+    `typeof vi`, runner globals on `globalThis` or `window`, and
+    `import.meta.vitest` outside an in-source test block.
+  - >-
+    Also reports production code that opens or imports one of the
+    repository's test files by name.
+  - >-
+    A comparison of `APP_ENV`, `NODE_ENV` or `import.meta.env.MODE` with
+    `"test"` is advice. A detection that was already in the base version is
+    not new, and one in generated code or in a new file nothing imports or
+    runs is advice; a test-file read in repository tooling (`scripts/`,
+    `tools/`, `validate-*` files) that no production code imports is advice
+    too.
+
+source_refs:
+  - path: skylos/done/answer_sites.py
+    symbol: "def _py_marker("
+  - path: skylos/done/answer_sites.py
+    symbol: "def _js_marker("
+  - path: skylos/done/answer_sites.py
+    symbol: "_PYTEST_RUN_ENV = frozenset("
+  - path: skylos/done/answer_sites.py
+    symbol: "_JS_RUNNER_ENV = frozenset("
+  - path: skylos/done/answer_sites.py
+    symbol: "def _is_test_setup("
+    note: the setup and config files that are skipped.
+  - path: skylos/done/answer_sites.py
+    symbol: "def scan_source("
+  - path: skylos/done/special_cases.py
+    symbol: "def find_special_cases("
+    note: base-version, generated, loose-script and tooling exceptions.
+  - path: skylos/done/checks.py
+    symbol: "def check_test_special_casing("
+
+fix:
+  explanation: >-
+    Remove the check from production code. If the tests need a fake
+    gateway, inject it: pass the client in, or patch it from a fixture or
+    the test setup file, so production code runs the same way everywhere.
+  language: python
+  code: |
+    def charge(card_token, amount_cents, gateway=client):
+        response = gateway.charge(card_token, amount_cents)
+        return response["status"] == "succeeded"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A library that really must behave differently under pytest, such as
+      a plugin shipped outside a `pytest_*` hook, is reported. Moving that
+      code into the plugin module (one that imports `pytest`) avoids it.
+    - >-
+      Detection spread over several lines can be missed: only lines the
+      change added are read, and an environment variable name built at run
+      time is not seen.
+  suppress:
+    - text: >-
+        `skylos done` does not read `# skylos: ignore` comments. To make the
+        whole check advisory, set its mode in the base commit's
+        `pyproject.toml`; settings in the change itself are ignored.
+      language: toml
+      code: |
+        [tool.skylos.done.checks]
+        test_special_casing = "advise"
+
+related: [SKY-A115, SKY-A117, SKY-A113]

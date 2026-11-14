@@ -1,0 +1,150 @@
+id: SKY-L011
+title: Disabled security control
+family: logic
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. Turning off TLS checks, CSRF protection or
+  login, and `ALLOWED_HOSTS = ["*"]`, are HIGH. Insecure settings such as
+  `DEBUG = True` or `SESSION_COOKIE_SECURE = False` are MEDIUM.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  Code that switches off a protection a library gives by default. Examples
+  are certificate checks (`verify=False`), CSRF protection (`@csrf_exempt`),
+  login (`@login_not_required`), and framework settings such as
+  `DEBUG = True` or cookies that may travel over plain HTTP.
+
+why_it_matters: >-
+  With `verify=False` the client accepts any certificate, so anyone on the
+  network path (a hotel Wi-Fi, a compromised proxy) can read the traffic
+  and change the rates the service returns. Such switches are often added
+  to get past a local error and then shipped.
+
+flagged_example:
+  language: python
+  filename: rates/client.py
+  expect_line: 13
+  code: |
+    """Client for the internal exchange-rate service."""
+
+    import requests
+
+    RATES_URL = "https://rates.internal.example.com"
+
+
+    def fetch_rates(currency):
+        response = requests.get(
+            f"{RATES_URL}/rates/{currency}",
+            timeout=10,
+            headers={"Accept": "application/json"},
+            verify=False,
+        )
+        response.raise_for_status()
+        return response.json()
+
+not_flagged_example:
+  language: python
+  filename: rates/client.py
+  code: |
+    """Client for the internal exchange-rate service."""
+
+    import requests
+
+    RATES_URL = "https://rates.internal.example.com"
+    CA_BUNDLE = "/etc/ssl/certs/internal-ca.pem"
+
+
+    def fetch_rates(currency):
+        response = requests.get(
+            f"{RATES_URL}/rates/{currency}",
+            timeout=10,
+            headers={"Accept": "application/json"},
+            verify=CA_BUNDLE,
+        )
+        response.raise_for_status()
+        return response.json()
+  why: >-
+    `verify` is set, but to the path of a CA bundle, so certificates are
+    still checked against the company's own certificate authority. Skylos
+    only reports the literal value `False`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Skips test files (`test_*.py`,
+    `*_test.py` and `conftest.py`).
+  - >-
+    Reports HIGH, on the value, for a keyword argument `verify=False` or
+    `check_hostname=False` in any call, and for a call to
+    `_create_unverified_context()`.
+  - >-
+    Reports HIGH for a function decorated with `@csrf_exempt` or
+    `@login_not_required`, and for an `ALLOWED_HOSTS` list that contains
+    `"*"`.
+  - >-
+    Reports MEDIUM for a plain assignment of `DEBUG = True`, or of `False`
+    to `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`,
+    `SESSION_COOKIE_HTTPONLY`, `CSRF_COOKIE_HTTPONLY`, `WTF_CSRF_ENABLED`,
+    `JWT_VERIFY` or `JWT_VERIFY_EXPIRATION`.
+  - >-
+    Only literal values count: `verify=settings.VERIFY_TLS` or
+    `DEBUG = os.environ.get("DEBUG") == "1"` is not reported.
+
+source_refs:
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "class DisabledSecurityRule"
+  - path: skylos/rules/vibe_dictionary.py
+    symbol: "DISABLED_SECURITY_PATTERNS = {"
+  - path: skylos/rules/vibe_dictionary.py
+    symbol: "DANGEROUS_ASSIGNMENTS = {"
+
+fix:
+  explanation: >-
+    Keep certificate checks on. When a service uses a private certificate
+    authority, pass its CA bundle to `verify` (or set `REQUESTS_CA_BUNDLE`)
+    instead of turning verification off.
+  filename: rates/client.py
+  code: |
+    """Client for the internal exchange-rate service."""
+
+    import requests
+
+    RATES_URL = "https://rates.internal.example.com"
+
+
+    def fetch_rates(currency):
+        response = requests.get(
+            f"{RATES_URL}/rates/{currency}",
+            timeout=10,
+            headers={"Accept": "application/json"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Any keyword named `verify` set to `False` is reported, even when it
+      has nothing to do with TLS, such as a `verify=False` flag on your own
+      function.
+    - >-
+      `DEBUG = True` in a settings file used only for local development is
+      reported.
+    - >-
+      It misses the same switches when the value comes from a variable or
+      the environment.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line that holds `False` (for a decorator, the
+        decorator line).
+      language: python
+      code: |
+        verify=False,  # skylos: ignore[SKY-L011] local test server only
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L011"]` turns the rule off for the
+        project.
+
+related: [SKY-D210, SKY-L010, SKY-L014]

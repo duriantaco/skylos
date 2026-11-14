@@ -1,0 +1,290 @@
+id: SKY-D212
+title: Command injection
+family: security
+severity: CRITICAL
+severity_note: >-
+  Python, PHP, Java, Kotlin, C#, Ruby and TypeScript request-flow findings
+  are CRITICAL. Some are HIGH: in TypeScript and JavaScript, any `X.exec()`
+  call in a file that loads `child_process`, `shelljs`, `ssh2`, `node-ssh` or
+  `dockerode`, even with no proven outside data; in Go, a `sh -c` command
+  built from a non-constant value with no proven outside source; and every
+  Rust and Dart finding. In shell scripts the severity drops one step when
+  only the script's own arguments reach the command behind a root-only
+  check, or when the command runs as a non-root user.
+languages: [Python, TypeScript/JavaScript, Go, Java, Kotlin, C#, PHP, Rust, Ruby, Dart, Shell]
+gate:
+  full: critical_blocks
+cwe: [CWE-78]
+
+what_it_is: >-
+  Command injection happens when outside text becomes part of a command that
+  a shell runs. Skylos reports SKY-D212 when data from a request, a function
+  parameter or `input()` reaches shell command text, such as
+  `subprocess.run(..., shell=True)` or `os.system()`, or chooses which
+  program runs.
+
+why_it_matters: >-
+  A visitor who sends `example.com; cat /etc/passwd` as a host name runs a
+  second command on your server, with the server's files, keys and network
+  access. One such endpoint is enough to take over the machine.
+
+flagged_example:
+  language: python
+  filename: app/tools.py
+  expect_line: 11
+  code: |
+    import subprocess
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.post("/ping")
+    def ping():
+        host = request.form.get("host", "")
+        out = subprocess.run(f"ping -c 1 {host}", shell=True, capture_output=True)
+        return {"output": out.stdout.decode()}
+
+not_flagged_example:
+  language: python
+  filename: app/tools.py
+  code: |
+    import shlex
+    import subprocess
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.post("/ping")
+    def ping():
+        host = request.form.get("host", "")
+        command = f"ping -c 1 {shlex.quote(host)}"
+        out = subprocess.run(command, shell=True, capture_output=True)
+        return {"output": out.stdout.decode()}
+  why: >-
+    `shlex.quote()` wraps the host in single quotes and escapes any quote
+    inside it, so the shell sees one word. Skylos checks where the quoted
+    value lands: after a fixed program name, outside other quotes, with no
+    `$(`, backtick, comment or unknown text before it. The line still gets
+    SKY-D209, because it uses `shell=True`.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/server.ts
+      expect_line: 8
+      code: |
+        import express from "express";
+        import { exec } from "child_process";
+
+        const app = express();
+
+        app.get("/ping", (req, res) => {
+          const host = String(req.query.host ?? "");
+          exec(`ping -c 1 ${host}`, (err, stdout) => {
+            res.json({ ok: !err, output: stdout });
+          });
+        });
+
+        app.listen(3000);
+    not_flagged:
+      language: typescript
+      filename: src/server.ts
+      code: |
+        import express from "express";
+        import { execFile } from "child_process";
+
+        const app = express();
+
+        app.get("/ping", (req, res) => {
+          const host = String(req.query.host ?? "");
+          execFile("ping", ["-c", "1", host], (err, stdout) => {
+            res.json({ ok: !err, output: stdout });
+          });
+        });
+
+        app.listen(3000);
+      why: >-
+        `execFile()` starts `ping` directly with an argument array and no
+        shell, so the host is one argument and cannot start a new command.
+  - flagged:
+      language: go
+      filename: main.go
+      expect_line: 10
+      code: |
+        package main
+
+        import (
+        	"net/http"
+        	"os/exec"
+        )
+
+        func ping(w http.ResponseWriter, r *http.Request) {
+        	host := r.URL.Query().Get("host")
+        	err := exec.Command("sh", "-c", "ping -c 1 "+host).Run()
+        	if err != nil {
+        		http.Error(w, "host unreachable", http.StatusBadGateway)
+        		return
+        	}
+        	w.WriteHeader(http.StatusNoContent)
+        }
+
+        func main() {
+        	http.HandleFunc("/ping", ping)
+        	http.ListenAndServe(":8080", nil)
+        }
+    not_flagged:
+      language: go
+      filename: main.go
+      code: |
+        package main
+
+        import (
+        	"net/http"
+        	"os/exec"
+        )
+
+        func ping(w http.ResponseWriter, r *http.Request) {
+        	host := r.URL.Query().Get("host")
+        	err := exec.Command("ping", "-c", "1", host).Run()
+        	if err != nil {
+        		http.Error(w, "host unreachable", http.StatusBadGateway)
+        		return
+        	}
+        	w.WriteHeader(http.StatusNoContent)
+        }
+
+        func main() {
+        	http.HandleFunc("/ping", ping)
+        	http.ListenAndServe(":8080", nil)
+        }
+      why: >-
+        The program is the fixed literal `ping` and the host is a separate
+        argument. Go's `exec.Command` does not use a shell, so Skylos only
+        checks the program, or the `-c` script of a shell such as `sh`.
+
+how_skylos_decides:
+  - >-
+    In Python, finds shell-string calls (`os.system`, `os.popen`,
+    `subprocess.getoutput`, `subprocess.getstatusoutput`,
+    `asyncio.create_subprocess_shell`), `subprocess.*` calls with
+    `shell=True` or a `shell=` value that is not a literal `False`, `None`
+    or `0`, an SSH client's `exec_command()`, the program argument of
+    `os.exec*`, `os.spawn*`, `os.posix_spawn*` and `pty.spawn`, and the
+    script after `-c` when the program is a shell (`["bash", "-c", script]`).
+    Import aliases such as `import subprocess as sp` are resolved; a local
+    function with the same name is not a sink.
+  - >-
+    Treats a value as tainted when it comes from `request.*`, `input()` or a
+    function parameter (except `self` and `cls`), directly or through
+    assignments, f-strings, `+`, `%` and `.format()`. `sys.argv` and
+    environment variables are not sources for this rule.
+  - >-
+    Leaves an argument list for a fixed program alone
+    (`subprocess.run(["git", "fetch", ref])`): an outside argument to a fixed
+    program is not a shell command.
+  - >-
+    Accepts `shlex.quote()` and `shlex.join()` only where the quoted value
+    stays one shell word: after a program name made of plain characters that
+    is not a shell or code runner (`sh`, `python`, `eval`, `xargs` and
+    others), outside quotes, and with no `$(`, backtick, here-document,
+    comment or unknown text before it. `"echo '" + shlex.quote(x) + "'"` is
+    still reported.
+  - >-
+    Does not recognise allowlist checks: a value tested with
+    `if host not in ALLOWED: abort(400)` is still tainted afterwards.
+  - >-
+    TypeScript and JavaScript: request data from an Express, Fastify, Koa,
+    NestJS or Next.js handler that reaches `child_process.exec()` or
+    `execSync()` command text is CRITICAL. Separately, any `X.exec()` call in
+    a file that loads a command module is HIGH, unless `X` is a proven
+    RegExp.
+  - >-
+    Go (reported by the Go engine as SKY-G212): `exec.Command`,
+    `exec.CommandContext`, `os.StartProcess` and `syscall.Exec` whose program
+    comes from request or network input, and `sh -c` / `bash -c` scripts
+    built from a variable. `os.Args`, flags and environment variables are
+    not sources there either. Java, Kotlin, C#, PHP, Rust, Ruby, Dart and
+    shell scripts have their own checks for outside data reaching a process
+    call.
+
+source_refs:
+  - path: skylos/rules/danger/danger_cmd/cmd_flow.py
+    symbol: "class _CmdFlowChecker"
+    note: Python detector; `_check_call` holds the sink list.
+  - path: skylos/rules/danger/danger_cmd/cmd_flow.py
+    symbol: "SHELL_STRING_CALLS = {"
+  - path: skylos/rules/danger/danger_cmd/cmd_flow.py
+    symbol: "def _unsafe_shell_parts"
+    note: where a `shlex.quote()` value may sit in the command.
+  - path: skylos/rules/danger/taint.py
+    symbol: "def _taint_params"
+    note: function parameters start out tainted.
+  - path: skylos/rules/danger/taint.py
+    symbol: "CMD_SANITIZERS = {"
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _command("
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "_COMMAND_EXEC_MESSAGES = {"
+    note: the HIGH `X.exec()` check.
+  - path: skylos/engines/go/internal/analyzer/taint.go
+    symbol: "func (a *Analyzer) execCommandSeverity"
+  - path: skylos/visitors/languages/go/go.py
+    symbol: "_GO_RULE_REMAP"
+  - path: test/test_cmd_injection.py
+    symbol: "def test_exec_family_flags_tainted_program_or_shell_script"
+
+fix:
+  explanation: >-
+    Run a fixed program with an argument list and no shell. Each value is
+    then one argument and can never start another command. Check the value
+    too (for example that it is a host name), so it cannot pass an option
+    such as `-f` to the program.
+  filename: app/tools.py
+  code: |
+    import subprocess
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.post("/ping")
+    def ping():
+        host = request.form.get("host", "")
+        out = subprocess.run(["ping", "-c", "1", "--", host], capture_output=True)
+        return {"output": out.stdout.decode()}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A helper that receives the command as a parameter, such as
+      `def run(cmd): subprocess.run(cmd, shell=True)`, is reported even when
+      every caller passes a constant. Parameters count as untrusted.
+    - >-
+      A value checked against an allowlist before the call is still
+      reported: the check is not recognised.
+    - >-
+      The same line usually also gets SKY-D209 (`shell=True`) or SKY-D203
+      (`os.system`), which report the call itself whatever its input.
+  suppress:
+    - check: inline
+      text: >-
+        Silence one line and say why. Only the listed rule is hidden. A bare
+        `# noqa` does not hide HIGH or CRITICAL security findings.
+      language: python
+      code: |
+        subprocess.run(cmd, shell=True)  # skylos: ignore[SKY-D212] cmd is from COMMANDS
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D212"]` turns the rule off for the
+        whole project, real injections included.
+
+related: [SKY-D203, SKY-D209, SKY-D235, SKY-D211]

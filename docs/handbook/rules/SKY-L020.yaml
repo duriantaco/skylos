@@ -1,0 +1,136 @@
+id: SKY-L020
+title: Overly broad file permissions
+family: logic
+severity: HIGH
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  HIGH.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  `os.chmod(path, mode)` sets who may read, write and run a file. SKY-L020
+  reports a call whose mode gives every user on the machine write access, or
+  gives other users any access to a file whose name marks it as a key,
+  certificate or credentials file.
+
+why_it_matters: >-
+  A world-writable folder lets any local account or compromised service
+  replace what is in it, for example swap an uploaded file for a script the
+  next job runs. A private key readable by other users can be copied by any
+  process on the host.
+
+flagged_example:
+  language: python
+  filename: app/uploads.py
+  expect_line: 11
+  code: |
+    """Prepare the shared upload folder for the web app and the thumbnail worker."""
+
+    import os
+
+    UPLOAD_ROOT = "/srv/media/uploads"
+
+
+    def prepare_upload_dir(tenant_id: str) -> str:
+        path = os.path.join(UPLOAD_ROOT, tenant_id)
+        os.makedirs(path, exist_ok=True)
+        os.chmod(path, 0o777)
+        return path
+
+not_flagged_example:
+  language: python
+  filename: app/deploy.py
+  code: |
+    """Install the release script and the signing key on the build host."""
+
+    import os
+
+
+    def install_release_files(script_path: str, key_bytes: bytes) -> None:
+        os.chmod(script_path, 0o755)
+        with open("signing_private.pem", "wb") as handle:
+            handle.write(key_bytes)
+        os.chmod("signing_private.pem", 0o600)
+  why: >-
+    `0o755` lets others read and run the script but not change it, which is
+    normal for a program. The key file's name contains `private` and `.pem`,
+    so Skylos checks it more strictly, and `0o600` gives no access to
+    anyone but the owner.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Skips test files: names that start
+    with `test_`, end in `_test.py`, or are `conftest.py`.
+  - >-
+    Looks only at calls written as `os.chmod(...)` with at least two
+    positional arguments, where the mode is an integer literal such as
+    `0o777` or `511`.
+  - >-
+    Reports when the mode includes all of `0o777` (everyone may read, write
+    and run), or when it has the world-writable bit `0o002`.
+  - >-
+    Otherwise reports when the path is a string literal or a variable whose
+    name contains a sensitive word (`.env`, `.pem`, `.key`, `.crt`,
+    `credentials`, `secrets`, `private`, `id_rsa`, `kubeconfig`, `keystore`
+    and others) and the mode gives group or other users any access
+    (`mode & 0o077`). Add words with `extra_sensitive_file_keywords` under
+    `[tool.skylos.vibe]`.
+  - >-
+    Every finding is HIGH and points at the `os.chmod` call.
+
+source_refs:
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "class BroadFilePermissionsRule"
+  - path: skylos/rules/vibe_dictionary.py
+    symbol: "SENSITIVE_FILE_KEYWORDS = {"
+    note: the sensitive file-name words.
+  - path: test/test_vibe_rules.py
+    symbol: "class TestBroadFilePermissions"
+
+fix:
+  explanation: >-
+    Give access to the owner and to a group the web app and the worker share,
+    and nobody else. For key and credential files, use `0o600`.
+  filename: app/uploads.py
+  code: |
+    """Prepare the shared upload folder for the web app and the thumbnail worker."""
+
+    import os
+
+    UPLOAD_ROOT = "/srv/media/uploads"
+
+
+    def prepare_upload_dir(tenant_id: str) -> str:
+        path = os.path.join(UPLOAD_ROOT, tenant_id)
+        os.makedirs(path, exist_ok=True)
+        os.chmod(path, 0o770)
+        return path
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A folder that really is meant for every user, such as a shared `/tmp`
+      style drop folder with the sticky bit (`0o1777`), is still reported.
+    - >-
+      It misses modes it cannot read as one literal: `stat.S_IRWXO`, a
+      variable, `mode=0o777` passed by keyword, and calls through
+      `Path.chmod`, `os.fchmod` or `from os import chmod`.
+    - >-
+      A sensitive path built with an f-string or `os.path.join` is not
+      recognised as sensitive, so only the `0o777` and world-writable checks
+      apply to it.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `os.chmod` line.
+      language: python
+      code: |
+        os.chmod(path, 0o777)  # skylos: ignore[SKY-L020] drop folder, sticky bit set
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L020"]` turns the rule off for the
+        project.
+
+related: [SKY-D348, SKY-L014]

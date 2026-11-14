@@ -1,0 +1,315 @@
+id: SKY-A135
+title: Code left unused by the change
+family: ai-defects
+severity: MEDIUM
+languages: [Python, TypeScript/JavaScript (symbols and whole files), Java, Kotlin, Go (needs the skylos-go engine), PHP, Rust, and the other languages the dead-code engine reads]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` runs this rule, in its `branch_orphans` check, which
+    advises by default: findings are listed and the verdict does not fail.
+    With `branch_orphans = "block"` under `[tool.skylos.done.checks]` in the
+    base commit's `pyproject.toml`, SKY-A135 findings fail the verdict,
+    except the doubtful ones described below, which stay advice.
+run_with: >-
+  `skylos done` after a change (default base `HEAD`, so uncommitted edits),
+  or `skylos done --base origin/main` for a pull request
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule; the handbook build checks examples
+    with `skylos .`, which never reports it. All four examples were run by
+    hand with `skylos done --no-tests`.
+
+what_it_is: >-
+  Code is left unused by a change when a function, method, class or
+  JavaScript file had a production caller in the base version and has none
+  after the change. It usually sits in a file the change did not touch: an
+  agent switched a call site to a new helper and left the old one behind.
+
+why_it_matters: >-
+  Diff-based review never shows the orphan, because none of its lines
+  changed. It stays in the code, keeps being maintained and tested, and
+  the next reader or agent may call the old, now-wrong helper.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: app/pricing.py
+  expect_line: 4
+  base_files:
+    - filename: app/pricing.py
+      code: |
+        """Price formatting for the shop pages."""
+
+
+        def price_label(cents):
+            return f"${cents / 100:,.2f}"
+    - filename: app/checkout.py
+      code: |
+        from app.pricing import price_label
+
+
+        def line_text(item):
+            return f"{item['name']}: {price_label(item['cents'])}"
+    - filename: app/cli.py
+      code: |
+        from app.checkout import line_text
+
+        if __name__ == "__main__":
+            print(line_text({"name": "Mug", "cents": 1250}))
+  files:
+    - filename: app/pricing.py
+      code: |
+        """Price formatting for the shop pages."""
+
+
+        def price_label(cents):
+            return f"${cents / 100:,.2f}"
+    - filename: app/checkout.py
+      code: |
+        from app.money import format_money
+
+
+        def line_text(item):
+            return f"{item['name']}: {format_money(item['cents'], 'USD')}"
+    - filename: app/money.py
+      code: |
+        """Money formatting in several currencies."""
+
+        SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
+
+
+        def format_money(cents, currency):
+            return f"{SYMBOLS[currency]}{cents / 100:,.2f}"
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: app/pricing.py
+      code: |
+        """Price formatting for the shop pages."""
+
+
+        def price_label(cents):
+            return f"${cents / 100:,.2f}"
+    - filename: app/checkout.py
+      code: |
+        from app.pricing import price_label
+
+
+        def line_text(item):
+            return f"{item['name']}: {price_label(item['cents'])}"
+    - filename: app/receipts.py
+      code: |
+        from app.pricing import price_label
+
+
+        def receipt_total(order):
+            return f"Total: {price_label(order['total_cents'])}"
+    - filename: app/cli.py
+      code: |
+        from app.checkout import line_text
+        from app.receipts import receipt_total
+
+        if __name__ == "__main__":
+            print(line_text({"name": "Mug", "cents": 1250}))
+            print(receipt_total({"total_cents": 1250}))
+  files:
+    - filename: app/checkout.py
+      code: |
+        from app.money import format_money
+
+
+        def line_text(item):
+            return f"{item['name']}: {format_money(item['cents'], 'USD')}"
+    - filename: app/money.py
+      code: |
+        """Money formatting in several currencies."""
+
+        SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
+
+
+        def format_money(cents, currency):
+            return f"{SYMBOLS[currency]}{cents / 100:,.2f}"
+  why: >-
+    The same call to `price_label` was removed, but `app/receipts.py` still
+    calls it. A symbol is reported only when no production caller is left.
+
+more_examples:
+  - flagged:
+      language: javascript
+      setup: git_diff
+      expect_file: src/pricing.js
+      expect_line: 1
+      base_files:
+        - filename: package.json
+          language: json
+          code: |
+            {"name": "shop", "type": "module", "main": "src/index.js"}
+        - filename: src/pricing.js
+          code: |
+            export function priceLabel(cents) {
+              return `$${(cents / 100).toFixed(2)}`;
+            }
+        - filename: src/checkout.js
+          code: |
+            import { priceLabel } from "./pricing.js";
+
+            export function lineText(item) {
+              return `${item.name}: ${priceLabel(item.cents)}`;
+            }
+        - filename: src/index.js
+          code: |
+            import { lineText } from "./checkout.js";
+
+            console.log(lineText({ name: "Mug", cents: 1250 }));
+      files:
+        - filename: src/pricing.js
+          code: |
+            export function priceLabel(cents) {
+              return `$${(cents / 100).toFixed(2)}`;
+            }
+        - filename: src/checkout.js
+          code: |
+            import { formatMoney } from "./money.js";
+
+            export function lineText(item) {
+              return `${item.name}: ${formatMoney(item.cents, "USD")}`;
+            }
+        - filename: src/money.js
+          code: |
+            const SYMBOLS = { USD: "$", EUR: "€", GBP: "£" };
+
+            export function formatMoney(cents, currency) {
+              return `${SYMBOLS[currency]}${(cents / 100).toFixed(2)}`;
+            }
+    not_flagged:
+      language: javascript
+      setup: git_diff
+      base_files:
+        - filename: package.json
+          language: json
+          code: |
+            {"name": "shop", "type": "module", "main": "src/index.js"}
+        - filename: src/pricing.js
+          code: |
+            export function priceLabel(cents) {
+              return `$${(cents / 100).toFixed(2)}`;
+            }
+        - filename: src/checkout.js
+          code: |
+            import { priceLabel } from "./pricing.js";
+
+            export function lineText(item) {
+              return `${item.name}: ${priceLabel(item.cents)}`;
+            }
+        - filename: src/receipts.js
+          code: |
+            import { priceLabel } from "./pricing.js";
+
+            export function receiptTotal(order) {
+              return `Total: ${priceLabel(order.totalCents)}`;
+            }
+        - filename: src/index.js
+          code: |
+            import { lineText } from "./checkout.js";
+            import { receiptTotal } from "./receipts.js";
+
+            console.log(lineText({ name: "Mug", cents: 1250 }));
+            console.log(receiptTotal({ totalCents: 1250 }));
+      files:
+        - filename: src/checkout.js
+          code: |
+            import { formatMoney } from "./money.js";
+
+            export function lineText(item) {
+              return `${item.name}: ${formatMoney(item.cents, "USD")}`;
+            }
+        - filename: src/money.js
+          code: |
+            const SYMBOLS = { USD: "$", EUR: "€", GBP: "£" };
+
+            export function formatMoney(cents, currency) {
+              return `${SYMBOLS[currency]}${(cents / 100).toFixed(2)}`;
+            }
+      why: >-
+        `src/receipts.js` still imports `src/pricing.js`, so the file keeps a
+        production importer. In the flagged version nothing imports it any
+        more, and the whole file is reported.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done` when the change touches production code. Copies
+    the base commit and the working tree (or pull request head) into private
+    temporary folders, removes test files from both, and runs the regular
+    dead-code analysis on each, with a confidence of 75 or more. Nothing in
+    the repository runs.
+  - >-
+    A function, method or class that is alive in the base copy and unused
+    in the head copy is a candidate, matched by name, kind and base line. A
+    JS or TS file that something imported at the base and nothing imports
+    now is a candidate too. Generated files and test code are never
+    reported.
+  - >-
+    A symbol the analyzer is unsure about (a weak helper name, for example)
+    is kept only when a line the change removed used it, and then stays
+    advice. A candidate whose name appears in a file the analyzer could not
+    parse, or in a template or config file, or that has a decorator which
+    may register it with a framework, is not judged.
+  - >-
+    Survivors go through the same grep check as `skylos .` (on the head
+    copy without tests); any remaining use clears them. The message names
+    the removed or changed line that used to call the symbol, and says when
+    only tests still call it.
+
+source_refs:
+  - path: skylos/done/orphans.py
+    symbol: "def find_branch_orphans("
+  - path: skylos/done/orphans.py
+    symbol: "def _symbol_candidate("
+  - path: skylos/done/orphans.py
+    symbol: "def _file_candidate("
+  - path: skylos/done/orphans.py
+    symbol: "def _strip_tests("
+  - path: skylos/done/orphans.py
+    symbol: "def _grep_confirmed("
+  - path: skylos/done/orphans.py
+    symbol: "def _made_dead_message("
+  - path: skylos/done/orphans.py
+    symbol: "CONFIDENCE = 75"
+  - path: skylos/done/checks.py
+    symbol: "def check_branch_orphans("
+  - path: skylos/done/config.py
+    symbol: "DEFAULT_ORPHANS_BLOCK_RULES ="
+
+fix:
+  explanation: >-
+    Delete the orphan in the same change (here, remove `price_label` from
+    `app/pricing.py`, or the whole file once it holds nothing else), or
+    point the old callers back at it if dropping them was a mistake.
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Code reached only by reflection, string dispatch or a plugin system
+      the dead-code engine does not know looks unused, as it does for
+      SKY-U001.
+    - >-
+      Public library API that only other packages call is reported once its
+      last caller in this repository goes away.
+    - >-
+      Languages whose engine is not installed (Go without `skylos-go`, Dart
+      without Dart support) are listed as not checked, not passed.
+  suppress:
+    - text: >-
+        `skylos done` does not read `# skylos: ignore` comments for this
+        rule. The check advises by default. To keep it advisory, or to turn
+        it off, set its mode in the base commit's `pyproject.toml`.
+      language: toml
+      code: |
+        [tool.skylos.done.checks]
+        branch_orphans = "off"
+
+related: [SKY-A136, SKY-A137, SKY-U001, SKY-U004]

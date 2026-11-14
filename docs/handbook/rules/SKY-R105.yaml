@@ -1,0 +1,165 @@
+id: SKY-R105
+title: TypeScript type-check policy
+family: quality
+severity: LOW
+languages: [TypeScript]
+gate:
+  full: counted
+  diff: counted
+  note: >-
+    Advice that is measured on every `--quality` scan but not listed by
+    default. It is listed, and counted toward `max_quality`, with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+    A diff scan checks it only when the change touches a policy file such
+    as `package.json` or `tsconfig.json`.
+
+what_it_is: >-
+  Many bundlers, such as Vite and esbuild, strip TypeScript types without
+  checking them. SKY-R105 reports a `package.json` that sits next to a
+  `tsconfig.json` but has no npm script that runs the TypeScript compiler's
+  check.
+
+why_it_matters: >-
+  The build succeeds even when the code has type errors, so a wrong
+  property name or a missing `null` check ships to users. The
+  `"strict": true` in `tsconfig.json` is then only applied in editors.
+
+flagged_example:
+  language: json
+  files:
+    - filename: package.json
+      code: |
+        {
+          "name": "shop-web",
+          "private": true,
+          "scripts": {
+            "dev": "vite",
+            "build": "vite build"
+          }
+        }
+    - filename: tsconfig.json
+      code: |
+        {
+          "compilerOptions": { "strict": true, "noEmit": true }
+        }
+    - filename: src/main.ts
+      language: typescript
+      code: |
+        export const cartLimit: number = 50;
+  expect_file: package.json
+  expect_line: 1
+
+not_flagged_example:
+  language: json
+  files:
+    - filename: package.json
+      code: |
+        {
+          "name": "shop-web",
+          "private": true,
+          "scripts": {
+            "dev": "vite",
+            "build": "vue-tsc --noEmit && vite build"
+          }
+        }
+    - filename: tsconfig.json
+      code: |
+        {
+          "compilerOptions": { "strict": true, "noEmit": true }
+        }
+    - filename: src/main.ts
+      language: typescript
+      code: |
+        export const cartLimit: number = 50;
+  why: >-
+    The build script runs `vue-tsc --noEmit` before bundling. Skylos reads
+    each command in a script, including after `&&`, and accepts `tsc` or
+    `vue-tsc` as the type check.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, once per scanned project. A diff scan runs it
+    only when a policy file is among the changed files.
+  - >-
+    Visits every `package.json` in the project (outside excluded folders
+    and virtual environments) that has a `tsconfig.json` in the same
+    folder.
+  - >-
+    Splits each npm script into commands (through `&&`, `;`, `|`, `sh -c`,
+    `npx`, `pnpm exec` and similar) and accepts a command that runs `tsc`
+    or `vue-tsc`, unless it only prints help or the version, or passes
+    `--noCheck`.
+  - >-
+    Also accepts a Next.js project whose script runs `next build`, unless
+    its Next config sets `ignoreBuildErrors` to anything but `false`.
+  - >-
+    Otherwise reports LOW on line 1 of that `package.json`.
+
+source_refs:
+  - path: skylos/rules/quality/policy.py
+    symbol: "def _package_scripts_run_typecheck("
+  - path: skylos/rules/quality/policy.py
+    symbol: "def _script_executables("
+  - path: skylos/rules/quality/policy.py
+    symbol: "def _next_build_checks_typescript("
+
+fix:
+  explanation: >-
+    Add a script that runs `tsc --noEmit` and run it in CI, or put the check
+    in front of the build.
+  filename: package.json
+  code: |
+    {
+      "name": "shop-web",
+      "private": true,
+      "scripts": {
+        "dev": "vite",
+        "typecheck": "tsc --noEmit",
+        "build": "tsc --noEmit && vite build"
+      }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A type check that runs only in a CI file, a Makefile or a separate
+      tool is not seen, so the package is reported.
+    - >-
+      Any script that runs `tsc` counts, even one that neither CI nor the
+      build ever calls.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: json
+          files:
+            - filename: package.json
+              code: |
+                {
+                  "name": "shop-web",
+                  "private": true,
+                  "scripts": {
+                    "dev": "vite",
+                    "build": "vite build"
+                  }
+                }
+            - filename: tsconfig.json
+              code: |
+                {
+                  "compilerOptions": { "strict": true, "noEmit": true }
+                }
+            - filename: src/main.ts
+              language: typescript
+              code: |
+                export const cartLimit: number = 50;
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [tool.skylos]
+                ignore = ["SKY-R105"]
+      text: >-
+        `ignore = ["SKY-R105"]` under `[tool.skylos]` in a `pyproject.toml`
+        at the project root turns the check off. JSON has no comments, so
+        there is no inline marker.
+
+related: [SKY-R101, SKY-T104]

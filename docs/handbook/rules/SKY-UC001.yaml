@@ -1,0 +1,124 @@
+id: SKY-UC001
+title: Unreachable Python code
+family: dead-code
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  MEDIUM.
+languages: [Python]
+run_with: "`skylos . --quality` (or `-a`)"
+gate:
+  full: counted
+  note: >-
+    Reported in the quality list, so it counts toward `max_quality` (10 by
+    default), not `max_dead_code`.
+
+what_it_is: >-
+  Python statements that can never run. Typical cases are code after a
+  `return`, `raise`, `break` or `continue` in the same block, the body of
+  an `if` whose condition is always false, and a loop over an empty
+  literal.
+
+why_it_matters: >-
+  The line was written to do something, and it silently does nothing. In
+  the example below the rejected coupon is never logged because the call
+  sits after the `raise`, so support cannot see why customers' coupons
+  failed.
+
+flagged_example:
+  language: python
+  filename: shop/coupons.py
+  expect_line: 10
+  code: |
+    """Coupon handling."""
+
+    from shop.errors import CouponExpired
+    from shop.log import log_rejected_coupon
+
+
+    def apply_coupon(order, coupon):
+        if coupon.expired:
+            raise CouponExpired(coupon.code)
+            log_rejected_coupon(order, coupon)
+        order.discount = coupon.amount
+
+not_flagged_example:
+  language: python
+  filename: shop/refunds.py
+  code: |
+    """Refunds from the bank, not available yet."""
+
+
+    def iter_refunds(order):
+        """An empty generator until the bank API ships."""
+        return
+        yield
+  why: >-
+    The lone `yield` never runs, but its presence makes `iter_refunds` a
+    generator, so callers can loop over it and get nothing. Skylos keeps a
+    function's only `yield` (or `yield None`) for this idiom.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Looks at the statement blocks of
+    modules, functions, classes, `if`, loops, `with` and `try` bodies.
+  - >-
+    Reports the first statement that follows a `return`, `raise`, `break`
+    or `continue` in the same block, or an `if`/`else` whose branches all
+    end that way, or a `while True` loop with no `break`.
+  - >-
+    Reports the first statement of an `if` body whose condition is always
+    false, of an `else` after a condition that is always true, of a `while`
+    whose condition is always false, and of a `for` over an empty literal
+    (`[]`, `()`, `{}`, `""`). A condition counts only when it is built from
+    constants, `not`, `and` and `or`; `sys.version_info` checks within the
+    project's `requires-python` range are left alone.
+  - >-
+    Skips a function's only `yield` or `yield None` when it is the
+    unreachable statement. Reports MEDIUM on the unreachable line.
+
+source_refs:
+  - path: skylos/rules/quality/unreachable.py
+    symbol: "class UnreachableCodeRule"
+  - path: skylos/analysis/control_flow.py
+    symbol: "def evaluate_static_condition("
+
+fix:
+  explanation: >-
+    Move the statement to where it can run, here before the `raise`, or
+    delete it if it is no longer needed.
+  filename: shop/coupons.py
+  code: |
+    """Coupon handling."""
+
+    from shop.errors import CouponExpired
+    from shop.log import log_rejected_coupon
+
+
+    def apply_coupon(order, coupon):
+        if coupon.expired:
+            log_rejected_coupon(order, coupon)
+            raise CouponExpired(coupon.code)
+        order.discount = coupon.amount
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Code kept under `if False:` on purpose, for example to switch a block
+      off during debugging, is reported.
+    - >-
+      It misses code after a call that never returns, such as `sys.exit()`
+      or a function that always raises.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the unreachable line.
+      language: python
+      code: |
+        log_rejected_coupon(order, coupon)  # skylos: ignore[SKY-UC001] kept for #77
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-UC001"]` turns the rule off for the
+        project.
+
+related: [SKY-UC002, SKY-Q305, SKY-L033]

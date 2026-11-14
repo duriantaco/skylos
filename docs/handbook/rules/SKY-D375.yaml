@@ -1,0 +1,297 @@
+id: SKY-D375
+title: Pull request changes a job that publishes packages
+family: ci-cd
+severity: MEDIUM
+languages: [GitHub Actions workflows, GitLab CI]
+gate:
+  full: not_run
+  diff: counted
+  note: >-
+    It runs only when the scan compares against a base (`--diff`), and
+    counts toward `max_security`. A check that could not run, such as a
+    missing or failing `ca9`, is an analysis error, so a diff gate stops as
+    incomplete instead of passing.
+
+what_it_is: >-
+  A review flag for pull requests. When a change adds a CI job that
+  publishes packages, or changes what such a job does (its triggers,
+  permissions, secrets, actions, installed tools or publish commands),
+  SKY-D375 points at the job so a person reviews it before it merges.
+
+why_it_matters: >-
+  A publish job holds the keys to your package. A small, friendly-looking
+  edit to it, such as a new permission, a new action or a changed trigger,
+  can let later runs publish code nobody reviewed, and the edit is easy to
+  miss among other workflow changes.
+
+flagged_example:
+  language: yaml
+  setup: git_diff
+  expect_line: 16
+  base_files:
+    - filename: .github/workflows/release.yml
+      code: |
+        name: Release
+        on:
+          push:
+            tags: ["v*"]
+        permissions:
+          contents: read
+        jobs:
+          test:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                with:
+                  persist-credentials: false
+              - run: npm ci
+              - run: npm test
+          publish:
+            needs: test
+            runs-on: ubuntu-latest
+            environment: npm
+            steps:
+              - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                with:
+                  persist-credentials: false
+              - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+                with:
+                  node-version: 22
+                  registry-url: https://registry.npmjs.org
+              - run: npm ci
+              - run: npm publish --access public
+                env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  files:
+    - filename: .github/workflows/release.yml
+      code: |
+        name: Release
+        on:
+          push:
+            tags: ["v*"]
+        permissions:
+          contents: read
+        jobs:
+          test:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                with:
+                  persist-credentials: false
+              - run: npm ci
+              - run: npm test
+          publish:
+            needs: test
+            runs-on: ubuntu-latest
+            environment: npm
+            permissions:
+              contents: read
+              id-token: write
+            steps:
+              - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                with:
+                  persist-credentials: false
+              - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+                with:
+                  node-version: 22
+                  registry-url: https://registry.npmjs.org
+              - run: npm ci
+              - run: npm publish --provenance --access public
+                env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+not_flagged_example:
+  language: yaml
+  setup: git_diff
+  base_files:
+    - filename: .github/workflows/release.yml
+      code: |
+        name: Release
+        on:
+          push:
+            tags: ["v*"]
+        permissions:
+          contents: read
+        jobs:
+          test:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                with:
+                  persist-credentials: false
+              - run: npm ci
+              - run: npm test
+          publish:
+            needs: test
+            runs-on: ubuntu-latest
+            environment: npm
+            steps:
+              - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                with:
+                  persist-credentials: false
+              - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+                with:
+                  node-version: 22
+                  registry-url: https://registry.npmjs.org
+              - run: npm ci
+              - run: npm publish --access public
+                env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  files:
+    - filename: .github/workflows/release.yml
+      code: |
+        name: Release
+        on:
+          push:
+            tags: ["v*"]
+        permissions:
+          contents: read
+        jobs:
+          test:
+            runs-on: ubuntu-latest
+            strategy:
+              matrix:
+                node: [20, 22, 24]
+            steps:
+              - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                with:
+                  persist-credentials: false
+              - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+                with:
+                  node-version: ${{ matrix.node }}
+              - run: npm ci
+              - run: npm test
+          publish:
+            needs: test
+            runs-on: ubuntu-latest
+            environment: npm
+            steps:
+              - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                with:
+                  persist-credentials: false
+              - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+                with:
+                  node-version: 22
+                  registry-url: https://registry.npmjs.org
+              - run: npm ci
+              - run: npm publish --access public
+                env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  why: >-
+    The pull request edits the release workflow, but only its `test` job,
+    which publishes nothing. The `publish` job is the same as before, even
+    though its lines moved down.
+
+how_skylos_decides:
+  - >-
+    Runs only in a diff scan with `--danger` or `-a` (`skylos . --danger
+    --diff origin/main`), and in the pull-request scans Skylos uploads from
+    CI. It compares the merge base with the working tree.
+  - >-
+    Looks only when a Git-tracked CI file changed: a `*.yml` or `*.yaml`
+    directly in `.github/workflows`, another YAML file under `.github`
+    (outside `.github/workflows`) or `.gitlab`, or a top-level
+    `.gitlab-ci.yml`. Untracked files never count.
+  - >-
+    The `ca9` library builds an inventory of both sides (`ci_inventory`)
+    and keeps the jobs that publish: a publish command, a publish action or
+    a publish credential.
+  - >-
+    Compares each publish job with the base's job of the same file and name,
+    with line numbers removed: runner, environment, permissions, secret
+    names, actions and their refs, installs, tools, downloads, publish
+    commands, and the workflow's triggers and branch filters.
+  - >-
+    Reports one MEDIUM finding per publish job that is new or whose
+    inventory changed, on the job's name, whatever lines the diff touched.
+
+source_refs:
+  - path: skylos/rules/sca/supply_chain_diff.py
+    symbol: "def publish_job_findings("
+    note: >-
+      ca9 `ci_inventory` builds the job inventory (`ca9/ci/inventory.py`);
+      this page was checked against ca9 0.7.0.
+  - path: skylos/rules/sca/supply_chain_diff.py
+    symbol: "def ci_path("
+  - path: skylos/commands/scan_cmd.py
+    symbol: "def _add_supply_chain_diff_findings("
+
+fix:
+  explanation: >-
+    There is nothing to change in the code: read every changed step,
+    trigger and permission of the publish job, and merge only when you
+    would run that job yourself. Once merged, the job matches the base and
+    is no longer reported. Keeping publish jobs small and in their own
+    workflow file makes these reviews short.
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Any change to the workflow's triggers marks every publish job in it as
+      changed, even when the new trigger cannot reach the publish job.
+    - >-
+      Missed: a changed shell line the inventory does not model, such as a
+      new `npm run build` or `echo` step in the publish job, is not seen as a
+      change.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: yaml
+          setup: git_diff
+          base_files:
+            - filename: .github/workflows/release.yml
+              code: |
+                name: Release
+                on:
+                  push:
+                    tags: ["v*"]
+                permissions:
+                  contents: read
+                jobs:
+                  publish:
+                    runs-on: ubuntu-latest
+                    environment: npm
+                    steps:
+                      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                        with:
+                          persist-credentials: false
+                      - run: npm ci
+                      - run: npm publish --access public
+                        env:
+                          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          files:
+            - filename: .github/workflows/release.yml
+              code: |
+                name: Release
+                on:
+                  push:
+                    tags: ["v*"]
+                permissions:
+                  contents: read
+                jobs:
+                  publish:  # skylos: ignore[SKY-D375] handbook check
+                    runs-on: ubuntu-latest
+                    environment: npm
+                    permissions:
+                      contents: read
+                      id-token: write
+                    steps:
+                      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                        with:
+                          persist-credentials: false
+                      - run: npm ci
+                      - run: npm publish --provenance --access public
+                        env:
+                          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      text: >-
+        Skylos reads no inline marker for this rule; a `# skylos: ignore`
+        comment on the job does not hide it.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D375"]` turns the rule off for the
+        whole project. There is nothing to baseline: the finding disappears
+        once the change is merged.
+
+related: [SKY-D374, SKY-D373, SKY-D371, SKY-D290]

@@ -1,0 +1,172 @@
+id: SKY-U004
+title: Unused class
+family: dead-code
+severity: UNRATED
+severity_note: >-
+  Unused-code findings carry no severity in JSON. The terminal report shows
+  them as LOW, SARIF as level `note` and GitLab as `minor`. A confidence
+  score from 0 to 100 decides whether they are listed (60 or more by
+  default); a public module-level Python class is capped at 90.
+languages: [Python, TypeScript/JavaScript, Java, Go (types), PHP, Kotlin (private classes), Swift (private and fileprivate types), C#, Dart]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_dead_code`, which has no limit by default, so it only
+    fails a gate where you set one.
+
+what_it_is: >-
+  A class (or, in Go, a type) that nothing in the project creates, extends,
+  imports or names. Its methods are dead with it, even if they call each
+  other.
+
+why_it_matters: >-
+  An unused class is usually an old implementation left behind after a
+  rewrite. Readers and coding agents find it, extend it and fix bugs in it,
+  and none of that work ever runs.
+
+flagged_example:
+  language: python
+  expect_file: billing/exporters.py
+  expect_line: 13
+  files:
+    - filename: billing/exporters.py
+      code: |
+        """Export invoices for the accounting system."""
+        import csv
+        import io
+
+
+        class CsvExporter:
+            def export(self, invoices):
+                buffer = io.StringIO()
+                csv.writer(buffer).writerows(invoices)
+                return buffer.getvalue()
+
+
+        class LegacyXmlExporter:
+            """Old SAP export, replaced by CSV uploads in 2023."""
+
+            def export(self, invoices):
+                rows = "".join(f"<row>{number}</row>" for number, _ in invoices)
+                return f"<invoices>{rows}</invoices>"
+    - filename: main.py
+      code: |
+        from billing.exporters import CsvExporter
+
+        if __name__ == "__main__":
+            print(CsvExporter().export([("INV-1", 1200)]))
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: audit/models.py
+      code: |
+        """Audit trail tables."""
+        from django.db import models
+
+
+        class AuditEntry(models.Model):
+            action = models.CharField(max_length=50)
+            created = models.DateTimeField(auto_now_add=True)
+    - filename: main.py
+      code: |
+        from billing.exporters import CsvExporter
+
+        if __name__ == "__main__":
+            print(CsvExporter().export([("INV-1", 1200)]))
+    - filename: billing/exporters.py
+      code: |
+        """Export invoices for the accounting system."""
+        import csv
+        import io
+
+
+        class CsvExporter:
+            def export(self, invoices):
+                buffer = io.StringIO()
+                csv.writer(buffer).writerows(invoices)
+                return buffer.getvalue()
+  why: >-
+    Nothing in the project names `AuditEntry`, but it extends Django's
+    `models.Model`. Django finds models through the app registry, so Skylos
+    treats Django models, forms, management commands, views, admin classes
+    and middleware as used.
+
+how_skylos_decides:
+  - >-
+    Runs on every scan; no flag is needed. Every class is a definition, and
+    every reference to its name counts: a call, an import, a base-class
+    list, a type annotation, a decorator or an `isinstance` check.
+  - >-
+    Never reports a class a framework loads by convention: Django models,
+    forms, commands, views, admin classes, app configs and middleware, DRF
+    classes, `Protocol` classes, classes whose name starts with `Test` in a
+    test path, and classes behind a framework decorator.
+  - >-
+    Treats a class listed in `__all__`, or a public class in an
+    `__init__.py` without `__all__`, as exported and never reports it.
+    Lowers confidence by 15 for a class defined in an `__init__.py` and by
+    10 for a `_private` name.
+  - >-
+    Skips test, example and benchmark paths and lines marked
+    `# skylos: ignore[SKY-U004]`, confirms with a text search of the
+    project, and caps a public module-level Python class at 90. The rest is
+    listed when it scores at least the threshold (`--confidence`, default
+    60).
+
+source_refs:
+  - path: skylos/analysis/penalties.py
+    symbol: "def _check_django_drf_structural(def_obj, framework, analyzer=None)"
+    note: Django and DRF classes.
+  - path: skylos/analysis/penalties.py
+    symbol: "def _check_protocol_abc(def_obj, analyzer, framework)"
+  - path: skylos/analysis/penalties.py
+    symbol: "def _apply_standard_reductions("
+    note: "`Test*` classes, `__init__.py` and private-name penalties."
+  - path: skylos/analyzer.py
+    symbol: "def _mark_exports(self)"
+  - path: skylos/deadcode/confidence.py
+    symbol: "CONFIDENCE_CAPS = {"
+
+fix:
+  explanation: >-
+    Delete the class and the tests that only exercise it. If code outside
+    this repository uses it, list it in the module's `__all__`.
+  language: python
+  code: |
+    """Export invoices for the accounting system."""
+    import csv
+    import io
+
+
+    class CsvExporter:
+        def export(self, invoices):
+            buffer = io.StringIO()
+            csv.writer(buffer).writerows(invoices)
+            return buffer.getvalue()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Classes loaded by name from configuration (a dotted path in a
+      settings file, a plugin entry point) are reported unless the name
+      also appears in the project's text.
+    - >-
+      Library classes meant for other projects are reported when the module
+      has no `__all__`.
+  suppress:
+    - check: inline
+      text: >-
+        On the `class` line, with a reason:
+      language: python
+      code: |
+        class LegacyXmlExporter:  # skylos: ignore[SKY-U004] loaded by plugin name
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-U004"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline accepts the unused classes you already have.
+
+related: [SKY-U001, SKY-U003]

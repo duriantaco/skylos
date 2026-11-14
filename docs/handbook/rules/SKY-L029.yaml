@@ -1,0 +1,140 @@
+id: SKY-L029
+title: Unclear boolean argument
+family: logic
+severity: LOW
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  LOW.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Only when listed. This is advice outside the default set: the report
+    keeps it in JSON but does not list it, and the gate does not count it,
+    unless you pass `--all-advice` or select the rule (`--select SKY-L029`).
+    A finding based only on the signature, with no call that passes a bare
+    `True` or `False`, is hidden for the same reason.
+
+what_it_is: >-
+  A function takes a `True`/`False` switch as an ordinary positional
+  parameter, so callers can write `send_invoice(invoice, True)`. At the
+  call site nobody can tell what `True` means without opening the
+  function. This is often called a boolean trap.
+
+why_it_matters: >-
+  Readers guess, and reviewers miss swapped arguments: `send(invoice, True,
+  False)` and `send(invoice, False, True)` look equally plausible. A switch
+  added later in the wrong position still type-checks.
+
+flagged_example:
+  language: python
+  filename: billing/invoices.py
+  expect_line: 6
+  code: |
+    """Send monthly invoices."""
+
+    from billing.mail import send_mail
+
+
+    def send_invoice(invoice, include_pdf: bool = False):
+        attachments = [invoice.render_pdf()] if include_pdf else []
+        send_mail(invoice.customer.email, invoice.summary(), attachments)
+
+
+    def close_month(invoices):
+        for invoice in invoices:
+            send_invoice(invoice, True)
+
+not_flagged_example:
+  language: python
+  filename: billing/invoices.py
+  code: |
+    """Send monthly invoices."""
+
+
+    def sort_invoices(invoices, reverse=False):
+        return sorted(invoices, key=lambda invoice: invoice.due_date, reverse=reverse)
+
+
+    def newest_first(invoices):
+        return sort_invoices(invoices, True)
+  why: >-
+    `reverse` is one of a few switch names that are familiar from Python
+    itself (`sorted(..., reverse=True)`), along with `inplace`, `recursive`,
+    `verbose`, `debug`, `force`, `dry_run` and `strict`. Skylos accepts
+    those on public functions.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python functions and methods. Test files,
+    examples and build scripts are skipped, and so are dunder methods,
+    `self`, `cls` and a property setter's value.
+  - >-
+    A parameter is a candidate when it can be passed by position (it is
+    not after `*`) and it is annotated `bool` (the builtin) or has a
+    `True` or `False` default.
+  - >-
+    Skips functions decorated `@override` or `@overload`, methods
+    that override a base class in the same file, and functions passed
+    around as values (callbacks must keep their signature).
+  - >-
+    For a public function, reports every candidate except the familiar
+    names `inplace`, `reverse`, `recursive`, `verbose`, `debug`, `force`,
+    `dry_run` and `strict`. A private (`_name`) or nested function is
+    reported only when a call in the same file passes a bare `True` or
+    `False` in that position.
+  - >-
+    Reports LOW on the parameter's line. When such calls exist, the message
+    lists them.
+
+source_refs:
+  - path: skylos/rules/quality/logic_maintainability.py
+    symbol: "class BooleanTrapRule"
+  - path: skylos/rules/quality/logic_maintainability.py
+    symbol: "_BOOLEAN_TRAP_ALLOWED_NAMES = {"
+  - path: skylos/reporting/advice_policy.py
+    symbol: "def _signature_only_boolean("
+    note: signature-only findings are hidden from the default list.
+
+fix:
+  explanation: >-
+    Make the switch keyword-only by putting `*` before it, and name it at
+    the call. Python then rejects `send_invoice(invoice, True)`.
+  filename: billing/invoices.py
+  code: |
+    """Send monthly invoices."""
+
+    from billing.mail import send_mail
+
+
+    def send_invoice(invoice, *, include_pdf: bool = False):
+        attachments = [invoice.render_pdf()] if include_pdf else []
+        send_mail(invoice.customer.email, invoice.summary(), attachments)
+
+
+    def close_month(invoices):
+        for invoice in invoices:
+            send_invoice(invoice, include_pdf=True)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A public library function whose positional signature is part of a
+      published API is reported, even though changing it would break
+      callers.
+    - >-
+      Calls in other files are not read, so a private helper called with
+      bare literals from another module is missed.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the parameter.
+      language: python
+      code: |
+        def send_invoice(invoice, include_pdf: bool = False):  # skylos: ignore[SKY-L029]
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L029"]` turns the rule off for the
+        project.
+
+related: [SKY-C303]

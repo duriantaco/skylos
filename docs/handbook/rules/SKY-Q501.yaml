@@ -1,0 +1,205 @@
+id: SKY-Q501
+title: God class
+family: quality
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity. Both of the rule's findings, too many
+  methods and too many attributes, are reported MEDIUM.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Advice that is measured on every `--quality` scan but not listed by
+    default. It is listed, and counted toward `max_quality`, with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  A god class is one class that holds too much of a program's state and
+  behaviour. SKY-Q501 reports a Python class with more than 20 ordinary
+  methods or more than 15 instance attributes (fields set through `self`).
+
+why_it_matters: >-
+  Every method of such a class can read and change every field, so a change
+  to one feature (coupons, say) can break another (payment retries), and
+  tests need the whole object set up just to check one step.
+
+flagged_example:
+  language: python
+  filename: app/checkout.py
+  expect_line: 4
+  code: |
+    """Checkout flow for the web shop."""
+
+
+    class CheckoutSession:
+        def __init__(self, cart, customer, payments, mailer):
+            self.cart = cart
+            self.customer = customer
+            self.payments = payments
+            self.mailer = mailer
+            self.coupon = None
+            self.discount = 0
+            self.shipping_method = "standard"
+            self.shipping_cost = 0
+            self.tax = 0
+            self.total = 0
+            self.address = None
+            self.payment_intent = None
+            self.receipt_email = customer.email
+            self.status = "open"
+            self.errors = []
+            self.attempts = 0
+
+        def apply_coupon(self, code):
+            self.coupon = code
+            self.discount = self.cart.subtotal * 0.1
+
+        def charge(self):
+            self.attempts += 1
+            self.total = self.cart.subtotal - self.discount + self.shipping_cost
+            self.payment_intent = self.payments.charge(self.customer, self.total)
+            self.status = "paid"
+            self.mailer.send_receipt(self.receipt_email, self.total)
+
+not_flagged_example:
+  language: python
+  filename: app/models.py
+  code: |
+    """Order records shared by checkout and reporting."""
+
+    from dataclasses import dataclass, field
+    from datetime import datetime
+
+
+    @dataclass
+    class OrderRecord:
+        id: int
+        customer_id: int
+        email: str
+        currency: str
+        subtotal: float
+        discount: float
+        shipping_cost: float
+        tax: float
+        total: float
+        coupon: str | None
+        shipping_method: str
+        street: str
+        city: str
+        postcode: str
+        country: str
+        status: str
+        created: datetime
+        notes: list[str] = field(default_factory=list)
+  why: >-
+    The record has 18 fields, but they are declared in the class body, not
+    set through `self` in a method, and it has no methods of its own.
+    Skylos counts only attributes that methods assign, so a plain data
+    record is not reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on Python classes.
+  - >-
+    Counts the methods defined in the class body. Dunder methods such as
+    `__init__`, `__len__` and `__getitem__` are not counted, and neither are
+    `@overload` signatures that have an implementation in the class.
+  - >-
+    Counts instance attributes: the distinct names the instance methods
+    assign through `self` (`self.status = ...`, `self.attempts += 1`).
+    Fields declared in the class body are not counted.
+  - >-
+    Reports MEDIUM when there are more than 20 methods, and separately
+    MEDIUM when there are more than 15 instance attributes. These limits
+    are fixed; no setting changes them.
+  - >-
+    Skips declaration-only classes (fields, stubs and a plain `__init__`
+    that copies its parameters), test classes that pytest collects or that
+    follow the `Test` naming in test files, and files in `examples`,
+    `benchmarks` and top-level `docs` folders and the root `setup.py`.
+  - >-
+    Reports on the `class` line.
+
+source_refs:
+  - path: skylos/rules/quality/class_size.py
+    symbol: "class GodClassRule"
+  - path: skylos/rules/quality/class_size.py
+    symbol: "def __init__(self, max_methods=20, max_attributes=15)"
+  - path: skylos/rules/quality/class_size.py
+    symbol: "def _is_declarative_class("
+  - path: skylos/rules/quality/_scope.py
+    symbol: "def is_sample_or_build_python("
+  - path: skylos/analysis/file_processing.py
+    symbol: '("SKY-Q501", GodClassRule)'
+    note: built without arguments, so the limits are the defaults.
+
+fix:
+  explanation: >-
+    Move each group of fields that change together, and the methods that
+    use them, into its own class, and let the original class hold that
+    object. Here the price fields become a `Pricing` object.
+  filename: app/checkout.py
+  code: |
+    """Checkout flow for the web shop."""
+
+
+    class Pricing:
+        def __init__(self, cart):
+            self.cart = cart
+            self.coupon = None
+            self.discount = 0
+            self.shipping_cost = 0
+            self.tax = 0
+
+        def apply_coupon(self, code):
+            self.coupon = code
+            self.discount = self.cart.subtotal * 0.1
+
+        def total(self):
+            return self.cart.subtotal - self.discount + self.shipping_cost + self.tax
+
+
+    class CheckoutSession:
+        def __init__(self, cart, customer, payments, mailer):
+            self.pricing = Pricing(cart)
+            self.customer = customer
+            self.payments = payments
+            self.mailer = mailer
+            self.shipping_method = "standard"
+            self.address = None
+            self.payment_intent = None
+            self.status = "open"
+            self.errors = []
+            self.attempts = 0
+
+        def charge(self):
+            self.attempts += 1
+            total = self.pricing.total()
+            self.payment_intent = self.payments.charge(self.customer, total)
+            self.status = "paid"
+            self.mailer.send_receipt(self.customer.email, total)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A facade or a framework class that must expose many small methods
+      (an admin class, a test helper, an API client with one method per
+      endpoint) is reported even when each method is trivial.
+    - >-
+      Attributes set from outside the class, or declared only in the class
+      body, are not counted, so a class can grow past the limit unseen.
+  suppress:
+    - check: inline
+      text: >-
+        On the `class` line (the reported line):
+      language: python
+      code: |
+        class CheckoutSession:  # skylos: ignore[SKY-Q501] split in the checkout rewrite
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q501"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-Q502, SKY-Q702, SKY-Q701]

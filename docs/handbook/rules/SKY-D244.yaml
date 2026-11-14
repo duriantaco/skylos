@@ -1,0 +1,164 @@
+id: SKY-D244
+title: Secret as the default value of an MCP tool parameter
+family: security
+severity: CRITICAL
+languages: [Python]
+gate:
+  full: critical_blocks
+cwe: [CWE-798]
+
+what_it_is: >-
+  An MCP server offers tools that an AI model can call; each tool's
+  parameters, with their default values, are sent to the model as the
+  tool's schema. SKY-D244 reports a Python MCP tool whose parameter has a
+  default value shaped like a real API key, token or JWT.
+
+why_it_matters: >-
+  The key is stored in the source and in Git history, and every client
+  that lists the server's tools receives it in the tool schema, so the
+  model and its logs see it too. Anyone who gets it can call the
+  provider's API with your account, here reading and creating Stripe
+  charges.
+
+fragments:
+  STRIPE_DEMO_KEY: ["sk_live_", "51HandbookDemo0nlyMcpTool"]
+
+flagged_example:
+  language: python
+  filename: server/billing.py
+  expect_line: 10
+  code: |
+    import httpx
+    from mcp.server.fastmcp import FastMCP
+
+    mcp = FastMCP("billing-tools")
+
+
+    @mcp.tool()
+    def list_charges(
+        customer_id: str,
+        api_key: str = "{{STRIPE_DEMO_KEY}}",
+    ) -> list[dict]:
+        """List a customer's recent Stripe charges."""
+        response = httpx.get(
+            "https://api.stripe.com/v1/charges",
+            params={"customer": customer_id, "limit": 20},
+            auth=(api_key, ""),
+        )
+        return response.json()["data"]
+
+not_flagged_example:
+  language: python
+  filename: server/billing.py
+  code: |
+    import os
+
+    import httpx
+    from mcp.server.fastmcp import FastMCP
+
+    mcp = FastMCP("billing-tools")
+
+
+    @mcp.tool()
+    def list_charges(
+        customer_id: str,
+        created_after: str = "2024-01-01T00:00:00Z",
+    ) -> list[dict]:
+        """List a customer's Stripe charges created after a date."""
+        response = httpx.get(
+            "https://api.stripe.com/v1/charges",
+            params={"customer": customer_id, "created[gte]": created_after},
+            auth=(os.environ["STRIPE_SECRET_KEY"], ""),
+        )
+        return response.json()["data"]
+  why: >-
+    The key is read from the environment inside the tool, so it is in
+    neither the source nor the tool's schema. The one long string default
+    is a timestamp, which matches none of the key shapes Skylos knows.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files that import `mcp`, `fastmcp` or a
+    module under `mcp.`.
+  - >-
+    Looks at functions with a decorator named `tool`, `resource` or
+    `prompt`, such as `@mcp.tool()` or `@server.resource(...)`.
+  - >-
+    Reads the default values of positional and keyword-only parameters.
+    Only plain string literals of 10 characters or more are checked.
+  - >-
+    Reports CRITICAL, on the line of the default value, when the string
+    has the shape of a known credential: an OpenAI (`sk-`) or Anthropic
+    (`sk-ant-`) key, an AWS access key ID (`AKIA`), a GitHub (`ghp_`,
+    `gho_`) or GitLab (`glpat-`) token, a Slack token (`xoxb-` and
+    similar), a Stripe live key (`sk_live_`, `rk_live_`), a `Bearer` or
+    `Basic` authorization value, or a JWT (starts with `eyJ`).
+
+source_refs:
+  - path: skylos/rules/danger/danger_mcp/mcp_flow.py
+    symbol: "def _check_param_defaults"
+  - path: skylos/rules/danger/danger_mcp/mcp_flow.py
+    symbol: "_SECRET_PATTERNS = ["
+    note: the key shapes that count.
+  - path: skylos/rules/danger/danger_mcp/mcp_flow.py
+    symbol: "_MCP_TOOL_DECORATORS = {\"tool\", \"resource\", \"prompt\"}"
+  - path: skylos/rules/danger/danger_mcp/mcp_flow.py
+    symbol: "def _is_mcp_file"
+  - path: test/test_mcp_rules.py
+    symbol: "class TestD244SecretDefaults"
+
+fix:
+  explanation: >-
+    Remove the key from the tool's parameters and read it on the server,
+    from the environment or a secret store. The model should never choose
+    or see the credential. Then revoke the leaked key: it stays in Git
+    history.
+  filename: server/billing.py
+  code: |
+    import os
+
+    import httpx
+    from mcp.server.fastmcp import FastMCP
+
+    mcp = FastMCP("billing-tools")
+
+
+    @mcp.tool()
+    def list_charges(customer_id: str) -> list[dict]:
+        """List a customer's recent Stripe charges."""
+        response = httpx.get(
+            "https://api.stripe.com/v1/charges",
+            params={"customer": customer_id, "limit": 20},
+            auth=(os.environ["STRIPE_SECRET_KEY"], ""),
+        )
+        return response.json()["data"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A placeholder in the shape of a key is reported, for example
+      `token: str = "Bearer paste-your-token-here-xx"` in a sample
+      server.
+    - >-
+      In a file that imports MCP, any function with a decorator named
+      `tool`, `resource` or `prompt`, such as a LangChain `@tool`, is
+      checked the same way.
+    - >-
+      Missed: keys of other providers (for example Google `AIza…` keys or
+      Stripe test keys), a default built from several strings, and a key
+      held in a module constant or set inside the function body. The
+      secrets scan (`--secrets`, SKY-S101) covers most of those.
+  suppress:
+    - check: inline
+      text: >-
+        For a published sample whose value is not a real key, mark the
+        parameter line and say so.
+      language: python
+      code: |
+        token: str = "Bearer paste-your-token-here-xx",  # skylos: ignore[SKY-D244] placeholder
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D244"]` turns the rule off for the
+        whole project. A real key should be removed and revoked instead.
+
+related: [SKY-S101, SKY-D240, SKY-D241, SKY-D264]

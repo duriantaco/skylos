@@ -1,0 +1,179 @@
+id: SKY-D341
+title: Tool downloaded from the registry and run unpinned
+family: security
+severity: HIGH
+languages: [GitHub Actions workflows, GitLab CI, Shell, Dockerfile, Python, TypeScript/JavaScript]
+gate:
+  full: counted
+cwe: [CWE-829]
+
+what_it_is: >-
+  `npx -y tool`, `pnpm dlx tool` and `yarn dlx tool` download a package from
+  the npm registry and run it straight away, at whatever version is newest
+  that moment. SKY-D341 reports these commands, and package scripts named
+  like install steps, because the code they run is not pinned anywhere.
+
+why_it_matters: >-
+  If the tool's maintainer account is taken over, the next run of your job
+  executes the attacker's release, with the job's token and secrets.
+  Hijacked npm releases have reached many projects within hours, through
+  installs that always take the newest version.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/docs.yml
+  expect_line: 14
+  code: |
+    name: Docs
+    on:
+      pull_request:
+        paths: ["docs/**"]
+    permissions:
+      contents: read
+    jobs:
+      lint:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - run: npx -y markdownlint-cli2 "docs/**/*.md"
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/docs.yml
+  code: |
+    name: Docs
+    on:
+      pull_request:
+        paths: ["docs/**"]
+    permissions:
+      contents: read
+    jobs:
+      lint:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - run: npm ci --ignore-scripts
+          - run: npx --no markdownlint-cli2 "docs/**/*.md"
+  why: >-
+    It is still `npx`, but `--no` tells it never to download. It runs the
+    copy that `npm ci` installed from `package-lock.json`, where the tool
+    and every package it needs have a fixed version and hash.
+
+more_examples:
+  - flagged:
+      language: dockerfile
+      filename: Dockerfile
+      expect_line: 6
+      code: |
+        FROM node:22-slim
+        WORKDIR /app
+        COPY package.json pnpm-lock.yaml ./
+        RUN corepack enable && pnpm install --frozen-lockfile
+        COPY . .
+        RUN pnpm dlx prisma generate
+        CMD ["node", "dist/server.js"]
+    not_flagged:
+      language: dockerfile
+      filename: Dockerfile
+      code: |
+        FROM node:22-slim
+        WORKDIR /app
+        COPY package.json pnpm-lock.yaml ./
+        RUN corepack enable && pnpm install --frozen-lockfile
+        COPY . .
+        RUN pnpm exec prisma generate
+        CMD ["node", "dist/server.js"]
+      why: >-
+        `pnpm exec` runs the `prisma` that `pnpm install` took from the
+        lockfile. `pnpm dlx` would fetch the newest release instead.
+
+how_skylos_decides:
+  - >-
+    Reads the same commands as the other command rules: GitHub Actions
+    `run:` steps, GitLab CI script items, Dockerfile `RUN` instructions,
+    shell script files, fixed command strings in Python `os.system()`-style
+    or `shell=True` calls, and fixed strings passed to
+    `child_process.exec()` in TypeScript and JavaScript.
+  - >-
+    Splits each command at `;`, `&&`, `||` and `|`, not at line breaks, and
+    looks at the command word of each part.
+  - >-
+    `npx` (after `sudo`, `nohup`, `time`, `command` or `NAME=value`):
+    reported with `-y` or `--yes`, or with any word ending in `@latest`.
+  - >-
+    `npm exec` with `-y` or `--yes`; `pnpm dlx` and `yarn dlx`; and `npm
+    run`, `pnpm run` or `yarn` followed by a script named `bootstrap`,
+    `install`, `postinstall`, `prepare` or `setup`.
+  - >-
+    One HIGH finding per command block: in a workflow on the first line of
+    the `run:` text, elsewhere on the command's line.
+
+source_refs:
+  - path: skylos/security/command_guard_policy.py
+    symbol: "def _is_untrusted_package_tool_execution("
+  - path: skylos/security/command_guard_policy.py
+    symbol: "PACKAGE_SETUP_SCRIPT_NAMES = "
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _line_for_run_command("
+  - path: test/test_shell_security.py
+    symbol: "def test_npx_yes_latest_flags_untrusted_tool_execution("
+
+fix:
+  explanation: >-
+    Add the tool as an exact development dependency (`npm install
+    --save-dev --save-exact markdownlint-cli2`), commit the lockfile,
+    install with `npm ci` and run it with `npx --no`, `npm exec` or a
+    `package.json` script. Updates then arrive as reviewed lockfile changes.
+  filename: .github/workflows/docs.yml
+  code: |
+    name: Docs
+    on:
+      pull_request:
+        paths: ["docs/**"]
+    permissions:
+      contents: read
+    jobs:
+      lint:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+            with:
+              persist-credentials: false
+          - run: npm ci --ignore-scripts
+          - run: npx --no markdownlint-cli2 "docs/**/*.md"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      `yarn install`, Yarn's normal dependency install, is reported, because
+      `install` is on the list of script names; `npm install` and `pnpm
+      install` are not.
+    - >-
+      `npx -y tool@1.4.2` is reported although the version is fixed, and
+      `npm run setup` is reported whatever the script does.
+    - >-
+      Missed: `npx tool` without `-y`, which in CI also downloads because
+      npx assumes yes when no terminal is attached; `npm exec tool` without
+      `-y`; `bunx`, `uvx` and `pipx run`; and a command on a later line of a
+      multi-line `run: |` block.
+  suppress:
+    - check: inline
+      text: >-
+        For a one-line `run:` the marker must be a YAML comment at the end of
+        the line or on its own line directly above it. In a `run: |` block,
+        and in other files, put it on the reported line or the line above,
+        one rule per marker.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D341] scaffold only, output is reviewed in the PR
+        - run: npx -y create-vite@5.5.2 demo --template react-ts
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D341"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D337, SKY-D371, SKY-D312, SKY-D340]

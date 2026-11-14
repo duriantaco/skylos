@@ -1,0 +1,273 @@
+id: SKY-D372
+title: Unverified download reaching the publish step
+family: ci-cd
+severity: HIGH
+languages: [GitHub Actions workflows, GitLab CI]
+gate:
+  full: listed
+  diff: counted
+  note: >-
+    A diff scan counts a finding whose rule, file and job name are not
+    among the merge base's findings. A baseline scan counts it like a diff
+    scan when the baseline's `rule_coverage` lists it.
+
+what_it_is: >-
+  A job that publishes a package first downloads a file, for example a
+  prebuilt archive from a CDN, and nothing checks its checksum or
+  signature before the publish step runs. Whatever the server returned
+  that day ends up inside the package you ship.
+
+why_it_matters: >-
+  Whoever controls the download server, or the account that uploads to
+  it, controls part of your release. The @subql 5.8.3 release swapped a
+  package folder for such an archive, and users installed it from the
+  official registry.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/publish.yml
+  expect_line: 21
+  code: |
+    name: Publish SDK
+    on:
+      release:
+        types: [published]
+    permissions:
+      contents: read
+    jobs:
+      npm:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+            with:
+              node-version: 22
+              registry-url: https://registry.npmjs.org
+          - run: npm ci
+          - name: Fetch prebuilt native binaries
+            run: |
+              curl -fsSL -o prebuilt.tar.gz https://dl.acme.example/sdk/prebuilt.tar.gz
+              tar -xzf prebuilt.tar.gz -C packages/sdk/prebuilt
+          - run: npm publish ./packages/sdk --access public
+            env:
+              NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/publish.yml
+  code: |
+    name: Publish SDK
+    on:
+      release:
+        types: [published]
+    permissions:
+      contents: read
+    jobs:
+      npm:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+            with:
+              node-version: 22
+              registry-url: https://registry.npmjs.org
+          - run: npm ci
+          - name: Fetch prebuilt native binaries
+            run: |
+              curl -fsSL -o prebuilt.tar.gz https://dl.acme.example/sdk/prebuilt.tar.gz
+              gh attestation verify prebuilt.tar.gz --repo acme/sdk-native
+              tar -xzf prebuilt.tar.gz -C packages/sdk/prebuilt
+            env:
+              GH_TOKEN: ${{ github.token }}
+          - run: npm publish ./packages/sdk --access public
+            env:
+              NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  why: >-
+    The same archive is downloaded and published, but `gh attestation
+    verify` checks GitHub's build attestation for it before it is unpacked,
+    so a swapped file stops the job.
+
+more_examples:
+  - flagged:
+      language: yaml
+      filename: .gitlab-ci.yml
+      expect_line: 10
+      code: |
+        stages: [publish]
+
+        publish:
+          stage: publish
+          image: node:22-slim
+          rules:
+            - if: $CI_COMMIT_TAG
+          script:
+            - npm ci
+            - curl -fsSL -o dist.tgz https://cdn.acme.example/web/dist.tgz
+            - tar -xzf dist.tgz -C packages/web/dist
+            - npm publish ./packages/web
+    not_flagged:
+      language: yaml
+      files:
+        - filename: .gitlab-ci.yml
+          code: |
+            stages: [publish]
+
+            publish:
+              stage: publish
+              image: node:22-slim
+              rules:
+                - if: $CI_COMMIT_TAG
+              script:
+                - npm ci
+                - curl -fsSL -o dist.tgz https://cdn.acme.example/web/dist.tgz
+                - sha256sum -c release/dist.tgz.sha256
+                - tar -xzf dist.tgz -C packages/web/dist
+                - npm publish ./packages/web
+        - filename: release/dist.tgz.sha256
+          language: text
+          code: |
+            0000000000000000000000000000000000000000000000000000000000000000  dist.tgz
+      why: >-
+        `sha256sum -c` compares the archive with a checksum committed to the
+        repository before it is unpacked, so a changed file fails the job.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). The `ca9` library reads every `*.yml`
+    and `*.yaml` file directly in `.github/workflows`, the local composite
+    actions they call, and `.gitlab-ci.yml` with its local includes.
+  - >-
+    Finds downloads in `run:` steps and GitLab script lines: `curl` with
+    `-o`, `-O` or a redirect to a file, `wget`, `gh release download`,
+    `Invoke-WebRequest -OutFile`, and `curl … | tar -x`. Uploads (`curl
+    --data`, `--form`, `-T`) and downloads to standard output or `/dev/` are
+    not downloads.
+  - >-
+    Follows the file: a later `tar -x` or `unzip` of it says where it is
+    unpacked, `mv` or `cp` where it moves. A download that is only run as a
+    tool from a `bin` folder or outside the workspace is left to SKY-D371.
+  - >-
+    Reports the download when it lands in the workspace and the job
+    publishes after it (a publish command later in the job, or a publish
+    credential the job holds), unless a checksum check (`sha256sum -c` and
+    the other `*sum` programs, or a comparison with a hash) or a signature
+    check (`gpg --verify`, `cosign verify-blob`, `slsa-verifier`, `minisign
+    -V`, `gh attestation verify`) comes after it and names the file or is in
+    the same step.
+  - >-
+    Reports one HIGH finding per unverified download, on the download's
+    line.
+
+source_refs:
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "\"unverified_download_into_publish\": ("
+    note: >-
+      ca9 `audit_workflows` decides the rule (`ca9/ci/audit.py`
+      `_unverified_downloads`, data flow in `ca9/ci/jobs.py`
+      `_link_downloads`); this page was checked against ca9 0.7.0.
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "def scan_agent_publish("
+  - path: skylos/core/gatekeeper.py
+    symbol: "FULL_SCAN_REPORT_ONLY_RULES = frozenset("
+
+fix:
+  explanation: >-
+    Do not publish files fetched at release time when you can build them in
+    the job. If you must, download a fixed, versioned URL and check it
+    against a checksum committed to the repository, or verify its signature
+    or attestation, before it is unpacked.
+  filename: .github/workflows/publish.yml
+  code: |
+    name: Publish SDK
+    on:
+      release:
+        types: [published]
+    permissions:
+      contents: read
+    jobs:
+      npm:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+            with:
+              node-version: 22
+              registry-url: https://registry.npmjs.org
+          - run: npm ci
+          - name: Fetch prebuilt native binaries
+            run: |
+              curl -fsSL -o prebuilt.tar.gz \
+                https://dl.acme.example/sdk/v1.4.0/prebuilt.tar.gz
+              sha256sum -c packages/sdk/prebuilt.sha256
+              tar -xzf prebuilt.tar.gz -C packages/sdk/prebuilt
+          - run: npm publish ./packages/sdk --access public
+            env:
+              NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Any checksum or signature command in the same step counts as a check
+      of the file, even one that checks a different file.
+    - >-
+      A download in a job that only holds a publish credential is reported
+      even when no step ever packs the file, because the credential is
+      treated as a publish at the end of the job.
+    - >-
+      The flagged example also gets SKY-D364 for the stored npm token. It
+      is a separate finding about the same job.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: yaml
+          filename: .github/workflows/publish.yml
+          code: |
+            name: Publish SDK
+            on:
+              release:
+                types: [published]
+            permissions:
+              contents: read
+            jobs:
+              npm:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                    with:
+                      persist-credentials: false
+                  - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+                    with:
+                      node-version: 22
+                      registry-url: https://registry.npmjs.org
+                  - run: npm ci
+                  - name: Fetch prebuilt native binaries
+                    run: |
+                      # skylos: ignore[SKY-D372] handbook check
+                      curl -fsSL -o prebuilt.tar.gz https://dl.acme.example/sdk/prebuilt.tar.gz
+                      tar -xzf prebuilt.tar.gz -C packages/sdk/prebuilt
+                  - run: npm publish ./packages/sdk --access public
+                    env:
+                      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      text: >-
+        Skylos reads no inline marker for this rule, neither as a YAML
+        comment nor as a shell comment inside the `run:` block.
+    - check: baseline
+      text: >-
+        Accept a reviewed job with a baseline: `skylos baseline .`, then
+        `--baseline`. The entry matches the rule, file and job name, not the
+        line. In pull-request CI (`SKYLOS_POLICY_BASE`), the entry must also
+        be in the base commit's `.skylos/baseline.json`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D372"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D371, SKY-D328, SKY-D340, SKY-D364]

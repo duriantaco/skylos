@@ -1,0 +1,266 @@
+id: SKY-A136
+title: New code nothing calls
+family: ai-defects
+severity: LOW
+languages: [Python, TypeScript/JavaScript (symbols and whole files), Java, Kotlin, Go (needs the skylos-go engine), PHP, Rust, and the other languages the dead-code engine reads]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` runs this rule, in its `branch_orphans` check, which
+    advises by default: findings are listed and the verdict does not fail.
+    With `branch_orphans = "block"` under `[tool.skylos.done.checks]` in the
+    base commit's `pyproject.toml`, SKY-A136 findings fail the verdict.
+run_with: >-
+  `skylos done` after a change (default base `HEAD`, so uncommitted edits),
+  or `skylos done --base origin/main` for a pull request
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule; the handbook build checks examples
+    with `skylos .`, which never reports it. All four examples were run by
+    hand with `skylos done --no-tests`.
+
+what_it_is: >-
+  New code nothing calls is a function, method, class or JavaScript file
+  that the change added and that no code reaches, or that only other unused
+  code calls. Agents often write a helper, then solve the task another way
+  and leave the helper behind.
+
+why_it_matters: >-
+  Unused new code makes a change look bigger and more finished than it is.
+  It can also mean the wiring step was forgotten: the new handler or
+  validator exists but nothing ever runs it.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: app/orders.py
+  expect_line: 8
+  base_files:
+    - filename: app/orders.py
+      code: |
+        """Order totals for the checkout service."""
+
+
+        def order_total(items):
+            return sum(item["cents"] * item["qty"] for item in items)
+    - filename: app/cli.py
+      code: |
+        from app.orders import order_total
+
+        if __name__ == "__main__":
+            print(order_total([{"cents": 1250, "qty": 2}]))
+  files:
+    - filename: app/orders.py
+      code: |
+        """Order totals for the checkout service."""
+
+
+        def order_total(items):
+            return sum(item["cents"] * item["qty"] for item in items)
+
+
+        def apply_coupon(total_cents, percent_off):
+            return round(total_cents * (100 - percent_off) / 100)
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: app/orders.py
+      code: |
+        """Order totals for the checkout service."""
+
+        from flask import Flask
+
+        app = Flask(__name__)
+
+
+        def order_total(items):
+            return sum(item["cents"] * item["qty"] for item in items)
+  files:
+    - filename: app/orders.py
+      code: |
+        """Order totals for the checkout service."""
+
+        from flask import Flask, request
+
+        app = Flask(__name__)
+
+
+        def order_total(items):
+            return sum(item["cents"] * item["qty"] for item in items)
+
+
+        @app.post("/orders/total")
+        def order_total_view():
+            return {"total_cents": order_total(request.json["items"])}
+  why: >-
+    No code in the repository calls `order_total_view` either, but Flask
+    does: the route decorator registers it. Skylos treats framework routes
+    as used, and does not judge a symbol under a decorator that may
+    register it.
+
+more_examples:
+  - flagged:
+      language: typescript
+      setup: git_diff
+      expect_file: src/orders.ts
+      expect_line: 10
+      base_files:
+        - filename: package.json
+          language: json
+          code: |
+            {"name": "shop", "type": "module", "main": "src/index.ts"}
+        - filename: src/orders.ts
+          code: |
+            export interface Item {
+              cents: number;
+              qty: number;
+            }
+
+            export function orderTotal(items: Item[]): number {
+              return items.reduce((sum, item) => sum + item.cents * item.qty, 0);
+            }
+        - filename: src/index.ts
+          code: |
+            import { orderTotal } from "./orders.js";
+
+            console.log(orderTotal([{ cents: 1250, qty: 2 }]));
+      files:
+        - filename: src/orders.ts
+          code: |
+            export interface Item {
+              cents: number;
+              qty: number;
+            }
+
+            export function orderTotal(items: Item[]): number {
+              return items.reduce((sum, item) => sum + item.cents * item.qty, 0);
+            }
+
+            function applyCoupon(totalCents: number, percentOff: number): number {
+              return Math.round((totalCents * (100 - percentOff)) / 100);
+            }
+    not_flagged:
+      language: typescript
+      setup: git_diff
+      base_files:
+        - filename: package.json
+          language: json
+          code: |
+            {"name": "shop", "type": "module", "main": "src/index.ts"}
+        - filename: src/orders.ts
+          code: |
+            export interface Item {
+              cents: number;
+              qty: number;
+            }
+
+            export function orderTotal(items: Item[]): number {
+              return items.reduce((sum, item) => sum + item.cents * item.qty, 0);
+            }
+        - filename: src/index.ts
+          code: |
+            import { orderTotal } from "./orders.js";
+
+            console.log(orderTotal([{ cents: 1250, qty: 2 }]));
+      files:
+        - filename: src/orders.ts
+          code: |
+            export interface Item {
+              cents: number;
+              qty: number;
+            }
+
+            export function orderTotal(items: Item[], percentOff = 0): number {
+              const total = items.reduce((sum, i) => sum + i.cents * i.qty, 0);
+              return applyCoupon(total, percentOff);
+            }
+
+            function applyCoupon(totalCents: number, percentOff: number): number {
+              return Math.round((totalCents * (100 - percentOff)) / 100);
+            }
+      why: >-
+        The new `applyCoupon` is called by `orderTotal`, which the entry
+        point uses, so the new code is wired in.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done` when the change touches production code. Copies
+    the base commit and the working tree (or pull request head) into private
+    temporary folders, removes test files from both, and runs the regular
+    dead-code analysis on each, with a confidence of 75 or more. Nothing in
+    the repository runs.
+  - >-
+    A function, method or class that is unused in the head copy and whose
+    declaration line the change added is new when its name is on no removed
+    line and most of its body is new lines; a definition moved or renamed
+    from elsewhere in the change is not new. A JS or TS file the change
+    added that nothing imports is reported as a whole.
+  - >-
+    Entry points, framework roots (routes, views, fixtures, commands),
+    exported public API and dispatch the dead-code engine recognises count
+    as used. A new symbol the analyzer is unsure about, one whose name
+    appears in a template, config file or a file it could not parse, and
+    one under a decorator that may register it are not judged.
+  - >-
+    Survivors go through the same grep check as `skylos .` (on the head
+    copy without tests). A survivor that a test calls is reported as
+    SKY-A137 instead.
+
+source_refs:
+  - path: skylos/done/orphans.py
+    symbol: "def find_branch_orphans("
+  - path: skylos/done/orphans.py
+    symbol: "def _is_new("
+  - path: skylos/done/orphans.py
+    symbol: "def _file_candidate("
+  - path: skylos/done/orphans.py
+    symbol: "def decorated("
+  - path: skylos/done/orphans.py
+    symbol: "def _grep_confirmed("
+  - path: skylos/done/orphans.py
+    symbol: "def _new_symbol_message("
+  - path: skylos/done/checks.py
+    symbol: "def check_branch_orphans("
+  - path: skylos/done/config.py
+    symbol: "DEFAULT_ORPHANS_BLOCK_RULES ="
+
+fix:
+  explanation: >-
+    Wire the new code in where it was meant to run, or delete it. A helper
+    written for a later change belongs in that change.
+  language: python
+  code: |
+    def order_total(items, percent_off=0):
+        total = sum(item["cents"] * item["qty"] for item in items)
+        return apply_coupon(total, percent_off)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Code reached only by reflection, string dispatch or a plugin system
+      the dead-code engine does not know looks unused, as it does for
+      SKY-U001.
+    - >-
+      A new public library function that only other packages will call is
+      reported until something in the repository uses it or exports it.
+    - >-
+      Languages whose engine is not installed (Go without `skylos-go`, Dart
+      without Dart support) are listed as not checked, not passed.
+  suppress:
+    - text: >-
+        `skylos done` does not read `# skylos: ignore` comments for this
+        rule. The check advises by default. To keep SKY-A136 advisory while
+        `branch_orphans` blocks, leave it out of
+        `branch_orphans_block_rules` in the base commit's `pyproject.toml`.
+      language: toml
+      code: |
+        [tool.skylos.done]
+        branch_orphans_block_rules = ["SKY-A135"]
+
+        [tool.skylos.done.checks]
+        branch_orphans = "block"
+
+related: [SKY-A135, SKY-A137, SKY-U001, SKY-U004]

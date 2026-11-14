@@ -1,0 +1,258 @@
+id: SKY-L023
+title: Phantom decorator
+family: ai-defects
+severity: CRITICAL
+severity_note: >-
+  The catalog gives no severity for this rule; both detectors behind it
+  report CRITICAL.
+languages: [Python]
+gate:
+  full: critical_blocks
+  note: >-
+    Counts toward `max_ai_defects`. Every finding is CRITICAL, and
+    `block_ai_defect_severities` (under `[tool.skylos.gate]`) is
+    `["CRITICAL"]` by default, so one finding fails the gate on its own.
+    The agent hook (`skylos verify`) also blocks on it.
+run_with: >-
+  `skylos . --ai-defects` (or `-a`); reads the code as it is, no diff needed
+
+what_it_is: >-
+  A decorator is the `@name` line above a function that wraps it, and
+  security checks such as "admin only" are often written as decorators.
+  SKY-L023 reports a decorator that does not exist where the code says it
+  lives: `@permissions.require_admin` when the project's `permissions`
+  module has no `require_admin`, or a bare `@login_required` that is never
+  imported.
+
+why_it_matters: >-
+  Python looks the decorator up when the module is imported, so the
+  service fails to start, or, if an agent "fixes" the error by deleting the
+  line, the handler runs with no access check at all. Either way the guard
+  the code appears to have is not there.
+
+flagged_example:
+  language: python
+  expect_file: app/views.py
+  expect_line: 4
+  files:
+    - filename: app/__init__.py
+      code: ""
+    - filename: app/permissions.py
+      code: |
+        """Role checks for request handlers."""
+
+        import functools
+
+
+        def require_role(role):
+            def decorator(view):
+                @functools.wraps(view)
+                def wrapper(request, *args, **kwargs):
+                    if role not in request.user.roles:
+                        return {"status": 403}
+                    return view(request, *args, **kwargs)
+
+                return wrapper
+
+            return decorator
+    - filename: app/views.py
+      code: |
+        from app import permissions
+
+
+        @permissions.require_admin
+        def delete_user(request, user_id):
+            request.db.users.delete(user_id)
+            return {"status": 204}
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: app/__init__.py
+      code: ""
+    - filename: app/permissions.py
+      code: |
+        """Role checks for request handlers."""
+
+        import functools
+
+
+        def require_role(role):
+            def decorator(view):
+                @functools.wraps(view)
+                def wrapper(request, *args, **kwargs):
+                    if role not in request.user.roles:
+                        return {"status": 403}
+                    return view(request, *args, **kwargs)
+
+                return wrapper
+
+            return decorator
+    - filename: app/views.py
+      code: |
+        from app import permissions
+
+
+        @permissions.require_role("admin")
+        def delete_user(request, user_id):
+            request.db.users.delete(user_id)
+            return {"status": 204}
+  why: >-
+    `require_role` is defined in `app/permissions.py`, so the decorator
+    resolves. Skylos checks the name, not the arguments: `("admin")` is the
+    project's own business.
+
+more_examples:
+  - flagged:
+      language: python
+      expect_file: app/admin.py
+      expect_line: 5
+      files:
+        - filename: app/__init__.py
+          code: ""
+        - filename: app/routing.py
+          code: |
+            """A tiny router for the admin API."""
+
+            ROUTES = {}
+
+
+            def route(path, methods=("GET",)):
+                def register(view):
+                    for method in methods:
+                        ROUTES[(method, path)] = view
+                    return view
+
+                return register
+        - filename: app/admin.py
+          code: |
+            from app.routing import route
+
+
+            @route("/admin/users/<user_id>", methods=["DELETE"])
+            @login_required
+            def delete_user(request, user_id):
+                request.db.users.delete(user_id)
+                return {"status": 204}
+    not_flagged:
+      language: python
+      files:
+        - filename: app/__init__.py
+          code: ""
+        - filename: app/routing.py
+          code: |
+            """A tiny router for the admin API."""
+
+            ROUTES = {}
+
+
+            def route(path, methods=("GET",)):
+                def register(view):
+                    for method in methods:
+                        ROUTES[(method, path)] = view
+                    return view
+
+                return register
+        - filename: app/security.py
+          code: |
+            import functools
+
+
+            def login_required(view):
+                @functools.wraps(view)
+                def wrapper(request, *args, **kwargs):
+                    if request.user is None:
+                        return {"status": 401}
+                    return view(request, *args, **kwargs)
+
+                return wrapper
+        - filename: app/admin.py
+          code: |
+            from app.routing import route
+            from app.security import login_required
+
+
+            @route("/admin/users/<user_id>", methods=["DELETE"])
+            @login_required
+            def delete_user(request, user_id):
+                request.db.users.delete(user_id)
+                return {"status": 204}
+      why: >-
+        `login_required` is imported from a module that defines it. A bare
+        decorator is reported only when its name is on Skylos's list of
+        security decorators and the file neither defines nor imports it.
+
+how_skylos_decides:
+  - >-
+    Builds a table of every Python module in the project and the names each
+    one defines at top level, imports or re-exports.
+  - >-
+    For each decorator written as `@module.name` or `@module.name(...)`,
+    where `module` is one of the project's own modules, reports the
+    decorator when that module has no `name`. It stays silent when the
+    module has a module-level `__getattr__` or otherwise writes its own
+    namespace, when the name is bound only in some branches, or when the
+    decorator sits under a `try`/`except AttributeError`.
+  - >-
+    For a bare decorator, `@name` or `@name(...)`, a second check looks the
+    name up in a list of security decorators (`login_required`,
+    `requires_auth`, `admin_required`, `rate_limit`, `csrf_protect` and
+    others). It reports the decorator when the file neither defines nor
+    imports that name. Other bare names are left to Python itself.
+  - >-
+    Decorators from installed packages (`@app.route`, `@pytest.fixture`)
+    are not checked by this rule.
+
+source_refs:
+  - path: skylos/rules/ai_defect/phantom_refs.py
+    symbol: "def _build_decorator_finding("
+  - path: skylos/rules/ai_defect/phantom_refs.py
+    symbol: "def scan_repo_phantom_security_references("
+  - path: skylos/rules/ai_defect/phantom_decorator.py
+    symbol: "class PhantomDecoratorRule"
+  - path: skylos/rules/vibe_dictionary.py
+    symbol: "PHANTOM_SECURITY_DECORATORS = {"
+  - path: skylos/analyzer.py
+    symbol: "PhantomDecoratorRule(vibe_dictionary=vibe_dictionary)"
+
+fix:
+  explanation: >-
+    Use the decorator the project really has, or write the missing one in
+    the module the code names. Never delete the decorator line to make the
+    import error go away: that removes the access check.
+  language: python
+  filename: app/views.py
+  code: |
+    from app import permissions
+
+
+    @permissions.require_role("admin")
+    def delete_user(request, user_id):
+        request.db.users.delete(user_id)
+        return {"status": 204}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A bare security decorator that reaches the file through a star import
+      (`from app.security import *`) or a `builtins` patch is reported,
+      because the file does not import it by name.
+    - >-
+      A module that adds decorators at run time with a computed name, for
+      example a plugin loader, can make a real decorator look missing.
+    - >-
+      To add your own decorator names to the security list, set
+      `extra_phantom_decorators` under `[tool.skylos.vibe]`.
+  suppress:
+    - check: inline
+      text: >-
+        On the decorator line, with the reason the name exists at run time:
+      language: python
+      code: |
+        @permissions.require_admin  # skylos: ignore[SKY-L023] added by plugin loader
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L023"]` turns the rule off for the
+        project.
+
+related: [SKY-L012, SKY-D224]

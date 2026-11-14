@@ -1,0 +1,134 @@
+id: SKY-L035
+title: Blanket ESLint disable
+family: logic
+severity: HIGH
+languages: [TypeScript, JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  A `/* eslint-disable */` comment at the top of a file with no rule names.
+  It turns off every ESLint rule for the whole file, including the ones
+  that catch real bugs, such as unhandled promises and unused variables.
+
+why_it_matters: >-
+  Coding agents often add it to make a lint error go away. From then on
+  ESLint checks nothing in that file, so new mistakes added later pass CI
+  without a single warning.
+
+flagged_example:
+  language: typescript
+  filename: src/jobs/purge.ts
+  expect_line: 1
+  code: |
+    /* eslint-disable */
+    import { db } from "../db";
+
+    export async function purgeExpiredSessions(): Promise<number> {
+      const result = await db.sessions.deleteMany({ expiresAt: { lt: new Date() } });
+      console.log(`purged ${result.count} sessions`);
+      return result.count;
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/jobs/purge.ts
+  code: |
+    /* eslint-disable no-console -- this job reports progress on stdout */
+    import { db } from "../db";
+
+    export async function purgeExpiredSessions(): Promise<number> {
+      const result = await db.sessions.deleteMany({ expiresAt: { lt: new Date() } });
+      console.log(`purged ${result.count} sessions`);
+      return result.count;
+    }
+  why: >-
+    The comment names the one rule it turns off (`no-console`) and says
+    why. Every other ESLint rule still checks the file.
+
+more_examples:
+  - flagged:
+      language: javascript
+      filename: scripts/legacy-export.js
+      expect_line: 2
+      code: |
+        #!/usr/bin/env node
+        /* eslint-disable -- legacy export, will be rewritten */
+        const fs = require("fs");
+
+        const rows = JSON.parse(fs.readFileSync("orders.json", "utf8"));
+        fs.writeFileSync("orders.csv", rows.map((row) => row.join(",")).join("\n"));
+    not_flagged:
+      language: javascript
+      filename: scripts/legacy-export.js
+      code: |
+        #!/usr/bin/env node
+        /* eslint-disable */
+        const fs = require("fs");
+        /* eslint-enable */
+
+        const rows = JSON.parse(fs.readFileSync("orders.json", "utf8"));
+        fs.writeFileSync("orders.csv", rows.map((row) => row.join(",")).join("\n"));
+      why: >-
+        A later `/* eslint-enable */` turns the rules back on, so the
+        disabled region is limited. A reason after `--` does not count as a
+        rule name: the flagged version is still a blanket disable.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`,
+    `.mjs` and `.cjs` files. Generated and minified files are skipped.
+  - >-
+    Reads only the comments before the first statement (a `#!` line may
+    come first). Looks for a block comment `/* eslint-disable */` that names
+    no rule; text after `--` is a reason, not a rule name.
+  - >-
+    Skips the file when a bare `/* eslint-enable */` block comment comes
+    after it anywhere in the file.
+  - >-
+    Line comments (`// eslint-disable-next-line`), `eslint-disable-line`
+    and disables placed later in the file are not checked. Reports HIGH on
+    the line of the comment.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _blanket_eslint_findings("
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "_ESLINT_DIRECTIVE_RE = re.compile("
+
+fix:
+  explanation: >-
+    Remove the comment and fix what ESLint reports. Where a rule really
+    does not fit, turn off only that rule, with a reason, on the narrowest
+    scope: one line with `// eslint-disable-next-line rule-name`, or the file
+    with `/* eslint-disable rule-name -- reason */`.
+  filename: src/jobs/purge.ts
+  code: |
+    import { db } from "../db";
+
+    export async function purgeExpiredSessions(): Promise<number> {
+      const result = await db.sessions.deleteMany({ expiresAt: { lt: new Date() } });
+      // eslint-disable-next-line no-console -- job output goes to the scheduler log
+      console.log(`purged ${result.count} sessions`);
+      return result.count;
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A vendored or generated file that is not marked as generated (no
+      `@generated` header, not under `dist`, `build`, `generated` or
+      `vendor`) is reported. Mark it or exclude the folder instead.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the same line as the comment.
+      language: typescript
+      code: |
+        /* eslint-disable */ // skylos: ignore[SKY-L035] copied third-party file
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L035"]` turns the rule off for the
+        project.
+
+related: [SKY-A118, SKY-A119, SKY-T104]

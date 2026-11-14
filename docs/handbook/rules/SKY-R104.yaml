@@ -1,0 +1,137 @@
+id: SKY-R104
+title: Pre-commit policy
+family: quality
+severity: LOW
+languages: [Python, TypeScript, JavaScript, Java, Go]
+gate:
+  full: counted
+  diff: counted
+  note: >-
+    Advice that is measured on every `--quality` scan but not listed by
+    default. It is listed, and counted toward `max_quality`, with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+    A diff scan checks it only when the change touches a policy file.
+
+what_it_is: >-
+  [pre-commit](https://pre-commit.com) runs checks such as linters and
+  formatters on each commit, from a `.pre-commit-config.yaml` file in the
+  repository. SKY-R104 reports a project that has no such file at its
+  root.
+
+why_it_matters: >-
+  Without commit hooks, every check waits for CI, so simple mistakes cost a
+  full pipeline run and a second push, and some developers skip the
+  checks entirely when working locally.
+
+flagged_example:
+  language: python
+  files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+    - filename: app/pricing.py
+      code: |
+        """Price helpers."""
+
+
+        def total(prices):
+            return sum(prices)
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+    - filename: .pre-commit-config.yml
+      language: yaml
+      code: |
+        repos:
+          - repo: https://github.com/astral-sh/ruff-pre-commit
+            rev: v0.6.9
+            hooks:
+              - id: ruff
+    - filename: app/pricing.py
+      code: |
+        """Price helpers."""
+
+
+        def total(prices):
+            return sum(prices)
+  why: >-
+    The configuration uses the shorter `.yml` extension, which pre-commit
+    also reads. Skylos accepts both `.pre-commit-config.yaml` and
+    `.pre-commit-config.yml`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, once per scanned project, for every language. A
+    diff scan runs it only when a policy file is among the changed files.
+  - >-
+    Looks for `.pre-commit-config.yaml` or `.pre-commit-config.yml` at the
+    project root. Its contents are not checked.
+  - >-
+    When neither exists, reports LOW on the project folder.
+
+source_refs:
+  - path: skylos/rules/quality/policy.py
+    symbol: "def analyze_repo_policy("
+  - path: skylos/rules/quality/policy.py
+    symbol: 'root / ".pre-commit-config.yaml",'
+
+fix:
+  explanation: >-
+    Add a `.pre-commit-config.yaml` with the checks you want on every commit,
+    and run `pre-commit install` once per clone.
+  filename: .pre-commit-config.yaml
+  language: yaml
+  code: |
+    repos:
+      - repo: https://github.com/astral-sh/ruff-pre-commit
+        rev: v0.6.9
+        hooks:
+          - id: ruff
+          - id: ruff-format
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Projects that run their commit hooks with another tool, such as
+      Husky, lefthook or a hand-written `.git/hooks` script, are reported.
+    - >-
+      An empty or broken `.pre-commit-config.yaml` is accepted, because only
+      its presence is checked.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: python
+          files:
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [project]
+                name = "shop"
+                version = "1.0.0"
+
+                [tool.skylos]
+                ignore = ["SKY-R104"]
+            - filename: app/pricing.py
+              code: |
+                """Price helpers."""
+
+
+                def total(prices):
+                    return sum(prices)
+      text: >-
+        `ignore = ["SKY-R104"]` under `[tool.skylos]` turns the check off.
+        The finding points at the project folder, so there is no line for an
+        inline marker.
+
+related: [SKY-R102, SKY-R103]

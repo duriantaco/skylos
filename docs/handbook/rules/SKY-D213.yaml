@@ -1,0 +1,162 @@
+id: SKY-D213
+title: Hugging Face trust_remote_code runs repository code
+family: security
+severity: HIGH
+severity_note: >-
+  HIGH by default. MEDIUM when the same call passes `revision=` as a literal
+  40-character commit SHA, or when the model reference is a string literal
+  that starts with `./`, `../`, `/` or `~` (a local directory). A SHA held in
+  a constant (`revision=MODEL_REVISION`) does not lower it.
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-94, CWE-829]
+
+what_it_is: >-
+  A Hugging Face model or dataset can ship its own Python files next to its
+  weights. With `trust_remote_code=True`, transformers, datasets and the
+  libraries built on them download those files and import them, so code
+  from the model's repository runs inside your process. SKY-D213 reports
+  every call that switches this on with a literal `True`.
+
+why_it_matters: >-
+  Whoever can push to that repository (its owner, or someone holding a
+  stolen token) can change `modeling_*.py`, and your next start runs the new
+  code with your server's permissions, files and secrets. Without a pinned
+  revision the code can change between two runs while nothing changes in
+  your own repository.
+
+flagged_example:
+  language: python
+  filename: app/chat_model.py
+  expect_line: 8
+  code: |
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    MODEL_ID = "acme-labs/support-chat-7b"
+
+
+    def load_chat_model():
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+        model = AutoModelForCausalLM.from_pretrained(MODEL_ID, trust_remote_code=True)
+        return tokenizer, model
+
+not_flagged_example:
+  language: python
+  filename: app/chat_model.py
+  code: |
+    import argparse
+
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+
+    def main():
+        parser = argparse.ArgumentParser(description="Chat with a local model.")
+        parser.add_argument("model_id")
+        parser.add_argument("--trust-remote-code", action="store_true")
+        args = parser.parse_args()
+        tokenizer = AutoTokenizer.from_pretrained(args.model_id)
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model_id, trust_remote_code=args.trust_remote_code
+        )
+        return tokenizer, model
+
+
+    if __name__ == "__main__":
+        main()
+  why: >-
+    The flag is off unless the person running the script passes
+    `--trust-remote-code`. Skylos reports only the literal `True`, where the
+    code always runs the repository's files; a value chosen at run time is
+    the caller's decision. The same file still gets SKY-D345 for the missing
+    `revision=`.
+
+how_skylos_decides:
+  - >-
+    Looks at every call in a Python file, whatever the function is called:
+    `from_pretrained()`, `pipeline()`, `load_dataset()`, LangChain's
+    `HuggingFaceEmbeddings()` and so on.
+  - >-
+    Reports the call when it passes `trust_remote_code=True` as a keyword,
+    or passes a literal dictionary that holds `"trust_remote_code": True`,
+    for example `model_kwargs={"trust_remote_code": True}`.
+  - >-
+    Skips the call when the value is `False` or anything other than the
+    literal `True`: a variable, a setting, or a `**options` dictionary built
+    elsewhere.
+  - >-
+    Lowers the finding to MEDIUM when `revision=` in the same call is a
+    literal 40-character hex commit SHA (`main`, `master`, `latest`,
+    `refs/heads/…` and `refs/pr/…` do not count), or when the model
+    reference (the first argument, or `pretrained_model_name_or_path=`,
+    `model_name_or_path=`, `model=`, `model_name=` or `path=`) is a string
+    literal starting with `./`, `../`, `/` or `~`. Otherwise it is HIGH.
+  - >-
+    Reports one finding on the line where the call starts. A missing or
+    branch-name revision on a Hugging Face download is a separate rule,
+    SKY-D345.
+
+source_refs:
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "def _enables_remote_code"
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "def _append_remote_code_finding"
+    note: severity, and the reason in the message.
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "def _is_immutable_commit_revision"
+  - path: skylos/rules/danger/danger_ml/model_deserialization.py
+    symbol: "def _loads_local_path"
+  - path: test/test_deserialization.py
+    symbol: "def test_trust_remote_code_off_or_caller_chosen_is_not_d213"
+
+fix:
+  explanation: >-
+    If transformers supports the architecture itself, drop the flag: the
+    library then builds the model from its own installed code. Pin
+    `revision=` to a commit SHA so the files cannot change under you. If the
+    model really needs its own code, read that code at one commit and pin
+    the literal SHA in the call; Skylos then reports MEDIUM, which you can
+    silence with the reason.
+  filename: app/chat_model.py
+  code: |
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    MODEL_ID = "acme-labs/support-chat-7b"
+    MODEL_REVISION = "4f2c9e1d7a6b5c3e2f1a0b9c8d7e6f5a4b3c2d1e"
+
+
+    def load_chat_model():
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION)
+        model = AutoModelForCausalLM.from_pretrained(MODEL_ID, revision=MODEL_REVISION)
+        return tokenizer, model
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A model whose code you have reviewed and pinned to one commit is still
+      reported (as MEDIUM with a literal SHA, HIGH with a SHA in a constant).
+      Skylos cannot tell a reviewed commit from an unreviewed one.
+    - >-
+      A flag that is always on but passes through a variable or a
+      `**options` dictionary is not reported. This is a gap, not a sign the
+      call is safe.
+  suppress:
+    - check: inline
+      text: >-
+        Silence one reviewed call on the line where the call starts and say
+        why. A bare `# noqa` does not hide a HIGH security finding.
+      language: python
+      code: |
+        model = AutoModel.from_pretrained(  # skylos: ignore[SKY-D213] reviewed at 4f2c9e1
+            MODEL_ID, revision=MODEL_REVISION, trust_remote_code=True
+        )
+    - check: baseline
+      text: >-
+        Accept the calls you already have with `skylos baseline .`, then scan
+        with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D213"]` turns the rule off for the
+        whole project, including calls added later.
+
+related: [SKY-D345, SKY-D265, SKY-D202, SKY-D341]

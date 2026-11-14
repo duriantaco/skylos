@@ -1,0 +1,280 @@
+id: SKY-Q301
+title: Cyclomatic complexity too high
+family: quality
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. Python reports WARN (read as MEDIUM) for a
+  score from the threshold up to 14 and HIGH from 15. TypeScript,
+  JavaScript, Java and Go always report MEDIUM.
+languages: [Python, TypeScript, JavaScript, Java, Go]
+gate:
+  full: counted
+  note: >-
+    Python and JS/TS findings are listed only when SKY-Q306 also reports the
+    same function; that function's metrics then share one entry, led by the
+    most severe, which the gate counts once. Otherwise they are hidden and
+    counted only with `--all-advice` or when the rule is named in
+    `[tool.skylos.gate] rules`. Go and Java findings are listed by default.
+
+what_it_is: >-
+  Cyclomatic complexity counts the separate paths through a function: one,
+  plus one for every `if`, loop, `case`, `except` or extra `and`/`or`
+  operand. SKY-Q301 reports a function whose count is above the limit, 10
+  by default.
+
+why_it_matters: >-
+  Every path needs its own test. A function with a dozen paths is hard to
+  test fully, and a change to one rule (a new country, a new discount) can
+  break another path nobody re-checked.
+
+flagged_example:
+  language: python
+  filename: app/shipping.py
+  expect_line: 8
+  code: |
+    """Shipping prices for the checkout service."""
+
+    from decimal import Decimal
+
+    FREE_SHIPPING_MIN = Decimal("75.00")
+
+
+    def shipping_cost(order, customer):
+        if order.total >= FREE_SHIPPING_MIN and not customer.is_wholesale:
+            return Decimal("0")
+        if order.destination.country == "US":
+            base = Decimal("5.00")
+        elif order.destination.country in ("CA", "MX"):
+            base = Decimal("12.00")
+        elif order.destination.is_eu:
+            base = Decimal("15.00")
+        else:
+            base = Decimal("25.00")
+        if order.weight_kg > 20:
+            base += Decimal("10.00")
+        elif order.weight_kg > 5:
+            base += Decimal("4.00")
+        if order.express:
+            base *= 2
+        if customer.is_member or customer.has_coupon("SHIPFREE"):
+            base -= Decimal("5.00")
+        return max(base, Decimal("0"))
+
+not_flagged_example:
+  language: python
+  filename: app/shipping.py
+  code: |
+    """Shipping prices for the checkout service."""
+
+    from decimal import Decimal
+
+    FREE_SHIPPING_MIN = Decimal("75.00")
+
+
+    def shipping_cost(order, customer):
+        if order.total >= FREE_SHIPPING_MIN and not customer.is_wholesale:
+            return Decimal("0")
+        if order.destination.country == "US":
+            base = Decimal("5.00")
+        elif order.destination.country in ("CA", "MX"):
+            base = Decimal("12.00")
+        elif order.destination.is_eu:
+            base = Decimal("15.00")
+        else:
+            base = Decimal("25.00")
+        if order.weight_kg > 20:
+            base += Decimal("10.00")
+        if order.express:
+            base *= 2
+        if customer.is_member or customer.has_coupon("SHIPFREE"):
+            base -= Decimal("5.00")
+        return max(base, Decimal("0"))
+  why: >-
+    Without the second weight tier the score is exactly 10: 1, plus 7
+    `if`/`elif` branches, plus the `and` and the `or`. The rule reports only
+    scores above the limit.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/orders/status.ts
+      expect_line: 3
+      code: |
+        type Order = { state: string; refunded: boolean };
+
+        export function statusLabel(order: Order): string {
+          switch (order.state) {
+            case "new":
+              return "New";
+            case "paid":
+              return order.refunded ? "Refunded" : "Paid";
+            case "packed":
+              return "Packed";
+            case "shipped":
+              return "Shipped";
+            case "delivered":
+              return "Delivered";
+            case "returned":
+              return "Returned";
+            case "lost":
+              return "Lost in transit";
+            case "cancelled":
+              return "Cancelled";
+            case "held":
+              return "On hold";
+            default:
+              return "Unknown";
+          }
+        }
+    not_flagged:
+      language: typescript
+      filename: src/orders/status.ts
+      code: |
+        type Order = { state: string; refunded: boolean };
+
+        const LABELS: Record<string, string> = {
+          new: "New",
+          packed: "Packed",
+          shipped: "Shipped",
+          delivered: "Delivered",
+          returned: "Returned",
+          lost: "Lost in transit",
+          cancelled: "Cancelled",
+          held: "On hold",
+        };
+
+        export function statusLabel(order: Order): string {
+          if (order.state === "paid") {
+            return order.refunded ? "Refunded" : "Paid";
+          }
+          return LABELS[order.state] ?? "Unknown";
+        }
+      why: >-
+        The labels live in a lookup object, so the function has one `if`
+        and one ternary: a score of 3. In TS/JS the nine `case` labels of the
+        flagged version (not `default`) and the ternary make 11.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`. Each function and method is scored on its own:
+    nested functions, classes and lambdas inside it are not added to its
+    score.
+  - >-
+    Python starts at 1 and adds 1 for each `if` and `elif`, `for`,
+    `async for`, `while` and conditional expression; 1 for each operand
+    after the first in an `and`/`or` chain; 1 per `except` handler; 1 per
+    `for` and per `if` in a comprehension; and 1 per `match` case that can
+    fail, plus 1 per case guard (`case _:` adds nothing).
+  - >-
+    TypeScript and JavaScript start at 1 and add 1 for each `if`, classic
+    `for`, `while`, `case` label (not `default`), `catch` and ternary.
+    `for…of`, `for…in`, `do…while`, `&&`, `||` and `??` add nothing. Java
+    adds 1 for `if`, `for`, enhanced `for`, `while`, `do`, `catch` and
+    ternaries; switch cases and `&&`/`||` add nothing. Go adds 1 for `if`,
+    `for`, each `switch` and `select` statement, each `case` and `default`,
+    and each `&&` or `||`.
+  - >-
+    Reports a score above the limit. The limit is `complexity` under
+    `[tool.skylos]` (default 10) for Python, TS/JS and Java; Go always uses
+    10.
+  - >-
+    Python skips test code (test folders, `test_*.py` and `*_test.py`
+    modules that define tests, files pytest is configured to collect),
+    `examples` and `benchmarks` folders, a top-level `docs` folder and the
+    root `setup.py`. Minified JavaScript is not scanned.
+  - >-
+    Reports on the `def` (or function) line. Python severity is WARN below
+    15 and HIGH from 15; the other languages report MEDIUM.
+
+source_refs:
+  - path: skylos/rules/quality/complexity.py
+    symbol: "def _func_complexity("
+  - path: skylos/rules/quality/complexity.py
+    symbol: "class ComplexityRule"
+  - path: skylos/rules/quality/_scope.py
+    symbol: "def is_non_production_function_scope("
+    note: the Python test, example and docs skip.
+  - path: skylos/visitors/languages/typescript/quality.py
+    symbol: "def _calc_complexity("
+  - path: skylos/visitors/languages/java/quality.py
+    symbol: "COMPLEXITY_NODES"
+  - path: skylos/visitors/languages/go/quality.py
+    symbol: "def scan_go_quality("
+    note: called without thresholds, so Go uses its defaults.
+  - path: skylos/config.py
+    symbol: '"complexity": 10,'
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "CORROBORATING_PAIRS"
+    note: when the finding is listed by default.
+  - path: test/test_complexity.py
+    symbol: "def test_boolean_operators_count"
+
+fix:
+  explanation: >-
+    Move independent decisions out into small helpers or a lookup table, so
+    each function holds one kind of decision.
+  filename: app/shipping.py
+  code: |
+    """Shipping prices for the checkout service."""
+
+    from decimal import Decimal
+
+    FREE_SHIPPING_MIN = Decimal("75.00")
+    BASE_RATES = {
+        "US": Decimal("5.00"),
+        "CA": Decimal("12.00"),
+        "MX": Decimal("12.00"),
+    }
+
+
+    def base_rate(destination):
+        if destination.is_eu:
+            return Decimal("15.00")
+        return BASE_RATES.get(destination.country, Decimal("25.00"))
+
+
+    def weight_surcharge(weight_kg):
+        if weight_kg > 20:
+            return Decimal("10.00")
+        if weight_kg > 5:
+            return Decimal("4.00")
+        return Decimal("0")
+
+
+    def shipping_cost(order, customer):
+        if order.total >= FREE_SHIPPING_MIN and not customer.is_wholesale:
+            return Decimal("0")
+        base = base_rate(order.destination) + weight_surcharge(order.weight_kg)
+        if order.express:
+            base *= 2
+        if customer.is_member or customer.has_coupon("SHIPFREE"):
+            base -= Decimal("5.00")
+        return max(base, Decimal("0"))
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A flat `if`/`elif` or `switch` dispatch over many values scores high
+      but reads easily. Cognitive complexity (SKY-Q306) scores it lower,
+      which is why a Python or JS/TS finding stays hidden unless both agree.
+    - >-
+      It misses branching it does not count: `&&`/`||`/`??` and
+      `for…of` loops in TS/JS, and switch cases and `&&`/`||` in Java.
+    - >-
+      Go ignores the `complexity` setting and always uses 10.
+  suppress:
+    - check: inline
+      text: >-
+        On the `def` line (the reported line):
+      language: python
+      code: |
+        def shipping_cost(order, customer):  # skylos: ignore[SKY-Q301] pricing table
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q301"]` turns the rule off for the
+        project; `complexity = 15` under `[tool.skylos]` raises the limit
+        instead. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-Q306, SKY-Q302, SKY-C304]

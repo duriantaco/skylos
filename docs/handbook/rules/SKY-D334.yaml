@@ -1,0 +1,152 @@
+id: SKY-D334
+title: Root systemd service runs a program from a user-writable folder
+family: infrastructure
+severity: HIGH
+languages: [systemd units]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the detector never reports CRITICAL.
+
+what_it_is: >-
+  An edge or device systemd service that runs as root and starts a program
+  or script from a folder ordinary users can write to, such as `/home`,
+  `/tmp` or a mounted USB stick. Whoever can change that file decides what
+  root runs.
+
+why_it_matters: >-
+  On a device where the default user's home folder holds the code, any
+  process running as that user, or anyone with its SSH key, can edit the
+  script and get root at the next restart.
+
+flagged_example:
+  language: ini
+  filename: camera-uploader.service
+  expect_line: 6
+  code: |
+    [Unit]
+    Description=Jetson camera uploader
+
+    [Service]
+    User=root
+    ExecStart=/usr/bin/python3 /home/jetson/uploader/main.py --camera /dev/video0
+    Restart=always
+    NoNewPrivileges=true
+    ProtectSystem=strict
+    PrivateTmp=true
+
+not_flagged_example:
+  language: ini
+  filename: camera-uploader.service
+  code: |
+    [Unit]
+    Description=Jetson camera uploader
+
+    [Service]
+    User=root
+    WorkingDirectory=/home/jetson/uploader
+    ExecStart=/opt/uploader/venv/bin/python /opt/uploader/main.py --camera /dev/video0
+    Restart=always
+    NoNewPrivileges=true
+    ProtectSystem=strict
+    PrivateTmp=true
+  why: >-
+    Only the working folder is under `/home`. The interpreter and the script
+    both live under `/opt`, which only root can change, so this rule stays
+    quiet. SKY-D333 still reports the `User=root` line.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Reads the same `*.service` files as SKY-D333 and
+    needs the same `[Service]` section and edge context (a device, camera,
+    GPU or robot word, or a `/dev/` path, somewhere in the unit).
+  - >-
+    Needs the service to run as root: no `User=` in `[Service]`, or the last
+    `User=` is empty, `0` or `root`.
+  - >-
+    Looks at `ExecStart=`, `ExecStartPre=`, `ExecStartPost=` and
+    `ExecReload=`, after removing systemd's `-`, `+`, `!` and `@` prefixes.
+  - >-
+    Reports when the program, or any later word in the command that starts
+    with a path, is under `/home/`, `/tmp/`, `/var/tmp/`, `/dev/shm/`,
+    `/media/`, `/mnt/` or `/run/user/`.
+  - >-
+    Reports HIGH on the first such command line and then stops.
+
+source_refs:
+  - path: skylos/rules/config/edge/systemd.py
+    symbol: "def _scan_mutable_exec_path("
+  - path: skylos/rules/config/edge/systemd.py
+    symbol: "def _mutable_exec_path("
+  - path: skylos/rules/config/edge/systemd.py
+    symbol: "MUTABLE_EXEC_RE = re.compile("
+  - path: test/test_edge_systemd_security.py
+    symbol: "def test_edge_systemd_scanner_detects_root_service_risks"
+
+fix:
+  explanation: >-
+    Install the code under a root-owned folder such as `/opt` and run it
+    from there. If the service does not need root, also give it its own
+    user, which clears SKY-D333 as well.
+  filename: camera-uploader.service
+  code: |
+    [Unit]
+    Description=Jetson camera uploader
+
+    [Service]
+    User=root
+    ExecStart=/usr/bin/python3 /opt/uploader/main.py --camera /dev/video0
+    Restart=always
+    NoNewPrivileges=true
+    ProtectSystem=strict
+    PrivateTmp=true
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Any argument that is a path in one of those folders is read as the
+      program being run, so `--spool /tmp/uploads` on a root service is
+      reported as "executes /tmp/uploads". A path written as
+      `--spool=/tmp/uploads` is not.
+    - >-
+      A script path inside quotes is missed:
+      `ExecStart=/bin/sh -c "/home/pi/run.sh"` is not reported.
+    - >-
+      `EnvironmentFile=` and `WorkingDirectory=` under `/home` are not
+      checked, although a root service that reads environment variables
+      from a user-writable file can also be taken over.
+    - >-
+      Root services with no device context are never checked.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: ini
+          filename: camera-uploader.service
+          code: |
+            [Unit]
+            Description=Jetson camera uploader
+
+            [Service]
+            User=root
+            # skylos: ignore[SKY-D334] /home/jetson is root-owned on this image
+            ExecStart=/usr/bin/python3 /home/jetson/uploader/main.py --camera /dev/video0
+            Restart=always
+            NoNewPrivileges=true
+            ProtectSystem=strict
+            PrivateTmp=true
+      text: >-
+        Put the marker on a comment line directly above the reported
+        `Exec…=` line. systemd reads `#` only at the start of a line, so do
+        not append it to the command.
+      language: ini
+      code: |
+        # skylos: ignore[SKY-D334] /home/jetson is root-owned on this image
+        ExecStart=/usr/bin/python3 /home/jetson/uploader/main.py
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D334"]` turns the rule off for the
+        project.
+
+related: [SKY-D333, SKY-D335, SKY-D336]

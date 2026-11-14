@@ -1,0 +1,149 @@
+id: SKY-D359
+title: Cached request-derived external Flask URL
+family: security
+severity: MEDIUM
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  Flask's `url_for(..., _external=True)` builds an absolute link such as
+  `https://shop.example.com/product/tea`. Unless `SERVER_NAME` is set, the
+  host part comes from the `Host` header of the current request, which the
+  client chooses. SKY-D359 reports such links built inside a function whose
+  result is cached.
+
+why_it_matters: >-
+  The first request fills the cache. If an attacker sends it with
+  `Host: evil.example`, every later visitor gets a sitemap, email or page
+  whose links point to the attacker's site. This is called web cache
+  poisoning, and it can turn into phishing or password-reset theft.
+
+flagged_example:
+  language: python
+  filename: app/shop.py
+  expect_line: 15
+  code: |
+    from functools import lru_cache
+
+    from flask import Flask, url_for
+
+    app = Flask(__name__)
+
+
+    @app.get("/product/<slug>")
+    def product(slug):
+        return {"slug": slug}
+
+
+    @lru_cache(maxsize=1)
+    def sitemap_urls():
+        return [url_for("product", slug=s, _external=True) for s in ("tea", "mugs")]
+
+
+    @app.get("/sitemap.json")
+    def sitemap():
+        return {"urls": sitemap_urls()}
+
+not_flagged_example:
+  language: python
+  filename: app/shop.py
+  code: |
+    from flask import Flask, url_for
+
+    app = Flask(__name__)
+
+
+    @app.get("/product/<slug>")
+    def product(slug):
+        return {"slug": slug}
+
+
+    @app.get("/sitemap.json")
+    def sitemap():
+        urls = [url_for("product", slug=s, _external=True) for s in ("tea", "mugs")]
+        return {"urls": urls}
+  why: >-
+    The links are built again for every request, so a forged `Host` header
+    only changes the reply to the person who sent it. Skylos reports
+    external URLs only inside cached functions.
+
+how_skylos_decides:
+  - >-
+    Finds `flask.url_for()` calls, resolved through imports, that pass a
+    literal `_external=True`.
+  - >-
+    Reports only when the call sits in a cached function: one decorated with
+    `functools.lru_cache`, `functools.cache` or `functools.cached_property`,
+    or a method that such a cached method of the same class calls through
+    `self`, together with functions nested in it.
+  - >-
+    Skips the file when it has exactly one Flask app and that app's config
+    sets a literal `SERVER_NAME`, or a `TRUSTED_HOSTS` list with one fixed
+    host, so the host no longer comes from the request.
+  - >-
+    Reports the rest as MEDIUM.
+
+source_refs:
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "def _index_cached_helpers"
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "def _fixed_flask_host"
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "External Flask URL is generated while building cached content;"
+
+fix:
+  explanation: >-
+    Set `SERVER_NAME` (or `TRUSTED_HOSTS`) to your real host so Flask
+    builds external links from configuration, not from the request. If you
+    cannot, do not cache content that contains absolute links.
+  filename: app/shop.py
+  code: |
+    from functools import lru_cache
+
+    from flask import Flask, url_for
+
+    app = Flask(__name__)
+    app.config["SERVER_NAME"] = "shop.example.com"
+
+
+    @app.get("/product/<slug>")
+    def product(slug):
+        return {"slug": slug}
+
+
+    @lru_cache(maxsize=1)
+    def sitemap_urls():
+        return [url_for("product", slug=s, _external=True) for s in ("tea", "mugs")]
+
+
+    @app.get("/sitemap.json")
+    def sitemap():
+        return {"urls": sitemap_urls()}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A host fixed by a reverse proxy, or by `SERVER_NAME` set in another
+      module or an environment config file, is not seen, so the call is
+      still reported.
+    - >-
+      Caches from other libraries, such as Flask-Caching's `@cache.cached()`,
+      are not recognised, so links cached that way are not reported.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why. Only the listed rule is hidden.
+      language: python
+      code: |
+        link = url_for("home", _external=True)  # skylos: ignore[SKY-D359] proxy pins Host
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D359"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D230, SKY-D216]

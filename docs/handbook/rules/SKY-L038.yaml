@@ -1,0 +1,104 @@
+id: SKY-L038
+title: Conversion call inside f-string
+family: logic
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Only when listed. This is advice outside the default set: the report
+    keeps it in JSON but does not list it, and the gate does not count it,
+    unless you pass `--all-advice` or select the rule (`--select SKY-L038`).
+
+what_it_is: >-
+  An f-string field that calls `str()`, `repr()` or `ascii()`, such as
+  `f"Order {str(order.id)}"`. f-strings have conversion flags for exactly
+  this: `{order.id!s}`, `{order.id!r}` and `{order.id!a}`.
+
+why_it_matters: >-
+  The call is longer than the flag and does the same thing. It is a small
+  readability cost, but it adds up in logging and message code, and it is a
+  common sign of code converted from `%` or `.format()` style by hand.
+
+flagged_example:
+  language: python
+  filename: shipping/notify.py
+  expect_line: 5
+  code: |
+    """Shipping notifications."""
+
+
+    def shipped_message(order):
+        return f"Order {str(order.id)} shipped to {order.city}"
+
+not_flagged_example:
+  language: python
+  filename: shipping/notify.py
+  code: |
+    """Shipping notifications."""
+
+
+    def shipped_message(order):
+        return f"Order {str(order.id).zfill(8)} shipped to {order.city}"
+  why: >-
+    `str()` is called to get a string for `.zfill(8)`, not as the whole
+    field. A conversion flag cannot express that, so there is nothing to
+    replace.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Looks at every f-string field
+    that has no conversion flag yet.
+  - >-
+    Reports a field whose whole expression is `str(x)`, `repr(x)` or
+    `ascii(x)` with one plain argument, where the name resolves to the
+    builtin (a local `def str`, a parameter or an assignment named `str`
+    turns the check off).
+  - >-
+    Reads the source to make sure the field ends with `}` or `:`, so debug
+    fields such as `{str(x)=}` are not reported: there the expression text
+    is part of the output.
+  - >-
+    Skips files where the project's ruff configuration ignores `RUF010`,
+    and golden test fixtures. Reports LOW on the line of the call.
+
+source_refs:
+  - path: skylos/rules/quality/slop.py
+    symbol: "class FormattedConversionCallRule"
+  - path: skylos/rules/quality/slop.py
+    symbol: "def _ordinary_conversion_field("
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "DEFAULT_ADVICE_RULES ="
+    note: L038 is not in the default advice set, so it is not listed by default.
+
+fix:
+  explanation: >-
+    Use the conversion flag. For `str()`, `{order.id}` alone is usually
+    enough, since an f-string field already formats the value as text.
+  filename: shipping/notify.py
+  code: |
+    """Shipping notifications."""
+
+
+    def shipped_message(order):
+        return f"Order {order.id!s} shipped to {order.city}"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      This is style advice; the code works. Teams that find `str()` easier
+      to read than `!s` can turn the rule off.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported line.
+      language: python
+      code: |
+        label = f"{str(item)}"  # skylos: ignore[SKY-L038] matches the legacy format
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L038"]` turns the rule off for the
+        project. Ignoring ruff's `RUF010` in the project's ruff
+        configuration also turns it off.
+
+related: [SKY-L037]

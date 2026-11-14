@@ -1,0 +1,281 @@
+id: SKY-A121
+title: CI check weakened
+family: ai-defects
+severity: HIGH
+languages: [GitHub Actions workflows and composite actions, GitLab CI]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` reports it, in its `silenced_checks` check, which
+    advises by default: the finding is shown but does not fail the verdict.
+    With `silenced_checks = "block"` in `[tool.skylos.done.checks]` it
+    blocks. `skylos cicd risk-review` counts it as "CI weakened", which
+    needs a human approval.
+run_with: >-
+  `skylos done` (compares uncommitted changes with `HEAD`) or
+  `skylos done --base origin/main` for a pull request; agent hooks run it
+  when the agent stops
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule; the handbook build runs `skylos .`
+    scans, which never report it.
+
+what_it_is: >-
+  The change lets a CI step that runs a linter, type checker, formatter
+  check, scanner or test runner fail without failing the build, or stops it
+  running at all. Examples are `continue-on-error: true`, `|| true` after
+  the command, `--exit-zero`, GitLab's `allow_failure`, or the step, job or
+  pull-request trigger removed.
+
+why_it_matters: >-
+  A required CI check is the last line that stops a broken or unsafe change
+  from merging. Once it can fail quietly the check still shows a green tick,
+  so nobody notices that it no longer protects anything.
+
+flagged_example:
+  language: yaml
+  setup: git_diff
+  expect_file: .github/workflows/ci.yml
+  expect_line: 12
+  base_files:
+    - filename: .github/workflows/ci.yml
+      code: |
+        name: ci
+        on: [pull_request]
+
+        jobs:
+          checks:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - uses: actions/setup-python@v5
+              - run: pip install ruff mypy
+              - run: ruff check .
+              - name: Type check
+                run: mypy src
+  files:
+    - filename: .github/workflows/ci.yml
+      code: |
+        name: ci
+        on: [pull_request]
+
+        jobs:
+          checks:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - uses: actions/setup-python@v5
+              - run: pip install ruff mypy
+              - run: ruff check .
+              - name: Type check
+                run: mypy src || true
+
+not_flagged_example:
+  language: yaml
+  setup: git_diff
+  base_files:
+    - filename: .github/workflows/ci.yml
+      code: |
+        name: ci
+        on: [pull_request]
+
+        jobs:
+          checks:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - uses: actions/setup-python@v5
+              - run: pip install ruff mypy
+              - run: ruff check .
+              - name: Type check
+                run: mypy src
+  files:
+    - filename: .github/workflows/ci.yml
+      code: |
+        name: ci
+        on: [pull_request]
+
+        jobs:
+          checks:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - uses: actions/setup-python@v5
+              - run: pip install ruff mypy
+              - run: ruff check .
+              - name: Type check
+                run: mypy src
+              - name: Security scan (preview)
+                run: pip install bandit && bandit -r src || true
+  why: >-
+    The quiet step is new and runs a tool no step ran before: it was never
+    required, so making it advisory weakens nothing. The existing `ruff`
+    and `mypy` steps still fail the build.
+
+more_examples:
+  - flagged:
+      language: yaml
+      setup: git_diff
+      expect_file: .gitlab-ci.yml
+      expect_line: 13
+      base_files:
+        - filename: .gitlab-ci.yml
+          code: |
+            stages: [test]
+
+            unit-tests:
+              stage: test
+              image: python:3.12
+              script:
+                - pip install -r requirements.txt
+                - pytest
+
+            semgrep:
+              stage: test
+              image: semgrep/semgrep
+              script:
+                - semgrep scan --config auto --error
+      files:
+        - filename: .gitlab-ci.yml
+          code: |
+            stages: [test]
+
+            unit-tests:
+              stage: test
+              image: python:3.12
+              script:
+                - pip install -r requirements.txt
+                - pytest
+
+            semgrep:
+              stage: test
+              image: semgrep/semgrep
+              allow_failure: true
+              script:
+                - semgrep scan --config auto --error
+    not_flagged:
+      language: yaml
+      setup: git_diff
+      base_files:
+        - filename: .gitlab-ci.yml
+          code: |
+            stages: [test]
+
+            unit-tests:
+              stage: test
+              image: python:3.12
+              script:
+                - pip install -r requirements.txt
+                - pytest
+
+            semgrep:
+              stage: test
+              image: semgrep/semgrep
+              script:
+                - semgrep scan --config auto --error
+      files:
+        - filename: .gitlab-ci.yml
+          code: |
+            stages: [test]
+
+            unit-tests:
+              stage: test
+              image: python:3.12
+              script:
+                - pip install -r requirements.txt
+                - pytest
+
+            sast-semgrep:
+              stage: test
+              image: semgrep/semgrep
+              script:
+                - semgrep scan --config auto --error
+      why: >-
+        The `semgrep` job is gone, but a job with the same command still
+        runs under a new name. A step or job counts as removed only when the
+        same tool no longer runs in any workflow, composite action or GitLab
+        file.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done`, which compares the working tree (or a pull
+    request's head) with a base commit: `HEAD` by default, the merge base
+    with `--base`. Its settings come from the base commit, never from the
+    change.
+  - >-
+    Reads changed `.github/workflows/*.yml`, composite `action.yml` files and
+    `.gitlab-ci.yml` files at the base and after the change. A step is a
+    check step when it runs a linter, type checker, formatter check or
+    scanner, directly, through a `package.json` script or a make, tox or nox
+    target, or through a known action.
+  - >-
+    Reports a check step that can now fail without failing the build:
+    `continue-on-error: true` on the step or job, a swallowed failure
+    (`|| true`, `|| echo`, `; exit 0`, `set +e`), an exit-zero option,
+    fewer failing findings (`--max-warnings` raised, `semgrep --error`
+    dropped, new `--ignore` options), or GitLab `allow_failure` and
+    `when: manual`.
+  - >-
+    Also reports a test or check that stops running: its step or job
+    removed while the same tool runs nowhere else at head, `if: false` or
+    `when: never`, a workflow that no longer runs on pull requests or
+    pushes, or an aggregate job that no longer `needs` the job running it.
+  - >-
+    Each step at head is paired with a base step: one with the same name
+    and tool, else any base step that runs the same tool (same job first).
+    A quiet step with no such partner is new, was never required and is
+    not a weakening. A quiet GitHub Actions test step is reported as
+    SKY-A112 instead, so it is reported once.
+
+source_refs:
+  - path: skylos/done/ci_checks.py
+    symbol: "def ci_weakening("
+  - path: skylos/done/ci_checks.py
+    symbol: "def _counterpart("
+  - path: skylos/done/ci_checks.py
+    symbol: "def classify("
+  - path: skylos/done/ci_checks.py
+    symbol: "def test_failure_swallowed("
+  - path: skylos/done/checks.py
+    symbol: "def check_silenced_checks("
+  - path: skylos/done/config.py
+    symbol: '"silenced_checks": "advise"'
+    note: the default mode.
+
+fix:
+  explanation: >-
+    Keep the check required and fix what it reports. If a check is really
+    too noisy to require yet, add it as a separate, clearly named advisory
+    step and leave the existing required step as it was.
+  language: yaml
+  code: |
+    - name: Type check
+      run: mypy src
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A new advisory step that runs the same tool as an existing required
+      step, such as `mypy --strict src || true` added next to `mypy src`, is
+      paired with the required step and reported as if that step had been
+      loosened.
+    - >-
+      A deliberate change, such as moving a slow scan to a nightly workflow,
+      is reported when no pull-request workflow runs that tool any more.
+    - >-
+      Steps that run a tool through a script Skylos cannot read (a shell
+      file, a custom container entry point) are not recognised as check
+      steps, so weakening them is not seen.
+  suppress:
+    - text: >-
+        `skylos done` findings ignore `# skylos: ignore[...]` comments and the
+        `[tool.skylos] ignore` list. The check only advises by default; to
+        turn it off, commit the mode to the base branch first (the change
+        under review cannot change its own check):
+      language: toml
+      code: |
+        [tool.skylos.done.checks]
+        silenced_checks = "off"
+
+related: [SKY-A112, SKY-A119, SKY-A103]

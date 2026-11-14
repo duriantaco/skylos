@@ -1,0 +1,172 @@
+id: SKY-D325
+title: Symlink-following file read
+family: security
+severity: MEDIUM
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-59]
+
+what_it_is: >-
+  A symbolic link (symlink) is a file that points to another path; reading
+  it reads the target. SKY-D325 reports a file read whose path is built
+  from outside input, when nothing in the function rejects links or other
+  special files and nothing caps how much is read.
+
+why_it_matters: >-
+  If someone can leave a link named `report.csv` in the export folder, a
+  download endpoint that serves `report.csv` hands out `/etc/shadow`, a
+  private key or the app's `.env`. A path such as `/dev/zero` or a huge file
+  read without a size cap can also exhaust the server's memory.
+
+flagged_example:
+  language: python
+  filename: app/exports.py
+  expect_line: 12
+  code: |
+    from pathlib import Path
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+    EXPORTS_DIR = Path("/srv/app/exports")
+
+
+    @app.get("/exports")
+    def download_export():
+        name = Path(request.args["file"]).name
+        data = (EXPORTS_DIR / name).read_bytes()
+        return data, 200, {"Content-Type": "text/csv"}
+
+not_flagged_example:
+  language: python
+  filename: app/show_export.py
+  code: |
+    from pathlib import Path
+
+    import click
+
+
+    @click.command()
+    @click.argument("export_file")
+    def show_export(export_file):
+        """Print an export file to the terminal."""
+        click.echo(Path(export_file).read_text())
+
+
+    if __name__ == "__main__":
+        show_export()
+  why: >-
+    The path is an argument of a Click command, so it comes from the person
+    running the program, who can already read any file they choose. Skylos
+    treats Click and Typer arguments, `sys.argv` and environment variables
+    as the operator's input, not as an attacker's.
+
+how_skylos_decides:
+  - >-
+    Looks at Python reads: `open()` and a path's `.open()` in a read mode
+    (`r`; a `+` mode when the handle is seen being read; a mode it cannot
+    read), `Path.read_text()` and `read_bytes()`, and `os.open()` without
+    write flags.
+  - >-
+    The path must be able to carry outside data: a tainted value (a
+    function parameter, `request.*`, `input()`, `os.getenv()`), a string
+    built with an f-string, `+`, `%` or `.format()`, or a name taken from
+    such a value with `Path(x).name`. A base name joined to a fixed folder
+    is still reported: the last part can be a link.
+  - >-
+    Skips an `os.open()` call when `O_NOFOLLOW` appears in the call or in
+    an earlier statement of the same function, or when it uses the `os`
+    module's `O_CREAT | O_EXCL`.
+  - >-
+    Skips the read when earlier statements in the same function mention
+    both a link or containment check (`is_symlink`, `readlink`, `lstat`,
+    `S_ISLNK`, `O_NOFOLLOW`, `resolve`, `relative_to`, `is_relative_to`, or
+    a file-type check) and a size cap (`st_size`, `MAX_BYTES`, `MAX_FILE`,
+    `MAX_SIDE`) or file-type check (`is_file`, `S_ISREG`, `fstat`). A
+    file-type name alone meets both. It matches names only.
+  - >-
+    A `with open(...) as fh` block whose handle is only read in constant
+    chunks (`fh.read(65536)`, `shutil.copyfileobj()`) needs only the link
+    or containment check.
+  - >-
+    Decides who controls the path as SKY-D324 does: request data and route
+    or MCP tool arguments are reported, operator input is skipped, and a
+    plain helper's parameter is reported only when the scanned callers pass
+    untrusted input (otherwise it moves to `suppressed`). Reports MEDIUM on
+    the line of the read call.
+
+source_refs:
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _flag_symlink_read_if_unsafe"
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _has_symlink_read_guard"
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _record_safety_tokens"
+    note: the guard names, recorded per function.
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _handle_reads_bounded"
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "_OPERATOR_SOURCE_MARKERS = ("
+  - path: skylos/rules/danger/danger_fs/path_provenance.py
+    symbol: "def resolve_helper_parameter_findings"
+  - path: test/test_dangerous.py
+    symbol: "def test_fixed_base_basename_read_still_flags_symlink_read"
+
+fix:
+  explanation: >-
+    Open the file with `O_NOFOLLOW` so a link in the last part makes the
+    call fail, check with `fstat` that it is a regular file, and read at
+    most a fixed number of bytes.
+  filename: app/exports.py
+  code: |
+    import os
+    import stat
+    from pathlib import Path
+
+    from flask import Flask, abort, request
+
+    app = Flask(__name__)
+    EXPORTS_DIR = Path("/srv/app/exports")
+    MAX_EXPORT_BYTES = 10 * 1024 * 1024
+
+
+    @app.get("/exports")
+    def download_export():
+        name = Path(request.args["file"]).name
+        fd = os.open(EXPORTS_DIR / name, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                abort(404)
+            data = fh.read(MAX_EXPORT_BYTES)
+        return data, 200, {"Content-Type": "text/csv"}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A read inside a folder only your own process writes to cannot be
+      redirected, but Skylos cannot see who writes the folder.
+    - >-
+      The guard is found by name, so it can also hide a real problem: an
+      earlier `path.is_file()`, which follows links, is enough to silence
+      the rule, and so is a bare `.resolve()` together with a size check.
+    - >-
+      `O_NOFOLLOW` kept in a module constant is not seen inside the
+      function. Write it in the call or in a local variable.
+  suppress:
+    - check: inline
+      text: >-
+        Silence one reviewed read on its reported line and say why.
+      language: python
+      code: |
+        data = path.read_bytes()  # skylos: ignore[SKY-D325] folder written only by us
+    - check: baseline
+      text: >-
+        Accept the reads you already have with `skylos baseline .`, then scan
+        with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D325"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D324, SKY-D215, SKY-D326]

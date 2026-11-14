@@ -1,0 +1,115 @@
+id: SKY-L033
+title: No-effect statement
+family: logic
+severity: LOW
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  LOW.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A statement that computes a value and throws it away, such as
+  `user.active == False` on a line of its own. Python runs it without
+  complaint. It is almost always a typo for an assignment (`=`) or a
+  missing `assert`.
+
+why_it_matters: >-
+  The code looks as if it does something and does not. In the example
+  below a deactivated user is saved unchanged and can still sign in, and
+  no test or error points at the line.
+
+flagged_example:
+  language: python
+  filename: accounts/admin.py
+  expect_line: 5
+  code: |
+    """User administration."""
+
+
+    def deactivate(user):
+        user.active == False
+        user.save()
+
+not_flagged_example:
+  language: python
+  filename: tests/test_version.py
+  code: |
+    import pytest
+
+    from app.version import Version
+
+
+    def test_version_cannot_compare_with_text():
+        current = Version("1.2")
+        with pytest.raises(TypeError):
+            current < "1.3"
+  why: >-
+    The comparison is thrown away on purpose: the test only checks that
+    making it raises `TypeError`. Skylos skips expressions inside a
+    `with pytest.raises(...)` block, where evaluating them is the point.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Looks at every statement that
+    is a bare expression.
+  - >-
+    Reports a comparison (`==`, `<`, `in`, `is` and the others) whose
+    result is discarded, and a constant expression Skylos can work out
+    without running anything, such as `42` or `1 + 2`.
+  - >-
+    Reports a discarded call to `uuid.uuid1()`, `uuid.uuid3()`,
+    `uuid.uuid4()` or `uuid.uuid5()`; other calls can have side effects
+    and are left alone.
+  - >-
+    Skips strings (docstrings), `...`, `None`, `await` and `yield`, a bare
+    name or attribute, any expression that contains a call or `:=`, a
+    constant expression that would raise (such as `1 / 0`), and expressions
+    inside `with pytest.raises(...)`.
+  - >-
+    Reports LOW on the line of the statement.
+
+source_refs:
+  - path: skylos/rules/quality/logic_maintainability.py
+    symbol: "class NoEffectStatementRule"
+  - path: skylos/rules/quality/logic_maintainability.py
+    symbol: "def _exception_probe_expressions("
+  - path: skylos/rules/quality/logic_maintainability.py
+    symbol: "def _contains_possible_effect("
+
+fix:
+  explanation: >-
+    Use `=` to change the value. If the line was meant as a check, write
+    `assert` or an `if`.
+  filename: accounts/admin.py
+  code: |
+    """User administration."""
+
+
+    def deactivate(user):
+        user.active = False
+        user.save()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A comparison kept only for its side effect, such as an overloaded
+      `==` on a query-builder object that records something, is reported.
+    - >-
+      It misses discarded arithmetic or attribute reads that involve names,
+      such as `total + tax` or `user.active`, because Skylos cannot prove
+      they have no effect.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported line.
+      language: python
+      code: |
+        query.price < 10  # skylos: ignore[SKY-L033] builder records the filter
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L033"]` turns the rule off for the
+        project.
+
+related: [SKY-L003, SKY-L040]

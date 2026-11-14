@@ -1,0 +1,107 @@
+id: SKY-L041
+title: Empty test body
+family: logic
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A collected test whose body is only a docstring, `pass` or `...`. Its
+  name promises a check that was never written.
+
+why_it_matters: >-
+  pytest reports the empty test as passed, so the suite looks complete.
+  Generated test files often contain a row of such stubs, and nobody
+  notices that refunds were never tested.
+
+flagged_example:
+  language: python
+  filename: tests/test_refunds.py
+  expect_line: 1
+  code: |
+    def test_refund_restores_stock():
+        """Refunding an order puts its items back in stock."""
+        pass
+
+not_flagged_example:
+  language: python
+  filename: tests/test_refunds.py
+  code: |
+    import pytest
+
+
+    @pytest.mark.skip(reason="needs the warehouse stub")
+    def test_refund_restores_stock():
+        """Refunding an order puts its items back in stock."""
+        pass
+  why: >-
+    The test is marked `skip` with a reason, so pytest reports it as
+    skipped rather than passed and the gap shows up in every test run.
+    Skylos leaves skipped and `xfail` tests alone.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python test files that pytest would collect
+    under the project's settings (`test_*.py` and `*_test.py` by default)
+    and on proven `unittest.TestCase` classes. Skipped and `xfail` tests,
+    `conftest.py` and fixture folders are left out.
+  - >-
+    Reports a test whose body, after an optional docstring, holds only
+    `pass` or `...`.
+  - >-
+    Skips a test that takes parameters (fixtures can carry the checks), and
+    every test in a file or class where fixtures could do the checking: a
+    `usefixtures` mark, an `autouse` fixture in the module, a setup or
+    teardown hook such as `setUp`, `setup_method` or `setup_module`, or a
+    `conftest.py` in
+    the test's folder or above.
+  - >-
+    Reports LOW on the `def` line.
+
+source_refs:
+  - path: skylos/rules/quality/test_assertions.py
+    symbol: "class EmptyTestRule"
+  - path: skylos/rules/quality/test_assertions.py
+    symbol: "def _only_placeholders("
+  - path: skylos/rules/quality/_test_subjects.py
+    symbol: "def _possible_conftest_fixtures("
+
+fix:
+  explanation: >-
+    Write the check the name describes, or delete the stub. If it must wait,
+    mark it `skip` with a reason, as in the example Skylos leaves alone.
+  filename: tests/test_refunds.py
+  code: |
+    from shop.orders import place_order, refund
+    from shop.stock import stock_level
+
+
+    def test_refund_restores_stock():
+        """Refunding an order puts its items back in stock."""
+        order = place_order(sku="MUG-1", quantity=2)
+        refund(order)
+        assert stock_level("MUG-1") == 10
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A test that exists only to prove a module imports cleanly is reported
+      when its body is `pass`. A plain `import` at the top of the file
+      already does that.
+    - >-
+      It misses stubs that take a fixture parameter, since the fixture may
+      hold the real checks.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `def` line.
+      language: python
+      code: |
+        def test_refund_restores_stock():  # skylos: ignore[SKY-L041] placeholder
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L041"]` turns the rule off for the
+        project.
+
+related: [SKY-L040, SKY-L026, SKY-A101]

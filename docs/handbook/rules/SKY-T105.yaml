@@ -1,0 +1,159 @@
+id: SKY-T105
+title: Unvalidated JSON type assertion
+family: quality
+severity: MEDIUM
+languages: [TypeScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  `JSON.parse()` and a fetch response's `.json()` return whatever the text
+  contained. Asserting the result with `as Settings` only tells the
+  compiler what to assume; nothing checks it. SKY-T105 reports such an
+  assertion when no validation sits in between.
+
+why_it_matters: >-
+  A settings file edited by hand, or an API that changed its response, is
+  accepted as if it matched the type. The mistake surfaces later as
+  `undefined` in the middle of the program, or as a value from outside
+  that was trusted without a check.
+
+flagged_example:
+  language: typescript
+  filename: src/settings.ts
+  expect_line: 4
+  code: |
+    type Settings = { theme: "light" | "dark"; fontSize: number };
+
+    export function loadSettings(raw: string): Settings {
+      return JSON.parse(raw) as Settings;
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/settings.ts
+  code: |
+    type Settings = { theme: "light" | "dark"; fontSize: number };
+
+    function isSettings(value: unknown): value is Settings {
+      const v = value as Partial<Record<keyof Settings, unknown>>;
+      const themeOk = v.theme === "light" || v.theme === "dark";
+      return themeOk && typeof v.fontSize === "number";
+    }
+
+    export function loadSettings(raw: string): Settings {
+      const data: unknown = JSON.parse(raw);
+      if (!isSettings(data)) {
+        throw new Error("settings file is not valid");
+      }
+      return data;
+    }
+  why: >-
+    The parsed value is kept as `unknown` and only becomes `Settings` after
+    the type guard has checked it. The one assertion left is to a type that
+    still contains `unknown`, which is not a claim about the data.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/api/users.ts
+      expect_line: 5
+      code: |
+        type User = { id: string; email: string };
+
+        export async function fetchUser(id: string): Promise<User> {
+          const res = await fetch(`/api/users/${id}`);
+          return (await res.json()) as User;
+        }
+    not_flagged:
+      language: typescript
+      filename: src/api/users.ts
+      code: |
+        type User = { id: string; email: string };
+
+        export async function fetchUser(id: string): Promise<unknown> {
+          const res = await fetch(`/api/users/${id}`);
+          return await res.json();
+        }
+      why: >-
+        The response is returned as `unknown`, so every caller has to check
+        it before using it as a `User`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on `.ts`, `.tsx`, `.mts` and `.cts` files.
+    Declaration files, generated files and files that do not parse are
+    skipped.
+  - >-
+    Finds an assertion (`x as T` or `<T>x`) to a precise type: not
+    `as const`, and with no `any`, `unknown`, `object` or `{}` inside it.
+  - >-
+    Its operand, looking through parentheses, `await`, `!` and `satisfies`,
+    must be either a call to the global `JSON.parse` with one argument that
+    is not a fixed string, or an awaited `.json()` call with no arguments
+    on a response that comes straight from `await fetch(...)` or from a
+    `const` assigned `await fetch(...)`.
+  - >-
+    Gives up when `JSON`, `JSON.parse`, `fetch` or `Response.prototype.json`
+    is shadowed or reassigned in the file, or when the file is too large to
+    analyse completely.
+  - >-
+    Reports MEDIUM on the line where the assertion starts.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/type_safety.py
+    symbol: "def _boundary_assertion_findings("
+  - path: skylos/visitors/languages/typescript/type_safety.py
+    symbol: "def _is_builtin_json_parse("
+  - path: skylos/visitors/languages/typescript/type_safety.py
+    symbol: "def _is_fetch_response_json("
+  - path: skylos/visitors/languages/typescript/type_safety.py
+    symbol: "def _is_static_json_text("
+
+fix:
+  explanation: >-
+    Keep the parsed value as `unknown` and check it with a type guard or a
+    schema library such as Zod before using it as the type.
+  filename: src/settings.ts
+  code: |
+    type Settings = { theme: "light" | "dark"; fontSize: number };
+
+    function isSettings(value: unknown): value is Settings {
+      const v = value as Partial<Record<keyof Settings, unknown>>;
+      const themeOk = v.theme === "light" || v.theme === "dark";
+      return themeOk && typeof v.fontSize === "number";
+    }
+
+    export function loadSettings(raw: string): Settings {
+      const data: unknown = JSON.parse(raw);
+      if (!isSettings(data)) {
+        throw new Error("settings file is not valid");
+      }
+      return data;
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      JSON that the program wrote itself a moment earlier, for example a
+      value read back from its own cache, is reported although it cannot
+      have another shape.
+    - >-
+      It misses a `.json()` call on a response that came from a wrapper
+      such as `axios` or a helper function, and an assertion done in a
+      separate step (`const data = JSON.parse(raw); return data as T`).
+  suppress:
+    - check: inline
+      text: >-
+        On the reported line:
+      language: typescript
+      code: |
+        return JSON.parse(raw) as Settings; // skylos: ignore[SKY-T105] written by saveSettings
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-T105"]` in `pyproject.toml` turns the
+        rule off for the project. A baseline accepts existing findings, but
+        it records the absolute file path and the line, so an entry stops
+        matching when the checkout moves or the line shifts.
+
+related: [SKY-T103, SKY-T106]

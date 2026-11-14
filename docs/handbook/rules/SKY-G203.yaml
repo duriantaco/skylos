@@ -1,0 +1,187 @@
+id: SKY-G203
+title: Go defer inside a loop
+family: go
+severity: MEDIUM
+languages: [Go]
+gate:
+  full: counted
+
+what_it_is: >-
+  In Go, `defer` runs a call when the surrounding function returns, not when
+  the current loop iteration ends. A `defer f.Close()` inside a loop keeps
+  every file open until the whole function finishes. SKY-G203 reports a
+  `defer` inside a `for` or `range` loop unless a `return` follows it in the
+  same loop body.
+
+why_it_matters: >-
+  A loop over thousands of files can fail with "too many open files". With
+  `mu.Lock(); defer mu.Unlock()` in a loop, the second iteration waits for a
+  lock that is only released when the function returns, so it deadlocks.
+
+flagged_example:
+  language: go
+  filename: handlers/export.go
+  expect_line: 15
+  code: |
+    package handlers
+
+    import (
+    	"archive/zip"
+    	"io"
+    	"os"
+    )
+
+    func ExportReports(zw *zip.Writer, paths []string) error {
+    	for _, p := range paths {
+    		f, err := os.Open(p)
+    		if err != nil {
+    			return err
+    		}
+    		defer f.Close()
+    		w, err := zw.Create(p)
+    		if err != nil {
+    			return err
+    		}
+    		if _, err := io.Copy(w, f); err != nil {
+    			return err
+    		}
+    	}
+    	return nil
+    }
+
+not_flagged_example:
+  language: go
+  filename: handlers/config.go
+  code: |
+    package handlers
+
+    import (
+    	"encoding/json"
+    	"os"
+    )
+
+    type ExportConfig struct {
+    	Format string `json:"format"`
+    }
+
+    // LoadExportConfig reads the first config file that exists.
+    func LoadExportConfig(candidates []string) (*ExportConfig, error) {
+    	for _, path := range candidates {
+    		f, err := os.Open(path)
+    		if err != nil {
+    			continue
+    		}
+    		defer f.Close()
+    		var cfg ExportConfig
+    		err = json.NewDecoder(f).Decode(&cfg)
+    		return &cfg, err
+    	}
+    	return nil, os.ErrNotExist
+    }
+  why: >-
+    The `defer` is followed by a `return` in the same loop body, so it can
+    run at most once: the function ends in the same iteration that opened
+    the file.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. The bundled Go engine, `skylos-go`, parses each
+    `.go` file with Go's own parser. `_test.go` files, symbolic links and
+    files under `vendor`, `testdata`, `node_modules` and hidden folders are
+    skipped; generated files are checked. A `go.mod` is not required.
+  - >-
+    Walks each function body, and separately each function literal, keeping
+    track of the `for` and `range` loops around every statement
+    (three-clause loops and `for {}` count too).
+  - >-
+    Stops at a function literal inside the loop: `go func() { defer
+    wg.Done() }()` and per-iteration closures have their own defers and are
+    not reported.
+  - >-
+    Reports a `defer` with a loop around it unless it is a direct statement
+    of the innermost loop body and is followed, later in that same body, by
+    a `return`, or by a plain `break` when only one loop encloses it. It does
+    not check whether a `continue` in between can skip that exit.
+  - >-
+    Reports MEDIUM. The ID stays SKY-G203 in the output: Go findings that
+    have a cross-language rule are renamed (Go SQL injection SKY-G211 is
+    reported as SKY-D211), but defer-in-loop has none.
+
+source_refs:
+  - path: skylos/engines/go/internal/analyzer/analyzer.go
+    symbol: "func (a *Analyzer) walkDefersInLoops("
+  - path: skylos/engines/go/internal/analyzer/analyzer.go
+    symbol: "func deferRunsOnce("
+    note: the run-once exemption.
+  - path: skylos/visitors/languages/go/go.py
+    symbol: "_GO_RULE_REMAP"
+    note: G203 is not renamed.
+  - path: skylos/engines/go/internal/analyzer/analyzer_path_test.go
+    symbol: "func TestReliabilitySeveritiesAndPrecision("
+
+fix:
+  explanation: >-
+    Move the loop body into its own function, so each `defer` runs when that
+    call returns, once per iteration. Closing the file explicitly before the
+    next iteration also works.
+  filename: handlers/export.go
+  code: |
+    package handlers
+
+    import (
+    	"archive/zip"
+    	"io"
+    	"os"
+    )
+
+    func ExportReports(zw *zip.Writer, paths []string) error {
+    	for _, p := range paths {
+    		if err := addReport(zw, p); err != nil {
+    			return err
+    		}
+    	}
+    	return nil
+    }
+
+    func addReport(zw *zip.Writer, p string) error {
+    	f, err := os.Open(p)
+    	if err != nil {
+    		return err
+    	}
+    	defer f.Close()
+    	w, err := zw.Create(p)
+    	if err != nil {
+    		return err
+    	}
+    	_, err = io.Copy(w, f)
+    	return err
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A `defer` inside an `if` block in the loop, followed by a `return` in
+      that block, is reported even though it runs once: Skylos only looks at
+      direct statements of the loop body.
+    - >-
+      A labelled `break outer` is reported even when it leaves the only
+      loop.
+    - >-
+      It misses a `defer` followed by an `if … { continue }` and then a
+      `return`: the `continue` lets the `defer` run again, but the later
+      `return` counts as the exit.
+  suppress:
+    - check: inline
+      text: >-
+        On the `defer` line; a comment on the line above is not read:
+      language: go
+      code: |
+        defer f.Close() // skylos: ignore[SKY-G203] the loop returns after the first match
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-G203"]` (the ID in upper case) turns the
+        rule off. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-G260, SKY-L008]

@@ -1,0 +1,184 @@
+id: SKY-D312
+title: JavaScript install runs dependency scripts in CI
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  The catalog lists HIGH, but the detector reports every finding as
+  MEDIUM, whether or not the job holds secrets or a write token.
+languages: [GitHub Actions workflows, composite actions]
+gate:
+  full: counted
+
+what_it_is: >-
+  `npm ci`, `npm install`, `yarn install`, `pnpm install` and
+  `bun install` can run each dependency's lifecycle scripts, such as
+  `postinstall`, while installing. SKY-D312 reports such an install in a
+  workflow `run:` block that does not pass `--ignore-scripts`.
+
+why_it_matters: >-
+  A compromised dependency's `postinstall` script runs inside the job,
+  where it can read the job's token, secrets and OIDC token. Several npm
+  attacks stole publish tokens from CI exactly this way, then used them to
+  release infected versions of other packages.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  expect_line: 24
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        name: Publish to npm
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        environment: npm
+        permissions:
+          contents: read
+          id-token: write
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@v4
+            with:
+              node-version: 22
+              registry-url: https://registry.npmjs.org
+          - run: npm ci
+          - run: npm run build
+          - run: npm publish --provenance --access public
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        name: Publish to npm
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        environment: npm
+        permissions:
+          contents: read
+          id-token: write
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@v4
+            with:
+              node-version: 22
+              registry-url: https://registry.npmjs.org
+          - run: |
+              npm ci --ignore-scripts
+              npm rebuild esbuild
+          - run: npm run build
+          - run: npm publish --provenance --access public
+  why: >-
+    Install scripts are off, and the one dependency that needs its build
+    step is rebuilt by name. `npm run build` runs the project's own script
+    from `package.json`, which is reviewed with the repository; the rule
+    only looks at installs.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows` and composite actions
+    (`action.yml`, `action.yaml`). Every `run:` block is checked, in any
+    job, whatever its trigger or permissions.
+  - >-
+    Reports a line that starts (after spaces) with `npm`, `pnpm`, `yarn`
+    or `bun` followed by `ci` or `install`, unless `--ignore-scripts`
+    appears later on that same line.
+  - >-
+    Takes only the first match in each `run:` block. Reports MEDIUM on the
+    first line of the file that contains the matched text, such as
+    `npm ci`; blocks whose match has the same text give one finding there.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_js_install_scripts("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "JS_INSTALL_RE = re.compile("
+    note: the install-command pattern.
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_issue_derived_hardening_gaps"
+
+fix:
+  explanation: >-
+    Install with `--ignore-scripts`. If a dependency really needs its
+    install step (a native module, `esbuild`), run `npm rebuild <name>`
+    for that package only, after reviewing it.
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        name: Publish to npm
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        environment: npm
+        permissions:
+          contents: read
+          id-token: write
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: actions/setup-node@v4
+            with:
+              node-version: 22
+              registry-url: https://registry.npmjs.org
+          - run: npm ci --ignore-scripts
+          - run: npm run build
+          - run: npm publish --provenance --access public
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Only the command line is read. `ignore-scripts=true` in `.npmrc` or
+      `npm config set ignore-scripts true` is not seen, and Bun, or pnpm
+      from version 10, which skip dependency scripts unless the project
+      trusts the package, are still reported.
+    - >-
+      `--ignore-scripts` anywhere later on the line, even in a `#` comment,
+      clears it. Installs that do not start the line
+      (`cd web && npm ci`), `npm i` and a bare `yarn` are missed.
+    - >-
+      Location: the finding goes to the first line containing the same
+      text, so after an earlier `npm ci --ignore-scripts` a later plain
+      `npm ci` is reported on the earlier, safe line.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D312] <reason>` on the reported line or
+        on the line directly above it, one rule per marker. In a multi-line
+        `run:` block the marker can be a shell comment.
+      language: yaml
+      code: |
+        run: |
+          # skylos: ignore[SKY-D312] test job, no secrets or write token
+          npm ci
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D312"]` turns the rule off for the
+        whole project. A baseline also works, but it records the absolute
+        file path and line, so it stops matching when the checkout moves or
+        lines above the finding change.
+
+related: [SKY-D341, SKY-D371, SKY-D309, SKY-D310]

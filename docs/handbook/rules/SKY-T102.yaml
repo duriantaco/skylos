@@ -1,0 +1,170 @@
+id: SKY-T102
+title: Missing return type annotation
+family: quality
+severity: LOW
+severity_note: >-
+  The catalog gives no severity. Every finding is reported LOW.
+languages: [Python]
+run_with: >-
+  `--quality`, when the project's mypy settings require annotations or
+  `typing_coverage_advice = true` is set under `[tool.skylos]`
+gate:
+  full: counted
+  opt_in: >-
+    a mypy policy that requires annotations for the file
+    (`disallow_untyped_defs`, `disallow_incomplete_defs` or `strict`), or
+    `typing_coverage_advice = true` under `[tool.skylos]`
+  note: >-
+    When it runs, it is listed and counted toward `max_quality`. Missing
+    parameter types on the same function (SKY-T101) are shown in the same
+    entry.
+
+what_it_is: >-
+  A return annotation (`-> str`) states what a function gives back. SKY-T102
+  reports a public Python function or method without one, but only where
+  the project has asked for annotations: when its own mypy settings
+  require them, or when annotation advice is turned on.
+
+why_it_matters: >-
+  Without a declared return type, mypy treats the function as returning
+  `Any` (or skips it), so every caller loses checking. A function that
+  sometimes returns `None` then reaches code that calls `.upper()` on it.
+
+flagged_example:
+  language: python
+  files:
+    - filename: app/pricing.py
+      code: |
+        """Price formatting for invoices."""
+
+        from decimal import Decimal
+
+
+        def format_price(price: Decimal, currency: str):
+            return f"{price:.2f} {currency}"
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.mypy]
+        files = ["app"]
+        disallow_incomplete_defs = true
+  expect_file: app/pricing.py
+  expect_line: 6
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: app/pricing.py
+      code: |
+        """Price formatting for invoices."""
+
+        from decimal import Decimal
+
+
+        def format_price(price: Decimal, currency: str) -> str:
+            return f"{price:.2f} {currency}"
+
+
+        def legacy_total(items):
+            return sum(item.price for item in items)
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.mypy]
+        files = ["app"]
+        disallow_incomplete_defs = true
+  why: >-
+    `disallow_incomplete_defs` only rejects functions that are partly
+    annotated, as `format_price` was. `legacy_total` has no annotations at
+    all, so mypy accepts it under this setting, and Skylos follows mypy.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, once per Python module, with the same scope as
+    SKY-T101: public module-level functions and methods of public classes,
+    restricted to a literal `__all__` when there is one; test code,
+    examples, benchmarks, a top-level `docs` folder and the root `setup.py`
+    are skipped unless the mypy policy covers them.
+  - >-
+    Reads the project's mypy settings and requires a return type where mypy
+    would: on every public function with `disallow_untyped_defs` or
+    `strict`, and only on partly annotated ones with
+    `disallow_incomplete_defs`. The file must be among the files mypy
+    checks (`files` or a command's targets). A `# type:` comment counts.
+  - >-
+    With `typing_coverage_advice = true` under `[tool.skylos]` and no such
+    requirement, it reports functions that are explicitly part of an API,
+    such as names in a literal `__all__`; a plain procedure that never
+    returns a value is then not reported.
+  - >-
+    Reports LOW on the `def` line.
+
+source_refs:
+  - path: skylos/rules/quality/practices.py
+    symbol: "class TypeAnnotationPracticeRule"
+  - path: skylos/rules/quality/practices.py
+    symbol: "def _inferable_none_procedure("
+  - path: skylos/analysis/typing_policy.py
+    symbol: "def annotation_policy("
+  - path: skylos/analysis/typing_policy.py
+    symbol: '_STRICT_FLAGS = {"disallow_untyped_defs": True, "disallow_incomplete_defs": True}'
+
+fix:
+  explanation: >-
+    Add the return type. For a function that returns nothing, write
+    `-> None`.
+  filename: app/pricing.py
+  code: |
+    """Price formatting for invoices."""
+
+    from decimal import Decimal
+
+
+    def format_price(price: Decimal, currency: str) -> str:
+        return f"{price:.2f} {currency}"
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Under a mypy requirement, a function that only performs an action
+      without `-> None` is reported, as mypy would report it.
+    - >-
+      It misses private functions (names starting with `_`) and nested
+      functions, which mypy still checks.
+  suppress:
+    - check: inline
+      text: >-
+        On the `def` line (the reported line):
+      language: python
+      code: |
+        def format_price(price: Decimal, currency: str):  # skylos: ignore[SKY-T102] stub
+    - check:
+        kind: example
+        example:
+          language: python
+          files:
+            - filename: app/pricing.py
+              code: |
+                """Price formatting for invoices."""
+
+                from decimal import Decimal
+
+
+                def format_price(price: Decimal, currency: str):
+                    return f"{price:.2f} {currency}"
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [tool.mypy]
+                files = ["app"]
+                disallow_incomplete_defs = true
+
+                [tool.skylos]
+                ignore = ["SKY-T102"]
+      text: >-
+        `ignore = ["SKY-T102"]` under `[tool.skylos]` turns the rule off for
+        the project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-T101, SKY-R101]

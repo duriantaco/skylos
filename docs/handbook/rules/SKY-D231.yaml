@@ -1,0 +1,163 @@
+id: SKY-D231
+title: Unsafe CORS configuration
+family: security
+severity: HIGH
+severity_note: >-
+  A wildcard origin without credentials is reported only when the same
+  module has state-changing routes that nothing authenticates: MEDIUM, or
+  HIGH when one of those routes performs a privileged action. Every other
+  finding is HIGH.
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-942]
+
+what_it_is: >-
+  Cross-Origin Resource Sharing (CORS) headers tell the browser which other
+  websites may call your API and read the answer. SKY-D231 reports Python
+  web apps that allow every website: by echoing back the request's `Origin`
+  header, by a `*` setting combined with cookies, or by a CORS setup with no
+  origin list at all.
+
+why_it_matters: >-
+  When your API answers every origin with credentials allowed, any page a
+  logged-in user visits can call it with their cookies and read the reply:
+  their profile, orders or API keys, or change their settings.
+
+flagged_example:
+  language: python
+  filename: app/main.py
+  expect_line: 9
+  code: |
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.after_request
+    def add_cors_headers(response):
+        origin = request.headers.get("Origin", "")
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+
+not_flagged_example:
+  language: python
+  filename: app/main.py
+  code: |
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app = FastAPI()
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"])
+
+
+    @app.get("/status")
+    def status():
+        return {"ok": True}
+  why: >-
+    A public, read-only status API may be readable by every site. The
+    wildcard is used without `allow_credentials=True`, so browsers send no
+    cookies, and the app has no state-changing route a page could call.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files that mention `cors`, `origins` or
+    the `Access-Control-Allow-Origin` header.
+  - >-
+    Reports a response header `Access-Control-Allow-Origin` (set by
+    subscript, `.set()`, `.add()` or a dict literal) whose value is the
+    request's own `Origin` header, or a local holding it, unless an
+    allowlist test protects it: `origin in ALLOWED` or `origin == "https://…"`
+    in an enclosing `if`, an earlier `if` that returns, raises or resets the
+    origin when the test fails, an `any(origin == o for o in ALLOWED)`, a
+    `fullmatch` with a pattern that has no `.*` or `.+`, or a same-module
+    helper that returns one of those tests. An allowlist that is a single
+    string, or contains `"*"` or `"null"`, does not count.
+  - >-
+    Reports flask-cors `CORS(…)` and `@cross_origin(…)` with a wildcard
+    origin and `supports_credentials=True`, and Starlette or FastAPI
+    `CORSMiddleware` with `allow_origins=["*"]` or an `allow_origin_regex`
+    such as `.*` and `allow_credentials=True`.
+  - >-
+    Reports a `CORS(…)` call with no `origins` or `resources` argument (it
+    allows every origin), `CORS_ALLOW_ALL_ORIGINS = True` (django-cors-headers),
+    and `"Access-Control-Allow-Origin": "*"` in a dict or an
+    `ACCESS_CONTROL_ALLOW_ORIGIN = "*"` setting.
+  - >-
+    A wildcard origin without credentials is reported only when the module
+    creates an app with state-changing routes (POST, PUT, PATCH, DELETE)
+    that nothing in the route, its body or the module authenticates. Files
+    in `test`, `tests` or `corpus` folders, and `test_*.py` or `*_test.py`
+    files, are not searched for such routes.
+    TypeScript and JavaScript `cors({ origin: "*" })` is SKY-D247.
+
+source_refs:
+  - path: skylos/rules/danger/danger_cors/cors_flow.py
+    symbol: "def _check_reflected_origin"
+  - path: skylos/rules/danger/danger_cors/cors_flow.py
+    symbol: "def _origin_test"
+    note: the allowlist tests that clear a reflected origin.
+  - path: skylos/rules/danger/danger_cors/cors_flow.py
+    symbol: "def _check_wildcard_with_credentials"
+  - path: skylos/rules/danger/danger_cors/cors_flow.py
+    symbol: "def _report_open_wildcard"
+    note: wildcard without credentials needs open state-changing routes.
+  - path: skylos/rules/quality/practices.py
+    symbol: "def open_unguarded_routes"
+  - path: skylos/rules/danger/danger.py
+    symbol: "_CORS_TOKENS = ("
+  - path: test/test_cors_open_routes.py
+    symbol: "def test_echoed_origin_without_a_check_is_reported"
+
+fix:
+  explanation: >-
+    Answer only origins you list. Compare the request's `Origin` with a set
+    of your own sites before echoing it, add `Vary: Origin` so caches keep
+    the answers apart, and never combine `*` with credentials. With
+    flask-cors or `CORSMiddleware`, pass the explicit list of origins.
+  filename: app/main.py
+  code: |
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+    ALLOWED_ORIGINS = {"https://app.example.com", "https://admin.example.com"}
+
+
+    @app.after_request
+    def add_cors_headers(response):
+        origin = request.headers.get("Origin", "")
+        if origin in ALLOWED_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Vary"] = "Origin"
+        return response
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      An origin checked by a helper in another module, or by a test Skylos
+      does not model (such as `origin.endswith(".example.com")`), is
+      reported as echoed without a check.
+    - >-
+      Any call whose name ends in `CORS` without an `origins` or `resources`
+      argument is reported, including a project's own `CORS(app)` wrapper
+      that reads its origins from settings.
+    - >-
+      Only the file that holds the CORS setup is searched for open routes,
+      so a wildcard without credentials is missed when the routes live in
+      other modules.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the reported line and say why every origin is acceptable.
+      language: python
+      code: |
+        response.headers["Access-Control-Allow-Origin"] = origin  # skylos: ignore[SKY-D231] gateway
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D231"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D247, SKY-D252, SKY-D283]

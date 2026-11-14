@@ -1,0 +1,193 @@
+id: SKY-D400
+title: Terraform security group opens SSH or RDP to the whole internet
+family: infrastructure
+severity: HIGH
+languages: [Terraform]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the rule never reports CRITICAL.
+
+what_it_is: >-
+  An AWS security group is a firewall for servers. SKY-D400 reports a
+  Terraform security group rule that lets any address on the internet
+  (`0.0.0.0/0` or `::/0`) reach the administrative ports 22 (SSH) or 3389
+  (Remote Desktop).
+
+why_it_matters: >-
+  Internet-wide scanners try passwords and known exploits on these ports
+  within minutes of a server coming up. One weak password or unpatched SSH or
+  RDP service then gives an attacker a shell inside your network.
+
+flagged_example:
+  language: terraform
+  filename: main.tf
+  expect_line: 5
+  code: |
+    variable "vpc_id" {
+      type = string
+    }
+
+    resource "aws_security_group" "bastion" {
+      name   = "bastion"
+      vpc_id = var.vpc_id
+
+      ingress {
+        description = "SSH"
+        from_port   = 22
+        to_port     = 22
+        protocol    = "tcp"
+        cidr_blocks = ["0.0.0.0/0"]
+      }
+    }
+
+not_flagged_example:
+  language: terraform
+  filename: main.tf
+  code: |
+    variable "vpc_id" {
+      type = string
+    }
+
+    resource "aws_security_group" "bastion" {
+      name   = "bastion"
+      vpc_id = var.vpc_id
+
+      ingress {
+        description = "SSH from the office VPN"
+        from_port   = 22
+        to_port     = 22
+        protocol    = "tcp"
+        cidr_blocks = ["10.20.0.0/16"]
+      }
+    }
+  why: >-
+    The same SSH rule, but the source is the private VPN range `10.20.0.0/16`,
+    not the whole internet. Skylos merges all source ranges of a rule and
+    reports only when together they cover every IPv4 or every IPv6 address.
+
+more_examples:
+  - flagged:
+      language: terraform
+      filename: main.tf
+      expect_line: 1
+      code: |
+        resource "aws_vpc_security_group_ingress_rule" "rdp" {
+          security_group_id = aws_security_group.windows.id
+          ip_protocol       = "tcp"
+          from_port         = 3389
+          to_port           = 3389
+          cidr_ipv6         = "::/0"
+        }
+    not_flagged:
+      language: terraform
+      filename: main.tf
+      code: |
+        resource "aws_vpc_security_group_ingress_rule" "https" {
+          security_group_id = aws_security_group.windows.id
+          ip_protocol       = "tcp"
+          from_port         = 443
+          to_port           = 443
+          cidr_ipv6         = "::/0"
+        }
+      why: >-
+        Opening HTTPS (443) to everyone is normal for a public web server.
+        Only ranges that include port 22 or 3389 (or every protocol, `-1`)
+        count.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`). Reads `.tf` and `.tf.json` files, skipping
+    `.terraform`, `.git`, `node_modules`, `vendor`, `build`, `dist` and
+    virtual-environment folders, and parses them as HCL without running
+    Terraform or contacting AWS.
+  - >-
+    Resolves only literal values and `local` values of the same module. Input
+    variables, data sources, attributes of other resources and module outputs
+    stay unknown, and an unknown value never produces a finding.
+  - >-
+    Skips a resource with `count = 0` or an empty `for_each`, and needs the
+    official AWS provider (`hashicorp/aws`, which an `aws_` resource uses
+    unless another provider is configured).
+  - >-
+    Checks `ingress` blocks of `aws_security_group`, `aws_security_group_rule`
+    with `type = "ingress"`, and `aws_vpc_security_group_ingress_rule`.
+  - >-
+    A rule counts as administrative when its protocol is TCP (`tcp` or `6`)
+    and its port range includes 22 or 3389, or when the protocol is all
+    (`-1`). UDP and ICMP rules are left alone.
+  - >-
+    Merges the rule's IPv4 and IPv6 source ranges and reports when they cover
+    a whole address family, so `0.0.0.0/1` plus `128.0.0.0/1` counts as the
+    whole internet. Rules whose source is another security group or a prefix
+    list are not reported.
+  - >-
+    Reports HIGH on the `resource` line, once per resource.
+
+source_refs:
+  - path: skylos/rules/config/terraform/aws.py
+    symbol: "def _ingress("
+  - path: skylos/rules/config/terraform/aws.py
+    symbol: "def _admin_ports("
+  - path: skylos/rules/config/terraform/aws.py
+    symbol: "def _world_sources("
+    note: merges the source ranges.
+  - path: test/test_terraform_aws.py
+    symbol: "def test_protocol_port_and_cidr_edges_have_frozen_outcomes("
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def aws_provider_status("
+    note: only the official AWS provider counts.
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def instance_status("
+
+fix:
+  explanation: >-
+    Allow SSH and RDP only from known ranges such as a VPN, or close the ports
+    and use AWS Systems Manager Session Manager or EC2 Instance Connect
+    instead.
+  filename: main.tf
+  language: terraform
+  code: |
+    variable "vpc_id" {
+      type = string
+    }
+
+    resource "aws_security_group" "bastion" {
+      name   = "bastion"
+      vpc_id = var.vpc_id
+
+      ingress {
+        description = "SSH from the office VPN"
+        from_port   = 22
+        to_port     = 22
+        protocol    = "tcp"
+        cidr_blocks = ["10.20.0.0/16"]
+      }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Values that come from variables, modules or other resources are not
+      checked, because Skylos does not run Terraform: `cidr_blocks =
+      var.admin_cidrs` is not reported even when its default is `0.0.0.0/0`.
+    - >-
+      It judges the declaration only. It does not know what is deployed, and
+      other settings (account defaults, security groups, routing) can make the
+      real exposure smaller or larger.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        Terraform rules read no inline marker: `# skylos: ignore[SKY-D400]` on
+        the resource line does not hide the finding.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D400"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        declarations that exist today and reports new ones.
+
+related: [SKY-D408, SKY-D405]

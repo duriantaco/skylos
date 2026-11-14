@@ -1,0 +1,209 @@
+id: SKY-GPU003
+title: TensorRT engine shipped to GPUs it was not built for
+family: infrastructure
+severity: HIGH
+languages: [Python, C++, Dockerfile, GPU target contract (YAML)]
+gate:
+  full: counted
+  note: >-
+    Reported under reliability. It counts toward `max_reliability`, which is 0
+    by default, so one finding fails `--gate`.
+  opt_in: >-
+    A `.skylos/gpu-targets.yml` contract in the repository.
+
+what_it_is: >-
+  A serialized TensorRT engine is a model compiled for one GPU model; by
+  default it only runs on GPUs with the same compute capability. SKY-GPU003
+  reports an engine that is built, written to a file and copied into the
+  release image when the contract lists GPUs with different compute
+  capabilities.
+
+why_it_matters: >-
+  On the other GPUs TensorRT refuses to load the engine, so the service starts
+  but every inference fails. The mismatch is only visible on the hardware
+  itself.
+
+flagged_example:
+  language: python
+  expect_file: build_engine.py
+  expect_line: 10
+  files:
+    - filename: build_engine.py
+      code: |
+        import tensorrt as trt
+
+        logger = trt.Logger(trt.Logger.WARNING)
+        builder = trt.Builder(logger)
+        network = builder.create_network(0)
+        parser = trt.OnnxParser(network, logger)
+        with open("model.onnx", "rb") as model:
+            parser.parse(model.read())
+        config = builder.create_builder_config()
+        serialized = builder.build_serialized_network(network, config)
+        with open("model.engine", "wb") as output:
+            output.write(serialized)
+    - filename: Dockerfile
+      language: dockerfile
+      code: |
+        FROM nvcr.io/nvidia/tensorrt:24.05-py3
+        COPY model.engine /models/model.engine
+        COPY serve.py /app/serve.py
+        CMD ["python3", "/app/serve.py"]
+    - filename: CMakeLists.txt
+      language: cmake
+      code: |
+        cmake_minimum_required(VERSION 3.24)
+        project(trt_plugins LANGUAGES CXX CUDA)
+        set(CMAKE_CUDA_ARCHITECTURES 80 86)
+        add_library(trt_plugins SHARED plugins/nms.cu)
+    - filename: .skylos/gpu-targets.yml
+      language: yaml
+      code: |
+        version: 1
+        targets:
+          - name: a100
+            vendor: nvidia
+            compute_capability: "8.0"
+          - name: rtx-a6000
+            vendor: nvidia
+            compute_capability: "8.6"
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: build_engine.py
+      code: |
+        import tensorrt as trt
+
+        logger = trt.Logger(trt.Logger.WARNING)
+        builder = trt.Builder(logger)
+        network = builder.create_network(0)
+        parser = trt.OnnxParser(network, logger)
+        with open("model.onnx", "rb") as model:
+            parser.parse(model.read())
+        config = builder.create_builder_config()
+        config.hardware_compatibility_level = trt.HardwareCompatibilityLevel.AMPERE_PLUS
+        serialized = builder.build_serialized_network(network, config)
+        with open("model.engine", "wb") as output:
+            output.write(serialized)
+    - filename: Dockerfile
+      language: dockerfile
+      code: |
+        FROM nvcr.io/nvidia/tensorrt:24.05-py3
+        COPY model.engine /models/model.engine
+        COPY serve.py /app/serve.py
+        CMD ["python3", "/app/serve.py"]
+    - filename: CMakeLists.txt
+      language: cmake
+      code: |
+        cmake_minimum_required(VERSION 3.24)
+        project(trt_plugins LANGUAGES CXX CUDA)
+        set(CMAKE_CUDA_ARCHITECTURES 80 86)
+        add_library(trt_plugins SHARED plugins/nms.cu)
+    - filename: .skylos/gpu-targets.yml
+      language: yaml
+      code: |
+        version: 1
+        targets:
+          - name: a100
+            vendor: nvidia
+            compute_capability: "8.0"
+          - name: rtx-a6000
+            vendor: nvidia
+            compute_capability: "8.6"
+  why: >-
+    The builder sets the `AMPERE_PLUS` hardware compatibility level on this
+    config before building, so the engine runs on every Ampere or newer GPU,
+    including both targets.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`), and only when the repository has a GPU
+    target contract: `.skylos/gpu-targets.yml` (or `.yaml`), version 1,
+    listing each target's `name`, `vendor: nvidia`, and its `driver`,
+    `compute_capability` and `platform` (`linux` or `windows`, optionally
+    `/amd64` or `/arm64`). Without the file nothing is checked, unless an
+    `SKY-GPU` rule is selected explicitly with `--select`.
+  - >-
+    Reads Dockerfiles, CMake files, Makefiles, Bazel files, shell scripts,
+    Python, C/C++/CUDA sources and YAML as text, skipping `build`, `dist`,
+    `node_modules`, caches and virtual environments. It never runs a build or
+    probes a GPU.
+  - >-
+    Needs a contract with targets of different compute capabilities.
+  - >-
+    In Python, finds a `build_serialized_network(network, config)` call, a
+    later binary write of its result to a literal file path, and a `COPY` or
+    `ADD` of that exact file in the final Docker stage. C++ builders using
+    `NvInfer.h` are matched the same way.
+  - >-
+    Does not report when that same config object gets
+    `hardware_compatibility_level = AMPERE_PLUS` before the build and every
+    target is Ampere (8.0) or newer.
+  - >-
+    Reports HIGH on the build call.
+
+source_refs:
+  - path: skylos/rules/config/gpu/compatibility.py
+    symbol: "def _python_tensorrt_builders("
+  - path: skylos/rules/config/gpu/compatibility.py
+    symbol: "def _tensorrt_finding("
+  - path: test/test_gpu_compatibility.py
+    symbol: "def test_packaged_tensorrt_engine_for_heterogeneous_targets_is_reported("
+
+fix:
+  explanation: >-
+    Build the engine on the target GPU at deploy time, ship one engine per
+    compute capability, or build with the `AMPERE_PLUS` hardware compatibility
+    level when every target is Ampere or newer.
+  filename: build_engine.py
+  language: python
+  code: |
+    import tensorrt as trt
+
+    logger = trt.Logger(trt.Logger.WARNING)
+    builder = trt.Builder(logger)
+    network = builder.create_network(0)
+    parser = trt.OnnxParser(network, logger)
+    with open("model.onnx", "rb") as model:
+        parser.parse(model.read())
+    config = builder.create_builder_config()
+    config.hardware_compatibility_level = trt.HardwareCompatibilityLevel.AMPERE_PLUS
+    serialized = builder.build_serialized_network(network, config)
+    with open("model.engine", "wb") as output:
+        output.write(serialized)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      `AMPERE_PLUS` does not make an engine portable across operating systems
+      or CPU architectures, and is not counted as covering pre-Ampere GPUs
+      such as a T4.
+    - >-
+      An engine that is built but not copied into the final Docker stage is
+      not reported.
+    - >-
+      The compatibility level must be assigned as written in the example.
+      Setting it through a variable (`level =
+      trt.HardwareCompatibilityLevel.AMPERE_PLUS`, then
+      `config.hardware_compatibility_level = level`) is not recognised, so a
+      portable engine is still reported.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the build call line, or in a comment on the line
+        above it.
+      language: python
+      code: |
+        # skylos: ignore[SKY-GPU003] fleet is being moved to A100 only
+        serialized = builder.build_serialized_network(network, config)
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-GPU003"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        findings that exist today and reports new ones.
+
+related: [SKY-GPU000, SKY-GPU002]

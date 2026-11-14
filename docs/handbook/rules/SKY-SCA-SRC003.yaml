@@ -1,0 +1,151 @@
+id: SKY-SCA-SRC003
+title: Dependency from Git or a URL that can change
+family: supply-chain
+severity: MEDIUM
+languages: [requirements*.txt, pyproject.toml, uv.lock, poetry.lock, Pipfile.lock, package.json, npm, pnpm, Yarn and Bun lockfiles]
+gate:
+  full: listed
+  note: >-
+    The built-in gate reports it without counting it, so a tag-pinned Git
+    dependency does not start failing an existing gate. A gate policy pulled
+    from Skylos Cloud counts it toward `max_dependency_vulnerabilities`.
+
+what_it_is: >-
+  A dependency installed straight from a Git repository or a download URL
+  instead of a registry. SKY-SCA-SRC003 reports a Git dependency that is not
+  pinned to a full 40-character commit, and a URL dependency without a hash
+  of the file.
+
+why_it_matters: >-
+  A branch or a tag can be moved to other code, and the file behind a URL
+  can be replaced, without any change in your repository. The next install
+  then runs code nobody reviewed, and no advisory database covers Git or URL
+  packages, so the vulnerability scan cannot warn you either.
+
+flagged_example:
+  language: text
+  filename: requirements.txt
+  expect_line: 2
+  code: |
+    six==1.17.0
+    billing @ git+https://github.com/acme/billing@main
+
+not_flagged_example:
+  language: text
+  filename: requirements.txt
+  code: |
+    six==1.17.0
+    billing @ git+https://github.com/acme/billing@3f9c2a7e5b1d4c6a8e0f2b4d6c8a0e2f4b6d8c0a
+  why: >-
+    The dependency still comes from Git, but it is pinned to a full commit
+    SHA. A commit cannot be moved, so every install gets the same code.
+
+more_examples:
+  - flagged:
+      language: json
+      filename: package.json
+      expect_line: 6
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "dependencies": {
+            "ms": "2.1.3",
+            "ui-kit": "github:acme/ui-kit#v2.1.0"
+          }
+        }
+    not_flagged:
+      language: json
+      filename: package.json
+      code: |
+        {
+          "name": "shop",
+          "version": "1.0.0",
+          "dependencies": {
+            "ms": "2.1.3",
+            "ui-kit": "github:acme/ui-kit#3f9c2a7e5b1d4c6a8e0f2b4d6c8a0e2f4b6d8c0a"
+          }
+        }
+      why: >-
+        `v2.1.0` is a tag, and a tag can be deleted and created again on
+        other code. The full commit SHA cannot.
+
+how_skylos_decides:
+  - >-
+    Runs with `--sca`. Skylos reads manifests and lockfiles itself, records
+    every npm and PyPI dependency that comes from Git or a URL, and hands
+    them to the `ca9` library, which decides the finding. Nothing is
+    downloaded or installed.
+  - >-
+    A Git dependency is reported unless its ref is a full 40-character
+    commit SHA. A branch, a tag, a short SHA, or no ref at all (the default
+    branch) is reported.
+  - >-
+    A URL dependency is reported unless a hash is recorded with it, such as
+    `--hash=sha256:…` or `#sha256=…` in a requirements file, or the hash a
+    lockfile stores.
+  - >-
+    Local folders and workspace packages are not reported. When a lockfile
+    covers a `package.json` or `pyproject.toml`, only the lockfile entry is
+    checked, because it records what really gets installed.
+  - >-
+    Skylos checks every `ca9` finding against its own record and drops one
+    that names a pinned commit or a hashed URL.
+
+source_refs:
+  - path: skylos/rules/sca/package_sources.py
+    symbol: "def source_is_mutable("
+  - path: skylos/rules/sca/supply_chain.py
+    symbol: "def _source_records("
+    note: Git and URL entries, skipped when a lockfile covers the manifest.
+  - path: skylos/rules/sca/supply_chain.py
+    symbol: "def _confirmed("
+  - path: test/test_sca_supply_chain.py
+    symbol: "def test_mutable_git_and_url_sources_report_src003("
+
+fix:
+  explanation: >-
+    Pin the dependency to the full commit SHA you reviewed, or add a hash
+    for a URL dependency. Better still, publish the package to a registry
+    (a private one is fine) and depend on a version.
+  language: text
+  filename: requirements.txt
+  code: |
+    six==1.17.0
+    billing @ git+https://github.com/acme/billing@3f9c2a7e5b1d4c6a8e0f2b4d6c8a0e2f4b6d8c0a
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A tag you control and never move is still reported. Skylos cannot
+      tell a protected tag from one anyone with push access can move.
+    - >-
+      The finding never fails the built-in gate, so a reviewed tag can stay
+      listed without blocking anything.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: text
+          filename: requirements.txt
+          code: |
+            six==1.17.0
+            billing @ git+https://github.com/acme/billing@main  # skylos: ignore[SKY-SCA-SRC003]
+      text: >-
+        An inline marker on the requirement line is not read: the finding
+        stays reported. Pin the commit instead.
+      language: text
+      code: |
+        billing @ git+https://github.com/acme/billing@main  # skylos: ignore[SKY-SCA-SRC003]
+    - check: {kind: config, expect: reported}
+      text: >-
+        `[tool.skylos] ignore = ["SKY-SCA-SRC003"]` does not hide it in a
+        full scan either.
+    - check: {kind: baseline, expect: reported}
+      text: >-
+        A baseline does not hold it. `skylos baseline .` saves dependency
+        findings only with `--sca`, and even then only known
+        vulnerabilities.
+
+related: [SKY-SCA-SRC004, SKY-SCA-INT001, SKY-SCA-SRC001]

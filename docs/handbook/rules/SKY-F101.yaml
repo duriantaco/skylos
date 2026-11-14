@@ -1,0 +1,142 @@
+id: SKY-F101
+title: FastAPI route without a response contract
+family: quality
+severity: LOW
+severity_note: >-
+  The catalog gives no severity. Every finding is reported LOW.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Advice that is measured on every `--quality` scan but not listed by
+    default. It is listed, and counted toward `max_quality`, with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  FastAPI uses a route's `response_model`, `response_class` or return type
+  annotation to validate, filter and document what the route sends back.
+  SKY-F101 reports a FastAPI route that has none of the three. The catalog
+  calls the rule "Framework handler practice issue".
+
+why_it_matters: >-
+  Without a response model, the route returns whatever the function
+  returns: a database row with a password hash or an internal note goes
+  straight to the client, and the OpenAPI schema says nothing about the
+  shape clients should expect.
+
+flagged_example:
+  language: python
+  filename: app/api/orders.py
+  expect_line: 11
+  code: |
+    """Order API."""
+
+    from fastapi import FastAPI
+
+    from app.db import load_order
+
+    app = FastAPI()
+
+
+    @app.get("/orders/{order_id}")
+    def get_order(order_id: int):
+        return load_order(order_id)
+
+not_flagged_example:
+  language: python
+  filename: app/api/orders.py
+  code: |
+    """Order API."""
+
+    from fastapi import FastAPI
+    from pydantic import BaseModel
+
+    from app.db import load_order
+
+    app = FastAPI()
+
+
+    class OrderOut(BaseModel):
+        id: int
+        total: float
+
+
+    @app.get("/orders/{order_id}", response_model=OrderOut)
+    def get_order(order_id: int):
+        return load_order(order_id)
+  why: >-
+    The route declares `response_model=OrderOut`, so FastAPI keeps only the
+    `id` and `total` fields of whatever `load_order` returns.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on Python files outside `test` and `tests`
+    folders and `test_*.py` or `*_test.py` files.
+  - >-
+    Finds route handlers whose decorator is proven to be a FastAPI route:
+    a method such as `.get`, `.post` or `.api_route` on a `FastAPI()` app or
+    an `APIRouter()` created from the imported `fastapi` names.
+  - >-
+    Reports when the function has no return annotation and no route
+    decorator passes a `response_model` or `response_class` other than
+    `None`.
+  - >-
+    Reports LOW on the `def` line.
+
+source_refs:
+  - path: skylos/rules/quality/practices.py
+    symbol: "class FrameworkPracticeRule"
+  - path: skylos/rules/quality/practices.py
+    symbol: "def _decorator_has_response_contract("
+  - path: skylos/rules/quality/_framework_practices.py
+    symbol: "class FrameworkResponseContracts"
+
+fix:
+  explanation: >-
+    Declare a Pydantic response model, either with `response_model=` or as
+    the return type annotation.
+  filename: app/api/orders.py
+  code: |
+    """Order API."""
+
+    from fastapi import FastAPI
+    from pydantic import BaseModel
+
+    from app.db import load_order
+
+    app = FastAPI()
+
+
+    class OrderOut(BaseModel):
+        id: int
+        total: float
+
+
+    @app.get("/orders/{order_id}")
+    def get_order(order_id: int) -> OrderOut:
+        return OrderOut.model_validate(load_order(order_id))
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A route that returns a `Response` object it builds itself, such as a
+      file download, is reported when it has no annotation, although a
+      response model would not apply.
+    - >-
+      A return annotation of `dict` or `Any` counts as a contract, even
+      though it filters nothing.
+  suppress:
+    - check: inline
+      text: >-
+        On the `def` line (the reported line):
+      language: python
+      code: |
+        def get_order(order_id: int):  # skylos: ignore[SKY-F101] streams a PDF
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-F101"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-F102, SKY-T102]

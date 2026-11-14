@@ -1,0 +1,124 @@
+id: SKY-L016
+title: Undefined config
+family: logic
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  MEDIUM.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A feature flag is read from the environment with no default, such as
+  `os.getenv("ENABLE_NEW_PRICING")`, and the file never declares it. Coding
+  agents often write such checks for settings that no deployment defines.
+
+why_it_matters: >-
+  Nobody knows the flag exists, so the new code path never runs, or runs by
+  accident: environment values are strings, and `"false"` or `"0"` are both
+  true in an `if`. Setting `ENABLE_NEW_PRICING=false` turns the new pricing
+  on.
+
+flagged_example:
+  language: python
+  filename: shop/pricing.py
+  expect_line: 9
+  code: |
+    """Price a shopping cart."""
+
+    import os
+
+    from shop import legacy_pricing, new_pricing
+
+
+    def cart_total(cart):
+        if os.getenv("ENABLE_NEW_PRICING"):
+            return new_pricing.total(cart)
+        return legacy_pricing.total(cart)
+
+not_flagged_example:
+  language: python
+  filename: shop/pricing.py
+  code: |
+    """Price a shopping cart."""
+
+    import os
+
+    from shop import legacy_pricing, new_pricing
+
+
+    def cart_total(cart):
+        if os.getenv("ENABLE_NEW_PRICING", "false") == "true":
+            return new_pricing.total(cart)
+        return legacy_pricing.total(cart)
+  why: >-
+    The read gives a default, so the flag has a defined value when the
+    environment does not set it, and the comparison with `"true"` turns the
+    string into a real yes or no.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Looks at calls written
+    `os.getenv("NAME")` and `os.environ.get("NAME")` with a literal name.
+  - >-
+    Only names that start with `ENABLE_`, `DISABLE_`, `USE_`, `FEATURE_`,
+    `FLAG_` or `TOGGLE_` are checked; other settings are left alone, and so
+    are well-known variables such as `DEBUG`, `PATH` or `DATABASE_URL`.
+  - >-
+    Skips a read with a default other than `None`, a module-level
+    declaration that assigns the read to the same name
+    (`ENABLE_X = os.getenv("ENABLE_X")`), and a name that also appears as
+    `os.environ["NAME"]` anywhere in the file.
+  - >-
+    Reports MEDIUM on the line of the call. Other files, `.env` files and
+    deployment settings are not read.
+
+source_refs:
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "class UndefinedConfigRule"
+  - path: skylos/rules/vibe_dictionary.py
+    symbol: "WELL_KNOWN_ENV_VARS = {"
+
+fix:
+  explanation: >-
+    Declare the flag once, with a default and a real boolean, and use that
+    constant. The name now has one place where it is defined and
+    documented.
+  filename: shop/pricing.py
+  code: |
+    """Price a shopping cart."""
+
+    import os
+
+    from shop import legacy_pricing, new_pricing
+
+    ENABLE_NEW_PRICING = os.getenv("ENABLE_NEW_PRICING", "false").lower() == "true"
+
+
+    def cart_total(cart):
+        if ENABLE_NEW_PRICING:
+            return new_pricing.total(cart)
+        return legacy_pricing.total(cart)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A flag that a settings module or `.env` file in another place does
+      define is reported, because only the current file is read.
+    - >-
+      A module-level `ENABLE_X = os.getenv("ENABLE_X")` is accepted even
+      though it still turns `"false"` into a true value.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the `os.getenv()` call.
+      language: python
+      code: |
+        if os.getenv("ENABLE_NEW_PRICING"):  # skylos: ignore[SKY-L016] set in Helm values
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L016"]` turns the rule off for the
+        project.
+
+related: [SKY-L026, SKY-L014]

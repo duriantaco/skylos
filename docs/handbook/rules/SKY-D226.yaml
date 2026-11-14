@@ -1,0 +1,160 @@
+id: SKY-D226
+title: Cross-site scripting through raw HTML
+family: security
+severity: CRITICAL
+severity_note: >-
+  TypeScript and JavaScript findings are reported as HIGH, as are Java,
+  Kotlin, C# and PHP findings. Python `Markup()`/`mark_safe()` and Go
+  `html/template` findings built from request data are CRITICAL.
+languages: [TypeScript/JavaScript, Python, Go, Java, Kotlin, C#, PHP]
+gate:
+  full: critical_blocks
+  note: >-
+    TypeScript and JavaScript findings are HIGH, so they count toward the
+    limits; Python and Go findings are CRITICAL.
+cwe: [CWE-79]
+
+what_it_is: >-
+  Cross-site scripting (XSS) happens when a page inserts text as HTML, so
+  that markup someone else wrote runs as script in another user's browser.
+  In TypeScript and JavaScript, Skylos reports SKY-D226 when a value that is
+  not proven safe reaches an HTML sink such as `innerHTML`,
+  `document.write()` or React's `dangerouslySetInnerHTML`.
+
+why_it_matters: >-
+  A search link carrying `<img src=x onerror=…>` runs that script for
+  whoever opens it, with their session: it can read what they see on the
+  page and act as them.
+
+flagged_example:
+  language: typescript
+  filename: src/search/heading.ts
+  expect_line: 3
+  code: |
+    export function showSearchHeading(heading: HTMLElement): void {
+      const query = new URLSearchParams(window.location.search).get("q") ?? "";
+      heading.innerHTML = `Results for <mark>${query}</mark>`;
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/search/heading.ts
+  code: |
+    const SPINNER = '<span class="spinner" aria-hidden="true"></span>';
+
+    export function showLoading(panel: HTMLElement): void {
+      panel.innerHTML = SPINNER;
+    }
+
+    export function showSearchHeading(heading: HTMLElement): void {
+      const query = new URLSearchParams(window.location.search).get("q") ?? "";
+      heading.textContent = `Results for ${query}`;
+    }
+  why: >-
+    `innerHTML` only receives `SPINNER`, a constant whose markup Skylos can
+    read and that cannot run script. The search text goes into
+    `textContent`, which the browser always treats as text.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. In `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`,
+    `.mjs` and `.cjs` files it finds HTML sinks: assignments to `innerHTML`
+    or `outerHTML` (also `+=`), `document.write()` and `writeln()`,
+    `insertAdjacentHTML()`, `createContextualFragment()`, `setHTMLUnsafe()`,
+    jQuery `.html()`, `.append()` and similar on `$(…)`, `jQuery(…)` or a
+    `$`-prefixed variable, and the JSX `dangerouslySetInnerHTML` attribute.
+    `.vue` and `.svelte` templates are not read.
+  - >-
+    It does not need to find where the value came from: every sink is
+    reported unless the value is proven safe.
+  - >-
+    A value is proven safe when it is fixed markup Skylos can read (string
+    literals, templates and `+` joins of literals, both sides of a `? :`, or
+    a `const` bound to one) and that markup cannot run script: no `on…=`
+    attributes, no `javascript:` URLs, and no `<script>`, `<iframe>`,
+    `<svg>` or similar tags. The empty string is safe.
+  - >-
+    A value is also safe when it is the result of an imported sanitizer
+    called with one argument: `DOMPurify.sanitize(x)` from `dompurify` or
+    `isomorphic-dompurify`, or `sanitizeHtml(x)` from `sanitize-html`. This
+    proof holds only while every use of the sanitizer in the file is such a
+    one-argument call.
+  - >-
+    Only `dangerouslySetInnerHTML={{ __html: value }}` can be proven safe;
+    any other form is reported. jQuery `.append()` and its siblings count
+    only for a template literal or `+` join that contains a tag.
+    `textContent` and DOM `append(text)` are not sinks.
+  - >-
+    Other languages need outside data: Python `Markup()` and `mark_safe()`
+    on request input, Go `template.HTML()` and similar on request input
+    (from the Go engine as SKY-G226), servlet writers in Java and Kotlin,
+    and Ktor `respondText()` with an HTML content type in Kotlin, `Html.Raw`,
+    `HtmlString` and `MarkupString` in C#, Drupal `Markup::create()` and
+    Blade `{!! !!}` in PHP.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "_SIMPLE_MAP: dict"
+    note: the TypeScript/JavaScript sinks.
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _html_assignment_rhs_requires_finding("
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _html_literal_can_execute("
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _is_safe_html_sanitizer_call("
+  - path: skylos/rules/danger/danger_web/xss_flow.py
+    symbol: "SKY-D226"
+    note: the Python check.
+  - path: test/test_ts_innerhtml_values.py
+    symbol: "def test_inert_or_proven_sanitized_values_are_quiet"
+
+fix:
+  explanation: >-
+    Put outside text in the page as text: `textContent`, or React's normal
+    `{value}` rendering, which escapes it. When the content must stay HTML,
+    such as rendered Markdown, pass it through `DOMPurify.sanitize(html)`
+    first, imported from `dompurify` and called with that one argument.
+  filename: src/search/heading.ts
+  code: |
+    export function showSearchHeading(heading: HTMLElement): void {
+      const query = new URLSearchParams(window.location.search).get("q") ?? "";
+      const mark = document.createElement("mark");
+      mark.textContent = query;
+      heading.replaceChildren("Results for ", mark);
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      HTML built from your own trusted data, such as
+      `` `<b>${row.label}</b>` `` or a lookup like `ICONS[kind]`, is
+      reported, because Skylos does not check where the value came from.
+    - >-
+      Literal SVG markup is reported: `<svg>` is on the list of tags that can
+      carry script.
+    - >-
+      jQuery calls on a receiver not written as `$(…)`, `jQuery(…)` or a
+      `$`-prefixed name, such as `const box = $("#g"); box.html(x)`, are
+      missed.
+    - >-
+      A sanitizer called with options, such as
+      `DOMPurify.sanitize(html, { ALLOWED_TAGS: [...] })`, is not accepted,
+      and its presence also cancels the proof for every plain
+      `DOMPurify.sanitize(x)` in the same file.
+  suppress:
+    - check: inline
+      text: >-
+        On the reported line. In JSX, a `{/* … */}` comment on the attribute
+        line works.
+      language: tsx
+      code: |
+        el.innerHTML = iconSvg; // skylos: ignore[SKY-D226] bundled icon, no user data
+        <div dangerouslySetInnerHTML={{ __html: html }} /> {/* skylos: ignore[SKY-D226] CMS */}
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D226"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-D227, SKY-D228, SKY-D230, SKY-D270]

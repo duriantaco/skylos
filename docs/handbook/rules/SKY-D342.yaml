@@ -1,0 +1,149 @@
+id: SKY-D342
+title: Dockerfile ADD downloads a file without a checksum
+family: infrastructure
+severity: HIGH
+languages: [Dockerfile]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the detector never reports CRITICAL.
+
+what_it_is: >-
+  A Dockerfile `ADD` that fetches a file from an `http://` or `https://` URL
+  without `--checksum`. Docker puts whatever the server returns into the
+  image, and nothing checks that it is the file you expected.
+
+why_it_matters: >-
+  If the download server, the release or the network path is compromised,
+  every image you build afterwards ships the attacker's binary, often as a
+  tool that runs inside production containers.
+
+flagged_example:
+  language: dockerfile
+  filename: Dockerfile
+  expect_line: 5
+  code: |
+    # syntax=docker/dockerfile:1
+    FROM python:3.12-slim
+
+    WORKDIR /app
+    ADD https://downloads.example.com/grpc-health-probe/v0.4.28/probe-linux-amd64 \
+        /usr/local/bin/grpc_health_probe
+    RUN chmod +x /usr/local/bin/grpc_health_probe
+
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir -r requirements.txt
+    COPY . .
+    CMD ["python", "-m", "app"]
+
+not_flagged_example:
+  language: dockerfile
+  filename: Dockerfile
+  code: |
+    # syntax=docker/dockerfile:1
+    FROM python:3.12-slim
+
+    WORKDIR /app
+    ADD vendor/grpc_health_probe /usr/local/bin/grpc_health_probe
+    RUN chmod +x /usr/local/bin/grpc_health_probe
+
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir -r requirements.txt
+    COPY . .
+    CMD ["python", "-m", "app"]
+  why: >-
+    `ADD` is still used, but it copies a file from the build context, which
+    is reviewed with the rest of the repository. Only `http://` and
+    `https://` sources are downloads.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Reads files named `Dockerfile`, `Dockerfile.*` or
+    `*.dockerfile`, outside `.git`, `.venv`, `venv`, `node_modules`,
+    `build`, `dist` and cache folders; files over 1 MB and symlinks are
+    skipped.
+  - >-
+    Joins instruction lines that end in `\` and looks at every `ADD`, in
+    shell form or JSON (`["src", "dest"]`) form.
+  - >-
+    Skips options such as `--chown` and `--chmod` with their values. An
+    `ADD` with `--checksum` (with `=` or a space) is never reported.
+  - >-
+    Reports when any source (every word but the last) starts with
+    `http://` or `https://`. Sources built from variables, such as
+    `${PROBE_URL}/probe`, are not resolved and are not reported.
+  - >-
+    Reports HIGH on the line where the `ADD` instruction starts.
+
+source_refs:
+  - path: skylos/rules/config/container/dockerfile.py
+    symbol: "def _scan_remote_add("
+  - path: skylos/rules/config/container/dockerfile.py
+    symbol: "def _add_sources_from_body("
+  - path: test/test_dockerfile_security.py
+    symbol: "def test_dockerfile_remote_add_with_checksum_is_accepted"
+
+fix:
+  explanation: >-
+    Add `--checksum=sha256:<digest>` with the digest the project publishes
+    for that release. BuildKit then refuses to build when the download does
+    not match. `--checksum` needs Dockerfile syntax 1.6 or newer, which the
+    `# syntax=docker/dockerfile:1` line selects.
+  filename: Dockerfile
+  code: |
+    # syntax=docker/dockerfile:1
+    FROM python:3.12-slim
+
+    WORKDIR /app
+    ADD --checksum=sha256:9e3fa4a1b0c2d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3 \
+        https://downloads.example.com/grpc-health-probe/v0.4.28/probe-linux-amd64 \
+        /usr/local/bin/grpc_health_probe
+    RUN chmod +x /usr/local/bin/grpc_health_probe
+
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir -r requirements.txt
+    COPY . .
+    CMD ["python", "-m", "app"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A Git source such as `ADD https://github.com/acme/tools.git#v1.2.0`
+      is reported like a file download, although a tag or commit in the URL
+      already pins it.
+    - >-
+      It misses remote sources built from `ARG` or `ENV` values, and
+      downloads done in `RUN curl` or `RUN wget` without a checksum.
+    - >-
+      Any `--checksum` value silences it; Skylos does not check that the
+      digest is well formed.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: dockerfile
+          filename: Dockerfile
+          code: |
+            # syntax=docker/dockerfile:1
+            FROM python:3.12-slim
+
+            WORKDIR /app
+            # skylos: ignore[SKY-D342] mirror serves signed, immutable releases
+            ADD https://downloads.example.com/grpc-health-probe/v0.4.28/probe-linux-amd64 \
+                /usr/local/bin/grpc_health_probe
+            RUN chmod +x /usr/local/bin/grpc_health_probe
+      text: >-
+        Put the marker on a comment line directly above the `ADD`. Docker
+        reads `#` as a comment only at the start of a line; after an
+        instruction it becomes part of the arguments.
+      language: dockerfile
+      code: |
+        # skylos: ignore[SKY-D342] mirror serves signed, immutable releases
+        ADD https://downloads.example.com/probe/v0.4.28/probe /usr/local/bin/probe
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D342"]` turns the rule off for the
+        project.
+
+related: [SKY-D343, SKY-D328]

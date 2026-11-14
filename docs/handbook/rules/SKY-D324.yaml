@@ -1,0 +1,177 @@
+id: SKY-D324
+title: Symlink-following file write
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-59]
+
+what_it_is: >-
+  A symbolic link (symlink) is a file that points to another path. When a
+  program writes to a path whose last part is a symlink, the operating
+  system writes to the link's target instead. SKY-D324 reports a file write
+  whose path is built from outside input, with nothing in the function that
+  rejects symlinks.
+
+why_it_matters: >-
+  If an attacker can place a link in the folder (through another upload, an
+  extracted archive or a shared temporary directory), a write meant for
+  `notes/todo.txt` lands in `~/.ssh/authorized_keys` or the app's own
+  config, with the server's permissions. Cutting the name down to its last
+  part with `Path(name).name` does not help: that last part can be the link.
+
+flagged_example:
+  language: python
+  filename: app/notes.py
+  expect_line: 12
+  code: |
+    from pathlib import Path
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+    NOTES_DIR = Path("/srv/app/notes")
+
+
+    @app.post("/notes")
+    def save_note():
+        name = Path(request.form["name"]).name
+        with open(NOTES_DIR / name, "w", encoding="utf-8") as fh:
+            fh.write(request.form["body"])
+        return {"saved": name}
+
+not_flagged_example:
+  language: python
+  filename: app/notes.py
+  code: |
+    from pathlib import Path
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+    NOTES_DIR = Path("/srv/app/notes")
+
+
+    @app.post("/notes")
+    def save_note():
+        name = Path(request.form["name"]).name
+        with open(NOTES_DIR / name, "x", encoding="utf-8") as fh:
+            fh.write(request.form["body"])
+        return {"saved": name}
+  why: >-
+    Mode `"x"` creates a new file and fails if anything already exists at
+    that path, a symlink included, so the write can never follow a planted
+    link. Skylos skips exclusive creates. (A note can then not be
+    overwritten; the fix below keeps overwriting.)
+
+how_skylos_decides:
+  - >-
+    Looks at Python writes: `open()` and a path's `.open()` in a mode that
+    can write (`w`, `a`, `+`; a mode it cannot read counts as both read and
+    write), `Path.write_text()` and `write_bytes()`, and `os.open()` with
+    `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_TRUNC` or `O_APPEND`.
+  - >-
+    The path must be able to carry outside data: a tainted value (a
+    function parameter, `request.*`, `input()`, `os.getenv()`), a string
+    built with an f-string, `+`, `%` or `.format()`, or a name taken from
+    such a value with `Path(x).name`, which removes folders but not a final
+    link.
+  - >-
+    Skips exclusive creates (`open(p, "x")`, or `os.open()` with the `os`
+    module's `O_CREAT | O_EXCL`) and an `os.open()` call that names
+    `O_NOFOLLOW`.
+  - >-
+    Skips the write when an earlier statement in the same function mentions
+    a link, file-type or containment check: `is_symlink`, `readlink`,
+    `lstat`, `S_ISLNK`, `O_NOFOLLOW`, `is_file`, `S_ISREG`, `fstat`,
+    `resolve`, `relative_to` or `is_relative_to`. It matches the name only;
+    it does not prove that the check rejects the path.
+  - >-
+    Decides who controls the path. Request data and route or MCP tool
+    arguments are reported. Click or Typer command arguments, `sys.argv` and
+    environment variables belong to whoever runs the program, so they are
+    skipped. For a plain helper's parameter, Skylos follows the callers
+    through the scanned project: it reports when a resolved caller passes
+    untrusted input, keeps the finding when the trace is cut off, and
+    otherwise moves it to `suppressed` as safe or unknown.
+  - >-
+    Reports HIGH on the line of the write call. When the path still holds
+    the raw input instead of a base name, the same line usually also gets
+    SKY-D215.
+
+source_refs:
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _flag_symlink_write_if_unsafe"
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _flag_open_operations"
+    note: read and write modes, exclusive creates.
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _record_safety_tokens"
+    note: the guard names, recorded per function.
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _untrusted_path_evidence"
+    note: operator input is skipped; helper parameters go to the caller trace.
+  - path: skylos/rules/danger/danger_fs/path_provenance.py
+    symbol: "def resolve_helper_parameter_findings"
+  - path: test/test_dangerous.py
+    symbol: "def test_symlink_following_write_flags_attacker_controlled_output"
+
+fix:
+  explanation: >-
+    Open the file with `O_NOFOLLOW`, so the call fails when the last part
+    of the path is a link, and keep the name reduced to a base name inside
+    the fixed folder. Write the flags in the call or in a local variable of
+    the same function, where Skylos sees them.
+  filename: app/notes.py
+  code: |
+    import os
+    from pathlib import Path
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+    NOTES_DIR = Path("/srv/app/notes")
+
+
+    @app.post("/notes")
+    def save_note():
+        name = Path(request.form["name"]).name
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+        fd = os.open(NOTES_DIR / name, flags, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(request.form["body"])
+        return {"saved": name}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Flags kept in a module constant (`WRITE_FLAGS = ... | os.O_NOFOLLOW`
+      at the top of the file) are not seen inside the function, so a safe
+      `os.open(path, WRITE_FLAGS)` is still reported.
+    - >-
+      The other way round, any earlier mention of a guard name silences the
+      rule: a bare `.resolve()` with no containment check, or an `is_file()`
+      test, which itself follows links.
+    - >-
+      A helper whose callers Skylos cannot resolve is moved to `suppressed`
+      as unknown instead of being reported; look there when a scan of part
+      of a project shows nothing.
+  suppress:
+    - check: inline
+      text: >-
+        Silence one reviewed write on its reported line and say why. A bare
+        `# noqa` does not hide a HIGH security finding.
+      language: python
+      code: |
+        with open(out_path, "w") as fh:  # skylos: ignore[SKY-D324] folder is not shared
+    - check: baseline
+      text: >-
+        Accept the writes you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D324"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D215, SKY-D325, SKY-D326, SKY-D348]

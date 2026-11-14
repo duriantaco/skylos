@@ -1,0 +1,206 @@
+id: SKY-D233
+title: Unsafe deserialization
+family: security
+severity: CRITICAL
+severity_note: >-
+  Python `marshal`, `jsonpickle` and `dill` calls are CRITICAL and
+  `shelve.open()` is HIGH. Java `XMLDecoder` and C# `BinaryFormatter`-style
+  formatters are CRITICAL with request data and HIGH otherwise. Java XStream,
+  SnakeYAML and Jackson settings, and Json.NET `TypeNameHandling`, range from
+  MEDIUM to CRITICAL depending on the setting and whether request data is
+  read.
+languages: [Python, Java, Kotlin, C#]
+gate:
+  full: critical_blocks
+  note: >-
+    HIGH and MEDIUM findings, such as `shelve.open()`, are only counted.
+cwe: [CWE-502]
+
+what_it_is: >-
+  Deserialization turns stored bytes or text back into objects. Some formats
+  can name any class or function to call while they load, so loading them
+  runs code. SKY-D233 reports such loaders beyond `pickle` (which has its own
+  rules): `marshal`, `shelve`, `jsonpickle` and `dill` in Python, and their
+  equivalents in Java, Kotlin and C#.
+
+why_it_matters: >-
+  If an attacker can change the data, for example a cookie, an upload or a
+  cache entry, a crafted payload runs a command on the server the moment it
+  is loaded. No other bug is needed.
+
+flagged_example:
+  language: python
+  filename: app/cart.py
+  expect_line: 10
+  code: |
+    import jsonpickle
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/cart")
+    def show_cart():
+        cart = jsonpickle.decode(request.cookies.get("cart", "[]"))
+        return {"items": len(cart)}
+
+not_flagged_example:
+  language: python
+  filename: app/cart.py
+  code: |
+    import json
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/cart")
+    def show_cart():
+        cart = json.loads(request.cookies.get("cart", "[]"))
+        return {"items": len(cart)}
+  why: >-
+    `json.loads()` only builds dicts, lists, strings, numbers and booleans.
+    It cannot create objects of other classes or call functions, so it is not
+    a code-running loader.
+
+more_examples:
+  - flagged:
+      language: java
+      filename: src/main/java/com/example/SettingsController.java
+      expect_line: 14
+      code: |
+        package com.example;
+
+        import java.beans.XMLDecoder;
+        import java.io.IOException;
+        import javax.servlet.http.HttpServletRequest;
+        import org.springframework.web.bind.annotation.PostMapping;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @RestController
+        public class SettingsController {
+
+            @PostMapping("/settings/import")
+            public String importSettings(HttpServletRequest request) throws IOException {
+                XMLDecoder decoder = new XMLDecoder(request.getInputStream());
+                Object settings = decoder.readObject();
+                decoder.close();
+                return String.valueOf(settings);
+            }
+        }
+    not_flagged:
+      language: java
+      filename: src/main/java/com/example/SettingsController.java
+      code: |
+        package com.example;
+
+        import com.fasterxml.jackson.databind.ObjectMapper;
+        import java.io.IOException;
+        import javax.servlet.http.HttpServletRequest;
+        import org.springframework.web.bind.annotation.PostMapping;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @RestController
+        public class SettingsController {
+            private final ObjectMapper mapper = new ObjectMapper();
+
+            @PostMapping("/settings/import")
+            public String importSettings(HttpServletRequest request) throws IOException {
+                Settings settings = mapper.readValue(request.getInputStream(), Settings.class);
+                return settings.theme();
+            }
+
+            public record Settings(String theme, int pageSize) {}
+        }
+      why: >-
+        Jackson reads the body into the one fixed `Settings` class. Without
+        default typing or `@JsonTypeInfo(use = Id.CLASS)`, the data cannot
+        choose which class is created.
+
+how_skylos_decides:
+  - >-
+    In Python, resolves each call's name through imports and aliases and
+    matches it against a fixed table: `marshal.load()`, `marshal.loads()`,
+    `jsonpickle.decode()`, `dill.load()`, `dill.loads()` and
+    `dill.Unpickler(...).load()` are CRITICAL; `shelve.open()` is HIGH.
+  - >-
+    Reports every matching call, whatever its argument. These formats can
+    run code whenever the data is not your own, so the rule asks for a
+    review of where the data comes from.
+  - >-
+    Java and Kotlin: `new XMLDecoder(...)` on anything but a string literal
+    (CRITICAL when request or socket data is read), XStream `fromXML` with
+    missing or permissive type permissions, SnakeYAML `load` without
+    `SafeConstructor`, Jackson default typing or `@JsonTypeInfo(use =
+    Id.CLASS)`, and Kryo with registration turned off.
+  - >-
+    C#: `BinaryFormatter`, `SoapFormatter`, `NetDataContractSerializer`,
+    `LosFormatter` and `ObjectStateFormatter` deserialization, Json.NET
+    `TypeNameHandling` other than `None`, and `JavaScriptSerializer` with a
+    `SimpleTypeResolver`. `pickle` itself is reported as SKY-D204 and
+    SKY-D205.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: "DANGEROUS_CALLS = {"
+    note: the Python sink table; the D233 entries follow `tempfile.mktemp`.
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _call_findings("
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "XMLDecoder can call arbitrary methods while reading XML."
+  - path: skylos/visitors/languages/java/danger.py
+    symbol: "@JsonTypeInfo(use = Id.CLASS) lets JSON name the Java class to create."
+  - path: skylos/visitors/languages/csharp/models.py
+    symbol: "SKY-D233"
+
+fix:
+  explanation: >-
+    Store and exchange data in a format that cannot create arbitrary
+    objects, such as JSON, and check its shape after loading. When you must
+    keep an object format, sign the data with a secret key and check the
+    signature before loading it.
+  filename: app/cart.py
+  code: |
+    import json
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.get("/cart")
+    def show_cart():
+        cart = json.loads(request.cookies.get("cart", "[]"))
+        if not isinstance(cart, list):
+            cart = []
+        return {"items": len(cart)}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A Python call that only reads a file your own build wrote, such as a
+      `shelve` cache in the app's data folder, is still reported. The rule
+      does not follow where the data comes from.
+    - >-
+      `marshal.loads()` used on compiled code your own tool produced is
+      reported the same way as one used on network data.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed call and say why the data is trusted. A bare `# noqa`
+        does not hide HIGH or CRITICAL security findings.
+      language: python
+      code: |
+        cart = jsonpickle.decode(blob)  # skylos: ignore[SKY-D233] blob is signed
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D233"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D204, SKY-D205, SKY-D206, SKY-D265]

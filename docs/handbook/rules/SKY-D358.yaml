@@ -1,0 +1,153 @@
+id: SKY-D358
+title: Gradio app open on every network interface without a login
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  Gradio is a Python library for putting a web page in front of a model or
+  function; `launch()` starts its web server. SKY-D358 reports a
+  `launch()` that binds to every network interface (`server_name` of
+  `"0.0.0.0"` or `"::"`) without setting `auth` or `auth_dependency`.
+
+why_it_matters: >-
+  Anyone who can reach the machine's address can use the app: run the
+  model on your bill, read whatever the tool can read, and call the
+  app's HTTP API directly. Demo apps often wrap internal data or paid
+  model calls and are then left running on a cloud server.
+
+flagged_example:
+  language: python
+  filename: app/support_ui.py
+  expect_line: 13
+  code: |
+    import gradio as gr
+
+    from support.agent import answer_ticket
+
+
+    def respond(message, history):
+        return answer_ticket(message, history)
+
+
+    demo = gr.ChatInterface(respond, title="Support assistant")
+
+    if __name__ == "__main__":
+        demo.launch(server_name="0.0.0.0", server_port=7860)
+
+not_flagged_example:
+  language: python
+  filename: app/support_ui.py
+  code: |
+    import gradio as gr
+
+    from support.agent import answer_ticket
+
+
+    def respond(message, history):
+        return answer_ticket(message, history)
+
+
+    demo = gr.ChatInterface(respond, title="Support assistant")
+
+    if __name__ == "__main__":
+        demo.launch(server_name="127.0.0.1", server_port=7860)
+  why: >-
+    `127.0.0.1` is the loopback address: only programs on the same machine,
+    such as a reverse proxy that does the login, can connect. Only the
+    all-interfaces addresses are reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files. Finds `.launch()` calls on an
+    object made by `gradio.Blocks()`, `gradio.Interface()` or
+    `gradio.ChatInterface()`: called directly, through a variable, or bound
+    by `with gr.Blocks() as demo:`.
+  - >-
+    Reads the keyword arguments, including those spread from a dictionary
+    with `**options` when every key of that dictionary is a fixed string.
+    When a variable can hold several values (a list in a loop, or
+    different `if` branches), each visible combination is checked.
+  - >-
+    Reports HIGH when `server_name` can be the literal `"0.0.0.0"`, `"::"`
+    or `"[::]"`, no keyword set is unknown, and `auth` and
+    `auth_dependency` are both missing or set to `None`. Any other value of
+    `auth` counts as configured.
+
+source_refs:
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "_GRADIO_FACTORIES = {\"gradio.Blocks\", \"gradio.Interface\", \"gradio.ChatInterface\"}"
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "def _keyword_variants"
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "\"python_public_launch_branch\""
+    note: the check in `visit_Call` that reports SKY-D358.
+  - path: test/test_python_security_gaps.py
+    symbol: "def test_public_gradio_without_auth"
+  - path: test/test_python_missing_target_flows.py
+    symbol: "def test_loop_public_bind_and_optional_auth_mapping"
+
+fix:
+  explanation: >-
+    Require a login with `auth`, taking the user name and password from the
+    environment or a secret store, or pass an `auth_dependency` that checks
+    your own single sign-on. If only one machine needs the app, bind to
+    `127.0.0.1` instead.
+  filename: app/support_ui.py
+  code: |
+    import os
+
+    import gradio as gr
+
+    from support.agent import answer_ticket
+
+
+    def respond(message, history):
+        return answer_ticket(message, history)
+
+
+    demo = gr.ChatInterface(respond, title="Support assistant")
+
+    if __name__ == "__main__":
+        demo.launch(
+            server_name="0.0.0.0",
+            server_port=7860,
+            auth=(os.environ["SUPPORT_UI_USER"], os.environ["SUPPORT_UI_PASSWORD"]),
+        )
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      An app in a container must bind to `0.0.0.0` for port mapping to work.
+      When the container is only reachable through a proxy that does the
+      login, the finding is a false alarm.
+    - >-
+      Any `auth` value other than `None` counts as configured, even a
+      function that accepts every password.
+    - >-
+      Missed: `share=True` (which publishes the app on a public
+      `gradio.live` link), a host read at run time such as
+      `os.environ.get("HOST", "0.0.0.0")`, the `GRADIO_SERVER_NAME`
+      environment variable, chained calls such as
+      `demo.queue().launch(server_name="0.0.0.0")`, and options passed as
+      `**kwargs` whose keys Skylos cannot see.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the `launch(` line when a proxy in front of the app requires a
+        login, and say which.
+      language: python
+      code: |
+        demo.launch(server_name="0.0.0.0")  # skylos: ignore[SKY-D358] behind SSO proxy
+    - check: baseline
+      text: >-
+        `skylos baseline .`, then `--baseline`, accepts existing launches by
+        file and line.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D358"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D241, SKY-D243, SKY-D283, SKY-D346]

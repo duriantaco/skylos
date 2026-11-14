@@ -1,0 +1,135 @@
+# Every Skylos Cloud destination and the guide section that covers it.
+#
+# source: where the label comes from in the Cloud repository
+#   sidebar   src/lib/dashboard-navigation.ts, the sidebar places
+#   page      src/lib/dashboard-navigation.ts, pages under a place (PLACE_LABELS)
+#   settings  src/lib/settings-sections.ts, settings pages and their sections
+#   project   src/lib/project-navigation.ts, a project's tabs and More menu
+# status: covered (default) or not_available (needs a reason; the section
+#   says so in the guide).
+#
+# test/test_handbook_coverage.py fails when a feature has no section. With
+# SKYLOS_CLOUD_REPO set, it also fails when the Cloud checkout has a
+# destination that is not listed here, or is not at the verified commit.
+
+verified_against:
+  commit: "6118d041"
+  date: 2026-11-13
+
+features:
+  - {id: sidebar.home, source: sidebar, label: Home, chapter: 02-first-scan.md, section: Where to see the scan}
+  - {id: sidebar.pull-requests, source: sidebar, label: Pull requests, chapter: 07-daily-work.md, section: Pull requests}
+  - {id: sidebar.issues, source: sidebar, label: Issues, chapter: 07-daily-work.md, section: Issues}
+  - {id: sidebar.supply-chain, source: sidebar, label: Supply chain, chapter: 07-daily-work.md, section: Supply chain}
+  - {id: sidebar.coding-agents, source: sidebar, label: Coding agents, chapter: 07-daily-work.md, section: Coding agents and agent checks}
+  - {id: sidebar.ai-app-safety, source: sidebar, label: AI app safety, chapter: 07-daily-work.md, section: AI app safety}
+  - {id: sidebar.deep-scans, source: sidebar, label: Deep scans, chapter: 07-daily-work.md, section: Deep scans}
+  - {id: sidebar.policy, source: sidebar, label: Policy, chapter: 05-policy.md, section: Where Policy lives}
+  - {id: sidebar.not-fixing, source: sidebar, label: Not fixing, chapter: 06-decide-on-issues.md, section: The "Not fixing" list}
+  - {id: sidebar.audit-evidence, source: sidebar, label: Audit evidence, chapter: 09-evidence-compliance.md, section: Audit evidence}
+  - {id: sidebar.compliance-reports, source: sidebar, label: Compliance reports, chapter: 09-evidence-compliance.md, section: Compliance reports from start to finish}
+  - {id: sidebar.settings, source: sidebar, label: Settings, chapter: 10-integrations-settings.md, section: Project settings}
+  - {id: sidebar.billing, source: sidebar, label: Billing, chapter: 11-billing.md, section: Plans}
+
+  - {id: page.repositories, source: page, label: Repositories, chapter: 10-integrations-settings.md, section: Project settings}
+  - {id: page.compare-scans, source: page, label: Compare scans, chapter: 07-daily-work.md, section: Trends and the codebase views}
+  - {id: page.scan, source: page, label: Scan, chapter: 03-read-a-scan.md, section: The issue list}
+  - {id: page.all-uploads, source: page, label: All uploads, chapter: 02-first-scan.md, section: Where to see the scan}
+  - {id: page.issue, source: page, label: Issue, chapter: 07-daily-work.md, section: Issues}
+  - {id: page.posture, source: page, label: Posture, chapter: 07-daily-work.md, section: Trends and the codebase views}
+  - {id: page.trends, source: page, label: Trends, chapter: 07-daily-work.md, section: Trends and the codebase views}
+  - {id: page.setup, source: page, label: Setup, chapter: 02-first-scan.md, section: Add a repository}
+  - {id: page.rules-for-every-repo, source: page, label: Rules for every repo, chapter: 06-decide-on-issues.md, section: The "Not fixing" list}
+  - {id: page.request-to-not-fix, source: page, label: Request to not fix, chapter: 06-decide-on-issues.md, section: Approve or reject a request}
+  - {id: page.rules, source: page, label: Rules, chapter: 05-policy.md, section: Custom rules}
+  - {id: page.agent-guardrails, source: page, label: Agent guardrails, chapter: 05-policy.md, section: Rules for coding agents}
+  - {id: page.review-exposure, source: page, label: Review exposure, chapter: 07-daily-work.md, section: Coding agents and agent checks}
+  - {id: page.agent-check, source: page, label: Agent check, chapter: 07-daily-work.md, section: Coding agents and agent checks}
+  - {id: page.agent-checks, source: page, label: Agent checks, chapter: 07-daily-work.md, section: Coding agents and agent checks}
+  - {id: page.behind-the-number, source: page, label: Behind the number, chapter: 07-daily-work.md, section: Coding agents and agent checks}
+  - {id: page.prepare-for-soc-2, source: page, label: Prepare for SOC 2, chapter: 09-evidence-compliance.md, section: Write your SOC 2 answers}
+  - {id: page.questionnaire-answers, source: page, label: Questionnaire answers, chapter: 09-evidence-compliance.md, section: Questionnaire answers}
+  - {id: feature.auditor-sample, source: other, label: "Answer an auditor's sample", chapter: 09-evidence-compliance.md, section: "Answer an auditor's sample"}
+  - {id: feature.verify-page, source: other, label: Report verification page, chapter: 09-evidence-compliance.md, section: The verify page}
+  - {id: feature.request-report-change, source: other, label: Request a change, chapter: 09-evidence-compliance.md, section: Request a change}
+  - {id: feature.merge-anyway, source: other, label: Merge anyway, chapter: 04-quality-gate.md, section: Merge anyway}
+  - {id: feature.this-looks-wrong, source: other, label: This looks wrong, chapter: 06-decide-on-issues.md, section: This looks wrong}
+  - {id: feature.send-feedback, source: other, label: Send feedback, chapter: 11-billing.md, section: Send feedback}
+  - {id: feature.fix-pull-request, source: other, label: Automatic fix pull request, chapter: 08-fixes.md, section: Automatic fix pull requests}
+  - {id: feature.weekly-cleanup, source: other, label: Weekly cleanup PRs, chapter: 08-fixes.md, section: Weekly cleanup pull requests}
+  - {id: feature.project-tokens, source: other, label: Project tokens, chapter: 02-first-scan.md, section: "Route 3: CI with a project token"}
+  - {id: page.audit-log, source: page, label: Audit log, chapter: 09-evidence-compliance.md, section: The audit log}
+  - {id: page.access-review, source: page, label: Access review, chapter: 09-evidence-compliance.md, section: Access review}
+  - {id: page.team, source: page, label: Team, chapter: 01-start.md, section: Invite members and set roles}
+  - {id: page.teams, source: page, label: Teams, chapter: 01-start.md, section: Invite members and set roles}
+  - {id: page.github, source: page, label: GitHub, chapter: 10-integrations-settings.md, section: Connect GitHub}
+  - {id: page.credit-history, source: page, label: Credit history, chapter: 11-billing.md, section: Receipts and credit history}
+  - {id: page.credits, source: page, label: Credits, chapter: 11-billing.md, section: Credit packs}
+  - {id: page.account, source: page, label: Account, chapter: 10-integrations-settings.md, section: Security}
+
+  - {id: settings.general, source: settings, label: General, chapter: 10-integrations-settings.md, section: Project settings}
+  - {id: settings.name, source: settings, label: Name, chapter: 01-start.md, section: Create and name a workspace}
+  - {id: settings.plan, source: settings, label: Plan, chapter: 11-billing.md, section: Plans}
+  - {id: settings.repositories, source: settings, label: Repositories, chapter: 10-integrations-settings.md, section: Project settings}
+  - {id: settings.weekly-digest, source: settings, label: Weekly digest, chapter: 10-integrations-settings.md, section: 'What Skylos emails, and what it does not'}
+  - {id: settings.your-reports, source: settings, label: Your reports, chapter: 11-billing.md, section: Send feedback}
+  - {id: settings.data-retention, source: settings, label: Data retention, chapter: 10-integrations-settings.md, section: Data retention and deleting a workspace}
+  - {id: settings.delete-workspace, source: settings, label: Delete workspace, chapter: 10-integrations-settings.md, section: Data retention and deleting a workspace}
+  - {id: settings.members-teams, source: settings, label: Members & teams, chapter: 01-start.md, section: Invite members and set roles}
+  - {id: settings.members, source: settings, label: Members, chapter: 01-start.md, section: Invite members and set roles}
+  - {id: settings.teams, source: settings, label: Teams, chapter: 01-start.md, section: Invite members and set roles}
+  - {id: settings.integrations, source: settings, label: Integrations, chapter: 10-integrations-settings.md, section: Connect GitHub}
+  - {id: settings.github, source: settings, label: GitHub, chapter: 10-integrations-settings.md, section: Connect GitHub}
+  - {id: settings.webhooks, source: settings, label: Webhooks, chapter: 10-integrations-settings.md, section: Webhooks}
+  - {id: settings.jira, source: settings, label: Jira, chapter: 10-integrations-settings.md, section: Jira}
+  - {id: settings.api-keys-page, source: settings, label: API & keys, chapter: 10-integrations-settings.md, section: API tokens and keys}
+  - {id: settings.api-tokens, source: settings, label: API tokens, chapter: 10-integrations-settings.md, section: API tokens and keys}
+  - {id: settings.api-keys, source: settings, label: API keys, chapter: 10-integrations-settings.md, section: API tokens and keys}
+  - {id: settings.security, source: settings, label: Security, chapter: 10-integrations-settings.md, section: Security}
+  - {id: settings.single-sign-on, source: settings, label: Single sign-on, chapter: 10-integrations-settings.md, section: Security}
+  - {id: settings.two-factor, source: settings, label: Two-factor, chapter: 10-integrations-settings.md, section: Security}
+  - {id: settings.billing-credits, source: settings, label: Billing & credits, chapter: 11-billing.md, section: Plans}
+
+  - {id: project.overview, source: project, label: Overview, chapter: 03-read-a-scan.md, section: The project Overview}
+  - {id: project.issues, source: project, label: Issues, chapter: 07-daily-work.md, section: Issues}
+  - {id: project.pull-requests, source: project, label: Pull requests, chapter: 07-daily-work.md, section: Pull requests}
+  - {id: project.scans, source: project, label: Scans, chapter: 02-first-scan.md, section: Where to see the scan}
+  - {id: project.settings, source: project, label: Settings, chapter: 10-integrations-settings.md, section: Project settings}
+  - {id: project.trends, source: project, label: Trends, chapter: 07-daily-work.md, section: Trends and the codebase views}
+  - {id: project.code-attribution, source: project, label: Code attribution, chapter: 07-daily-work.md, section: Trends and the codebase views}
+  - {id: project.ai-app-safety, source: project, label: AI app safety, chapter: 07-daily-work.md, section: AI app safety}
+  - {id: project.agent-pr-log, source: project, label: Agent PR log, chapter: 07-daily-work.md, section: Trends and the codebase views}
+  - {id: project.logic-changes, source: project, label: Logic changes, chapter: 07-daily-work.md, section: Trends and the codebase views}
+  - {id: project.technical-debt, source: project, label: Technical debt, chapter: 07-daily-work.md, section: Trends and the codebase views}
+  - {id: project.investigate, source: project, label: Investigate, chapter: 07-daily-work.md, section: Trends and the codebase views}
+  - {id: project.required-controls, source: project, label: Required controls, chapter: 07-daily-work.md, section: Trends and the codebase views}
+  - {id: project.not-fixing, source: project, label: Not fixing, chapter: 06-decide-on-issues.md, section: The "Not fixing" list}
+
+  - id: feature.ai-pull-request-review
+    source: other
+    label: AI pull request review
+    status: not_available
+    reason: The feature is switched off in Cloud (its price row is disabled and it needs operator setup). The pipeline view shows the stage as "Not run".
+    chapter: 12-plans-troubleshooting.md
+    section: Not available yet
+  - id: feature.bot-approvals
+    source: other
+    label: Bot approvals
+    status: not_available
+    reason: Hidden unless the operator sets SKYLOS_AI_APPROVAL_GUARD_ENABLED; not shown in the Policy page of a default deployment.
+    chapter: 12-plans-troubleshooting.md
+    section: Not available yet
+  - id: feature.developer-machine-hooks
+    source: other
+    label: Hooks on developer machines (workspace settings)
+    status: not_available
+    reason: The Policy page says these settings are coming; the CLI does not fetch them yet.
+    chapter: 12-plans-troubleshooting.md
+    section: Not available yet
+  - id: feature.scanner-proof
+    source: other
+    label: Scanner proof
+    status: not_available
+    reason: Off unless SCANNER_PROOF_ENABLED=1 and not linked from any page.
+    chapter: 12-plans-troubleshooting.md
+    section: Not available yet

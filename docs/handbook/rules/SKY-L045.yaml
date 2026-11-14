@@ -1,0 +1,107 @@
+id: SKY-L045
+title: Test assertion always true
+family: logic
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  An assertion in a test whose condition is true for every value of the
+  names in it: `len(x) >= 0`, `x or True`, `isinstance(x, object)`,
+  `x is x`, or a non-empty tuple, list, set or dict such as
+  `assert (x == 1, "message")`. SKY-L040 reports conditions made only of
+  literals, like `assert True`; this rule covers the ones that mention a
+  variable and still cannot fail.
+
+why_it_matters: >-
+  The assertion looks like a check but passes whatever the code returns. The
+  parenthesised form is a real bug: `assert (x == 1, "message")` asserts a
+  two-item tuple, which is always true, instead of `x == 1` with a message.
+
+flagged_example:
+  language: python
+  filename: test_runs.py
+  expect_line: 6
+  code: |
+    from agents.run_state import deserialize_items
+
+
+    def test_deserialize_items_keeps_string_agents():
+        result = deserialize_items([{"source_agent": "triage"}])
+        assert len(result) >= 0
+
+not_flagged_example:
+  language: python
+  filename: test_runs.py
+  code: |
+    from agents.run_state import deserialize_items
+
+
+    def test_deserialize_items_keeps_string_agents():
+        result = deserialize_items([{"source_agent": "triage"}])
+        assert len(result) >= 1
+        assert result == result
+  why: >-
+    `len(result) >= 1` fails on an empty list. `result == result` can be
+    false (a NaN, or a class whose `__eq__` says so), so Skylos does not call
+    it always true. Neither line is reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on the same collected tests as SKY-L044, and only
+    on assertions that run: lines after a `return` or a proven jump are
+    skipped.
+  - >-
+    Reports `assert` with a non-empty tuple, list, set or dict display (no
+    `*` unpacking), an `or` chain with an always-true part, `len(x) >= 0` or
+    `0 <= len(x)` where `len` is the builtin, `isinstance(x, object)` where
+    both names are the builtins, and `x is x`.
+  - >-
+    In `unittest` tests it also reports `self.assertTrue(True)`,
+    `self.assertFalse(False)` and `self.assertEqual` on two equal literals.
+  - >-
+    Leaves literal-only conditions to SKY-L040, and does not report `x == x`,
+    a comparison of two displays such as `[a] == [b]`, or `len` and
+    `isinstance` when the file rebinds those names.
+
+source_refs:
+  - path: skylos/rules/quality/test_effectiveness.py
+    symbol: "class AlwaysTrueAssertionRule"
+  - path: skylos/rules/quality/test_effectiveness.py
+    symbol: "def _always_true_reason("
+  - path: test/test_test_quality_effectiveness.py
+    symbol: "L045_INVALID"
+
+fix:
+  explanation: >-
+    Assert on the value the code should produce. For the tuple mistake, drop
+    the parentheses: `assert x == 1, "message"`.
+  filename: test_runs.py
+  code: |
+    from agents.run_state import deserialize_items
+
+
+    def test_deserialize_items_keeps_string_agents():
+        result = deserialize_items([{"source_agent": "triage"}])
+        assert [item.agent_name for item in result] == ["triage"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      `assert len(events) >= 0  # timing dependent` is reported even when the
+      author meant "this must not raise". The assertion still checks nothing;
+      remove it, or assert something the timing cannot change.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the assertion line.
+      language: python
+      code: |
+        assert len(events) >= 0  # skylos: ignore[SKY-L045] streaming must not raise
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L045"]` turns the rule off for the
+        project.
+
+related: [SKY-L040, SKY-L044, SKY-A101]

@@ -1,0 +1,168 @@
+id: SKY-D376
+title: Secrets passed to a reusable workflow from another repository
+family: ci-cd
+severity: MEDIUM
+languages: [GitHub Actions workflows]
+gate:
+  full: listed
+  diff: counted
+  note: >-
+    A diff scan counts a finding whose rule, file and job name are not
+    among the merge base's findings. A baseline scan counts it like a diff
+    scan when the baseline's `rule_coverage` lists it.
+
+what_it_is: >-
+  A job can call a reusable workflow stored in another repository (`uses:
+  owner/repo/.github/workflows/x.yml@ref`) and hand it secrets, an OIDC
+  token or a write token. SKY-D376 reports that hand-off so someone
+  reviews the other repository, because Skylos cannot see what that
+  workflow does with them.
+
+why_it_matters: >-
+  The called workflow runs with your publish token, and whoever can change
+  that repository, or move the tag you call, decides what runs. A
+  compromised shared release workflow can publish to every package that
+  calls it.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  expect_line: 9
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        uses: acme/release-workflows/.github/workflows/npm-publish.yml@v2
+        with:
+          package-dir: packages/sdk
+        secrets:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/ci.yml
+  code: |
+    name: CI
+    on:
+      pull_request:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      test:
+        uses: acme/ci/.github/workflows/test.yml@0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c
+        with:
+          node-version: 22
+  why: >-
+    The shared workflow also lives in another repository, but this job
+    hands it nothing secret: no secrets, no `id-token: write` and only a
+    read-only token.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). The `ca9` library reads every `*.yml`
+    and `*.yaml` file directly in `.github/workflows`.
+  - >-
+    Looks at jobs whose `uses:` names a workflow outside the repository.
+    `uses: ./.github/workflows/…` is local and is audited with the other
+    publish rules instead.
+  - >-
+    Collects what the job hands over: `secrets: inherit`, `toJSON(secrets)`,
+    every `secrets.NAME` the job's values mention (in `secrets:`, `with:` or
+    `if:`), `id-token: write`, and write scopes of `GITHUB_TOKEN` when the
+    job or workflow sets `permissions:`.
+  - >-
+    Reports a MEDIUM finding on the `uses:` line when that list is not
+    empty, whether or not the reference is pinned to a commit SHA. The
+    message says which.
+
+source_refs:
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "\"credentials_to_remote_reusable_workflow\": ("
+    note: >-
+      ca9 `audit_workflows` decides the rule (`ca9/ci/audit.py`
+      `_remote_reusable`); this page was checked against ca9 0.7.0.
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "def scan_agent_publish("
+  - path: skylos/core/gatekeeper.py
+    symbol: "FULL_SCAN_REPORT_ONLY_RULES = frozenset("
+
+fix:
+  explanation: >-
+    Keep the release workflow in this repository (here a copy at
+    `.github/workflows/npm-publish.yml`), where Skylos and your reviewers
+    can read it. If you must call a shared one, pin it to a full
+    commit SHA, pass only the secrets it needs (never `secrets: inherit`),
+    audit that repository with the same rules, and record the review in a
+    baseline, because the call stays reported.
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        uses: ./.github/workflows/npm-publish.yml
+        with:
+          package-dir: packages/sdk
+        secrets:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A call pinned to a reviewed commit SHA, in a repository your
+      organisation owns, is still reported: the rule cannot read the other
+      repository.
+    - >-
+      Any `secrets.NAME` mentioned in the job counts, even a non-secret
+      setting stored as a secret.
+    - >-
+      The flagged example also gets SKY-D292 because `@v2` is not a commit
+      SHA. With `secrets: inherit` it would also get SKY-D297.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: yaml
+          filename: .github/workflows/release.yml
+          code: |
+            name: Release
+            on:
+              push:
+                tags: ["v*"]
+            permissions:
+              contents: read
+            jobs:
+              publish:
+                # skylos: ignore[SKY-D376] handbook check
+                uses: acme/release-workflows/.github/workflows/npm-publish.yml@v2
+                with:
+                  package-dir: packages/sdk
+                secrets:
+                  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      text: >-
+        Skylos reads no inline marker for this rule; a `# skylos: ignore`
+        comment above the `uses:` line does not hide it.
+    - check: baseline
+      text: >-
+        Accept a reviewed call with a baseline: `skylos baseline .`, then
+        `--baseline`. The entry matches the rule, file and job name, not the
+        line. In pull-request CI (`SKYLOS_POLICY_BASE`), the entry must also
+        be in the base commit's `.skylos/baseline.json`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D376"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D297, SKY-D292, SKY-D298, SKY-D371]

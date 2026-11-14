@@ -1,0 +1,170 @@
+id: SKY-F102
+title: Route that changes data without an auth guard
+family: quality
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. A mutating route with no visible guard is
+  MEDIUM; a FastAPI route whose ownership check does not protect the
+  object it returns or changes is HIGH.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Listed by default and counted toward `max_quality`. A scan with
+    security checks (`--danger`, `-a`) replaces it with SKY-D283 when the
+    route performs a privileged action such as a delete.
+
+what_it_is: >-
+  A route that changes data (PUT, PATCH, DELETE, or a POST that is not a
+  plain query) should check who is calling. SKY-F102 reports such a
+  Python web route when nothing on it shows an authentication or
+  permission guard. It is a review: the guard may live somewhere Skylos
+  cannot see.
+
+why_it_matters: >-
+  Without a guard, anyone who can reach the server can change another
+  customer's shipping address, cancel orders or edit settings, just by
+  sending the request with a different ID.
+
+flagged_example:
+  language: python
+  filename: app/api/orders.py
+  expect_line: 17
+  code: |
+    """Order API."""
+
+    from fastapi import FastAPI
+    from pydantic import BaseModel
+
+    from app.db import save_address
+
+    app = FastAPI()
+
+
+    class Address(BaseModel):
+        street: str
+        city: str
+
+
+    @app.put("/orders/{order_id}/address")
+    def update_address(order_id: int, address: Address) -> dict:
+        save_address(order_id, address)
+        return {"updated": order_id}
+
+not_flagged_example:
+  language: python
+  filename: app/api/orders.py
+  code: |
+    """Order API."""
+
+    from fastapi import Depends, FastAPI
+    from pydantic import BaseModel
+
+    from app.auth import User, get_current_user
+    from app.db import save_address
+
+    app = FastAPI()
+
+
+    class Address(BaseModel):
+        street: str
+        city: str
+
+
+    @app.put("/orders/{order_id}/address")
+    def update_address(
+        order_id: int, address: Address, user: User = Depends(get_current_user)
+    ) -> dict:
+        save_address(order_id, address, owner_id=user.id)
+        return {"updated": order_id}
+  why: >-
+    The route takes the caller from `Depends(get_current_user)`, a
+    dependency whose name reads as authentication, and passes the user's ID
+    on, so the update is limited to the caller's own orders.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on Python files outside `test` and `tests`
+    folders and `test_*.py` or `*_test.py` files. Covers route decorators
+    of FastAPI, Flask, Quart, Starlette and Sanic style (`@app.put(...)`,
+    `@router.delete(...)`, `@bp.route(..., methods=["POST"])`).
+  - >-
+    A route changes data when it accepts PUT, PATCH or DELETE, or POST
+    unless its name or path reads as a query (`search`, `lookup`,
+    `calculate`, ...) and its body changes nothing.
+  - >-
+    It counts as guarded when another decorator's name reads as auth
+    (`login_required`, `requires_permission`), the route passes
+    `dependencies=[Depends(...)]`, its router was created with a guard, a
+    parameter's name or type reads as auth (`token`, `current_user`,
+    `principal`), or a default calls such a dependency.
+  - >-
+    Reports MEDIUM on the `def` line when no guard is found. It also
+    reports HIGH for a FastAPI route that compares an owner or tenant ID
+    but returns or changes an object that comparison does not protect.
+
+source_refs:
+  - path: skylos/rules/quality/practices.py
+    symbol: "def _route_changes_state("
+  - path: skylos/rules/quality/practices.py
+    symbol: "def _route_has_auth_guard("
+  - path: skylos/rules/quality/practices.py
+    symbol: "STATE_CHANGING_HTTP_METHODS = {\"PUT\", \"PATCH\", \"DELETE\"}"
+  - path: skylos/rules/quality/practices.py
+    symbol: "class FrameworkPracticeRule"
+
+fix:
+  explanation: >-
+    Require the caller as a dependency (`Depends(get_current_user)`), or
+    add a guard to the router with `dependencies=[...]`, and check that the
+    caller owns the object it changes.
+  filename: app/api/orders.py
+  code: |
+    """Order API."""
+
+    from fastapi import Depends, FastAPI
+    from pydantic import BaseModel
+
+    from app.auth import User, get_current_user
+    from app.db import save_address
+
+    app = FastAPI()
+
+
+    class Address(BaseModel):
+        street: str
+        city: str
+
+
+    @app.put("/orders/{order_id}/address")
+    def update_address(
+        order_id: int, address: Address, user: User = Depends(get_current_user)
+    ) -> dict:
+        save_address(order_id, address, owner_id=user.id)
+        return {"updated": order_id}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A guard applied elsewhere, such as middleware, a gateway in front of
+      the app or a router mounted with dependencies in another module, is
+      not seen, so the route is reported.
+    - >-
+      A guard is recognised by name: a dependency called
+      `get_current_user` counts, while one called `get_caller` does not,
+      and a parameter named `token` counts even when it is never checked.
+  suppress:
+    - check: inline
+      text: >-
+        On the `def` line (the reported line):
+      language: python
+      code: |
+        def update_address(order_id: int, address: Address) -> dict:  # skylos: ignore[SKY-F102]
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-F102"]` turns the rule off for the
+        project. Neither silences SKY-D283. A baseline accepts existing
+        findings, but it records the absolute file path and the line, so an
+        entry stops matching when the checkout moves or the line shifts.
+
+related: [SKY-D283, SKY-F101]

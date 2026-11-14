@@ -1,0 +1,232 @@
+id: SKY-A118
+title: Inline suppression added
+family: ai-defects
+severity: LOW
+languages: [Python, JavaScript/TypeScript (also Vue, Svelte, Astro), Go, Rust, Java/Kotlin, C#]
+gate:
+  full: not_run
+  note: >-
+    No `skylos .` scan reports it. `skylos done` lists it as advice under its
+    `silenced_checks` check, and it never blocks, even when that check is set
+    to `block`.
+run_with: >-
+  `skylos done` (uncommitted changes) or `skylos done --base origin/main`
+  (a pull request)
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule (the `silenced_checks` check); the
+    handbook check runs `skylos .`, which never reports SKY-A118.
+
+what_it_is: >-
+  An inline suppression is a comment or attribute that tells a linter, type
+  checker or scanner to look away from one line or file: `# noqa`,
+  `# type: ignore`, `@ts-ignore`, `// eslint-disable`, `//nolint`,
+  `#[allow(...)]`, `@SuppressWarnings`. SKY-A118 lists the suppressions a
+  change adds to code.
+
+why_it_matters: >-
+  A coding agent that cannot make a check pass can silence it instead. The
+  build turns green while the type error or lint warning is still there, and
+  a reviewer sees only a short comment at the end of a line.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: billing/refunds.py
+  expect_line: 8
+  base_files:
+    - filename: billing/refunds.py
+      code: |
+        from decimal import Decimal
+
+
+        def refund_amount(order, reason):
+            total = Decimal(order["total"])
+            if reason == "damaged":
+                return total
+            return total * Decimal("0.5")
+  files:
+    - filename: billing/refunds.py
+      code: |
+        from decimal import Decimal
+
+
+        def refund_amount(order, reason):
+            total = Decimal(order["total"])
+            if reason == "damaged":
+                return total
+            fee = order.get("restocking_fee")  # type: ignore
+            return total * Decimal("0.5") - fee
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: billing/refunds.py
+      code: |
+        from decimal import Decimal
+
+
+        def refund_amount(order, reason):
+            total = Decimal(order["total"])
+            if reason == "damaged":
+                return total
+            fee = order.get("fee")  # type: ignore[union-attr]
+            return total * Decimal("0.5") - fee
+  files:
+    - filename: billing/refunds.py
+      code: |
+        from decimal import Decimal
+
+
+        def refund_amount(order, reason):
+            total = Decimal(order["total"])
+            if reason in ("damaged", "late"):
+                return total
+            fee = order.get("restocking_fee")  # type: ignore[union-attr]
+            return total * Decimal("0.5") - fee
+  why: >-
+    The `# type: ignore[union-attr]` was already in the file. The change
+    edited that line but the file holds no more of that suppression than
+    before, so nothing new was silenced.
+
+more_examples:
+  - flagged:
+      language: typescript
+      setup: git_diff
+      expect_file: web/cart.ts
+      expect_line: 4
+      base_files:
+        - filename: web/cart.ts
+          code: |
+            export function cartTotal(items: Array<{ price: number; qty: number }>) {
+              let total = 0;
+              for (const item of items) {
+                total += item.price * item.qty;
+              }
+              return total;
+            }
+      files:
+        - filename: web/cart.ts
+          code: |
+            export function cartTotal(items: Array<{ price: number; qty: number }>) {
+              let total = 0;
+              for (const item of items) {
+                // @ts-ignore
+                total += item.price * item.quantity;
+              }
+              return total;
+            }
+    not_flagged:
+      language: typescript
+      setup: git_diff
+      base_files:
+        - filename: web/cart.test.ts
+          code: |
+            import { cartTotal } from "./cart";
+
+            test("sums price times quantity", () => {
+              expect(cartTotal([{ price: 3, qty: 2 }])).toBe(6);
+            });
+      files:
+        - filename: web/cart.test.ts
+          code: |
+            import { cartTotal } from "./cart";
+
+            test("sums price times quantity", () => {
+              expect(cartTotal([{ price: 3, qty: 2 }])).toBe(6);
+            });
+
+            test("rejects a missing quantity", () => {
+              // @ts-expect-error qty is required
+              expect(() => cartTotal([{ price: 3 }])).toThrow();
+            });
+      why: >-
+        Tests pass wrong types on purpose to check that code rejects them.
+        Suppressions added in test files are counted in the summary, not
+        listed.
+
+how_skylos_decides:
+  - >-
+    Runs only in `skylos done`, as part of the `silenced_checks` check. It
+    compares the base (HEAD, or the merge base with `--base`) with the
+    working tree, so committed, staged, unstaged and untracked edits count.
+  - >-
+    Reads changed Python, JavaScript/TypeScript (also `.vue`, `.svelte`,
+    `.astro`), Go, Rust, Java/Kotlin and C# files that have added lines.
+    Type declaration files (`.d.ts`) and vendored folders such as
+    `node_modules`, `vendor`, `dist` and `build` are skipped.
+  - >-
+    Finds suppression directives in comments and attributes, per language:
+    for example `# noqa`, `# type: ignore`, `# pyright: ignore`,
+    `# mypy: ignore-errors`, `# pylint: disable`, `# nosec`,
+    `# pragma: no cover`, `eslint-disable`, `@ts-ignore`, `@ts-nocheck`,
+    `//nolint`, `#[allow(...)]`, `@SuppressWarnings`, C# `#pragma warning
+    disable`, and in any of these languages `NOSONAR`, `nosemgrep`,
+    `gitleaks:allow` and `skylos: ignore`.
+  - >-
+    Counts a directive only when it sits on a line the change added and the
+    file now holds more of that directive than at the base. A suppressed
+    line that was moved, reindented or edited elsewhere in the change is
+    matched against the base and not counted.
+  - >-
+    Leaves out test files (they are counted in the summary) and generated
+    files. Also lists `_ = name` (Python) and `void name;` (JS/TS) added
+    where that is the variable's only use, a way to hide an unused-variable
+    warning.
+  - >-
+    Each finding says which suppression was added, quotes its reason if it
+    has one, and says when a whole-file directive stops a tool checking a
+    file. At most 20 are listed; every finding is advice.
+
+source_refs:
+  - path: skylos/done/suppressions.py
+    symbol: "def new_suppressions("
+  - path: skylos/done/suppressions.py
+    symbol: "def _added("
+    note: the base-against-head count that skips moved and edited lines.
+  - path: skylos/done/suppressions.py
+    symbol: "def language("
+  - path: skylos/done/suppressions.py
+    symbol: "_ANY_DIRECTIVES = ("
+  - path: skylos/done/suppressions.py
+    symbol: "def _python_tricks("
+  - path: skylos/done/checks.py
+    symbol: "def check_silenced_checks("
+  - path: skylos/done/config.py
+    symbol: "\"silenced_checks\": \"advise\""
+
+fix:
+  explanation: >-
+    Fix what the tool reported instead of silencing it. Here the order may
+    have no fee, so give the lookup a default. If a suppression really is
+    right, narrow it to one rule and write the reason after it, so the
+    reviewer can judge it.
+  language: python
+  code: |
+    fee = Decimal(order.get("restocking_fee", "0"))
+    return total * Decimal("0.5") - fee
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate, explained suppression is still listed, with its reason
+      quoted. That is intended: the finding is advice for the reviewer.
+    - >-
+      A file whose name or folder does not look like a test (a helper under
+      `fixtures/`, say) is treated as code, so its suppressions are listed.
+  suppress:
+    - text: >-
+        Turn the whole check off in the base branch's `pyproject.toml`. This
+        also stops SKY-A119 and SKY-A121, which share the check. `skylos
+        done` reads its settings from the base, never from the change.
+      language: toml
+      code: |
+        [tool.skylos.done.checks]
+        silenced_checks = "off"
+    - text: >-
+        A `# skylos: ignore[SKY-A118]` comment does not help: it is itself
+        an added suppression.
+
+related: [SKY-A125, SKY-A119, SKY-A121, SKY-A101]

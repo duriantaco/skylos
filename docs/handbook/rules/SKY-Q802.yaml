@@ -1,0 +1,216 @@
+id: SKY-Q802
+title: Unbalanced module design
+family: quality
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. MEDIUM for a distance from 0.5 to 0.7,
+  HIGH above 0.7.
+languages: [Python, TypeScript, JavaScript]
+gate:
+  full: listed
+  note: >-
+    By default it is an advisory shown under architecture metrics, and no
+    limit counts it. With `enforce_iad = true` under
+    `[tool.skylos.architecture]` (used in the examples) it becomes a
+    quality finding, counted toward `max_quality` and failing a strict
+    gate.
+
+what_it_is: >-
+  Robert Martin's package metrics rate each module by instability (I: how
+  much it depends on others compared with how much others depend on it)
+  and abstractness (A: its share of abstract classes and protocols). A
+  balanced module sits near the line A + I = 1. SKY-Q802 reports a module
+  whose distance from that line is above 0.5.
+
+why_it_matters: >-
+  A concrete module that many others import (A and I both near 0) is hard
+  to change: every edit ripples into its importers, and there is no
+  interface to swap an implementation behind. The opposite corner, an
+  abstract module nobody uses, is code kept for nothing.
+
+flagged_example:
+  language: python
+  files:
+    - filename: shop/pricing.py
+      code: |
+        """Tax and discount rules."""
+
+
+        def price_with_tax(amount, rate):
+            return round(amount * (1 + rate), 2)
+    - filename: shop/checkout.py
+      code: |
+        """Checkout totals."""
+
+        from shop.pricing import price_with_tax
+
+
+        def checkout_total(cart):
+            return price_with_tax(sum(item.price for item in cart), 0.2)
+    - filename: shop/invoices.py
+      code: |
+        """Invoice lines."""
+
+        from shop.pricing import price_with_tax
+
+
+        def invoice_line(item):
+            return f"{item.name}: {price_with_tax(item.price, 0.2)}"
+    - filename: shop/__init__.py
+      code: |
+        """The shop package."""
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.architecture]
+        enforce_iad = true
+  expect_file: shop/pricing.py
+  expect_line: 1
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: shop/_pricing.py
+      code: |
+        """Tax and discount rules."""
+
+
+        def price_with_tax(amount, rate):
+            return round(amount * (1 + rate), 2)
+    - filename: shop/checkout.py
+      code: |
+        """Checkout totals."""
+
+        from shop._pricing import price_with_tax
+
+
+        def checkout_total(cart):
+            return price_with_tax(sum(item.price for item in cart), 0.2)
+    - filename: shop/invoices.py
+      code: |
+        """Invoice lines."""
+
+        from shop._pricing import price_with_tax
+
+
+        def invoice_line(item):
+            return f"{item.name}: {price_with_tax(item.price, 0.2)}"
+    - filename: shop/__init__.py
+      code: |
+        """The shop package."""
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.architecture]
+        enforce_iad = true
+  why: >-
+    The same helper, named `_pricing`, is marked as private to its package.
+    Skylos skips the distance check for a private module that imports at
+    most two others: it is an implementation detail, not a design boundary.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`. Builds the import graph between the project's
+    Python modules (top-level imports only) and its TypeScript and
+    JavaScript modules.
+  - >-
+    For each module, I is the number of project modules it imports divided
+    by that number plus the number that import it. A is its abstract
+    classes (`ABC`, `ABCMeta`, `Protocol`) divided by all its classes and
+    functions, with a small bonus for `TypeVar`s and `if TYPE_CHECKING:`.
+  - >-
+    Reports a module whose distance |A + I - 1| is above 0.5 and that
+    imports or is imported by at least one project module: MEDIUM up to
+    0.7, HIGH above.
+  - >-
+    Skips a private module (name starting with `_`) that imports at most two
+    others, a package submodule imported only by its own package
+    `__init__`, and TS/JS modules whose abstractness cannot be measured.
+  - >-
+    Reports on line 1 of the module. Without `enforce_iad = true` the
+    finding is an advisory in the scan's architecture metrics, grouped with
+    SKY-Q803 for the same module.
+
+source_refs:
+  - path: skylos/analysis/architecture_findings.py
+    symbol: "def generate_architecture_findings("
+  - path: skylos/analysis/architecture.py
+    symbol: "def analyze_architecture("
+  - path: skylos/analysis/architecture.py
+    symbol: "def _compute_abstractness("
+  - path: skylos/analysis/architecture.py
+    symbol: "def _filter_contextual_findings("
+  - path: skylos/analysis/architecture_support.py
+    symbol: "def architecture_iad_strict("
+  - path: skylos/reporting/architecture_result.py
+    symbol: "def _attach_architecture_findings("
+
+fix:
+  explanation: >-
+    When the module is an internal helper, mark it private: rename
+    `pricing.py` to `_pricing.py` (below) and update the imports. When it is a real boundary that many modules use, put an
+    abstract interface (a `Protocol` or `ABC`) in front of it, so importers
+    depend on the interface. Do not add imports or empty abstractions only
+    to move the number.
+  code: |
+    """Tax and discount rules."""
+
+
+    def price_with_tax(amount, rate):
+        return round(amount * (1 + rate), 2)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      The metric was designed for whole packages, not single files. Almost
+      every small shared helper module is concrete and stable, so the rule
+      reports many modules that are fine as they are, which is why it is
+      advisory by default.
+    - >-
+      Only imports inside the scanned project count; a module's use of
+      third-party libraries does not change its instability.
+  suppress:
+    - check:
+        kind: inline
+        expect: reported
+      text: >-
+        An inline marker does **not** work for this rule: with this comment
+        on line 1, the reported line, the module is still reported.
+      language: python
+      code: |
+        """Tax and discount rules."""  # skylos: ignore[SKY-Q802] shared value helpers
+    - check:
+        kind: example
+        example:
+          language: python
+          files:
+            - filename: shop/pricing.py
+              code: |
+                """Tax and discount rules."""
+
+
+                def price_with_tax(amount, rate):
+                    return round(amount * (1 + rate), 2)
+            - filename: shop/checkout.py
+              code: |
+                """Checkout totals."""
+
+                from shop.pricing import price_with_tax
+
+
+                def checkout_total(cart):
+                    return price_with_tax(sum(item.price for item in cart), 0.2)
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [tool.skylos]
+                ignore = ["SKY-Q802"]
+
+                [tool.skylos.architecture]
+                enforce_iad = true
+      text: >-
+        `ignore = ["SKY-Q802"]` under `[tool.skylos]` turns the rule off for
+        the project; leaving out `enforce_iad` keeps it an advisory that no
+        gate counts.
+
+related: [SKY-Q803, SKY-Q804, SKY-Q701]

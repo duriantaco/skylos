@@ -1,0 +1,147 @@
+id: SKY-L017
+title: Error information disclosure
+family: logic
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  MEDIUM.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  An exception handler sends the exception's text or a formatted stack
+  trace back in the response, for example `jsonify({"error": str(exc)})`.
+  Exception messages are written for developers, not for the people who
+  call the API.
+
+why_it_matters: >-
+  A database error's text can contain the SQL statement, table and column
+  names or the database host; a stack trace shows file paths and library
+  versions. That is a map for an attacker probing the API, handed over by
+  every request that fails.
+
+flagged_example:
+  language: python
+  filename: billing/api.py
+  expect_line: 16
+  code: |
+    """Invoice endpoints."""
+
+    from flask import Flask, jsonify, request
+
+    from billing import service
+
+    app = Flask(__name__)
+
+
+    @app.post("/invoices")
+    def create_invoice():
+        try:
+            invoice = service.create(request.get_json())
+        except Exception as exc:
+            app.logger.exception("invoice creation failed")
+            return jsonify({"error": str(exc)}), 500
+        return jsonify(invoice.to_dict()), 201
+
+not_flagged_example:
+  language: python
+  filename: billing/api.py
+  code: |
+    """Invoice endpoints."""
+
+    from flask import Flask, jsonify, request
+    from marshmallow import ValidationError
+
+    from billing import service
+
+    app = Flask(__name__)
+
+
+    @app.post("/invoices")
+    def create_invoice():
+        try:
+            invoice = service.create(request.get_json())
+        except ValidationError as exc:
+            return jsonify({"error": exc.messages}), 400
+        return jsonify(invoice.to_dict()), 201
+  why: >-
+    The handler sends `exc.messages`, the field errors a validation library
+    writes for the client ("Missing data for required field"). Skylos only
+    reports the exception object itself, `str()` or `repr()` of it, or
+    `traceback.format_exc()`, not an attribute of the exception.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Skips test files (`test_*.py`,
+    `*_test.py` and `conftest.py`). Looks inside every `except` block.
+  - >-
+    Treats as disclosure the caught exception name (`exc`), `str(exc)`,
+    `repr(exc)` and `traceback.format_exc()`, given directly, inside an
+    f-string, or as the value of an `error`, `message`, `detail`, `msg` or
+    `reason` key in a dictionary.
+  - >-
+    Reports a call to `jsonify`, `make_response`, `Response`,
+    `JsonResponse`, `HttpResponse`, `HttpResponseBadRequest`,
+    `HttpResponseServerError`, `JSONResponse`, `HTMLResponse` or
+    `PlainTextResponse` that receives such a value, on the line of the call.
+  - >-
+    When the handler binds the exception (`except ... as exc`), also
+    reports a `return` of such a value, on the line of the `return`, since
+    a returned value may become the response body.
+
+source_refs:
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "class ErrorDisclosureRule"
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "_HTTP_RESPONSE_CONSTRUCTORS = {"
+
+fix:
+  explanation: >-
+    Keep the detail in your logs and send the client a generic message. A
+    request ID in both places lets support find the log entry.
+  filename: billing/api.py
+  code: |
+    """Invoice endpoints."""
+
+    from flask import Flask, jsonify, request
+
+    from billing import service
+
+    app = Flask(__name__)
+
+
+    @app.post("/invoices")
+    def create_invoice():
+        try:
+            invoice = service.create(request.get_json())
+        except Exception:
+            app.logger.exception("invoice creation failed")
+            return jsonify({"error": "Could not create the invoice."}), 500
+        return jsonify(invoice.to_dict()), 201
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      An exception whose text is written for the client, such as your own
+      `PaymentDeclined("Card expired")`, is reported when you return
+      `str(exc)`.
+    - >-
+      A `return str(exc)` from a helper that is not a request handler is
+      reported, since Skylos cannot tell where the value goes.
+    - >-
+      It misses `raise HTTPException(status_code=500, detail=str(exc))`,
+      because that is a `raise`, not a response call or a `return`.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported line.
+      language: python
+      code: |
+        return jsonify({"error": str(exc)}), 402  # skylos: ignore[SKY-L017] client message
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L017"]` turns the rule off for the
+        project.
+
+related: [SKY-L007, SKY-L030]

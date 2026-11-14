@@ -1,0 +1,114 @@
+id: SKY-D344
+title: Trojan Source bidirectional Unicode
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  Unicode has invisible control characters that switch the direction in
+  which text is shown, for right-to-left languages. "Trojan Source" uses
+  them in code so that an editor or code review shows something different
+  from what Python runs. SKY-D344 reports every line of a Python file that
+  contains one of these controls: U+202A to U+202E and U+2066 to U+2069.
+
+why_it_matters: >-
+  A reviewer can read `if access_level != "user": # Check if admin` and
+  approve it, while the real string is longer and never equals `"user"`, so
+  every user passes the admin check. The trick hides a backdoor in a pull
+  request that looks harmless.
+
+fragments:
+  RLO: ["\u202E"]
+  LRI: ["\u2066"]
+  PDI: ["\u2069"]
+
+flagged_example:
+  language: python
+  filename: app/permissions.py
+  expect_line: 3
+  code: |
+    def can_delete(account):
+        access_level = account.role
+        if access_level != "user{{RLO}} {{LRI}}# Check if admin{{PDI}} {{LRI}}":
+            return True
+        return False
+
+not_flagged_example:
+  language: python
+  filename: app/greetings.py
+  code: |
+    GREETINGS = {
+        "en": "Welcome back",
+        "he": "ברוך שובך",
+        "ar": "مرحبا بعودتك",
+    }
+
+
+    def greeting(language):
+        return GREETINGS.get(language, GREETINGS["en"])
+  why: >-
+    Hebrew and Arabic letters are shown right to left by the text itself;
+    they are not direction controls. Skylos only looks for the nine control
+    characters that can reorder the rest of a line.
+
+how_skylos_decides:
+  - >-
+    Reads the raw text of each Python file (`.py`, `.pyi`, `.pyw`) before
+    parsing, test files included.
+  - >-
+    Looks for the bidirectional embedding, override and isolate controls:
+    U+202A to U+202E and U+2066 to U+2069. Marks such as U+200E and U+200F
+    are not on the list.
+  - >-
+    Reports HIGH once per line that contains one, at the first such
+    character, and records which code point it is.
+  - >-
+    In other files (Markdown, YAML, prompts and so on) the same characters
+    are reported by SKY-D260 instead.
+
+source_refs:
+  - path: skylos/rules/danger/danger.py
+    symbol: "_BIDI_CONTROL_CHARS = {"
+  - path: skylos/rules/danger/danger.py
+    symbol: "def scan_trojan_source_text"
+
+fix:
+  explanation: >-
+    Delete the control characters and check what the line really says.
+    If you need right-to-left text in a string, write the letters directly,
+    or use `\u` escapes so the controls are visible in the source.
+  filename: app/permissions.py
+  code: |
+    def can_delete(account):
+        access_level = account.role
+        if access_level != "user":
+            return True
+        return False
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A translation file that uses direction controls on purpose, to mix
+      right-to-left and left-to-right words in one message, is reported.
+      Writing those controls as `\u202e`-style escapes keeps the meaning and
+      avoids the finding.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why. A bare `# noqa` does not hide HIGH
+        security findings.
+      language: python
+      code: |
+        LABEL = "..."  # skylos: ignore[SKY-D344] intended RTL embedding
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D344"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D260]

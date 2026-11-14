@@ -1,0 +1,220 @@
+id: SKY-A114
+title: Skylos settings or hooks changed
+family: ai-defects
+severity: HIGH
+languages: [pyproject.toml, skylos.toml, .skylos/ files, agent hook settings (Claude Code, Codex, Cursor), GitHub Actions workflows]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` runs this rule, in its `gate_tampering` check. That
+    check blocks by default, and every SKY-A114 finding fails the done
+    verdict. Set `gate_tampering` under `[tool.skylos.done.checks]` in the
+    base commit's `pyproject.toml` to change that.
+run_with: >-
+  `skylos done` after a change (default base `HEAD`, so uncommitted edits),
+  or `skylos done --base origin/main` for a pull request
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule; the handbook build checks examples
+    with `skylos .`, which never reports it. All four examples were run by
+    hand with `skylos done --no-tests`.
+
+what_it_is: >-
+  This rule reports a change to the settings or hooks that decide what
+  Skylos checks: the `[tool.skylos]` tables in `pyproject.toml`, a
+  `skylos.toml` file, anything under `.skylos/`, the agent hook settings
+  that run Skylos, and a GitHub workflow that runs Skylos. `skylos done`
+  reports the change so a person approves it.
+
+why_it_matters: >-
+  An agent that cannot pass the gate can raise a limit, add a rule to
+  `ignore`, or delete the hook that runs the check, and the next run
+  passes. The settings are read from the base commit for this reason, and
+  this rule makes the edit itself visible.
+
+flagged_example:
+  language: toml
+  setup: git_diff
+  expect_file: pyproject.toml
+  expect_line: 5
+  base_files:
+    - filename: pyproject.toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.4.0"
+
+        [tool.skylos.gate]
+        max_security = 0
+        max_quality = 10
+  files:
+    - filename: pyproject.toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.4.0"
+
+        [tool.skylos.gate]
+        max_security = 5
+        max_quality = 40
+
+not_flagged_example:
+  language: toml
+  setup: git_diff
+  base_files:
+    - filename: pyproject.toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.4.0"
+
+        [tool.skylos.gate]
+        max_security = 0
+        max_quality = 10
+  files:
+    - filename: pyproject.toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.5.0"
+        dependencies = ["httpx>=0.27"]
+
+        [tool.skylos.gate]
+        max_security = 0
+        max_quality = 10
+  why: >-
+    The same `pyproject.toml` changed, but only the `[project]` table. Skylos
+    compares the parsed `[tool.skylos]` tables before and after, and they
+    are equal.
+
+more_examples:
+  - flagged:
+      language: json
+      setup: git_diff
+      expect_file: .claude/settings.json
+      base_files:
+        - filename: .claude/settings.json
+          code: |
+            {
+              "hooks": {
+                "Stop": [
+                  {
+                    "hooks": [
+                      {"type": "command", "command": "skylos done --format json"}
+                    ]
+                  }
+                ]
+              }
+            }
+      files:
+        - filename: .claude/settings.json
+          code: |
+            {
+              "hooks": {}
+            }
+    not_flagged:
+      language: markdown
+      setup: git_diff
+      base_files:
+        - filename: .claude/settings.json
+          code: |
+            {
+              "hooks": {
+                "Stop": [
+                  {
+                    "hooks": [
+                      {"type": "command", "command": "skylos done --format json"}
+                    ]
+                  }
+                ]
+              }
+            }
+        - filename: .claude/commands/release.md
+          code: |
+            Bump the version in pyproject.toml and update CHANGELOG.md.
+      files:
+        - filename: .claude/commands/release.md
+          code: |
+            Bump the version in pyproject.toml and update CHANGELOG.md.
+            Then run `skylos done --base origin/main` and fix what it reports.
+      why: >-
+        A file under `.claude/` changed, but not one of the hook settings
+        files. Commands, skills and rules in `.claude/` are ordinary project
+        files; only `.claude/settings.json` and `settings.local.json` (and
+        the Codex and Cursor hook files) are protected by default.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done`, which compares the working tree (or a pull
+    request) with a base commit. Staged, unstaged and untracked files all
+    count; Skylos's own cache, receipts and session files do not.
+  - >-
+    Reports any changed, added, removed or renamed file that matches
+    `protected_paths`. The default list is `.skylos/`,
+    `.claude/settings.json`, `.claude/settings.local.json`,
+    `.codex/hooks.json`, `.codex/config.toml` and `.cursor/hooks.json`; a
+    pattern ending in `/` covers a folder, and `*` patterns work. The list
+    comes from `[tool.skylos.done]` in the base commit.
+  - >-
+    Reports a `pyproject.toml` whose parsed `[tool.skylos]` table differs
+    from the base version, at the line of the first `[tool.skylos` header.
+    Formatting changes and edits to other tables do not count.
+  - >-
+    Reports any edit, addition or removal of a `skylos.toml` or
+    `.skylos.toml` file, and any change to a `.github/workflows/*.yml` file
+    whose base version mentions `skylos`.
+  - >-
+    Every finding blocks while the check is in its default "block" mode.
+
+source_refs:
+  - path: skylos/done/checks.py
+    symbol: "def check_gate_tampering("
+  - path: skylos/done/checks.py
+    symbol: "def _protected_match("
+  - path: skylos/done/checks.py
+    symbol: '_SKYLOS_CONFIG_FILES = (".skylos.toml", "skylos.toml")'
+  - path: skylos/done/config.py
+    symbol: "DEFAULT_PROTECTED_PATHS = ("
+  - path: skylos/done/config.py
+    symbol: '"gate_tampering": "block"'
+  - path: skylos/done/base.py
+    symbol: "def is_runtime_path("
+
+fix:
+  explanation: >-
+    Undo the settings change and fix the findings the stricter settings
+    report. If the change is intended, make it in its own commit or pull
+    request that a person reviews and merges; once it is in the base
+    commit, `skylos done` uses the new settings.
+  language: toml
+  code: |
+    [tool.skylos.gate]
+    max_security = 0
+    max_quality = 10
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Every intended settings change is reported, including a stricter
+      limit or a new rule turned on. That is by design: a person decides.
+    - >-
+      Editing any part of a GitHub workflow that runs Skylos is reported,
+      even a step that has nothing to do with Skylos.
+    - >-
+      Removing the whole `[tool.skylos]` table is reported without a line
+      number, as are changes to protected files.
+  suppress:
+    - text: >-
+        `skylos done` does not read `# skylos: ignore` comments. Change the
+        check's mode, or narrow `protected_paths`, in the base commit's
+        `pyproject.toml`; settings in the change itself are ignored.
+      language: toml
+      code: |
+        [tool.skylos.done]
+        protected_paths = [".skylos/", ".claude/settings.json"]
+
+        [tool.skylos.done.checks]
+        gate_tampering = "advise"
+
+related: [SKY-A119, SKY-A121, SKY-A122, SKY-A112]

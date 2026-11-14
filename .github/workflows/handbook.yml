@@ -1,0 +1,117 @@
+name: Rule handbook
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/handbook.yml"
+      - "docs/handbook/**"
+      - "scripts/build_handbook.py"
+      - "skylos/rules/**"
+      - "test/test_handbook_coverage.py"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the PDF to (for example v5.4.0). Leave empty to keep the PDF as a workflow artifact only."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: handbook-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check pages and coverage
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Skylos
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+
+      - name: Install Skylos
+        run: |
+          uv venv .venv --python 3.13
+          uv pip install --python .venv/bin/python -e . pytest
+
+      - name: Check handbook pages
+        run: .venv/bin/python scripts/build_handbook.py --check --output build/handbook/skylos-handbook.pdf
+
+      - name: Handbook coverage test
+        run: .venv/bin/python -m pytest -q test/test_handbook_coverage.py
+
+  build:
+    name: Verify examples and build the PDF
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${EVENT_TAG:-$INPUT_TAG}"
+          if [ -n "$tag" ] && ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.]+)?$'; then
+            echo "::error::Not a release tag: $tag"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Skylos
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ steps.tag.outputs.tag || github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.22"
+          cache: false
+
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+
+      - name: Build the Go engine from this checkout
+        run: |
+          mkdir -p /tmp/skylos-go-build /tmp/skylos-go-gopath
+          cd skylos/engines/go
+          GOCACHE=/tmp/skylos-go-build GOPATH=/tmp/skylos-go-gopath go build -o skylos-go ./cmd/skylos-go
+
+      - name: Install Skylos
+        run: |
+          uv venv .venv --python 3.13
+          uv pip install --python .venv/bin/python -e .
+
+      - name: Verify every example and build the PDF
+        run: |
+          .venv/bin/python scripts/build_handbook.py --verify \
+            --chrome google-chrome --chrome-arg=--no-sandbox \
+            --output build/handbook/skylos-handbook.pdf
+
+      - name: Keep the PDF and reports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: skylos-handbook
+          path: build/handbook/
+          if-no-files-found: error
+
+      - name: Attach the PDF to the release
+        if: steps.tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: gh release upload "$TAG" build/handbook/skylos-handbook.pdf --clobber

@@ -1,0 +1,168 @@
+id: SKY-D302
+title: GitHub App token broader than needed
+family: ci-cd
+severity: HIGH
+languages: [GitHub Actions workflows, composite actions]
+gate:
+  full: counted
+
+what_it_is: >-
+  `actions/create-github-app-token` turns a GitHub App's private key into a
+  short-lived token for a job. SKY-D302 reports three ways that token ends
+  up stronger than the job needs: it covers every repository of an owner,
+  it keeps every permission the app was installed with, or it is not
+  revoked when the job ends.
+
+why_it_matters: >-
+  Anything that runs later in the job, including a compromised action or
+  build tool, can read the token. A token for one repository with
+  `contents: write` limits the damage to that repository; an owner-wide
+  token with all the app's permissions can rewrite code across the
+  organisation.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/homebrew.yml
+  expect_line: 17
+  code: |
+    name: Update Homebrew tap
+    on:
+      release:
+        types: [published]
+    permissions:
+      contents: read
+    jobs:
+      tap:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Get a token for the tap repository
+            id: app-token
+            uses: actions/create-github-app-token@v1
+            with:
+              app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+              private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+              owner: acme
+              permission-contents: write
+          - name: Bump the formula
+            run: gh workflow run bump.yml --repo acme/homebrew-tap -f tag="$TAG"
+            env:
+              GH_TOKEN: ${{ steps.app-token.outputs.token }}
+              TAG: ${{ github.event.release.tag_name }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/tag-release.yml
+  code: |
+    name: Create the release
+    on:
+      workflow_dispatch:
+    permissions:
+      contents: read
+    jobs:
+      tag:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Get a token for this repository
+            id: app-token
+            uses: actions/create-github-app-token@v1
+            with:
+              app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+              private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+              permission-contents: write
+          - name: Create the release
+            run: gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --generate-notes
+            env:
+              GH_TOKEN: ${{ steps.app-token.outputs.token }}
+              VERSION: ${{ vars.NEXT_VERSION }}
+  why: >-
+    There is no `owner:`, so the action limits the token to the repository
+    running the workflow, and a `permission-contents` input limits it to
+    that one permission. It is revoked when the job ends.
+
+how_skylos_decides:
+  - >-
+    Reads the steps of workflows and of composite actions (`action.yml`)
+    whose `uses:` is `actions/create-github-app-token`, at any version.
+  - >-
+    Reports `skip-token-revoke` set to true (`true`, `yes`, `on`, `1`): the
+    token stays valid after the job, until it expires.
+  - >-
+    Reports `owner:` without `repository:` or `repositories:`: the token
+    reaches every repository the app is installed on for that owner.
+  - >-
+    Reports a step with no input whose name starts with `permission-`: the
+    token gets every permission of the app installation.
+  - >-
+    Each is a HIGH finding, placed on the first line of the file that
+    contains `skip-token-revoke`, `owner`, or the step's `uses:` value
+    respectively. Two steps with the same problem in one file share that
+    line and give one finding.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_github_app_tokens("
+  - path: test/test_github_actions_security.py
+    symbol: "def test_github_actions_scanner_detects_extended_offline_risks("
+
+fix:
+  explanation: >-
+    Name the repositories the token is for. Keep one `permission-*` input
+    per permission the job uses, and leave `skip-token-revoke` unset.
+  filename: .github/workflows/homebrew.yml
+  code: |
+    name: Update Homebrew tap
+    on:
+      release:
+        types: [published]
+    permissions:
+      contents: read
+    jobs:
+      tap:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Get a token for the tap repository
+            id: app-token
+            uses: actions/create-github-app-token@v1
+            with:
+              app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+              private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+              owner: acme
+              repositories: homebrew-tap
+              permission-contents: write
+          - name: Bump the formula
+            run: gh workflow run bump.yml --repo acme/homebrew-tap -f tag="$TAG"
+            env:
+              GH_TOKEN: ${{ steps.app-token.outputs.token }}
+              TAG: ${{ github.event.release.tag_name }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A job that really works across all of an owner's repositories, such as
+      one that syncs labels everywhere, is reported for its `owner:` alone.
+    - >-
+      The `owner` finding goes on the first line containing the word, which
+      can be an earlier `if: github.repository_owner == 'acme'`. A marker
+      on the `owner:` line then does not silence it.
+    - >-
+      The examples also get SKY-D292 (LOW, hidden from the default list)
+      for the version tag `@v1`.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D302]` on the reported line or on the line
+        directly above it, one rule per marker.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D302] label sync runs on every acme repository
+        owner: acme
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D302"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        A baseline works, but it records the absolute file path and the line,
+        so it stops matching when the checkout moves or lines above shift.
+
+related: [SKY-D291, SKY-D298, SKY-D297]

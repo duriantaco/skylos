@@ -1,0 +1,135 @@
+id: SKY-GPU000
+title: GPU release contract is invalid or cannot be checked
+family: infrastructure
+severity: HIGH
+languages: [GPU target contract (YAML), Dockerfile, CMake, Python]
+gate:
+  full: counted
+  note: >-
+    Reported under reliability. It counts toward `max_reliability`, which is 0
+    by default, so one finding fails `--gate`.
+  opt_in: >-
+    A `.skylos/gpu-targets.yml` contract in the repository.
+
+what_it_is: >-
+  A GPU target contract, `.skylos/gpu-targets.yml`, lists the NVIDIA GPUs and
+  drivers a release must run on. SKY-GPU000 reports a contract that Skylos
+  cannot use (malformed, unknown keys, an unsupported value), or a release
+  whose evidence it cannot finish checking against the contract.
+
+why_it_matters: >-
+  The other `SKY-GPU` rules only prove compatibility against a valid contract.
+  A typo in the contract would otherwise make every check pass silently, and a
+  release would go out to GPUs it cannot run on.
+
+flagged_example:
+  language: yaml
+  expect_file: .skylos/gpu-targets.yml
+  expect_line: 1
+  files:
+    - filename: .skylos/gpu-targets.yml
+      code: |
+        version: 1
+        targets:
+          - name: inference-t4
+            vendor: nvidia
+            driver: "535.104.05"
+            platform: linux/x86_64
+    - filename: Dockerfile
+      language: dockerfile
+      code: |
+        FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+        COPY app /app
+        CMD ["python3", "/app/serve.py"]
+
+not_flagged_example:
+  language: yaml
+  files:
+    - filename: .skylos/gpu-targets.yml
+      code: |
+        version: 1
+        targets:
+          - name: inference-t4
+            vendor: nvidia
+            driver: "535.104.05"
+            platform: linux/amd64
+    - filename: Dockerfile
+      language: dockerfile
+      code: |
+        FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+        COPY app /app
+        CMD ["python3", "/app/serve.py"]
+  why: >-
+    The same contract with the platform written as Docker writes it,
+    `linux/amd64`. `x86_64` is not one of the accepted architectures, so the
+    flagged contract is rejected as a whole.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`), and only when the repository has a GPU
+    target contract: `.skylos/gpu-targets.yml` (or `.yaml`), version 1,
+    listing each target's `name`, `vendor: nvidia`, and its `driver`,
+    `compute_capability` and `platform` (`linux` or `windows`, optionally
+    `/amd64` or `/arm64`). Without the file nothing is checked, unless an
+    `SKY-GPU` rule is selected explicitly with `--select`.
+  - >-
+    Reads Dockerfiles, CMake files, Makefiles, Bazel files, shell scripts,
+    Python, C/C++/CUDA sources and YAML as text, skipping `build`, `dist`,
+    `node_modules`, caches and virtual environments. It never runs a build or
+    probes a GPU.
+  - >-
+    Reports a contract that is not valid YAML, has duplicate or unknown keys,
+    a version other than 1, no targets, a driver that is not a version number,
+    or a platform other than `linux` or `windows` with an optional `/amd64` or
+    `/arm64`.
+  - >-
+    Reports when the contract declares drivers but no final Docker stage uses
+    an NVIDIA CUDA image, or declares compute capabilities but no CUDA
+    architecture setting can be found, or when that evidence is dynamic,
+    conditional, `native`, or spread over several files.
+  - >-
+    In a diff scan, also reports a change that deletes the contract.
+  - >-
+    Reports HIGH on the contract file. The message says which part could not
+    be proven.
+
+source_refs:
+  - path: skylos/rules/config/gpu/compatibility.py
+    symbol: "def _parse_targets("
+  - path: skylos/rules/config/gpu/compatibility.py
+    symbol: "def scan_gpu_compatibility("
+  - path: skylos/rules/config/gpu/compatibility.py
+    symbol: 'PROFILE_NAMES = ("gpu-targets.yml", "gpu-targets.yaml")'
+
+fix:
+  explanation: >-
+    Correct the contract so every value is one Skylos accepts, or add the
+    missing build evidence the message names, such as a literal
+    `CMAKE_CUDA_ARCHITECTURES` list.
+  filename: .skylos/gpu-targets.yml
+  language: yaml
+  code: |
+    version: 1
+    targets:
+      - name: inference-t4
+        vendor: nvidia
+        driver: "535.104.05"
+        platform: linux/amd64
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A repository that builds several artefacts for different fleets is read
+      as one release for all targets. Give each deployable its own contract,
+      scanned on its own.
+  suppress:
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-GPU000"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        findings that exist today and reports new ones.
+
+related: [SKY-GPU001, SKY-GPU002, SKY-GPU003]

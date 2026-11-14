@@ -1,0 +1,162 @@
+id: SKY-D346
+title: Flask app started in debug mode
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-489]
+
+what_it_is: >-
+  `app.run(debug=True)` starts Flask's development server with the Werkzeug
+  debugger switched on. When a request fails, that debugger shows a page
+  with a Python console in the browser. SKY-D346 reports `run(debug=True)`
+  on a Flask app or a Flask-SocketIO server.
+
+why_it_matters: >-
+  The debugger console runs any Python code typed into it, with the rights
+  of the server process. If the server is reachable, often because it also
+  listens on `0.0.0.0`, one error page is enough for a visitor to read files,
+  steal secrets or take over the machine. The PIN that guards the console
+  can be worked out from information the server leaks.
+
+flagged_example:
+  language: python
+  filename: run.py
+  expect_line: 6
+  code: |
+    from shop import create_app
+
+    app = create_app()
+
+    if __name__ == "__main__":
+        app.run(host="0.0.0.0", port=5000, debug=True)
+
+not_flagged_example:
+  language: python
+  filename: run.py
+  code: |
+    import os
+
+    from shop import create_app
+
+    app = create_app()
+
+    if __name__ == "__main__":
+        debug = os.environ.get("FLASK_DEBUG") == "1"
+        app.run(host="127.0.0.1", port=5000, debug=debug)
+  why: >-
+    `debug` is a variable read from the environment, not the literal
+    `True`, so debug mode is off unless a developer turns it on locally. The
+    rule only reports `debug=True` written in the call.
+
+more_examples:
+  - flagged:
+      language: python
+      filename: chat.py
+      expect_line: 14
+      code: |
+        from flask import Flask
+        from flask_socketio import SocketIO
+
+        app = Flask(__name__)
+        socketio = SocketIO(app)
+
+
+        @socketio.on("message")
+        def relay(message):
+            socketio.emit("message", message)
+
+
+        if __name__ == "__main__":
+            socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    not_flagged:
+      language: python
+      filename: nightly.py
+      code: |
+        from etl import Pipeline, steps
+
+        pipeline = Pipeline([steps.extract, steps.clean, steps.load])
+
+        if __name__ == "__main__":
+            pipeline.run(debug=True)
+      why: >-
+        Flask-SocketIO serves the app through Werkzeug too, so
+        `socketio.run(..., debug=True)` is reported. `pipeline.run(debug=True)`
+        has the same shape, but `pipeline` is neither a Flask app nor named
+        like one, so it is left alone.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files. Looks only at `.run()` calls that
+    pass the keyword `debug` with the literal value `True`.
+  - >-
+    Reports HIGH when the receiver is proven to be a `flask.Flask` object,
+    for example `app = Flask(__name__)` in the same file.
+  - >-
+    Otherwise also reports, outside test files, when the receiver is
+    named `app`, `application` or `flask_app`, is `socketio` (or a
+    `SocketIO` object), or is the result of `Flask()`, `create_app()`,
+    `make_app()`, `build_app()`, `get_app()`, `Dash()` or `APIFlask()`.
+  - >-
+    `uvicorn.run(app, debug=True)`, `hypercorn` and other objects with a
+    `.run()` method are not reported. Test files are `test_*.py`,
+    `*_test.py`, `conftest.py` and files under `test/` or `tests/`.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: '"flask.Flask.run": ('
+    note: the rule for a proven Flask object.
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _is_flask_style_debug_run(node: ast.Call, name: str | None, filename) -> bool:"
+  - path: skylos/rules/danger/calls.py
+    symbol: "_FLASK_APP_FACTORIES = frozenset("
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _kw_equals(node: ast.Call, requirements):"
+  - path: test/test_agent_bench_python_detections.py
+    symbol: "def test_flask_debug_negatives(code, filename):"
+
+fix:
+  explanation: >-
+    Never hard-code `debug=True`. Turn debug mode on only on your own machine,
+    through `FLASK_DEBUG=1` or `flask run --debug`, and keep the development
+    server on `127.0.0.1`. In production, run the app under a real WSGI
+    server such as gunicorn, which has no debugger.
+  filename: run.py
+  code: |
+    import os
+
+    from shop import create_app
+
+    app = create_app()
+
+    if __name__ == "__main__":
+        debug = os.environ.get("FLASK_DEBUG") == "1"
+        app.run(host="127.0.0.1", port=5000, debug=debug)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A local-only script that is never deployed, such as a demo launcher in
+      the repository root, is still reported.
+    - >-
+      Missed: `debug=DEBUG` from a settings constant, `app.debug = True`,
+      `app.config["DEBUG"] = True` and debug mode set through the `FLASK_DEBUG`
+      environment variable on a server.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the `run()` line and say why it never reaches a shared server.
+      language: python
+      code: |
+        app.run(debug=True)  # skylos: ignore[SKY-D346] local demo script, never deployed
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D346"]` turns the rule off for the
+        whole project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the current calls
+        and report only new ones.
+
+related: [SKY-D283, SKY-D201]

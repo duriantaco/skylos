@@ -1,0 +1,136 @@
+id: SKY-Q405
+title: Async Promise executor
+family: quality
+severity: HIGH
+languages: [TypeScript, JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  `new Promise(async (resolve, reject) => { ... })`. The function passed to
+  the `Promise` constructor (the executor) is `async`, so it returns a
+  promise of its own that the constructor ignores.
+
+why_it_matters: >-
+  When anything inside the executor throws, such as a missing file or bad
+  JSON, the error rejects the ignored inner promise instead of the one the
+  caller holds. The caller's promise never settles: `await loadConfig()`
+  hangs forever, and the error shows up only as an unhandled rejection.
+
+flagged_example:
+  language: typescript
+  filename: src/config.ts
+  expect_line: 4
+  code: |
+    import { readFile } from "node:fs/promises";
+
+    export function loadConfig(path: string): Promise<Record<string, unknown>> {
+      return new Promise(async (resolve) => {
+        const text = await readFile(path, "utf8");
+        resolve(JSON.parse(text));
+      });
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/config.ts
+  code: |
+    import { readFile } from "node:fs";
+
+    export function loadConfig(path: string): Promise<Record<string, unknown>> {
+      return new Promise((resolve, reject) => {
+        readFile(path, "utf8", (err, text) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve(JSON.parse(text));
+        });
+      });
+    }
+  why: >-
+    The executor is an ordinary function that wraps a callback API, which is
+    what the `Promise` constructor is for. Errors reach `reject`.
+
+more_examples:
+  - flagged:
+      language: javascript
+      filename: src/ready.js
+      expect_line: 2
+      code: |
+        export function waitForReady(db) {
+          return new Promise(async (resolve) => {
+            await db.connect();
+            resolve(db);
+          });
+        }
+    not_flagged:
+      language: javascript
+      filename: src/ready.js
+      code: |
+        export function waitForReady(db) {
+          return new Promise((resolve, reject) => {
+            db.connect().then(() => resolve(db), reject);
+          });
+        }
+      why: >-
+        The executor is not `async`; the connection's failure is passed to
+        `reject`, so the caller sees it.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`,
+    `.mjs` and `.cjs` files. Generated and minified files, and files that do
+    not parse, are skipped.
+  - >-
+    Finds `new Promise(...)` whose first argument is an `async` arrow
+    function or function expression (type assertions and parentheses around
+    it are looked through).
+  - >-
+    `Promise` must be the built-in: Skylos skips the call when the file
+    declares or reassigns its own `Promise`, anywhere a write could reach
+    that call.
+  - >-
+    Reports HIGH on the line of the `new` expression. The executor's body
+    is not inspected.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _first_async_executor_argument("
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _async_misuse_findings("
+  - path: test/test_typescript_quality_signals.py
+    symbol: "def test_q405_skips_safe_or_unproven_promise_constructors"
+
+fix:
+  explanation: >-
+    Drop the constructor and write an `async` function. Errors then reject
+    the returned promise as expected.
+  filename: src/config.ts
+  code: |
+    import { readFile } from "node:fs/promises";
+
+    export async function loadConfig(path: string): Promise<Record<string, unknown>> {
+      const text = await readFile(path, "utf8");
+      return JSON.parse(text);
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      An async executor that wraps all of its body in `try`/`catch` and
+      calls `reject` is still reported, although it does settle. The plain
+      `async` function is simpler there too.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of `new Promise`.
+      language: typescript
+      code: |
+        return new Promise(async (resolve, reject) => { // skylos: ignore[SKY-Q405]
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q405"]` turns the rule off for the
+        project.
+
+related: [SKY-Q406, SKY-Q407, SKY-Q402]

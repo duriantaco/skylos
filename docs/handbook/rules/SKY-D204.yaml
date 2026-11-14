@@ -1,0 +1,177 @@
+id: SKY-D204
+title: Unsafe pickle deserialization
+family: security
+severity: CRITICAL
+severity_note: >-
+  Python findings are always CRITICAL. Java and Kotlin `ObjectInputStream`
+  is CRITICAL for request or network data, HIGH otherwise and MEDIUM when a
+  class filter is set. PHP `unserialize()` is reported (CRITICAL) only for
+  request data without an `allowed_classes` restriction.
+languages: [Python, Java, Kotlin, PHP]
+gate:
+  full: critical_blocks
+cwe: [CWE-502]
+
+what_it_is: >-
+  Python's pickle format stores instructions for rebuilding objects, and
+  loading a pickle carries them out, including calls to any importable
+  function. SKY-D204 reports code that loads a pickle from a file or stream,
+  and the matching object loaders in Java, Kotlin and PHP.
+
+why_it_matters: >-
+  A crafted pickle file runs `os.system(...)` the moment it is loaded, with
+  no bug in your code needed. An "import your settings" upload or a model
+  file downloaded from the internet is enough to take over the server.
+
+flagged_example:
+  language: python
+  filename: app/sessions.py
+  expect_line: 11
+  code: |
+    import pickle
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.post("/import")
+    def import_session():
+        upload = request.files["session"]
+        state = pickle.load(upload.stream)
+        return {"keys": sorted(state)}
+
+not_flagged_example:
+  language: python
+  filename: app/sessions.py
+  code: |
+    import builtins
+    import io
+    import pickle
+
+    SAFE_BUILTINS = {"dict", "list", "str", "int", "float", "bool", "set", "tuple"}
+
+
+    class RestrictedUnpickler(pickle.Unpickler):
+        def find_class(self, module, name):
+            if module == "builtins" and name in SAFE_BUILTINS:
+                return getattr(builtins, name)
+            raise pickle.UnpicklingError(f"global '{module}.{name}' is forbidden")
+
+
+    def load_session(blob: bytes) -> dict:
+        return RestrictedUnpickler(io.BytesIO(blob)).load()
+  why: >-
+    The subclass overrides `find_class`, the documented hook that decides
+    which functions and classes a pickle may load. Skylos does not report a
+    `.load()` on an unpickler subclass that defines `find_class`.
+
+more_examples:
+  - flagged:
+      language: php
+      filename: public/cart.php
+      expect_line: 3
+      code: |
+        <?php
+
+        $cart = unserialize($_COOKIE['cart'] ?? 'a:0:{}');
+        echo count($cart);
+    not_flagged:
+      language: php
+      filename: public/cart.php
+      code: |
+        <?php
+
+        $cart = unserialize($_COOKIE['cart'] ?? 'a:0:{}', ['allowed_classes' => false]);
+        echo count($cart);
+      why: >-
+        With `allowed_classes => false`, PHP turns every object in the data
+        into an inert `__PHP_Incomplete_Class`, so no class's magic methods
+        run. An array of allowed class names is accepted too.
+
+how_skylos_decides:
+  - >-
+    Python: resolves call names through imports and assignments and matches
+    `pickle.load`, `cloudpickle.load`, `pandas.read_pickle` and
+    `pickle.Unpickler(...).load()`. A `.load()` on a module class that
+    subclasses `pickle.Unpickler` without defining `find_class` counts as
+    `pickle.Unpickler.load`.
+  - >-
+    Skips an unpickler subclass that defines `find_class`. It does not check
+    what that method allows.
+  - >-
+    Reports every other match as CRITICAL. There is no constant or
+    trusted-path exception: the file's origin is not traced.
+  - >-
+    `pickle.loads()` on bytes is a separate rule, SKY-D205, and model
+    loaders such as `torch.load` are SKY-D265.
+  - >-
+    Java and Kotlin: reports `new ObjectInputStream(...)` as CRITICAL when
+    request or network data feeds it, HIGH otherwise, and MEDIUM when the
+    stream has an `ObjectInputFilter`.
+  - >-
+    PHP: reports `unserialize()` of request data (CRITICAL) unless the
+    second argument sets `allowed_classes` to `false` or to an array.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: "DANGEROUS_CALLS = {"
+    note: "`pickle.load`, `pickle.Unpickler.load`, `cloudpickle.load` and `pandas.read_pickle`."
+  - path: skylos/rules/danger/calls.py
+    symbol: "def unrestricted_unpickler_classes("
+    note: subclasses without `find_class`.
+  - path: skylos/rules/danger/calls.py
+    symbol: "def unpickler_load_name("
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "def _report_object_input_stream("
+  - path: skylos/visitors/languages/kotlin/security.py
+    symbol: "def _process_deserialization("
+  - path: skylos/visitors/languages/php/danger.py
+    symbol: "def unserialize_restricted("
+
+fix:
+  explanation: >-
+    Store user-supplied state in a data-only format such as JSON. If you
+    must read pickles, only read ones your own service wrote and signed, or
+    restrict `find_class` to plain built-in types.
+  filename: app/sessions.py
+  code: |
+    import json
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.post("/import")
+    def import_session():
+        upload = request.files["session"]
+        state = json.load(upload.stream)
+        return {"keys": sorted(state)}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Loading a pickle your own process wrote to a private cache directory
+      is reported too; Skylos does not prove where a file came from.
+    - >-
+      An unpickler subclass whose `find_class` allows everything is not
+      reported, because only the method's presence is checked.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed call on its own line. A bare `# noqa` does not hide
+        a CRITICAL security finding.
+      language: python
+      code: |
+        state = pickle.load(handle)  # skylos: ignore[SKY-D204] file written by our own worker
+    - check: baseline
+      text: >-
+        Accept existing findings with `skylos baseline .`, then scan with
+        `--baseline`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D204"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D205, SKY-D233, SKY-D265, SKY-D206, SKY-D200]

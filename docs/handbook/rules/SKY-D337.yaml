@@ -1,0 +1,164 @@
+id: SKY-D337
+title: Package registry or index override
+family: security
+severity: HIGH
+languages: [Dockerfile, Shell, GitHub Actions, GitLab CI, Python, TypeScript/JavaScript]
+gate:
+  full: counted
+cwe: [CWE-829]
+
+what_it_is: >-
+  Package installers fetch from a default registry (PyPI, npmjs.org,
+  RubyGems) unless a command points them elsewhere. SKY-D337 reports an
+  install or config command that adds or replaces the registry, so a person
+  can check who runs that registry.
+
+why_it_matters: >-
+  With `pip install --extra-index-url`, pip takes the highest version of a
+  name from either index. If your internal package `acme-billing` is not
+  also reserved on PyPI, anyone can publish `acme-billing 99.0` there and
+  your next build installs and runs it (dependency confusion).
+
+flagged_example:
+  language: dockerfile
+  filename: Dockerfile
+  expect_line: 4
+  code: |
+    FROM python:3.12-slim
+    WORKDIR /app
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir \
+          --extra-index-url https://pypi.acme-internal.example/simple \
+          -r requirements.txt
+    COPY . .
+    CMD ["python", "-m", "acme_billing"]
+
+not_flagged_example:
+  language: dockerfile
+  filename: Dockerfile
+  code: |
+    FROM python:3.12-slim
+    WORKDIR /app
+    COPY requirements.txt .
+    COPY wheels/ /wheels/
+    RUN pip install --no-cache-dir --no-index --find-links /wheels \
+          -r requirements.txt
+    COPY . .
+    CMD ["python", "-m", "acme_billing"]
+  why: >-
+    `--no-index` turns every package index off, and `--find-links /wheels`
+    installs only wheels already copied into the image, so no outside index
+    is involved. Skylos looks only for `--index-url` and `--extra-index-url`
+    on pip.
+
+more_examples:
+  - flagged:
+      language: shell
+      filename: scripts/install-ui.sh
+      expect_line: 3
+      code: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        npm install --registry https://npm.acme-internal.example/ @acme/ui
+    not_flagged:
+      language: shell
+      files:
+        - filename: scripts/install-ui.sh
+          code: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+            npm install @acme/ui
+        - filename: .npmrc
+          language: text
+          code: |
+            @acme:registry=https://npm.acme-internal.example/
+      why: >-
+        The project's `.npmrc` sends only the `@acme` scope to the internal
+        registry; everything else still comes from npmjs.org, so a public
+        package cannot take an internal name's place. Skylos reads commands,
+        not `.npmrc` files, and this command names no registry.
+
+how_skylos_decides:
+  - >-
+    Reads shell commands in `.sh`, `.bash`, `.zsh`, `.ksh` and `.bats` files,
+    GitHub Actions `run:` steps, GitLab CI script items, Dockerfile `RUN`
+    instructions (continuation lines joined), fixed command strings in Python
+    `os.system()`-style calls or `shell=True` calls, and fixed strings passed
+    to `child_process.exec()` in TypeScript and JavaScript.
+  - >-
+    Splits each command at `;`, `&&`, `||` and `|`, and looks at the command
+    word of each part (after `sudo`, `nohup`, `time`, `command` and
+    `VAR=value` prefixes).
+  - >-
+    `pip`, `pip3`, `python -m pip` and `python3 -m pip`: reports an argument
+    that starts with `--index-url` or `--extra-index-url`.
+  - >-
+    `npm`, `pnpm` and `yarn`: reports an argument that is the word
+    `registry` (any case), as in `npm config set registry …`, or that starts
+    with `--registry`. `gem`: reports an argument that starts with
+    `--source`.
+  - >-
+    There is no allowlist: an internal registry is reported the same as an
+    unknown one, and every finding is HIGH. Registry settings in files
+    (`pip.conf`, `.npmrc`, `PIP_INDEX_URL`) are not read.
+
+source_refs:
+  - path: skylos/security/command_guard_policy.py
+    symbol: "def _is_package_registry_override("
+  - path: skylos/security/command_guard_policy.py
+    symbol: "def _tokens_include_registry("
+  - path: skylos/security/command_guard_parse.py
+    symbol: "def command_name("
+  - path: test/test_shell_security.py
+    symbol: "def test_pip_extra_index_url_flags_package_registry_override"
+
+fix:
+  explanation: >-
+    Install from one index. Mirror your internal packages and their public
+    dependencies behind a single `--index-url` you own, or scope npm
+    packages with `@scope:registry=` in `.npmrc`, and reserve your internal
+    names on the public registry. A reviewed single private index is still
+    reported, so mark it with a reason.
+  filename: Dockerfile
+  code: |
+    FROM python:3.12-slim
+    WORKDIR /app
+    COPY requirements.txt .
+    # skylos: ignore[SKY-D337] single proxy index, owned by platform team
+    RUN pip install --no-cache-dir \
+          --index-url https://pypi.acme-internal.example/simple \
+          --require-hashes -r requirements.txt
+    COPY . .
+    CMD ["python", "-m", "acme_billing"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A single `--index-url` pointing at a proxy you own is reported the same
+      as `--extra-index-url`, although only the extra index mixes two
+      sources.
+    - >-
+      Read-only commands that contain the word `registry`, such as
+      `npm config get registry`, are reported.
+    - >-
+      Missed: `pip install -i URL`, `--find-links URL`, `uv pip install
+      --extra-index-url`, registries set in `pip.conf`, `.npmrc` or
+      environment variables; and in a GitHub Actions `run: |` block, or a
+      multi-line GitLab item, an install on a later line, because the block
+      is split only at `;`, `&&`, `||` and `|`, not at line breaks.
+  suppress:
+    - check: inline
+      text: >-
+        In a Dockerfile the marker goes on the first line of the `RUN`
+        instruction or on the line directly above it, one rule per marker. In
+        a shell script it must be a comment on the reported line.
+      language: dockerfile
+      code: |
+        # skylos: ignore[SKY-D337] single proxy index, owned by platform team
+        RUN pip install --index-url https://pypi.acme-internal.example/simple -r req.txt
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D337"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D341, SKY-D328, SKY-D222, SKY-D339]

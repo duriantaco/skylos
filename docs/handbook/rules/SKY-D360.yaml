@@ -1,0 +1,136 @@
+id: SKY-D360
+title: Dependabot runs manifest code with registry credentials
+family: ci-cd
+severity: HIGH
+languages: [Dependabot configuration]
+gate:
+  full: counted
+
+what_it_is: >-
+  Some package formats run code to work out their dependencies, for example
+  a Python `setup.py`. Dependabot does not run that code unless an update
+  entry sets `insecure-external-code-execution: allow`. SKY-D360 reports
+  that setting on a `pip`, `bundler` or `mix` entry that also logs in to
+  private registries.
+
+why_it_matters: >-
+  With the option on, code from your manifests and from the packages they
+  pull in runs inside Dependabot's job, which holds the private registry
+  passwords you gave it. A typosquatted or hijacked dependency can read
+  those credentials and use them to publish to your internal index.
+
+flagged_example:
+  language: yaml
+  filename: .github/dependabot.yml
+  expect_line: 13
+  code: |
+    version: 2
+    registries:
+      acme-pypi:
+        type: python-index
+        url: https://pypi.acme.example/simple
+        username: dependabot
+        password: ${{ secrets.ACME_PYPI_PASSWORD }}
+    updates:
+      - package-ecosystem: pip
+        directory: /
+        registries:
+          - acme-pypi
+        insecure-external-code-execution: allow
+        schedule:
+          interval: weekly
+        cooldown:
+          default-days: 7
+
+not_flagged_example:
+  language: yaml
+  filename: .github/dependabot.yml
+  code: |
+    version: 2
+    updates:
+      - package-ecosystem: pip
+        directory: /tools/legacy-plugin
+        insecure-external-code-execution: allow
+        schedule:
+          interval: weekly
+        cooldown:
+          default-days: 7
+  why: >-
+    The option is set, but this entry uses no private registry, so the
+    manifest code runs without any credentials to steal. Skylos reports the
+    option only together with `registries`.
+
+how_skylos_decides:
+  - >-
+    Reads the one file GitHub reads: `.github/dependabot.yml` (or
+    `.yaml`) at the top of the scanned folder. Copies elsewhere are
+    ignored. The file must say `version: 2` and have an `updates` list.
+  - >-
+    For each `updates` entry, checks `insecure-external-code-execution`. Only
+    the value `allow` (any case) counts.
+  - >-
+    Reports the entry when its `package-ecosystem` is `pip`, `bundler` or
+    `mix`, the ecosystems where Dependabot can run manifest code, and the
+    entry lists `registries`.
+  - >-
+    One HIGH finding per entry, on the line of the option.
+
+source_refs:
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _check_code_execution("
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def dependabot_files("
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _audit_dependabot("
+  - path: test/test_github_actions_workflow_audits.py
+    symbol: "def test_dependabot_execution_needs_registries_to_matter("
+
+fix:
+  explanation: >-
+    Remove the option. Dependabot then updates the manifest without running
+    its code. If a package really needs code to resolve, publish a built
+    wheel of it to your index instead.
+  filename: .github/dependabot.yml
+  code: |
+    version: 2
+    registries:
+      acme-pypi:
+        type: python-index
+        url: https://pypi.acme.example/simple
+        username: dependabot
+        password: ${{ secrets.ACME_PYPI_PASSWORD }}
+    updates:
+      - package-ecosystem: pip
+        directory: /
+        registries:
+          - acme-pypi
+        schedule:
+          interval: weekly
+        cooldown:
+          default-days: 7
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Not reported: the option on an entry without `registries`, even though
+      the manifest code still runs there.
+    - >-
+      The finding does not depend on which registry is listed; a registry
+      with read-only credentials is reported the same as one that can
+      publish.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D360]` and a reason as a YAML comment at
+        the end of the reported line, or as a comment line directly above
+        it. Text inside a value does not count.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D360] read-only mirror token, setup.py vendored
+        insecure-external-code-execution: allow
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D360"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D361, SKY-D337, SKY-D341]

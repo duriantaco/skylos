@@ -1,0 +1,119 @@
+id: SKY-P402
+title: pandas read_csv without a row bound
+family: quality
+severity: LOW
+severity_note: >-
+  The catalog gives no severity. Every finding is reported LOW.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Advice that is measured on every `--quality` scan but not listed by
+    default. It is listed, and counted toward `max_quality`, with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  `pandas.read_csv(path)` builds the whole table in memory before it
+  returns. SKY-P402 reports a call to pandas' `read_csv` that has neither
+  `chunksize`, `nrows` nor `iterator=True`. The catalog lists the rule as
+  "Repeated expensive operation"; this is what the code checks.
+
+why_it_matters: >-
+  A pandas DataFrame often takes several times the size of the CSV in
+  memory. A nightly job that worked on last year's export runs out of
+  memory once the file grows, and fails without a useful error.
+
+flagged_example:
+  language: python
+  filename: jobs/revenue.py
+  expect_line: 7
+  code: |
+    """Nightly revenue job."""
+
+    import pandas as pd
+
+
+    def total_revenue(path):
+        orders = pd.read_csv(path)
+        return orders["amount"].sum()
+
+not_flagged_example:
+  language: python
+  filename: jobs/revenue.py
+  code: |
+    """Nightly revenue job."""
+
+    import pandas as pd
+
+
+    def total_revenue(path):
+        total = 0
+        for chunk in pd.read_csv(path, chunksize=100_000):
+            total += chunk["amount"].sum()
+        return total
+  why: >-
+    With `chunksize`, `read_csv` returns an iterator that yields 100,000
+    rows at a time, so memory use stays the same however large the file
+    becomes.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on Python files.
+  - >-
+    Finds calls that resolve to `pandas.read_csv` through the file's
+    imports (`import pandas as pd`, `from pandas import read_csv`). A
+    `read_csv` method of another object, or a project module named
+    `pandas`, does not count.
+  - >-
+    Leaves alone a call with a positive `chunksize`, an `nrows` of zero or
+    more, a size given as a variable, or `iterator=True`.
+  - >-
+    Reports LOW on the line of the call. Other pandas readers, such as
+    `read_json` or `read_parquet`, are not checked.
+
+source_refs:
+  - path: skylos/rules/quality/performance.py
+    symbol: "def _is_pandas_read("
+  - path: skylos/rules/quality/performance.py
+    symbol: "def _pandas_row_bound("
+  - path: skylos/rules/quality/performance.py
+    symbol: "def _pandas_lazy_iterator("
+
+fix:
+  explanation: >-
+    Read the file in chunks and combine the partial results, or load only
+    the columns you need with `usecols` and pass `chunksize`.
+  filename: jobs/revenue.py
+  code: |
+    """Nightly revenue job."""
+
+    import pandas as pd
+
+
+    def total_revenue(path):
+        chunks = pd.read_csv(path, usecols=["amount"], chunksize=100_000)
+        return sum(chunk["amount"].sum() for chunk in chunks)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A CSV that is small by design, such as a lookup table shipped with
+      the code, is reported.
+    - >-
+      `usecols` and `dtype` reduce memory but do not count as a bound, so a
+      call that already reads only one small column is still reported.
+  suppress:
+    - check: inline
+      text: >-
+        On the reported line:
+      language: python
+      code: |
+        orders = pd.read_csv(path)  # skylos: ignore[SKY-P402] one day of orders
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-P402"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-P401, SKY-P404]

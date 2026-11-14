@@ -1,0 +1,237 @@
+id: SKY-A125
+title: Scanner suppression marker added
+family: ai-defects
+severity: MEDIUM
+languages: [Any file with comments (Python, JavaScript/TypeScript, Go, Java, PHP, Ruby, C/C++, Terraform, YAML, shell, Dockerfiles and more)]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_ai_defects` when the scan has a change to compare.
+    `skylos done` lists it under `guardrail_tampering`, which advises by
+    default.
+run_with: >-
+  `skylos . --ai-defects --diff origin/main` (or `-a`) on a change; also
+  `skylos done`
+
+what_it_is: >-
+  Code-scanning platforms such as DeepSource, Checkov, Trivy, CodeQL and
+  SonarQube read special comments that tell them to stop reporting a line,
+  a resource or a file. SKY-A125 reports a change that adds one of these
+  markers.
+
+why_it_matters: >-
+  The marker hides a finding from a check that runs somewhere else, often in
+  CI after the pull request is opened. A coding agent that cannot make that
+  check pass can add one line, and the reviewer sees a comment rather than
+  the weakness it hides.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: app/settings_loader.py
+  expect_line: 8
+  base_files:
+    - filename: app/settings_loader.py
+      code: |
+        import json
+
+
+        def load_settings(path):
+            try:
+                with open(path) as handle:
+                    return json.load(handle)
+            except (OSError, ValueError):
+                return {}
+  files:
+    - filename: app/settings_loader.py
+      code: |
+        import json
+
+
+        def load_settings(path):
+            try:
+                with open(path) as handle:
+                    return json.load(handle)
+            except Exception:  # skipcq: PYL-W0703
+                return {}
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: app/settings_loader.py
+      code: |
+        import json
+
+
+        def load_settings(path):
+            try:
+                with open(path) as handle:
+                    return json.load(handle)
+            except (OSError, ValueError):
+                return {}
+  files:
+    - filename: app/settings_loader.py
+      code: |
+        import json
+
+
+        def load_settings(path):
+            try:
+                with open(path) as handle:
+                    return json.load(handle)
+            except Exception:  # nosemgrep
+                return {}
+  why: >-
+    In Python, JavaScript/TypeScript, Go, Rust, Java/Kotlin and C# files,
+    `nosemgrep` and `NOSONAR` belong to SKY-A118, which `skylos done`
+    reports. SKY-A125 leaves them alone there so the same comment is not
+    reported twice.
+
+more_examples:
+  - flagged:
+      language: hcl
+      setup: git_diff
+      expect_file: infra/storage.tf
+      expect_line: 6
+      base_files:
+        - filename: infra/storage.tf
+          code: |
+            resource "aws_s3_bucket" "invoices" {
+              bucket = "acme-invoices"
+            }
+
+            resource "aws_s3_bucket_public_access_block" "invoices" {
+              bucket                  = aws_s3_bucket.invoices.id
+              block_public_acls       = true
+              block_public_policy     = true
+              ignore_public_acls      = true
+              restrict_public_buckets = true
+            }
+      files:
+        - filename: infra/storage.tf
+          code: |
+            resource "aws_s3_bucket" "invoices" {
+              bucket = "acme-invoices"
+            }
+
+            resource "aws_s3_bucket_public_access_block" "invoices" {
+              #checkov:skip=CKV_AWS_54:partner portal reads the bucket
+              bucket                  = aws_s3_bucket.invoices.id
+              block_public_acls       = true
+              block_public_policy     = false
+              ignore_public_acls      = true
+              restrict_public_buckets = false
+            }
+    not_flagged:
+      language: markdown
+      setup: git_diff
+      base_files:
+        - filename: docs/infrastructure.md
+          code: |
+            # Infrastructure checks
+
+            Checkov scans every Terraform change in CI.
+      files:
+        - filename: docs/infrastructure.md
+          code: |
+            # Infrastructure checks
+
+            Checkov scans every Terraform change in CI.
+
+            Never add `#checkov:skip=CKV_AWS_54` to a bucket that holds
+            customer data; ask the platform team instead.
+      why: >-
+        Markdown, reStructuredText and plain-text files are not read: a
+        marker there is being explained, not used.
+
+how_skylos_decides:
+  - >-
+    Runs with `--ai-defects` when there is a change to compare: in a diff
+    scan (`--diff` or `--diff-base`), in a full scan of a Git checkout with
+    uncommitted changes, and in `skylos done`. It compares each changed file
+    at the base with the same file in the working tree.
+  - >-
+    Reads files whose comment style it knows: `#` (Python, Ruby, shell,
+    YAML, Terraform, Dockerfile), `//` and `/* */` (C-family, Go, Java,
+    JavaScript/TypeScript, Swift, Dart), PHP, `--` (SQL, Lua) and HTML-style
+    markup. Documentation files, test files, generated files and vendored
+    folders are left out; markers in tests are only counted.
+  - >-
+    Looks for markers inside comments only: DeepSource `skipcq`,
+    JetBrains/Qodana `noinspection`, Qlty `qlty-ignore`, CodeScene
+    `@codescene(disable...)`, CodeQL `codeql[...]` and `lgtm[...]`, Checkov
+    `checkov:skip=`, Trivy `trivy:ignore:` (and `tfsec:ignore:`) and KICS
+    `kics-scan ignore`. `NOSONAR` and `nosemgrep` count only in languages
+    SKY-A118 does not read, such as PHP, Ruby, Terraform and YAML.
+  - >-
+    Reports a marker only on a line the change added, and only when the file
+    now holds more of that marker than at the base, so moved or reindented
+    lines are not new.
+  - >-
+    The message names the tool, what it stops reporting (this line, the
+    next line, the resource block, the whole file), the rule IDs and the
+    reason, or says that none was given. At most 20 markers are listed.
+
+source_refs:
+  - path: skylos/rules/ai_defect/guardrails/markers.py
+    symbol: "MARKERS: tuple[Marker, ...] = ("
+  - path: skylos/rules/ai_defect/guardrails/markers.py
+    symbol: "def comment_style("
+  - path: skylos/rules/ai_defect/guardrails/markers.py
+    symbol: "def find_markers("
+    note: skips `outside_a118_only` markers in files SKY-A118 reads.
+  - path: skylos/rules/ai_defect/guardrails/markers.py
+    symbol: "def detect_new_markers("
+  - path: skylos/rules/ai_defect/guardrails/scan.py
+    symbol: "def scan_git_changes("
+  - path: skylos/analyzer.py
+    symbol: "def _scan_ai_defect_diff_signals("
+
+fix:
+  explanation: >-
+    Fix what the platform reported. Here, catch only the errors a bad
+    settings file can raise. If a marker really is right, keep it as narrow
+    as the tool allows, write the reason after it and let a reviewer confirm
+    it.
+  language: python
+  filename: app/settings_loader.py
+  code: |
+    import json
+
+
+    def load_settings(path):
+        try:
+            with open(path) as handle:
+                return json.load(handle)
+        except (OSError, ValueError):
+            return {}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate, reviewed marker is still reported, with its reason
+      quoted. That is intended: the reviewer decides.
+    - >-
+      A file whose name or folder does not look like a test is treated as
+      code, so a marker in a test helper under another folder is reported.
+    - >-
+      Snyk Code's `deepcode ignore` and Codacy have no marker the rule
+      reads, so those are not reported.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        An inline `# skylos: ignore[SKY-A125]` on the reported line does not
+        silence it in Skylos 5.6.0: this rule reports a path relative to the
+        project, and the inline-ignore lookup does not match it. Use the
+        setting below.
+      language: python
+      code: |
+        except Exception:  # skipcq: PYL-W0703  # skylos: ignore[SKY-A125] fallback
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-A125"]` turns the rule off for the
+        project. For `skylos done`, set `guardrail_tampering = "off"` under
+        `[tool.skylos.done.checks]` in the base branch.
+
+related: [SKY-A118, SKY-A122, SKY-A119]

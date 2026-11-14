@@ -1,0 +1,171 @@
+id: SKY-D300
+title: Unsafe write to GITHUB_ENV or GITHUB_PATH
+family: ci-cd
+severity: HIGH
+severity_note: >-
+  The catalog lists HIGH, but the detector reports every finding as MEDIUM.
+languages: [GitHub Actions workflows, composite actions]
+gate:
+  full: counted
+
+what_it_is: >-
+  A step can set environment variables for every later step in its job by
+  appending `NAME=value` lines to the file named by `$GITHUB_ENV`, and add
+  folders to `PATH` through `$GITHUB_PATH`. SKY-D300 reports a `run:`
+  script that writes anything other than a fixed `NAME=value` text to one
+  of those files.
+
+why_it_matters: >-
+  If the written value comes from a file, a command or event text that
+  someone else controls, a line break in it adds a variable of their
+  choice, such as `NODE_OPTIONS` or `LD_PRELOAD`. Every later step in the
+  job then runs their code with the job's token and secrets.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/coverage-comment.yml
+  expect_line: 19
+  code: |
+    name: Coverage comment
+    on:
+      workflow_run:
+        workflows: [Tests]
+        types: [completed]
+    permissions:
+      actions: read
+      pull-requests: write
+    jobs:
+      comment:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/download-artifact@v4
+            with:
+              name: coverage
+              run-id: ${{ github.event.workflow_run.id }}
+              github-token: ${{ github.token }}
+          - name: Read the pull request number
+            run: echo "PR_NUMBER=$(cat pr-number.txt)" >> "$GITHUB_ENV"
+          - name: Post the coverage report
+            run: gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file cov.md
+            env:
+              GH_TOKEN: ${{ github.token }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/tests.yml
+  code: |
+    name: Tests
+    on: [push, pull_request]
+    permissions:
+      contents: read
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - name: Quieter pip
+            run: echo "PIP_DISABLE_PIP_VERSION_CHECK=1" >> "$GITHUB_ENV"
+          - run: pip install -e . && pytest
+  why: >-
+    The script writes a fixed `NAME=value` text in quotes, with no `$` or
+    backtick inside, so nothing outside the workflow file can shape what
+    lands in `$GITHUB_ENV`.
+
+how_skylos_decides:
+  - >-
+    Reads the steps of workflows and of composite actions (`action.yml`).
+    Only a step's own `run:` text is read.
+  - >-
+    Looks at each line of the script that names the file: `$GITHUB_ENV`,
+    `${GITHUB_ENV}`, `%GITHUB_ENV%`, `$env:GITHUB_ENV`, or the same forms of
+    `GITHUB_PATH`. The line must also contain `>`, `>>`, `|` or `tee`, so
+    reading the file is not a write.
+  - >-
+    Accepts the line only when the part before the redirect is exactly
+    `echo "NAME=value"` (or single quotes) with no `$` or backtick in the
+    value. Everything else is reported: command output, variables, `${{ }}`
+    expressions, `printf`, heredocs, and unquoted `echo NAME=value`.
+  - >-
+    Reports one MEDIUM finding per file. It is placed on the first line of
+    the file that starts with `run:` (after spaces), which is not always the
+    step that writes the file; when every step is written `- run: …`, the
+    finding is on line 1.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_github_env_writes("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _run_line_writes_env_unsafely("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _line_for_key("
+    note: picks the first `run:` key in the file as the finding line.
+
+fix:
+  explanation: >-
+    Do not write outside data to `$GITHUB_ENV`. Check the value, pass it on
+    as a step output, and give it to the next step through `env:`. A
+    check before a `$GITHUB_ENV` write is not enough for Skylos: the line
+    still holds a variable, so it is still reported.
+  filename: .github/workflows/coverage-comment.yml
+  code: |
+    name: Coverage comment
+    on:
+      workflow_run:
+        workflows: [Tests]
+        types: [completed]
+    permissions:
+      actions: read
+      pull-requests: write
+    jobs:
+      comment:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/download-artifact@v4
+            with:
+              name: coverage
+              run-id: ${{ github.event.workflow_run.id }}
+              github-token: ${{ github.token }}
+          - name: Read the pull request number
+            id: pr
+            run: |
+              number="$(cat pr-number.txt)"
+              [[ "$number" =~ ^[0-9]+$ ]] || { echo "::error::bad number"; exit 1; }
+              echo "number=$number" >> "$GITHUB_OUTPUT"
+          - name: Post the coverage report
+            run: gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file cov.md
+            env:
+              GH_TOKEN: ${{ github.token }}
+              PR_NUMBER: ${{ steps.pr.outputs.number }}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Common safe writes are reported: `echo "$HOME/.local/bin" >>
+      "$GITHUB_PATH"` (every `GITHUB_PATH` line is a folder, never
+      `NAME=value`), `echo "SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"`, and a
+      value checked against a strict pattern first.
+    - >-
+      Several unsafe steps in one file give a single finding, on the first
+      `run:` line of the file, even when that step writes nothing.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D300]` on the reported line or on the line
+        directly above it. Because the file gets one finding on its first
+        `run:` line, that marker silences the rule for the whole file.
+      language: yaml
+      code: |
+        # skylos: ignore[SKY-D300] SHA comes from the runner
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D300"]` turns the rule off for the whole
+        project.
+    - check: baseline
+      text: >-
+        A baseline works, but it records the absolute file path and the line,
+        so it stops matching when the checkout moves or lines above shift.
+
+related: [SKY-D294, SKY-D306, SKY-D290]

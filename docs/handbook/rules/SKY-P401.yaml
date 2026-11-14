@@ -1,0 +1,130 @@
+id: SKY-P401
+title: Potential unbounded read
+family: quality
+severity: LOW
+severity_note: >-
+  The catalog gives no severity. Every finding is reported LOW.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Advice that is measured on every `--quality` scan but not listed by
+    default. It is listed, and counted toward `max_quality`, with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  `file.read()` and `file.readlines()` without a size load everything that
+  is left in the source into memory at once. SKY-P401 reports such calls
+  when Skylos cannot see that the whole value is needed.
+
+why_it_matters: >-
+  Reading a 4 GB upload to hash it needs 4 GB of memory; a server handling
+  a few such uploads at once is killed. Reading in fixed-size chunks keeps
+  memory flat whatever the file size.
+
+flagged_example:
+  language: python
+  filename: app/storage/checksum.py
+  expect_line: 8
+  code: |
+    """Upload checksum for the file store."""
+
+    import hashlib
+
+
+    def upload_checksum(path):
+        with open(path, "rb") as handle:
+            data = handle.read()
+        return hashlib.sha256(data).hexdigest()
+
+not_flagged_example:
+  language: python
+  filename: app/settings.py
+  code: |
+    """Settings file loader."""
+
+    import json
+
+
+    def load_settings(path):
+        with open(path, encoding="utf-8") as handle:
+            return json.loads(handle.read())
+  why: >-
+    `json.loads` needs the whole text, so reading it in chunks would not
+    help. Skylos does not report a read passed straight to a standard
+    parser that requires the complete value, such as `json.loads`,
+    `ast.parse`, `tomllib.loads` or `zlib.decompress`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on Python files. Test code, `examples` and
+    `benchmarks` folders, a top-level `docs` folder and the root `setup.py`
+    are skipped.
+  - >-
+    Finds calls to `.read()` and `.readlines()`. A call with a size
+    argument is bounded and left alone, even when the size is a variable;
+    no size, `None`, a negative number, or `readlines(0)` reads everything.
+  - >-
+    Leaves alone `read()` on an `io.BytesIO` or `io.StringIO` the file
+    creates itself, `ConfigParser.read()` (its argument is file names),
+    OpenCV `VideoCapture.read()`, a read passed straight to a parser that
+    needs the whole value, and a read returned from a function declared to
+    return `str` or `bytes`.
+  - >-
+    Reports LOW on the line of the call. The message says whether the
+    source is a file from `open()`, a `zipfile` member or an unknown
+    stream.
+
+source_refs:
+  - path: skylos/rules/quality/performance.py
+    symbol: "def _read_message("
+  - path: skylos/rules/quality/performance.py
+    symbol: "def _read_bound("
+  - path: skylos/rules/quality/performance.py
+    symbol: "def _whole_buffer_consumer("
+  - path: skylos/rules/quality/performance.py
+    symbol: "class PerformanceRule"
+
+fix:
+  explanation: >-
+    Read in fixed-size chunks and feed each chunk to the consumer, or
+    iterate over the file line by line.
+  filename: app/storage/checksum.py
+  code: |
+    """Upload checksum for the file store."""
+
+    import hashlib
+
+    CHUNK = 1024 * 1024
+
+
+    def upload_checksum(path):
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            while chunk := handle.read(CHUNK):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A file that is small by design, such as a template or a key file, is
+      reported; Skylos cannot know its size.
+    - >-
+      A read whose result goes to a variable first, and only then to
+      `json.loads`, is reported; only a direct argument counts.
+  suppress:
+    - check: inline
+      text: >-
+        On the reported line:
+      language: python
+      code: |
+        data = handle.read()  # skylos: ignore[SKY-P401] files are capped at 5 MB on upload
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-P401"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-P402, SKY-P404, SKY-L008]

@@ -1,0 +1,167 @@
+id: SKY-D229
+title: XPath injection
+family: security
+severity: CRITICAL
+languages: [Java]
+gate:
+  full: critical_blocks
+
+what_it_is: >-
+  XPath is a query language for XML documents. XPath injection happens when
+  outside text is pasted into an XPath expression instead of being passed as
+  a variable. Skylos reports SKY-D229 when request data reaches the
+  expression of `XPath.compile()` or `XPath.evaluate()`, or dom4j
+  `DocumentHelper.createXPath()`.
+
+why_it_matters: >-
+  A lookup such as `//user[name='` + name + `']` returns every user when
+  the name is `' or '1'='1`. When XML holds accounts or settings, that can
+  bypass a login check or leak the whole document.
+
+flagged_example:
+  language: java
+  filename: src/main/java/com/example/DirectoryController.java
+  expect_line: 22
+  code: |
+    package com.example;
+
+    import javax.xml.xpath.XPath;
+    import javax.xml.xpath.XPathExpressionException;
+    import javax.xml.xpath.XPathFactory;
+    import org.springframework.web.bind.annotation.GetMapping;
+    import org.springframework.web.bind.annotation.RequestParam;
+    import org.springframework.web.bind.annotation.RestController;
+    import org.w3c.dom.Document;
+
+    @RestController
+    public class DirectoryController {
+        private final Document directory;
+
+        public DirectoryController(Document directory) {
+            this.directory = directory;
+        }
+
+        @GetMapping("/email")
+        public String email(@RequestParam String name) throws XPathExpressionException {
+            XPath xpath = XPathFactory.newInstance().newXPath();
+            return xpath.evaluate("//user[name='" + name + "']/email", directory);
+        }
+    }
+
+not_flagged_example:
+  language: java
+  filename: src/main/java/com/example/DirectoryController.java
+  code: |
+    package com.example;
+
+    import javax.xml.xpath.XPath;
+    import javax.xml.xpath.XPathExpressionException;
+    import javax.xml.xpath.XPathFactory;
+    import org.springframework.web.bind.annotation.GetMapping;
+    import org.springframework.web.bind.annotation.RequestParam;
+    import org.springframework.web.bind.annotation.RestController;
+    import org.w3c.dom.Document;
+
+    @RestController
+    public class DirectoryController {
+        private final Document directory;
+
+        public DirectoryController(Document directory) {
+            this.directory = directory;
+        }
+
+        @GetMapping("/email")
+        public String email(@RequestParam String name) throws XPathExpressionException {
+            XPath xpath = XPathFactory.newInstance().newXPath();
+            xpath.setXPathVariableResolver(variable -> name);
+            return xpath.evaluate("//user[name=$user]/email", directory);
+        }
+    }
+  why: >-
+    The expression is a fixed string with an XPath variable, `$user`. The
+    resolver supplies the name as a value, so quotes in it are compared as
+    text and can never change the query.
+
+how_skylos_decides:
+  - >-
+    Finds `compile()`, `evaluate()` and `evaluateExpression()` on a receiver
+    whose declared type is `javax.xml.xpath.XPath`, and dom4j
+    `DocumentHelper.createXPath()`. A `Pattern.compile()` or a service's own
+    `evaluate()` is not matched.
+  - >-
+    Checks the expression argument (the first one) for request data:
+    servlet request getters, Spring and JAX-RS handler parameters such as
+    `@RequestParam` and `@PathVariable`, and helpers in the file that return
+    them. Number, boolean, `UUID` and date parameters never count.
+  - >-
+    Reports CRITICAL when request data reaches the expression, directly or
+    through string building and assignments.
+
+source_refs:
+  - path: skylos/visitors/languages/java/models.py
+    symbol: "XPATH_SINKS = {"
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "XPath expression uses servlet-controlled data."
+  - path: skylos/visitors/languages/java/danger.py
+    symbol: "_JAVA_XPATH_RECEIVER_HINT = re.compile("
+    note: the servlet-style line check that reports the same rule.
+
+fix:
+  explanation: >-
+    Keep the XPath expression fixed and pass outside values through
+    variables with an `XPathVariableResolver`. If a value must become part
+    of the expression, check it against a strict allowlist first.
+  filename: src/main/java/com/example/DirectoryController.java
+  code: |
+    package com.example;
+
+    import java.util.Map;
+    import javax.xml.namespace.QName;
+    import javax.xml.xpath.XPath;
+    import javax.xml.xpath.XPathExpressionException;
+    import javax.xml.xpath.XPathFactory;
+    import org.springframework.web.bind.annotation.GetMapping;
+    import org.springframework.web.bind.annotation.RequestParam;
+    import org.springframework.web.bind.annotation.RestController;
+    import org.w3c.dom.Document;
+
+    @RestController
+    public class DirectoryController {
+        private final Document directory;
+
+        public DirectoryController(Document directory) {
+            this.directory = directory;
+        }
+
+        @GetMapping("/email")
+        public String email(@RequestParam String name) throws XPathExpressionException {
+            Map<QName, Object> values = Map.of(new QName("user"), name);
+            XPath xpath = XPathFactory.newInstance().newXPath();
+            xpath.setXPathVariableResolver(values::get);
+            return xpath.evaluate("//user[name=$user]/email", directory);
+        }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A value checked against an allowlist before it is pasted into the
+      expression is still reported: the check is not recognised.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why. A bare `// noqa` does not hide
+        CRITICAL security findings.
+      language: java
+      code: |
+        return xpath.evaluate(expr, doc); // skylos: ignore[SKY-D229] expr from FIELDS
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D229"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D239, SKY-D211, SKY-D236]

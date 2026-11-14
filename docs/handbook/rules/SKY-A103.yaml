@@ -1,0 +1,291 @@
+id: SKY-A103
+title: CI permission expansion
+family: ai-defects
+severity: HIGH
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_ai_defects` when the scan has a change to compare.
+    HIGH findings do not block on their own unless `HIGH` is added to
+    `block_ai_defect_severities` under `[tool.skylos.gate]`.
+run_with: >-
+  `skylos . --ai-defects --diff origin/main` (or `-a`) on a change
+
+what_it_is: >-
+  A GitHub Actions workflow gets a token whose rights are set by its
+  `permissions:` block, and some triggers run with the base repository's
+  secrets. SKY-A103 reports a change that adds a `write` permission,
+  `permissions: write-all`, or a `pull_request_target` or `workflow_run`
+  trigger.
+
+why_it_matters: >-
+  A token that can write to the repository, publish packages or mint cloud
+  credentials turns any mistake in that job into a supply-chain risk. An
+  agent that hits a permission error often fixes it by widening the
+  permission, and the one-word change is easy to miss in review.
+
+flagged_example:
+  language: yaml
+  setup: git_diff
+  expect_file: .github/workflows/release.yml
+  expect_line: 8
+  base_files:
+    - filename: release/version.py
+      code: |
+        def next_version(current):
+            major, minor, patch = current.split(".")
+            return f"{major}.{minor}.{int(patch) + 1}"
+    - filename: .github/workflows/release.yml
+      code: |
+        name: release
+
+        on:
+          push:
+            tags: ["v*"]
+
+        permissions:
+          contents: read
+
+        jobs:
+          publish:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: make release
+  files:
+    - filename: .github/workflows/release.yml
+      code: |
+        name: release
+
+        on:
+          push:
+            tags: ["v*"]
+
+        permissions:
+          contents: write
+
+        jobs:
+          publish:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: make release
+
+not_flagged_example:
+  language: yaml
+  setup: git_diff
+  base_files:
+    - filename: release/version.py
+      code: |
+        def next_version(current):
+            major, minor, patch = current.split(".")
+            return f"{major}.{minor}.{int(patch) + 1}"
+    - filename: .github/workflows/release.yml
+      code: |
+        name: release
+
+        on:
+          push:
+            tags: ["v*"]
+
+        permissions:
+          contents: write
+
+        jobs:
+          publish:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: make release
+  files:
+    - filename: .github/workflows/release.yml
+      code: |
+        name: release
+
+        on:
+          push:
+            tags: ["v*"]
+
+        permissions:
+          contents: write  # the release job pushes the version tag
+
+        jobs:
+          publish:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: make release
+  why: >-
+    The change touches the `contents: write` line but only adds a comment.
+    The removed line held the same permission, so nothing was widened.
+
+more_examples:
+  - flagged:
+      language: yaml
+      setup: git_diff
+      expect_file: .github/workflows/labels.yml
+      expect_line: 3
+      base_files:
+        - filename: app/labels.py
+          code: |
+            def label_for(path):
+                if path.startswith("docs/"):
+                    return "documentation"
+                return "code"
+        - filename: .github/workflows/labels.yml
+          code: |
+            name: label pull requests
+
+            on: pull_request
+
+            jobs:
+              label:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/labeler@v5
+      files:
+        - filename: .github/workflows/labels.yml
+          code: |
+            name: label pull requests
+
+            on: pull_request_target
+
+            jobs:
+              label:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/labeler@v5
+    not_flagged:
+      language: yaml
+      setup: git_diff
+      base_files:
+        - filename: app/labels.py
+          code: |
+            def label_for(path):
+                if path.startswith("docs/"):
+                    return "documentation"
+                return "code"
+        - filename: .github/workflows/labels.yml
+          code: |
+            name: label pull requests
+
+            on: pull_request
+
+            jobs:
+              label:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/labeler@v5
+      files:
+        - filename: .github/workflows/labels.yml
+          code: |
+            name: label pull requests
+
+            on: [pull_request, merge_group]
+
+            jobs:
+              label:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/labeler@v5
+      why: >-
+        The workflow gained a trigger, but `merge_group` runs with the same
+        rights as `pull_request`. Only `pull_request_target` and
+        `workflow_run` run with the base repository's secrets and token.
+
+how_skylos_decides:
+  - >-
+    Runs with `--ai-defects` when there is a change to compare: in a diff
+    scan (`--diff` or `--diff-base`), or in a full scan of a Git checkout
+    with uncommitted changes. It reads the Git diff of each changed file
+    against the base.
+  - >-
+    Looks only at `.yml` and `.yaml` files under a `.github/workflows/`
+    folder.
+  - >-
+    On each added line it looks for `permissions: write-all`, a `write`
+    grant for a token scope such as `contents`, `packages`, `id-token`,
+    `actions`, `pull-requests` or `security-events` (block or inline
+    `{...}` form), and a `pull_request_target` or `workflow_run` trigger in
+    an `on:` value or list entry. Comments are stripped first.
+  - >-
+    A removed line with the same grant or trigger cancels the added one:
+    for `on:` and the top-level `permissions:` anywhere in the file, for
+    other lines only when one line was replaced by one line. So moving or
+    commenting a line is not reported.
+  - >-
+    Reports each new grant or trigger on its added line, with severity
+    HIGH.
+
+source_refs:
+  - path: skylos/rules/ai_defect/ci_permission_expansion.py
+    symbol: "def detect_ci_permission_expansion("
+  - path: skylos/rules/ai_defect/ci_permission_expansion.py
+    symbol: "_WRITE_PERMISSIONS = {"
+  - path: skylos/rules/ai_defect/ci_permission_expansion.py
+    symbol: "_PRIVILEGED_TRIGGERS = {\"pull_request_target\", \"workflow_run\"}"
+  - path: skylos/rules/ai_defect/ci_permission_expansion.py
+    symbol: "def _is_github_actions_workflow("
+  - path: skylos/rules/ai_defect/ci_permission_expansion.py
+    symbol: "def _fallback_signal_entries("
+  - path: skylos/analyzer.py
+    symbol: "def _scan_ai_defect_diff_signals("
+
+fix:
+  explanation: >-
+    Keep the workflow's token read-only and grant `write` only to the one
+    job that needs it, for the one scope it needs. If the release must push
+    a tag, give that job `contents: write` and leave every other job at
+    `contents: read`.
+  language: yaml
+  filename: .github/workflows/release.yml
+  code: |
+    name: release
+
+    on:
+      push:
+        tags: ["v*"]
+
+    permissions:
+      contents: read
+
+    jobs:
+      publish:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - run: make release
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate grant, such as `id-token: write` for trusted publishing,
+      is reported. That is intended: the finding asks a reviewer to confirm
+      it.
+    - >-
+      Moving a job-level grant to a different job in a multi-line edit is
+      reported again, because only one-line replacements are compared for
+      job-level blocks.
+    - >-
+      Workflows outside `.github/workflows/`, such as composite actions in
+      `action.yml`, are not read.
+    - >-
+      In a repository with no source file Skylos analyses (only workflows
+      and YAML, say), the scan takes a shorter path that does not run this
+      rule, so nothing is reported.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        An inline `# skylos: ignore[SKY-A103]` comment does not silence it
+        in Skylos 5.6.0: the inline-ignore lookup does not match this rule's
+        findings in workflow files.
+      language: yaml
+      code: |
+        contents: write  # skylos: ignore[SKY-A103] release pushes the tag
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-A103"]` turns the rule off for the
+        project.
+
+related: [SKY-D292, SKY-D294, SKY-A121, SKY-A122]

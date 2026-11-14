@@ -1,0 +1,169 @@
+id: SKY-D246
+title: JWT read with decode() instead of verify()
+family: security
+severity: HIGH
+languages: [TypeScript/JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  A JWT (JSON Web Token) is a signed piece of text that says who a user is.
+  In the `jsonwebtoken` package, `jwt.decode()` only unpacks the token and
+  never checks the signature; `jwt.verify()` does both. SKY-D246 reports
+  every `jwt.decode()` call in TypeScript and JavaScript.
+
+why_it_matters: >-
+  Anyone can build a token that says `"sub": "admin"`. Server code that
+  trusts what `jwt.decode()` returns lets an attacker act as any user,
+  including administrators, with a token they wrote themselves.
+
+flagged_example:
+  language: typescript
+  filename: src/middleware/auth.ts
+  expect_line: 6
+  code: |
+    import jwt from "jsonwebtoken";
+    import type { NextFunction, Request, Response } from "express";
+
+    export function requireUser(req: Request, res: Response, next: NextFunction) {
+      const token = req.headers.authorization?.replace("Bearer ", "") ?? "";
+      const payload = jwt.decode(token) as { sub?: string } | null;
+      if (!payload?.sub) {
+        return res.status(401).end();
+      }
+      res.locals.userId = payload.sub;
+      next();
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/middleware/auth.ts
+  code: |
+    import jwt, { type JwtPayload } from "jsonwebtoken";
+    import type { NextFunction, Request, Response } from "express";
+
+    const secret = process.env.JWT_SECRET ?? "";
+
+    export function requireUser(req: Request, res: Response, next: NextFunction) {
+      const token = req.headers.authorization?.replace("Bearer ", "") ?? "";
+      try {
+        const payload = jwt.verify(token, secret, { algorithms: ["HS256"] });
+        res.locals.userId = (payload as JwtPayload).sub;
+        next();
+      } catch {
+        res.status(401).end();
+      }
+    }
+  why: >-
+    `jwt.verify()` checks the signature with the server's secret and allows
+    only HS256 before any claim is used. The rule looks only for calls to a
+    method named `decode`.
+
+more_examples:
+  - flagged:
+      language: javascript
+      filename: lib/session.js
+      expect_line: 4
+      code: |
+        const jsonwebtoken = require("jsonwebtoken");
+
+        function sessionUser(cookieToken) {
+          const claims = jsonwebtoken.decode(cookieToken);
+          return claims ? { id: claims.sub, role: claims.role } : null;
+        }
+
+        module.exports = { sessionUser };
+    not_flagged:
+      language: javascript
+      filename: web/header.js
+      code: |
+        import { jwtDecode } from "jwt-decode";
+
+        export function showSignedInName(idToken) {
+          const { name } = jwtDecode(idToken);
+          document.querySelector("#user-name").textContent = name;
+        }
+      why: >-
+        This is browser code that only shows the user's name; the server
+        still verifies the token on every request, so reading it unverified
+        here grants nothing. The `jwt-decode` helper is not a `.decode()`
+        call on `jwt`, `jsonwebtoken` or `jwtlib`, so it is not reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on TypeScript and JavaScript files. Finds every
+    call of the form `<object>.decode(...)`.
+  - >-
+    Reports HIGH when the object, lower-cased, is exactly `jwt`,
+    `jsonwebtoken` or `jwtlib`. The arguments are not read, so
+    `jwt.decode(token, { complete: true })` counts too.
+  - >-
+    The import is not checked: a different module imported under the name
+    `jwt` is reported, and `jsonwebtoken` imported under another name
+    (`import tokens from "jsonwebtoken"`) is not. Python's `jwt.decode()`
+    with verification turned off is SKY-D232.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "# --- JWT decode without verify (SKY-D246) ---"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: '(#eq? @jwt_decode_prop "decode")'
+    note: the tree-sitter query that finds `.decode(...)` calls.
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: 'if obj_text in ("jwt", "jsonwebtoken", "jwtlib"):'
+
+fix:
+  explanation: >-
+    Use `jwt.verify()` with the secret or public key and a fixed
+    `algorithms` list, and reject the request when it throws. Never base an
+    access decision on what `jwt.decode()` returns.
+  filename: src/middleware/auth.ts
+  code: |
+    import jwt, { type JwtPayload } from "jsonwebtoken";
+    import type { NextFunction, Request, Response } from "express";
+
+    const secret = process.env.JWT_SECRET ?? "";
+
+    export function requireUser(req: Request, res: Response, next: NextFunction) {
+      const token = req.headers.authorization?.replace("Bearer ", "") ?? "";
+      let payload: JwtPayload;
+      try {
+        payload = jwt.verify(token, secret, { algorithms: ["HS256"] }) as JwtPayload;
+      } catch {
+        return res.status(401).end();
+      }
+      if (!payload.sub) {
+        return res.status(401).end();
+      }
+      res.locals.userId = payload.sub;
+      next();
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A `jwt.decode(token, { complete: true })` that only reads the `kid`
+      header to choose a key, followed by `jwt.verify()`, is still
+      reported. So is browser code that only displays a name.
+    - >-
+      Missed: `jsonwebtoken` imported under another name, a destructured
+      `decode` (`const { decode } = require("jsonwebtoken")`), and other
+      libraries such as `jose`'s `decodeJwt()`.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the reviewed line with a comment that says why the result is
+        not trusted.
+      language: typescript
+      code: |
+        const shown = jwt.decode(token); // skylos: ignore[SKY-D246] display only, not trusted
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D246"]` turns the rule off for the
+        whole project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the existing calls
+        and report only new ones.
+
+related: [SKY-D232, SKY-D270, SKY-D283]

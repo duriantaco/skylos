@@ -1,0 +1,205 @@
+id: SKY-Q701
+title: High coupling
+family: quality
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. MEDIUM for a class that depends on 5 to 8
+  other classes of its file, HIGH from 9.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    A measurement, not listed by default. It is listed, and counted toward
+    `max_quality`, with `--all-advice` or when the rule is named in
+    `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  Coupling is how many other classes one class depends on. SKY-Q701 counts,
+  for each Python class, the other classes defined in the same file that
+  it inherits from, names in type hints, creates, reads attributes from or
+  uses as decorators, and reports a class that depends on more than 4 of
+  them.
+
+why_it_matters: >-
+  A class wired to many others breaks when any of them changes, and
+  testing it means building all of them first. In a single file, a class
+  like this is often where the module's responsibilities should have been
+  split.
+
+flagged_example:
+  language: python
+  filename: app/orders.py
+  expect_line: 28
+  code: |
+    """Order placement for the shop."""
+
+
+    class Cart:
+        def __init__(self, items):
+            self.items = items
+
+
+    class Pricing:
+        def total(self, cart):
+            return sum(item.price for item in cart.items)
+
+
+    class TaxTable:
+        rates = {"DE": 0.19, "FR": 0.20}
+
+
+    class Inventory:
+        def reserve(self, items):
+            return all(item.in_stock for item in items)
+
+
+    class Mailer:
+        def send(self, to, text):
+            print(to, text)
+
+
+    class OrderService:
+        def __init__(self):
+            self.pricing = Pricing()
+            self.inventory = Inventory()
+            self.mailer = Mailer()
+
+        def place(self, cart: Cart, email, country):
+            if not self.inventory.reserve(cart.items):
+                raise ValueError("out of stock")
+            total = self.pricing.total(cart) * (1 + TaxTable.rates[country])
+            self.mailer.send(email, f"Order total: {total:.2f}")
+            return total
+
+not_flagged_example:
+  language: python
+  filename: app/orders.py
+  code: |
+    """Order placement for the shop."""
+
+
+    class Cart:
+        def __init__(self, items):
+            self.items = items
+
+
+    class Pricing:
+        rates = {"DE": 0.19, "FR": 0.20}
+
+        def total(self, cart, country):
+            net = sum(item.price for item in cart.items)
+            return net * (1 + self.rates[country])
+
+
+    class Inventory:
+        def reserve(self, items):
+            return all(item.in_stock for item in items)
+
+
+    class Mailer:
+        def send(self, to, text):
+            print(to, text)
+
+
+    class OrderService:
+        def __init__(self):
+            self.pricing = Pricing()
+            self.inventory = Inventory()
+            self.mailer = Mailer()
+
+        def place(self, cart: Cart, email, country):
+            if not self.inventory.reserve(cart.items):
+                raise ValueError("out of stock")
+            total = self.pricing.total(cart, country)
+            self.mailer.send(email, f"Order total: {total:.2f}")
+            return total
+  why: >-
+    Tax now belongs to `Pricing`, so `OrderService` depends on 4 classes:
+    `Cart`, `Pricing`, `Inventory` and `Mailer`. That is the limit, and
+    Skylos reports only counts above it.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on each Python class that has behaviour.
+    Declaration-only classes (fields, enum values, stubs) are not measured.
+  - >-
+    Collects the classes defined in the same file. A dependency is another
+    of those classes that this class inherits from, names in a type hint,
+    calls (creates), reads an attribute of, or uses as a decorator. Classes
+    imported from other modules are not counted.
+  - >-
+    Reports when the number of distinct dependencies is above 4: MEDIUM up
+    to 8, HIGH above 8. The limits are fixed.
+  - >-
+    Reports on the `class` line, with the count per kind of dependency.
+
+source_refs:
+  - path: skylos/rules/quality/coupling.py
+    symbol: "class CBORule"
+  - path: skylos/rules/quality/coupling.py
+    symbol: "def _compute_metrics("
+  - path: skylos/rules/quality/coupling.py
+    symbol: "def __init__(self, low_threshold=4, high_threshold=8)"
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "ARCHITECTURE_METRIC_RULES"
+    note: not listed by default.
+
+fix:
+  explanation: >-
+    Move each decision to the class that owns its data (tax to `Pricing`),
+    or pass the collaborators in, so the class talks to fewer others.
+  filename: app/orders.py
+  code: |
+    """Order placement for the shop."""
+
+
+    class Cart:
+        def __init__(self, items):
+            self.items = items
+
+
+    class Pricing:
+        rates = {"DE": 0.19, "FR": 0.20}
+
+        def total(self, cart, country):
+            net = sum(item.price for item in cart.items)
+            return net * (1 + self.rates[country])
+
+
+    class OrderService:
+        def __init__(self, pricing, inventory, mailer):
+            self.pricing = pricing
+            self.inventory = inventory
+            self.mailer = mailer
+
+        def place(self, cart: Cart, email, country):
+            if not self.inventory.reserve(cart.items):
+                raise ValueError("out of stock")
+            total = self.pricing.total(cart, country)
+            self.mailer.send(email, f"Order total: {total:.2f}")
+            return total
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Only classes of the same file count, so the measure says little about
+      a class whose collaborators live in other modules, and a module that
+      keeps a family of related classes together scores higher.
+    - >-
+      A composition root or factory that is meant to wire many classes
+      together is reported.
+  suppress:
+    - check: inline
+      text: >-
+        On the `class` line (the reported line):
+      language: python
+      code: |
+        class OrderService:  # skylos: ignore[SKY-Q701] wires the checkout together
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q701"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-Q702, SKY-Q501, SKY-Q804]

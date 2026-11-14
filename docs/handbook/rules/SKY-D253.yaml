@@ -1,0 +1,152 @@
+id: SKY-D253
+title: Secret compared with == or ===
+family: security
+severity: MEDIUM
+languages: [TypeScript/JavaScript]
+gate:
+  full: counted
+cwe: [CWE-208]
+
+what_it_is: >-
+  `===` and `==` stop at the first character that differs, so comparing a
+  secret this way takes slightly longer the more leading characters match.
+  SKY-D253 reports an equality check in TypeScript or JavaScript where one
+  side is named like a password, token, signature, hash or key.
+
+why_it_matters: >-
+  That time difference is a "timing side channel". An attacker who can send
+  many requests and measure the answers can guess a webhook signature or an
+  API key one character at a time. `crypto.timingSafeEqual()` always takes
+  the same time.
+
+flagged_example:
+  language: typescript
+  filename: src/webhooks/receive.ts
+  expect_line: 10
+  code: |
+    import crypto from "node:crypto";
+    import type { Request, Response } from "express";
+
+    const webhookKey = process.env.WEBHOOK_KEY ?? "";
+
+    export function receiveWebhook(req: Request, res: Response) {
+      const signature = req.get("x-signature") ?? "";
+      const body = JSON.stringify(req.body);
+      const expected = crypto.createHmac("sha256", webhookKey).update(body).digest("hex");
+      if (signature !== expected) {
+        return res.status(401).end();
+      }
+      res.status(204).end();
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/webhooks/receive.ts
+  code: |
+    import crypto from "node:crypto";
+    import type { Request, Response } from "express";
+
+    const webhookKey = process.env.WEBHOOK_KEY ?? "";
+
+    export function receiveWebhook(req: Request, res: Response) {
+      const signature = Buffer.from(req.get("x-signature") ?? "", "hex");
+      const body = JSON.stringify(req.body);
+      const expected = crypto.createHmac("sha256", webhookKey).update(body).digest();
+      if (
+        signature.length !== expected.length ||
+        !crypto.timingSafeEqual(signature, expected)
+      ) {
+        return res.status(401).end();
+      }
+      res.status(204).end();
+    }
+  why: >-
+    `signature.length !== expected.length` compares two lengths, which are
+    public (`timingSafeEqual` needs equal lengths). The rule reads the last
+    name of each side, here `length`. The secret bytes themselves are
+    compared with `crypto.timingSafeEqual()`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on TypeScript and JavaScript files. Finds every
+    `==`, `===`, `!=` and `!==` expression.
+  - >-
+    Skips it when one side is the literal `null`, when it is a strict
+    comparison with `true` or `false`, or when it compares a password
+    field with its confirmation field of the same private sign-up form
+    (a Zod schema used only through `zodResolver` in `useForm`).
+  - >-
+    Otherwise takes the last name of each side (`token`, `user.passwordHash`
+    gives `passwordHash`, `process.env.API_SECRET` gives `API_SECRET`),
+    lower-cases it and removes `_`. Reports MEDIUM when it ends in
+    password, passwd, pwd, secret, token, hash, digest, hmac, signature or
+    apikey. One finding per comparison.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _check_timing_comparison"
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "_TIMING_SENSITIVE_SUFFIXES = ("
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "def _compares_one_form_entry_twice"
+    note: the sign-up form exception.
+  - path: test/test_typescript_expanded.py
+    symbol: "class TestTimingUnsafeComparison"
+
+fix:
+  explanation: >-
+    Turn both values into `Buffer`s, check that the lengths match, and
+    compare the bytes with `crypto.timingSafeEqual()`. For passwords, use a
+    password-hashing library such as bcrypt or argon2, whose `verify` call
+    already compares safely.
+  filename: src/webhooks/receive.ts
+  code: |
+    import crypto from "node:crypto";
+    import type { Request, Response } from "express";
+
+    const webhookKey = process.env.WEBHOOK_KEY ?? "";
+
+    export function receiveWebhook(req: Request, res: Response) {
+      const signature = Buffer.from(req.get("x-signature") ?? "", "hex");
+      const body = JSON.stringify(req.body);
+      const expected = crypto.createHmac("sha256", webhookKey).update(body).digest();
+      const valid =
+        signature.length === expected.length &&
+        crypto.timingSafeEqual(signature, expected);
+      if (!valid) {
+        return res.status(401).end();
+      }
+      res.status(204).end();
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Checks that only test whether a value is present are reported:
+      `token === undefined` and `token === ""` both count, because only
+      `null` is skipped. `typeof token !== "string"` and `!token` are not
+      reported.
+    - >-
+      Names that end in a listed word but hold nothing secret are
+      reported, such as `fileHash === previousHash` for a cache check or
+      `commitHash` comparisons.
+    - >-
+      Missed: secrets in variables with neutral names (`if (a === b)`),
+      `Buffer.equals()` and comparisons in Python, Go or Java.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the reported line and say why timing does not matter there.
+      language: typescript
+      code: |
+        if (fileHash !== cachedHash) { // skylos: ignore[SKY-D253] cache key, not a secret
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D253"]` turns the rule off for the
+        whole project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the existing
+        comparisons and report only new ones.
+
+related: [SKY-D282, SKY-D246, SKY-D232]

@@ -1,0 +1,131 @@
+id: SKY-L009
+title: Debug leftover
+family: logic
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. A debugger call (`breakpoint()`,
+  `pdb.set_trace()` and similar) or `ic()` is HIGH; a `print()` that looks
+  like debugging output is LOW.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A call left over from debugging. It can be a `breakpoint()` or
+  `pdb.set_trace()` that stops the program, an `ic()` from the icecream
+  library, or a `print()` that dumps a variable with a `DEBUG` label or the
+  `{value=}` f-string form.
+
+why_it_matters: >-
+  A forgotten `breakpoint()` freezes the request or job that reaches it: a
+  web worker waits forever for someone to type at a debugger prompt that
+  nobody can see. Debug prints can also write order details or user data to
+  logs that are kept and shared.
+
+flagged_example:
+  language: python
+  filename: shop/checkout.py
+  expect_line: 8
+  code: |
+    """Apply promotion codes at checkout."""
+
+    from shop.promotions import lookup_discount
+
+
+    def apply_discount(order, code):
+        discount = lookup_discount(code)
+        breakpoint()
+        order.total = max(order.total - discount, 0)
+        return order
+
+not_flagged_example:
+  language: python
+  filename: shop/checkout.py
+  code: |
+    """Apply promotion codes at checkout."""
+
+    from shop.promotions import lookup_discount
+
+
+    def apply_discount(order, code):
+        discount = lookup_discount(code)
+        print(f"Applied {code}: {discount} off order {order.id}")
+        order.total = max(order.total - discount, 0)
+        return order
+  why: >-
+    A plain `print()` is ordinary output: command-line tools and scripts
+    print on purpose. Skylos only reports a `print()` that carries evidence
+    of debugging, such as a `DEBUG:` label, `{discount=}` or a dump of
+    `locals()`. A logger is still the better choice in library code.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files, test files included. Looks at
+    every function call.
+  - >-
+    Reports HIGH for `breakpoint()` and `ic()` written as bare names, and
+    for `pdb.set_trace()`, `ipdb.set_trace()`, `pudb.set_trace()` and
+    `code.interact()`.
+  - >-
+    Reports LOW for `print()`, `pprint()`, `pprint.pprint()` or
+    `builtins.print()` only when the output looks like debugging: the
+    first argument starts with `DEBUG`, `DBG`, `[DEBUG]` or `[DBG]`; an
+    f-string uses the `{name=}` debug form; or an argument is `locals()`,
+    `globals()`, `vars()` or an object's `__dict__`.
+  - >-
+    Any other `print()` is left alone. The finding is on the line of the
+    call.
+
+source_refs:
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "class DebugLeftoverRule"
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "DEBUG_METHOD_CALLS = {"
+  - path: skylos/rules/quality/logic_security.py
+    symbol: "def _print_diagnostic_evidence("
+
+fix:
+  explanation: >-
+    Delete the debugger call. If you need to see the value later, log it at
+    debug level, where the log configuration decides whether it is written.
+  filename: shop/checkout.py
+  code: |
+    """Apply promotion codes at checkout."""
+
+    import logging
+
+    from shop.promotions import lookup_discount
+
+    logger = logging.getLogger(__name__)
+
+
+    def apply_discount(order, code):
+        discount = lookup_discount(code)
+        logger.debug("discount %s for code %s", discount, code)
+        order.total = max(order.total - discount, 0)
+        return order
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A developer tool or management command that is meant to open a
+      debugger or print `DEBUG:` lines is reported.
+    - >-
+      A local function you named `ic` or `breakpoint` is reported as if it
+      were the debugger.
+    - >-
+      It misses debugger calls written another way, such as
+      `import pdb as p; p.set_trace()` or `from pdb import set_trace`.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the call.
+      language: python
+      code: |
+        breakpoint()  # skylos: ignore[SKY-L009] dev-only debug command
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L009"]` turns the rule off for the
+        project.
+
+related: [SKY-L010, SKY-L026]

@@ -1,0 +1,160 @@
+id: SKY-SCA-API001
+title: Your line uses API a dependency upgrade removed
+family: supply-chain
+severity: MEDIUM
+languages: [Python lockfiles, requirements*.txt pins]
+gate:
+  full: not_run
+  diff: listed
+  note: >-
+    Advice only: neither the built-in gate nor a Skylos Cloud gate counts it,
+    and it is not uploaded to Cloud.
+run_with: >-
+  `skylos . --sca --review-upgrades --diff origin/main` on a pull request; the
+  workflow `skylos setup` writes turns this on
+
+what_it_is: >-
+  A pull request changes a locked Python version, and a line of your code uses
+  a public name, module, method or keyword argument that exists in the old
+  release and not in the new one. For example, MarkupSafe 2.1.0 removed
+  `soft_unicode`, so a pull request that only bumps the pin can break a file it
+  never touched.
+
+why_it_matters: >-
+  Python has no compile step, so CI only catches a removed API if a test happens
+  to run that line. Teams often leave dependency pull requests open because they
+  can't tell which ones are safe to merge. This names the lines to read.
+
+how_skylos_decides:
+  - >-
+    For each changed version in a lockfile or a `requirements*.txt` `==` pin, it
+    downloads both releases through `ca9.artifacts` and reads them with `ast`.
+    It never installs, imports or runs them, because the new release is
+    untrusted.
+  - >-
+    It builds each release's public surface: modules, names, classes, methods
+    and parameters, following `__all__`, re-exports and star imports. Names
+    starting with an underscore are not public.
+  - >-
+    It finds where your code uses the package, following import aliases, `from`
+    imports, attribute access and keyword arguments. A local function or
+    variable with the same name doesn't count.
+  - >-
+    Anything it cannot read says "could not check" instead of reporting a clean
+    result: names behind a module `__getattr__`, a computed `__all__`, compiled
+    modules with no `.pyi`, and failed downloads.
+  - >-
+    The pull request comment says either "Review these N call sites" or "No
+    API-level impact found in N call sites (behaviour changes not checked)". It
+    never says an upgrade is safe.
+
+source_refs:
+  - path: skylos/rules/sca/upgrade_api_diff.py
+    symbol: "def upgrade_api_findings("
+  - path: skylos/rules/sca/python_package_surface.py
+    symbol: "def build_surface("
+    note: the static surface; nothing from the package is imported.
+  - path: test/test_upgrade_api_diff.py
+    symbol: "def test_one_call_site_reads_as_one("
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: app.py
+  expect_line: 3
+  scan_flags: ["--sca", "--review-upgrades", "--diff=HEAD"]
+  base_files:
+    - filename: requirements.txt
+      language: text
+      code: |
+        markupsafe==2.0.1
+    - filename: app.py
+      language: python
+      code: |
+        import markupsafe as ms
+
+        print(ms.soft_unicode("x"))
+  files:
+    - filename: requirements.txt
+      language: text
+      code: |
+        markupsafe==2.1.0
+    - filename: app.py
+      language: python
+      code: |
+        import markupsafe as ms
+
+        print(ms.soft_unicode("x"))
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  scan_flags: ["--sca", "--review-upgrades", "--diff=HEAD"]
+  base_files:
+    - filename: requirements.txt
+      language: text
+      code: |
+        markupsafe==2.0.1
+    - filename: app.py
+      language: python
+      code: |
+        from markupsafe import escape
+
+        print(escape("x"))
+  files:
+    - filename: requirements.txt
+      language: text
+      code: |
+        markupsafe==2.1.0
+    - filename: app.py
+      language: python
+      code: |
+        from markupsafe import escape
+
+        print(escape("x"))
+  why: >-
+    `escape` exists in both releases.
+
+fix:
+  explanation: >-
+    Move to what the release notes name as the replacement, or stay on the old
+    version until you can.
+  language: python
+  filename: app.py
+  code: |
+    from markupsafe import soft_str
+
+    print(soft_str("x"))
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      It searches the whole repository, so a monorepo with two services on
+      different versions can name a line in the other service.
+    - >-
+      "N call sites" counts references, including import lines, not only calls.
+    - >-
+      It does not see behaviour changes, changed defaults or return types,
+      positional argument shifts, newly required parameters, methods reached
+      through `self.x` or a return value, or string references such as Django
+      settings.
+    - >-
+      If the old and new signatures both pass a keyword through `**kwargs` and
+      it can't be followed, the site counts as compared. The receipt's
+      `keywords_not_followed` count shows how many.
+    - >-
+      Only Python is compared. npm bumps say so.
+  suppress:
+    - check: inline
+      text: >-
+        On the line, with the reason. It hides that line only, and each line
+        that uses the name is reported separately:
+      language: python
+      code: |
+        print(ms.soft_unicode("x"))  # skylos: ignore[SKY-SCA-API001] migrating
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-SCA-API001"]` turns the rule off for the
+        project.
+
+related: [SKY-SCA-UPG001, SKY-SCA-UPG002]

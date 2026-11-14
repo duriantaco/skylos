@@ -1,0 +1,135 @@
+id: SKY-D245
+title: Dynamic require
+family: security
+severity: HIGH
+languages: [TypeScript/JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  In Node.js, `require()` loads a module and runs its top-level code. When
+  the module name is a variable, whoever controls that variable decides
+  which code runs. SKY-D245 reports `require()` calls whose argument is a
+  plain variable instead of a fixed string.
+
+why_it_matters: >-
+  A route that does `require(req.params.format)` lets a visitor load any
+  installed package or any `.js` file the server can read, such as
+  `../../uploads/evil`. Loading it runs its code inside the server process.
+
+flagged_example:
+  language: javascript
+  filename: src/server.js
+  expect_line: 7
+  code: |
+    const express = require("express");
+
+    const app = express();
+
+    app.get("/convert/:format", (req, res) => {
+      const format = req.params.format;
+      const converter = require(format);
+      res.json(converter.convert(String(req.query.text ?? "")));
+    });
+
+    app.listen(3000);
+
+not_flagged_example:
+  language: javascript
+  filename: src/server.js
+  code: |
+    const express = require("express");
+
+    const converters = {
+      csv: require("./converters/csv"),
+      json: require("./converters/json"),
+    };
+    const app = express();
+
+    app.get("/convert/:format", (req, res) => {
+      const converter = converters[req.params.format];
+      if (!converter) {
+        res.status(404).end();
+        return;
+      }
+      res.json(converter.convert(String(req.query.text ?? "")));
+    });
+
+    app.listen(3000);
+  why: >-
+    Every `require()` gets a string literal, so the set of modules is fixed
+    when the file is written. The request only picks one of them from a
+    lookup table.
+
+how_skylos_decides:
+  - >-
+    Parses each TypeScript and JavaScript file and finds calls to the
+    global name `require` whose arguments include a bare identifier, such as
+    `require(name)`.
+  - >-
+    Reports each match as HIGH, whatever the variable holds. The rule does
+    not follow where the value comes from.
+  - >-
+    A string literal is never reported. A template literal
+    (`` require(`./plugins/${name}`) ``), a `+` expression and dynamic
+    `import()` are not matched by this rule.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "@require_var_arg"
+    note: the tree-sitter query that finds the call.
+  - path: skylos/visitors/languages/typescript/danger.py
+    symbol: "# --- require() with variable (SKY-D245) ---"
+
+fix:
+  explanation: >-
+    Load modules with fixed strings and pick one from a lookup table, or
+    check the name against a literal allowlist and load from a fixed folder.
+  filename: src/server.js
+  code: |
+    const express = require("express");
+
+    const converters = {
+      csv: () => require("./converters/csv"),
+      json: () => require("./converters/json"),
+    };
+    const app = express();
+
+    app.get("/convert/:format", (req, res) => {
+      const load = converters[req.params.format];
+      if (!load) {
+        res.status(404).end();
+        return;
+      }
+      res.json(load().convert(String(req.query.text ?? "")));
+    });
+
+    app.listen(3000);
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A command-line tool that loads a config file named by its own user,
+      such as `require(configPath)`, is reported even though no visitor can
+      reach it.
+    - >-
+      A plugin loader that only passes names from a fixed list is reported
+      when it calls `require(name)` with a variable.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why. A bare `// noqa` does not hide
+        HIGH security findings.
+      language: javascript
+      code: |
+        const plugin = require(name); // skylos: ignore[SKY-D245] name from PLUGINS
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D245"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D201, SKY-D202, SKY-D357, SKY-D255]

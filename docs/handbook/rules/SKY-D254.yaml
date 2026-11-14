@@ -1,0 +1,205 @@
+id: SKY-D254
+title: Request data stored in the HTTP session
+family: security
+severity: HIGH
+languages: [Java]
+gate:
+  full: counted
+
+what_it_is: >-
+  The HTTP session is data the server keeps for each logged-in user, and
+  code usually trusts it more than the request. A "trust boundary
+  violation" is putting data the client chose into that trusted place.
+  SKY-D254 reports Java servlet and Spring code that stores request data in
+  the session with `getSession().setAttribute(...)`.
+
+why_it_matters: >-
+  Other pages read the session later and assume the server put the value
+  there. If a login form's hidden `role` field is copied into the session,
+  a user can send `role=admin` once and every later admin check passes.
+
+flagged_example:
+  language: java
+  filename: src/main/java/com/example/LoginServlet.java
+  expect_line: 13
+  code: |
+    package com.example;
+
+    import java.io.IOException;
+    import javax.servlet.http.HttpServlet;
+    import javax.servlet.http.HttpServletRequest;
+    import javax.servlet.http.HttpServletResponse;
+
+    public class LoginServlet extends HttpServlet {
+        @Override
+        protected void doPost(HttpServletRequest request, HttpServletResponse response)
+                throws IOException {
+            String role = request.getParameter("role");
+            request.getSession().setAttribute("role", role);
+            response.sendRedirect("/dashboard");
+        }
+    }
+
+not_flagged_example:
+  language: java
+  filename: src/main/java/com/example/LoginServlet.java
+  code: |
+    package com.example;
+
+    import java.io.IOException;
+    import javax.servlet.http.HttpServlet;
+    import javax.servlet.http.HttpServletRequest;
+    import javax.servlet.http.HttpServletResponse;
+
+    public class LoginServlet extends HttpServlet {
+        private final RoleStore roles = new RoleStore();
+
+        @Override
+        protected void doPost(HttpServletRequest request, HttpServletResponse response)
+                throws IOException {
+            String role = roles.roleFor(request.getRemoteUser());
+            request.getSession().setAttribute("role", role);
+            response.sendRedirect("/dashboard");
+        }
+    }
+  why: >-
+    The role comes from the server's own store, looked up for the user the
+    servlet container has already signed in. `getRemoteUser()` is not one
+    of the request-input methods the rule follows, such as
+    `getParameter()` or `getHeader()`.
+
+more_examples:
+  - flagged:
+      language: java
+      filename: src/main/java/com/example/CartController.java
+      expect_line: 13
+      code: |
+        package com.example;
+
+        import javax.servlet.http.HttpServletRequest;
+        import org.springframework.web.bind.annotation.PostMapping;
+        import org.springframework.web.bind.annotation.RequestParam;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @RestController
+        public class CartController {
+            @PostMapping("/cart/discount")
+            public String applyDiscount(@RequestParam String code,
+                    HttpServletRequest request) {
+                request.getSession().setAttribute("discountCode", code);
+                return "ok";
+            }
+        }
+    not_flagged:
+      language: java
+      filename: src/main/java/com/example/CartController.java
+      code: |
+        package com.example;
+
+        import javax.servlet.http.HttpServletRequest;
+        import org.springframework.web.bind.annotation.PostMapping;
+        import org.springframework.web.bind.annotation.RequestParam;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @RestController
+        public class CartController {
+            @PostMapping("/cart/discount")
+            public String applyDiscount(@RequestParam String code,
+                    HttpServletRequest request) {
+                boolean welcome = "WELCOME10".equals(code);
+                request.getSession().setAttribute("discountPercent", welcome ? 10 : 0);
+                return "ok";
+            }
+        }
+      why: >-
+        The request only chooses between two numbers the code itself
+        defines, so the session holds `10` or `0`, never the client's text.
+        Skylos sees that both branches of the `? :` are constants.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Java files and follows values inside each
+    method.
+  - >-
+    Request data is a value from `getParameter()`, `getHeader()`,
+    `getCookies()`, `getQueryString()`, `getInputStream()`, `getPart()` and
+    similar methods on the request, or a Spring or JAX-RS handler parameter
+    bound from the request (`@RequestParam`, `@PathVariable`,
+    `@RequestBody`, `@QueryParam` and others). The value stays marked
+    through assignments, string building and method calls.
+  - >-
+    Reports HIGH when such a value is an argument of `setAttribute()` or
+    `putValue()` called on an expression that contains a `getSession()`
+    call, such as `request.getSession().setAttribute(...)`.
+  - >-
+    Constants, and values that only choose between constants, are not
+    request data.
+
+source_refs:
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: 'method in {"setAttribute", "putValue"}'
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "REQUEST_SOURCE_METHODS = {"
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "REQUEST_PARAM_ANNOTATIONS = {"
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "def _receiver_chain_has_call"
+  - path: test/test_java_security.py
+    symbol: "def test_constant_session_attribute_is_not_trust_boundary"
+
+fix:
+  explanation: >-
+    Store only values the server decided: look the role up from your own
+    user store after authentication, and map client choices onto a fixed
+    set of values before saving them. Treat anything the client sent as
+    input to check, not as session state.
+  filename: src/main/java/com/example/LoginServlet.java
+  code: |
+    package com.example;
+
+    import java.io.IOException;
+    import javax.servlet.http.HttpServlet;
+    import javax.servlet.http.HttpServletRequest;
+    import javax.servlet.http.HttpServletResponse;
+
+    public class LoginServlet extends HttpServlet {
+        private final RoleStore roles = new RoleStore();
+
+        @Override
+        protected void doPost(HttpServletRequest request, HttpServletResponse response)
+                throws IOException {
+            String role = roles.roleFor(request.getRemoteUser());
+            request.getSession().setAttribute("role", role);
+            response.sendRedirect("/dashboard");
+        }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Values computed from request data are still reported even when they
+      are safe to keep, such as a discount percentage looked up by a
+      coupon code, or a search term saved only to fill the search box
+      again.
+    - >-
+      Missed: a session held in a variable (`HttpSession session =
+      request.getSession(); session.setAttribute(...)`) and a Spring
+      `HttpSession` handler parameter, because the call itself must
+      contain `getSession()`. Kotlin and other languages are not checked.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the reported line and say why the value is safe to keep.
+      language: java
+      code: |
+        request.getSession().setAttribute("search", q); // skylos: ignore[SKY-D254] refill only
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D254"]` turns the rule off for the
+        whole project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the existing
+        findings and report only new ones.
+
+related: [SKY-D234, SKY-D283, SKY-D252]

@@ -1,0 +1,208 @@
+id: SKY-U005
+title: Unused dependency
+family: dead-code
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  MEDIUM.
+languages: [Python (requirements files, pyproject.toml, setup.cfg, setup.py)]
+gate:
+  full: counted
+  note: >-
+    Reported in the quality list, so it counts toward `max_quality` (10 by
+    default), not `max_dead_code`.
+run_with: "`skylos . --quality` (or `-a`)"
+
+what_it_is: >-
+  A package the project declares as a run-time dependency that no Python
+  file imports and no command or configuration file uses. Every install
+  still downloads it.
+
+why_it_matters: >-
+  Each unused package makes installs slower and images larger, and is one
+  more thing that can carry a vulnerability or be taken over by an attacker.
+  Dependencies left behind after a rewrite are rarely noticed otherwise.
+
+flagged_example:
+  language: python
+  expect_file: requirements.txt
+  expect_line: 5
+  files:
+    - filename: requirements.txt
+      language: text
+      code: |
+        flask==3.0.3
+        requests==2.32.3
+        PyYAML==6.0.2
+        beautifulsoup4==4.12.3
+        python-dateutil==2.9.0
+    - filename: app.py
+      code: |
+        """Price watcher service."""
+        import requests
+        import yaml
+        from bs4 import BeautifulSoup
+        from flask import Flask
+
+        app = Flask(__name__)
+
+
+        @app.get("/price")
+        def price():
+            with open("settings.yml") as handle:
+                settings = yaml.safe_load(handle)
+            page = requests.get(settings["url"], timeout=10).text
+            return BeautifulSoup(page, "html.parser").select_one(".price").text
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: requirements.txt
+      language: text
+      code: |
+        flask==3.0.3
+        requests==2.32.3
+        PyYAML==6.0.2
+        beautifulsoup4==4.12.3
+        alembic==1.13.2
+    - filename: Procfile
+      language: text
+      code: |
+        release: alembic upgrade head
+        web: flask run
+    - filename: app.py
+      code: |
+        """Price watcher service."""
+        import requests
+        import yaml
+        from bs4 import BeautifulSoup
+        from flask import Flask
+
+        app = Flask(__name__)
+
+
+        @app.get("/price")
+        def price():
+            with open("settings.yml") as handle:
+                settings = yaml.safe_load(handle)
+            page = requests.get(settings["url"], timeout=10).text
+            return BeautifulSoup(page, "html.parser").select_one(".price").text
+  why: >-
+    `PyYAML` is imported as `yaml` and `beautifulsoup4` as `bs4`: Skylos maps
+    distribution names to the modules they provide. `alembic` is never
+    imported, but the Procfile runs its command, which counts as a use.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on a directory scan that contains Python files
+    (not when you scan single files). It reads run-time declarations next
+    to the code, walking up at most five folders to the project root:
+    `requirements.txt` and `requirements/*.txt` (following `-r` includes,
+    ignoring `-c` constraint files), `[project].dependencies` in
+    `pyproject.toml`, and `install_requires` in `setup.cfg` or `setup.py`.
+    Extras, `setup_requires` and `tests_require` are not read.
+  - >-
+    Treats compiled lock files (pip-compile or uv output with hashes and
+    `# via` comments) as pins, not declarations, and reads their `.in`
+    input files instead.
+  - >-
+    Collects uses: imports (including `importlib.import_module` and other
+    string imports), module names in Django settings and other
+    configuration, entry points, mypy and Sphinx plugins, pytest plugins,
+    fixtures and markers, and commands in a Procfile, Dockerfile, Compose
+    file or Makefile.
+  - >-
+    Never reports the project itself, command-line tools (`black`, `ruff`,
+    `pytest`, `mypy` and similar), runtime plugins such as `gunicorn`,
+    `celery` and database drivers, or type-stub packages. Maps each
+    remaining package to the modules it installs, using the installed
+    package metadata and a bundled name table, and keeps it when any of
+    them is used.
+  - >-
+    Abstains, with a reason in `analysis_summary.unused_dependency_analysis`,
+    when an import or configuration value could not be resolved or a shared
+    namespace hides which package is used. Otherwise reports MEDIUM on the
+    package's line in the manifest.
+
+source_refs:
+  - path: skylos/rules/quality/unused_deps.py
+    symbol: "def scan_unused_dependencies(repo_root, py_files"
+  - path: skylos/rules/quality/unused_deps.py
+    symbol: "def _collect_declared(repo_root)"
+  - path: skylos/rules/quality/unused_deps.py
+    symbol: "def _requirements_entries(current)"
+    note: compiled lock files are read through their `.in` inputs.
+  - path: skylos/rules/quality/unused_deps.py
+    symbol: "CLI_ONLY_PACKAGES = {"
+  - path: skylos/rules/quality/unused_deps.py
+    symbol: "RUNTIME_PLUGIN_PACKAGES = {"
+  - path: skylos/rules/quality/unused_deps.py
+    symbol: "def _collect_commands(root)"
+  - path: skylos/analyzer.py
+    symbol: "ud_findings = scan_unused_dependencies("
+    note: only with `--quality`, never for single-file scans.
+
+fix:
+  explanation: >-
+    Remove the package from the manifest and reinstall. If it is needed by
+    something Skylos cannot see, such as a notebook or a deploy script
+    outside the repository, move it to an extra or a separate requirements
+    file for that use.
+  language: text
+  code: |
+    flask==3.0.3
+    requests==2.32.3
+    PyYAML==6.0.2
+    beautifulsoup4==4.12.3
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Packages used only by notebooks, scripts outside the scanned folder or
+      a shell command Skylos does not read are reported.
+    - >-
+      A package loaded only through a plugin system Skylos does not know
+      (a setting string it cannot resolve) is reported; an import it cannot
+      resolve makes it abstain for every package instead.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: python
+          expect_file: requirements.txt
+          files:
+            - filename: requirements.txt
+              language: text
+              code: |
+                flask==3.0.3
+                requests==2.32.3
+                PyYAML==6.0.2
+                beautifulsoup4==4.12.3
+                python-dateutil==2.9.0  # skylos: ignore[SKY-U005] notebooks
+            - filename: app.py
+              code: |
+                """Price watcher service."""
+                import requests
+                import yaml
+                from bs4 import BeautifulSoup
+                from flask import Flask
+
+                app = Flask(__name__)
+
+
+                @app.get("/price")
+                def price():
+                    with open("settings.yml") as handle:
+                        settings = yaml.safe_load(handle)
+                    page = requests.get(settings["url"], timeout=10).text
+                    return BeautifulSoup(page, "html.parser").select_one(".price").text
+      text: >-
+        An inline `# skylos: ignore[SKY-U005]` comment in `requirements.txt`
+        is not read: the package stays reported.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-U005"]` turns the rule off; the summary
+        then records `rule_ignored`.
+
+related: [SKY-U002, SKY-D223, SKY-D222]

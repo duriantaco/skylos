@@ -1,0 +1,123 @@
+id: SKY-P404
+title: Unbounded eager ORM query
+family: quality
+severity: MEDIUM
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  `.all()` on an ORM query fetches every matching row and builds an object
+  for each one before returning. SKY-P404 reports a SQLAlchemy-style
+  `query(...).all()` or `Model.query.all()` call that has no limit or
+  pagination anywhere in the chain.
+
+why_it_matters: >-
+  A query that returns a few hundred rows in development can return
+  millions in production. The request then holds every row in memory,
+  times out or takes the worker down with it, and the database works hard
+  for rows nobody looks at.
+
+flagged_example:
+  language: python
+  filename: app/admin/export.py
+  expect_line: 9
+  code: |
+    """Admin export of every customer."""
+
+    from sqlalchemy.orm import Session
+
+    from app.models import Customer
+
+
+    def export_customers(session: Session):
+        customers = session.query(Customer).filter(Customer.active.is_(True)).all()
+        return [customer.email for customer in customers]
+
+not_flagged_example:
+  language: python
+  filename: app/admin/customers.py
+  code: |
+    """Admin list of customers, one page at a time."""
+
+    from sqlalchemy.orm import Session
+
+    from app.models import Customer
+
+    PAGE_SIZE = 100
+
+
+    def customer_page(session: Session, page: int):
+        query = session.query(Customer).filter(Customer.active.is_(True))
+        return query.order_by(Customer.id).limit(PAGE_SIZE).offset(page * PAGE_SIZE).all()
+  why: >-
+    The chain contains `.limit(...)`, so at most one page of rows is
+    fetched. Skylos also accepts `.first()`, `.one()`, `.one_or_none()`,
+    `.get()`, `.paginate()`, `.head()` and `.take()` in the chain.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on Python files.
+  - >-
+    Finds a call to `.all()` with no arguments.
+  - >-
+    Its receiver must look like an ORM query: somewhere in the chain there
+    is an attribute named `query` (`User.query`, `db.session.query(...)`)
+    or a call to a method named `query` or `select`.
+  - >-
+    The chain must not contain a limiting call: `limit`, `first`, `get`,
+    `head`, `one`, `one_or_none`, `paginate` or `take`. A `filter` or
+    `where` is not a limit.
+  - >-
+    Reports MEDIUM on the line of the `.all()` call.
+
+source_refs:
+  - path: skylos/rules/quality/performance.py
+    symbol: "def _is_unbounded_orm_all("
+  - path: skylos/rules/quality/performance.py
+    symbol: "def _looks_like_orm_query("
+  - path: skylos/rules/quality/performance.py
+    symbol: "def _call_chain_has_limiter("
+
+fix:
+  explanation: >-
+    Page through the rows, or stream them in batches with `yield_per`, so
+    memory use does not grow with the table.
+  filename: app/admin/export.py
+  code: |
+    """Admin export of every customer."""
+
+    from sqlalchemy.orm import Session
+
+    from app.models import Customer
+
+
+    def export_customers(session: Session):
+        query = session.query(Customer).filter(Customer.active.is_(True))
+        for customer in query.yield_per(1000):
+            yield customer.email
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A query on a table that is small by design, such as a list of
+      countries or feature flags, is reported.
+    - >-
+      It only recognises the `query` style. Django's
+      `Model.objects.all()` and SQLAlchemy 2.0's
+      `session.execute(select(User)).scalars().all()` are not reported.
+  suppress:
+    - check: inline
+      text: >-
+        On the reported line:
+      language: python
+      code: |
+        countries = session.query(Country).all()  # skylos: ignore[SKY-P404] 250 rows
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-P404"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-P401, SKY-P402, SKY-P403]

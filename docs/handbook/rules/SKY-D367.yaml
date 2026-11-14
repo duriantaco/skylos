@@ -1,0 +1,166 @@
+id: SKY-D367
+title: MCP server launched without an exact version
+family: supply-chain
+severity: MEDIUM
+languages: [MCP configuration files]
+gate:
+  full: listed
+  diff: counted
+  note: >-
+    A baseline scan counts it like a diff scan when the baseline's
+    `rule_coverage` lists it.
+
+what_it_is: >-
+  An MCP server entry tells a coding agent which program to start, such as
+  `npx -y @modelcontextprotocol/server-github`. Without an exact version,
+  `npx`, `uvx` or `docker run` fetch whatever the registry serves at that
+  moment. SKY-D367 reports committed MCP servers that are fetched this way.
+
+why_it_matters: >-
+  If the package's publisher account is taken over, the next release runs
+  inside every developer's agent session with the tokens in its `env`. The
+  `postmark-mcp` package shipped fifteen clean versions before one started
+  copying every email it sent to an attacker.
+
+flagged_example:
+  language: json
+  filename: .mcp.json
+  expect_line: 3
+  code: |
+    {
+      "mcpServers": {
+        "github": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-github"],
+          "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" }
+        }
+      }
+    }
+
+not_flagged_example:
+  language: json
+  filename: .mcp.json
+  code: |
+    {
+      "mcpServers": {
+        "github": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-github@2025.4.8"],
+          "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" }
+        },
+        "time": { "command": "uvx", "args": ["mcp-server-time==0.6.2"] },
+        "docs": { "type": "http", "url": "https://mcp.example.com/mcp" }
+      }
+    }
+  why: >-
+    Both launched servers name an exact version, so each start fetches the
+    same release. The `docs` server is a remote URL: there is no local
+    command to fetch, so this rule does not look at it.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). The `ca9` library reads the
+    `mcpServers` or `servers` block of `.mcp.json`, `.cursor/mcp.json`,
+    `.vscode/mcp.json`, `.kiro/settings/mcp.json`, and the `mcp.json` of
+    `.roo`, `.amazonq` and `.windsurf`; the same blocks in
+    `.claude/settings.json`, `.claude/settings.local.json` and
+    `.gemini/settings.json`; the `mcp` block of `.vscode/settings.json`; and
+    `[mcp_servers.*]` in `.codex/config.toml`. Dependency folders such as
+    `node_modules` are skipped.
+  - >-
+    Builds the launch from `command` plus `args`. A server with only a
+    `url` is not checked. It looks through `cmd /c`, `sh -c` and `env`
+    wrappers to the launcher: `npx`, `pnpx`, `bunx`, `npm exec`,
+    `pnpm dlx`, `yarn dlx`, `bun x`, `uvx`, `uv tool run`, `pipx run`,
+    `docker run`, `podman run` or `deno run`.
+  - >-
+    Reports the server when its launcher fetches the package and the
+    version is not exact. Exact means `pkg@1.2.3` for npm, `pkg==1.2.3` or
+    `pkg@1.2.3` for PyPI, a full 40-character Git commit, or an image digest
+    (`@sha256:…`). `@latest`, ranges and image tags such as `:1.4.0` are
+    not exact. Local scripts, `node server.js` and `python -m` do not fetch
+    and are not reported.
+  - >-
+    Reports on the line of the server's name. Keeps the same files as
+    SKY-D365 (regular files in the scanned folder that Git lists, or every
+    file outside Git).
+  - >-
+    In the gate, a full scan lists the finding without counting it; a diff
+    scan counts a new one under the security limits. A finding is new when
+    its rule, file and a digest of the server name and command are not among
+    the merge base's findings.
+
+source_refs:
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "\"mcp_server_unpinned\": (\"SKY-D367\""
+    note: >-
+      ca9 `agent_config` decides the launch and pinning
+      (`ca9/agent_config/mcp_launch.py`); this page was checked against ca9
+      0.7.0.
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "if rule_id in {\"SKY-D367\", \"SKY-D368\", \"SKY-D369\"}:"
+    note: the line falls back to the server name.
+  - path: skylos/core/gatekeeper.py
+    symbol: "FULL_SCAN_REPORT_ONLY_RULES = frozenset("
+  - path: test/test_supply_chain_v3.py
+    symbol: "def test_agent_rows_map_to_rules_and_skip_outside_paths_and_skylos_hooks"
+
+fix:
+  explanation: >-
+    Pin an exact, reviewed version and update it on purpose, the way you
+    update a dependency. For Docker, pin the image digest.
+  filename: .mcp.json
+  code: |
+    {
+      "mcpServers": {
+        "github": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-github@2025.4.8"],
+          "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" }
+        }
+      }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A version fixed somewhere else, such as a global install or a lockfile
+      the launcher never reads, does not count: only the launch line is
+      read.
+    - >-
+      An image tag is reported even when your registry makes tags
+      immutable. An unscoped npm name with a slash, such as `npx owner/tool`,
+      is read as a GitHub shortcut and is pinned only by `#<commit>`.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: json
+          filename: .mcp.json
+          code: |
+            {
+              "mcpServers": {
+                // skylos: ignore[SKY-D367] handbook check
+                "github": {
+                  "command": "npx",
+                  "args": ["-y", "@modelcontextprotocol/server-github"],
+                  "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" }
+                }
+              }
+            }
+      text: >-
+        Skylos reads no inline marker for this rule, even where the file
+        allows comments.
+    - check: baseline
+      text: >-
+        Accept a reviewed server with a baseline: `skylos baseline .`, then
+        `--baseline`. The entry matches the rule, file, server name and
+        command, not the line. In pull-request CI (`SKYLOS_POLICY_BASE`),
+        the entry must also be in the base commit's `.skylos/baseline.json`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D367"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D368, SKY-D369, SKY-D365, SKY-D292]

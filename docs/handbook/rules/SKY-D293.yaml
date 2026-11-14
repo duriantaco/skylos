@@ -1,0 +1,165 @@
+id: SKY-D293
+title: GitHub Actions persisted checkout credentials
+family: ci-cd
+severity: MEDIUM
+languages: [GitHub Actions workflows, composite actions]
+gate:
+  full: counted
+
+what_it_is: >-
+  `actions/checkout` saves the token it used in the checkout's `.git/config`
+  by default, so later `git push` commands work. Every later step in the
+  job can read it from there. SKY-D293 reports a checkout that keeps this
+  credential when something new can reach it: an uploaded artifact, pull
+  request code, or a third-party action next to a write token.
+
+why_it_matters: >-
+  An artifact that includes `.git/config` hands the token to anyone who can
+  download the artifact, which for a public repository is everyone. A
+  write token read by a compromised third-party action can push to your
+  branches or edit your releases.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  expect_line: 11
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: write
+    jobs:
+      release:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+          - run: make dist
+          - uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2
+            with:
+              files: dist/*
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: write
+    jobs:
+      release:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+          - run: make dist
+          - run: gh release create "$GITHUB_REF_NAME" dist/*
+            env:
+              GH_TOKEN: ${{ github.token }}
+  why: >-
+    The token is still saved in `.git/config`, but nothing new runs after
+    the checkout: `make dist` is the repository's own code and `gh` gets the
+    token from `GH_TOKEN` anyway. No third-party action and no artifact
+    upload follow, so the saved copy reaches no one who did not already
+    have it.
+
+how_skylos_decides:
+  - >-
+    Looks at every `actions/checkout` step in workflow jobs and in
+    composite actions. A checkout with `persist-credentials: false` (or
+    `${{ false }}`) is skipped.
+  - >-
+    Reports the checkout only when one of these is true, checked in order.
+    A later step in the job uploads the checkout's `.git/config` with
+    `actions/upload-artifact`: its `path` covers it, after globs, `!`
+    exclusions and the checkout's own `path`. Uploads that skip hidden
+    files do not count: v4.4 and later (a floating `@v4` counts as the
+    newest v4) without `include-hidden-files`. A SHA-pinned upload's
+    version is unknown, so it counts.
+  - >-
+    Or the checkout's `ref` or `repository` names pull request code
+    (`github.event.pull_request.head…`, `merge_commit_sha`,
+    `github.head_ref`, `refs/pull/…`) in a job that accounts without write
+    access can start, such as a `pull_request_target` job.
+  - >-
+    Or a later step uses a third-party action (any owner other than
+    `actions` or `github`, or a `docker://` image; `./` actions are the
+    repository's own) while the job's token has an explicit `write` scope
+    (`write-all` counts, `id-token` does not), or the checkout uses its own
+    `token` or `ssh-key`, which job permissions do not limit.
+  - >-
+    In a composite action the calling job is unknown, so only the upload,
+    or an own `token` or `ssh-key` with a later third-party action, counts.
+    A token with no declared permissions is SKY-D291's finding, not this
+    rule's.
+  - >-
+    Reports MEDIUM on the checkout's `uses:` line.
+
+source_refs:
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _scan_persisted_checkout_credentials("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _persisted_credential_exposure("
+    note: the three kinds of evidence.
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _upload_skips_hidden_files("
+  - path: test/test_workflow_credential_proofs.py
+    symbol: "def test_hidden_file_upload_states_are_conservative("
+
+fix:
+  explanation: >-
+    Set `persist-credentials: false` on the checkout. Steps that need the
+    token can still be given it through `env:` or an input.
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: write
+    jobs:
+      release:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+            with:
+              persist-credentials: false
+          - run: make dist
+          - uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2
+            with:
+              files: dist/*
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      An upload pinned to a commit SHA counts as including `.git`, even when
+      that commit is v4.4 or later and skips hidden files.
+    - >-
+      A third-party action that already receives the token as an input
+      (most release actions default to `github.token`) gains nothing new
+      from `.git/config`, but the checkout is still reported.
+  suppress:
+    - check: inline
+      text: >-
+        Put `skylos: ignore[SKY-D293]` with a reason on the checkout's
+        `uses:` line or the line directly above it.
+      language: yaml
+      code: |
+          # skylos: ignore[SKY-D293] a later step pushes the version bump
+          - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) also hides it. The
+        entry is the rule, the absolute file path and the line, so it stops
+        matching when lines above the checkout move or the checkout is at
+        another path.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D293"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D291, SKY-D290, SKY-D292, SKY-D311]

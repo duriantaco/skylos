@@ -1,0 +1,148 @@
+id: SKY-D402
+title: Terraform gives an S3 bucket a public ACL
+family: infrastructure
+severity: HIGH
+languages: [Terraform]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the rule never reports CRITICAL.
+
+what_it_is: >-
+  An access control list (ACL) is an older way to grant access to an S3
+  bucket. SKY-D402 reports a Terraform bucket that asks for one of the canned
+  ACLs that let anyone read or write it: `public-read`, `public-read-write`,
+  or `authenticated-read` (any AWS account).
+
+why_it_matters: >-
+  Everything in the bucket becomes downloadable by anyone who guesses its
+  name, and with `public-read-write` anyone can also upload or overwrite
+  files. Many data leaks were exactly this setting on a bucket meant for logs
+  or backups.
+
+flagged_example:
+  language: terraform
+  filename: main.tf
+  expect_line: 5
+  code: |
+    resource "aws_s3_bucket" "exports" {
+      bucket = "shop-customer-exports"
+    }
+
+    resource "aws_s3_bucket_acl" "exports" {
+      bucket = aws_s3_bucket.exports.id
+      acl    = "public-read"
+    }
+
+not_flagged_example:
+  language: terraform
+  filename: main.tf
+  code: |
+    resource "aws_s3_bucket" "exports" {
+      bucket = "shop-customer-exports"
+    }
+
+    resource "aws_s3_bucket_acl" "exports" {
+      bucket = aws_s3_bucket.exports.id
+      acl    = "public-read"
+    }
+
+    resource "aws_s3_bucket_public_access_block" "exports" {
+      bucket                  = aws_s3_bucket.exports.id
+      block_public_acls       = true
+      ignore_public_acls      = true
+      block_public_policy     = true
+      restrict_public_buckets = true
+    }
+  why: >-
+    The ACL still asks for public read, but the same bucket has a public
+    access block with `ignore_public_acls = true`, so S3 ignores the public
+    grant. Skylos sees the overlap and does not report it (the ACL line is
+    still worth deleting).
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`). Reads `.tf` and `.tf.json` files, skipping
+    `.terraform`, `.git`, `node_modules`, `vendor`, `build`, `dist` and
+    virtual-environment folders, and parses them as HCL without running
+    Terraform or contacting AWS.
+  - >-
+    Resolves only literal values and `local` values of the same module. Input
+    variables, data sources, attributes of other resources and module outputs
+    stay unknown, and an unknown value never produces a finding.
+  - >-
+    Skips a resource with `count = 0` or an empty `for_each`, and needs the
+    official AWS provider (`hashicorp/aws`, which an `aws_` resource uses
+    unless another provider is configured).
+  - >-
+    Checks the `acl` of `aws_s3_bucket` (older provider versions) and
+    `aws_s3_bucket_acl`.
+  - >-
+    Reports `public-read`, `public-read-write` and `authenticated-read`. Known
+    private ACLs such as `private` or `bucket-owner-full-control` pass;
+    explicit `grant` lists and `access_control_policy` blocks are not judged.
+  - >-
+    Does not report when an `aws_s3_bucket_public_access_block` for the same
+    bucket, or an account-wide block in the same module, sets
+    `block_public_acls` or `ignore_public_acls` to `true`.
+  - >-
+    Reports HIGH on the `resource` line.
+
+source_refs:
+  - path: skylos/rules/config/terraform/high_risk.py
+    symbol: "def _acl("
+  - path: skylos/rules/config/terraform/high_risk.py
+    symbol: "def _declared_block("
+    note: a matching public access block cancels the finding.
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def aws_provider_status("
+    note: only the official AWS provider counts.
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def instance_status("
+
+fix:
+  explanation: >-
+    Remove the ACL (new buckets have ACLs disabled by default) and add a
+    public access block. Share files with presigned URLs or through CloudFront
+    instead.
+  filename: main.tf
+  language: terraform
+  code: |
+    resource "aws_s3_bucket" "exports" {
+      bucket = "shop-customer-exports"
+    }
+
+    resource "aws_s3_bucket_public_access_block" "exports" {
+      bucket                  = aws_s3_bucket.exports.id
+      block_public_acls       = true
+      ignore_public_acls      = true
+      block_public_policy     = true
+      restrict_public_buckets = true
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Values that come from variables, modules or other resources are not
+      checked, because Skylos does not run Terraform: `cidr_blocks =
+      var.admin_cidrs` is not reported even when its default is `0.0.0.0/0`.
+    - >-
+      It judges the declaration only. It does not know what is deployed, and
+      other settings (account defaults, security groups, routing) can make the
+      real exposure smaller or larger.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        Terraform rules read no inline marker: `# skylos: ignore[SKY-D402]` on
+        the resource line does not hide the finding.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D402"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        declarations that exist today and reports new ones.
+
+related: [SKY-D403, SKY-D404]

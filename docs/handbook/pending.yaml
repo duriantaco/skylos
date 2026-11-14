@@ -1,0 +1,25 @@
+pending:
+  SKY-D200:
+    reason: 'No page: no scan reports SKY-D200. It is the internal ID of the Python
+      dangerous-call rule (`DangerousCallsRule` in `skylos/rules/danger/calls.py`);
+      its findings carry their own IDs (SKY-D201 to D210, D233, D235, D250, D346 to
+      D348), and an ignore or `--select` for SKY-D200 does not act on them. It needs
+      alias handling like the Go IDs, not a page.'
+  SKY-D218:
+    reason: 'No page: Skylos never reports this rule. Every finding goes to the JSON
+      `suppressed` list as a diagnostic (`resolve_source_required_findings` in `skylos/rules/danger/danger_sql/sql_source_policy.py`),
+      and `--verify` only reads reported findings. A page needs either a verify check
+      for suppressed findings or a product decision to list SKY-D218. Draft kept outside
+      the repository.'
+  SKY-Q801:
+    reason: 'No page: no detector emits SKY-Q801. The ID appears only in the docstring
+      of `skylos/analysis/architecture.py`, and dictionary.md lists it as reserved
+      with no current finding, so no example can produce it.'
+  SKY-D378:
+    reason: 'No page yet: added on main by PR #1230 (incomplete path traversal defence)
+      after this handbook was built. Write and verify the page in the next handbook
+      update.'
+  SKY-D379:
+    reason: 'No page yet: added on main by PR #1230 (catastrophic regex backtracking)
+      after this handbook was built. Write and verify the page in the next handbook
+      update.'

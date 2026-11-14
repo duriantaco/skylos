@@ -1,0 +1,115 @@
+id: SKY-L046
+title: Test result never checked
+family: logic
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A test that ends by storing the result of a call in a variable it never
+  reads, with no assertion anywhere. The test computes the answer and then
+  stops before comparing it with anything.
+
+why_it_matters: >-
+  The test only proves that the call did not raise. Whatever it returned,
+  right or wrong, the test passes. This often happens when assertions are
+  commented out or an agent leaves a test half written.
+
+flagged_example:
+  language: python
+  filename: test_reachability.py
+  expect_line: 9
+  code: |
+    from deadcode.scan import find_unused
+
+
+    def test_common_name_cross_package_gets_lower_confidence():
+        files = {
+            "pkg/service.py": "class MyService:\n    def get(self):\n        return None\n",
+            "pkg/main.py": "data = {}\nresult = data.get('key')\n",
+        }
+        unused = find_unused(files)
+
+not_flagged_example:
+  language: python
+  filename: test_reachability.py
+  code: |
+    import pickle
+
+    from deadcode.scan import find_unused, scan_file
+
+
+    def test_scan_result_can_be_sent_to_workers():
+        result = scan_file("app.py")
+        pickle.dumps(result)
+
+
+    def test_scan_does_not_raise_on_empty_input():
+        find_unused({})
+  why: >-
+    The first test passes its result on (to `pickle.dumps`). The second does
+    not keep the result at all, which reads as a deliberate "does not raise"
+    check. Neither is reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on the same collected tests as SKY-L044. Looks at
+    the test's last statement, stepping into a trailing `with` block.
+  - >-
+    Reports when that statement assigns a call's result (awaited or not) to
+    one or more plain names, none starting with `_`, that the test never
+    reads.
+  - >-
+    Leaves the test alone when it, or a function it calls that is defined in
+    the same file, asserts, raises, or calls a function whose name contains
+    `assert`, `check`, `expect`, `verify`, `raises`, `fail`, `match`,
+    `snapshot`, `should`, `ensure`, `validate` or `warns`.
+  - >-
+    Also left alone: `xfail` tests, tests that take a `benchmark` or snapshot
+    fixture, and tests that `return`, `yield` or use `global`.
+
+source_refs:
+  - path: skylos/rules/quality/test_effectiveness.py
+    symbol: "class UncheckedTestResultRule"
+  - path: test/test_test_quality_effectiveness.py
+    symbol: "L046_INVALID"
+
+fix:
+  explanation: >-
+    Assert on the stored result, or remove the assignment if the test only
+    checks that the call does not raise.
+  filename: test_reachability.py
+  code: |
+    from deadcode.scan import find_unused
+
+
+    def test_common_name_cross_package_gets_lower_confidence():
+        files = {
+            "pkg/service.py": "class MyService:\n    def get(self):\n        return None\n",
+            "pkg/main.py": "data = {}\nresult = data.get('key')\n",
+        }
+        unused = find_unused(files)
+        assert unused["MyService.get"].confidence < 60
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A test checked by a pytest plugin through a fixture name Skylos does not
+      know is reported. Assert in the test, or suppress the line.
+    - >-
+      It misses a result that is read once but never compared, such as
+      `print(result)`.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the assignment line.
+      language: python
+      code: |
+        unused = find_unused(files)  # skylos: ignore[SKY-L046] checked by the session fixture
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L046"]` turns the rule off for the
+        project.
+
+related: [SKY-L044, SKY-L041, SKY-A120]

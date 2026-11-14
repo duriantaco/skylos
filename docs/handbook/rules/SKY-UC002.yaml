@@ -1,0 +1,211 @@
+id: SKY-UC002
+title: Unreachable statement
+family: dead-code
+severity: MEDIUM
+severity_note: >-
+  The catalog gives no severity for this rule; every finding is MEDIUM.
+languages: [TypeScript, JavaScript, Java, C#, Rust]
+run_with: "`skylos . --quality` (or `-a`)"
+gate:
+  full: counted
+  note: >-
+    Reported in the quality list, so it counts toward `max_quality` (10 by
+    default), not `max_dead_code`.
+
+what_it_is: >-
+  A statement in a `{ ... }` block that comes after a `return`, `throw`,
+  `break` or `continue` in the same block, so it can never run. SKY-UC001
+  is the Python rule; this one covers the curly-brace languages.
+
+why_it_matters: >-
+  The statement was meant to do something and silently does nothing. Here
+  the rejected coupon is never logged because the call comes after the
+  `throw`, so support has no record of why a customer's coupon failed.
+
+flagged_example:
+  language: typescript
+  filename: src/coupons.ts
+  expect_line: 7
+  code: |
+    import { CouponExpired } from "./errors";
+    import { logRejectedCoupon } from "./log";
+
+    export function applyCoupon(order: Order, coupon: Coupon): void {
+      if (coupon.expired) {
+        throw new CouponExpired(coupon.code);
+        logRejectedCoupon(order, coupon);
+      }
+      order.discount = coupon.amount;
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/coupons.ts
+  code: |
+    export function applyCoupon(order: Order, coupon: Coupon): void {
+      switch (coupon.kind) {
+        case "percent":
+          order.discount = order.total * coupon.rate;
+          break;
+        case "fixed":
+          order.discount = coupon.amount;
+          break;
+      }
+    }
+  why: >-
+    The statement after the first `break` starts the next `case`, which a
+    jump can reach. Skylos only looks inside `{ ... }` blocks, and `case`
+    clauses are not blocks.
+
+more_examples:
+  - flagged:
+      language: java
+      filename: src/main/java/com/shop/Coupons.java
+      expect_line: 7
+      code: |
+        package com.shop;
+
+        public class Coupons {
+            public void applyCoupon(Order order, Coupon coupon) {
+                if (coupon.isExpired()) {
+                    throw new CouponExpiredException(coupon.getCode());
+                    logRejected(order, coupon);
+                }
+                order.setDiscount(coupon.getAmount());
+            }
+        }
+    not_flagged:
+      language: java
+      filename: src/main/java/com/shop/Coupons.java
+      code: |
+        package com.shop;
+
+        public class Coupons {
+            public void applyCoupon(Order order, Coupon coupon) {
+                if (coupon.isExpired()) {
+                    logRejected(order, coupon);
+                    throw new CouponExpiredException(coupon.getCode());
+                }
+                order.setDiscount(coupon.getAmount());
+            }
+        }
+      why: >-
+        The log call comes before the `throw`, so it runs. (Java's own
+        compiler rejects most code after `throw`; Skylos reports it before
+        the build does.)
+  - flagged:
+      language: rust
+      expect_file: src/lib.rs
+      expect_line: 4
+      files:
+        - filename: src/lib.rs
+          code: |
+            pub fn discounted(total: u32, expired: bool) -> u32 {
+                if expired {
+                    return total;
+                    record_rejection(total);
+                }
+                total - 5
+            }
+
+            fn record_rejection(_total: u32) {}
+        - filename: Cargo.toml
+          language: toml
+          code: |
+            [package]
+            name = "shop"
+            version = "0.1.0"
+            edition = "2021"
+    not_flagged:
+      language: rust
+      files:
+        - filename: src/lib.rs
+          code: |
+            pub fn discounted(total: u32, expired: bool) -> u32 {
+                if expired {
+                    record_rejection(total);
+                    return total;
+                }
+                total - 5
+            }
+
+            fn record_rejection(_total: u32) {}
+        - filename: Cargo.toml
+          language: toml
+          code: |
+            [package]
+            name = "shop"
+            version = "0.1.0"
+            edition = "2021"
+      why: >-
+        The call runs before the early `return`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on TypeScript, JavaScript, Java, C# and Rust
+    files.
+  - >-
+    In each `{ ... }` block, finds a `return`, `throw`, `break` or
+    `continue` statement (in Rust `return`, `break` or `continue`) and
+    reports the first statement after it that is not a comment, then moves
+    on to the next block.
+  - >-
+    Only the block's own statements count: an `if` that returns in both
+    branches does not make the code after it unreachable, and `switch`
+    cases are not blocks.
+  - >-
+    In Rust, macro calls, items such as nested `fn` and attributes are not
+    statements here, and a file that does not parse is skipped.
+  - >-
+    Reports MEDIUM on the line of the unreachable statement.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/quality.py
+    symbol: "def _check_unreachable_code("
+  - path: skylos/visitors/languages/java/quality.py
+    symbol: "def _check_unreachable_code("
+  - path: skylos/visitors/languages/csharp/quality.py
+    symbol: "SKY-UC002"
+  - path: skylos/visitors/languages/rust/quality.py
+    symbol: "def unreachable("
+
+fix:
+  explanation: >-
+    Move the statement before the jump, or delete it if it is no longer
+    needed.
+  filename: src/coupons.ts
+  code: |
+    import { CouponExpired } from "./errors";
+    import { logRejectedCoupon } from "./log";
+
+    export function applyCoupon(order: Order, coupon: Coupon): void {
+      if (coupon.expired) {
+        logRejectedCoupon(order, coupon);
+        throw new CouponExpired(coupon.code);
+      }
+      order.discount = coupon.amount;
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      In TypeScript and JavaScript, a helper `function` declared after the
+      `return` is reported, although function declarations are hoisted and
+      can be called from above.
+    - >-
+      It misses code after a call that never returns, such as
+      `process.exit()`, and code after an `if`/`else` whose branches both
+      return.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the unreachable line.
+      language: typescript
+      code: |
+        logRejectedCoupon(order, coupon); // skylos: ignore[SKY-UC002] kept for #77
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-UC002"]` turns the rule off for the
+        project.
+
+related: [SKY-UC001, SKY-Q305]

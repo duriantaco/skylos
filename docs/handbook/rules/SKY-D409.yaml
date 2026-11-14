@@ -1,0 +1,163 @@
+id: SKY-D409
+title: Kubernetes container runs in privileged mode
+family: infrastructure
+severity: HIGH
+languages: [Kubernetes YAML]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the rule never reports CRITICAL.
+
+what_it_is: >-
+  A privileged container runs with almost every protection of the container
+  turned off: it sees all host devices and holds every Linux capability.
+  SKY-D409 reports a Kubernetes workload that sets
+  `securityContext.privileged: true` on a container.
+
+why_it_matters: >-
+  Code running in a privileged container is effectively root on the node. A
+  bug in that container, or a compromised image, lets an attacker escape to
+  the node and from there reach every other pod and the secrets scheduled on
+  it.
+
+flagged_example:
+  language: yaml
+  filename: deploy/node-agent.yaml
+  expect_line: 19
+  code: |
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: node-agent
+      namespace: monitoring
+    spec:
+      selector:
+        matchLabels:
+          app: node-agent
+      template:
+        metadata:
+          labels:
+            app: node-agent
+        spec:
+          containers:
+            - name: agent
+              image: registry.example.com/node-agent:2.4.1
+              securityContext:
+                privileged: true
+
+not_flagged_example:
+  language: yaml
+  filename: deploy/node-agent.yaml
+  code: |
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: node-agent
+      namespace: monitoring
+    spec:
+      selector:
+        matchLabels:
+          app: node-agent
+      template:
+        metadata:
+          labels:
+            app: node-agent
+        spec:
+          containers:
+            - name: agent
+              image: registry.example.com/node-agent:2.4.1
+              securityContext:
+                privileged: false
+                capabilities:
+                  add: ["NET_ADMIN"]
+  why: >-
+    The container gets the one extra Linux capability it needs (`NET_ADMIN`,
+    to change network settings) instead of every capability. Added
+    capabilities are outside this rule.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`). Reads every `.yaml` and `.yml` file that
+    declares an `apiVersion` and a `kind`, skipping `.git`, `node_modules`,
+    build and virtual-environment folders. It never renders Helm templates or
+    Kustomize overlays and never contacts a cluster.
+  - >-
+    Checks the pod spec of `Pod`, `PodTemplate`, `ReplicationController`,
+    `Deployment`, `DaemonSet`, `ReplicaSet`, `StatefulSet`, `Job` and
+    `CronJob`, including items of a `v1` `List`. Values containing template
+    markers such as `{{` or `${` are treated as unknown and never reported.
+  - >-
+    Looks at every container in `containers`, `initContainers` and
+    `ephemeralContainers`. A container needs a unique literal `name`;
+    otherwise it is not judged.
+  - >-
+    Reports when `securityContext.privileged` is the boolean `true`. `false`,
+    a missing value and a missing `securityContext` pass; a string such as
+    `"true"` is not judged.
+  - >-
+    Reports HIGH on the `privileged:` line, once per container.
+
+source_refs:
+  - path: skylos/rules/config/kubernetes/scanner.py
+    symbol: "def container("
+  - path: skylos/rules/config/kubernetes/scanner.py
+    symbol: "_WORKLOADS = {"
+    note: the workload kinds and where their pod spec sits.
+
+fix:
+  explanation: >-
+    Remove `privileged: true` and add only the capabilities the process needs.
+    Enforce this cluster-wide with the Pod Security Admission `baseline` or
+    `restricted` level.
+  filename: deploy/node-agent.yaml
+  language: yaml
+  code: |
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: node-agent
+      namespace: monitoring
+    spec:
+      selector:
+        matchLabels:
+          app: node-agent
+      template:
+        metadata:
+          labels:
+            app: node-agent
+        spec:
+          containers:
+            - name: agent
+              image: registry.example.com/node-agent:2.4.1
+              securityContext:
+                privileged: false
+                capabilities:
+                  add: ["NET_ADMIN"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Some node agents (CNI plugins, storage drivers, some monitoring agents)
+      really need privileged mode. Accept reviewed ones with a baseline.
+    - >-
+      Helm chart templates are not rendered. A value written as `{{ .Values.x
+      }}` is not judged, and a template file that is not valid YAML on its own
+      (most are not) stops the scan as incomplete, exit 2, with a Kubernetes
+      parse error. Exclude the chart's `templates` folder and scan the output
+      of `helm template` instead.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        The Kubernetes rules read no inline marker: `# skylos:
+        ignore[SKY-D409]` on the `privileged:` line does not hide the finding.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D409"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        workloads that exist today and reports new ones.
+
+related: [SKY-D410, SKY-D411, SKY-D330]

@@ -1,0 +1,140 @@
+id: SKY-D404
+title: Terraform turns off S3 public access protections
+family: infrastructure
+severity: HIGH
+languages: [Terraform]
+gate:
+  full: counted
+  note: >-
+    Reported under security (`danger`). It counts toward `max_high` and
+    `max_security`; the rule never reports CRITICAL.
+
+what_it_is: >-
+  S3 Block Public Access is a set of four switches that stop public ACLs and
+  public bucket policies from taking effect. SKY-D404 reports a Terraform
+  `aws_s3_bucket_public_access_block` that explicitly sets one of them to
+  `false`.
+
+why_it_matters: >-
+  The block is the safety net behind every other bucket setting. With it off,
+  one public ACL or policy, added later by anyone, makes the bucket's data
+  public.
+
+flagged_example:
+  language: terraform
+  filename: main.tf
+  expect_line: 5
+  code: |
+    resource "aws_s3_bucket" "media" {
+      bucket = "shop-media"
+    }
+
+    resource "aws_s3_bucket_public_access_block" "media" {
+      bucket                  = aws_s3_bucket.media.id
+      block_public_acls       = false
+      ignore_public_acls      = false
+      block_public_policy     = true
+      restrict_public_buckets = true
+    }
+
+not_flagged_example:
+  language: terraform
+  filename: main.tf
+  code: |
+    resource "aws_s3_bucket" "media" {
+      bucket = "shop-media"
+    }
+
+    resource "aws_s3_bucket_public_access_block" "media" {
+      bucket                  = aws_s3_bucket.media.id
+      block_public_acls       = true
+      ignore_public_acls      = true
+      block_public_policy     = true
+      restrict_public_buckets = true
+    }
+  why: >-
+    The same resource with all four protections set to `true`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`). Reads `.tf` and `.tf.json` files, skipping
+    `.terraform`, `.git`, `node_modules`, `vendor`, `build`, `dist` and
+    virtual-environment folders, and parses them as HCL without running
+    Terraform or contacting AWS.
+  - >-
+    Resolves only literal values and `local` values of the same module. Input
+    variables, data sources, attributes of other resources and module outputs
+    stay unknown, and an unknown value never produces a finding.
+  - >-
+    Skips a resource with `count = 0` or an empty `for_each`, and needs the
+    official AWS provider (`hashicorp/aws`, which an `aws_` resource uses
+    unless another provider is configured).
+  - >-
+    Checks `aws_s3_bucket_public_access_block`.
+  - >-
+    Reports when any of `block_public_acls`, `ignore_public_acls`,
+    `block_public_policy` and `restrict_public_buckets` is the literal
+    `false`. A value that is not a boolean makes the resource not judged.
+  - >-
+    Reports HIGH on the `resource` line, once per resource. Turning a
+    protection off does not by itself make anything public; SKY-D402 and
+    SKY-D403 report the grants.
+
+source_refs:
+  - path: skylos/rules/config/terraform/high_risk.py
+    symbol: "def _blocks("
+  - path: skylos/rules/config/terraform/high_risk.py
+    symbol: "BLOCK_FLAGS = ("
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def aws_provider_status("
+    note: only the official AWS provider counts.
+  - path: skylos/rules/config/terraform/model.py
+    symbol: "def instance_status("
+
+fix:
+  explanation: >-
+    Set all four protections to `true`. If the bucket must serve public files,
+    keep it private and put CloudFront in front of it.
+  filename: main.tf
+  language: terraform
+  code: |
+    resource "aws_s3_bucket" "media" {
+      bucket = "shop-media"
+    }
+
+    resource "aws_s3_bucket_public_access_block" "media" {
+      bucket                  = aws_s3_bucket.media.id
+      block_public_acls       = true
+      ignore_public_acls      = true
+      block_public_policy     = true
+      restrict_public_buckets = true
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A protection that is left out is not reported, although the AWS provider
+      then sets it to `false`. Write all four explicitly.
+    - >-
+      Values that come from variables, modules or other resources are not
+      checked, because Skylos does not run Terraform: `cidr_blocks =
+      var.admin_cidrs` is not reported even when its default is `0.0.0.0/0`.
+    - >-
+      It judges the declaration only. It does not know what is deployed, and
+      other settings (account defaults, security groups, routing) can make the
+      real exposure smaller or larger.
+  suppress:
+    - check: {kind: inline, expect: reported}
+      text: >-
+        Terraform rules read no inline marker: `# skylos: ignore[SKY-D404]` on
+        the resource line does not hide the finding.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D404"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        declarations that exist today and reports new ones.
+
+related: [SKY-D402, SKY-D403]

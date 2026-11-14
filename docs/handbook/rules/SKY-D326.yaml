@@ -1,0 +1,159 @@
+id: SKY-D326
+title: Unsafe archive extraction
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-22]
+
+what_it_is: >-
+  A tar archive can hold members named `../../home/app/.bashrc`, absolute
+  paths, or symlinks that point outside the folder you unpack into. SKY-D326
+  reports Python code that extracts an archive without a filter or a member
+  check that stops this, a bug often called "Zip Slip".
+
+why_it_matters: >-
+  A plugin or backup upload that is unpacked with `extractall()` can
+  overwrite any file the process may write: application code, cron jobs or
+  SSH keys. The next restart then runs the attacker's code.
+
+flagged_example:
+  language: python
+  filename: app/plugins.py
+  expect_line: 6
+  code: |
+    import tarfile
+
+
+    def install_plugin(bundle_path, plugins_dir):
+        with tarfile.open(bundle_path) as bundle:
+            bundle.extractall(plugins_dir)
+
+not_flagged_example:
+  language: python
+  filename: app/plugins.py
+  code: |
+    import tarfile
+
+
+    def install_plugin(bundle_path, plugins_dir):
+        with tarfile.open(bundle_path) as bundle:
+            bundle.extractall(plugins_dir, filter="data")
+  why: >-
+    The `data` filter (Python 3.12, and security releases of 3.8 to 3.11)
+    refuses members with absolute paths, `..` parts, links that leave the
+    folder, and device files. Skylos accepts `filter="data"` and
+    `filter="tar"` written as literals.
+
+more_examples:
+  - flagged:
+      language: python
+      filename: app/restore.py
+      expect_line: 5
+      code: |
+        import shutil
+
+
+        def restore_backup(archive_path, target_dir):
+            shutil.unpack_archive(archive_path, target_dir)
+    not_flagged:
+      language: python
+      filename: app/restore.py
+      code: |
+        import zipfile
+
+
+        def restore_backup(archive_path, target_dir):
+            with zipfile.ZipFile(archive_path) as backup:
+                backup.extractall(target_dir)
+      why: >-
+        `zipfile` removes absolute paths and `..` parts from member names
+        and never creates links, so Skylos does not report a `ZipFile`
+        extraction. `shutil.unpack_archive()` may open a tar file, so it is
+        reported unless it passes a safe `filter`.
+
+how_skylos_decides:
+  - >-
+    Finds `extract()` and `extractall()` calls, plus
+    `shutil.unpack_archive()`. An `extract()` call must be able to pass a
+    member and use only archive keywords, so BeautifulSoup's `tag.extract()`
+    and OpenTelemetry's `extract()` do not match.
+  - >-
+    Follows the receiver back to its constructor. A `zipfile.ZipFile` or
+    `PyZipFile` is skipped, and so is a project class's own `extract`
+    method. A `tarfile` archive or a receiver Skylos cannot resolve is
+    checked.
+  - >-
+    Skips the call when it passes a literal `filter="data"` or
+    `filter="tar"`.
+  - >-
+    Skips it when the same function first checks members: it mentions
+    `issym`, `islnk`, `is_symlink`, `is_absolute`, `normpath`, `commonpath`
+    or `relative_to` before the extraction.
+  - >-
+    Reports the rest as HIGH. Test files are scanned too.
+
+source_refs:
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "ARCHIVE_EXTRACTION_RULE = \"SKY-D326\""
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _archive_call_name"
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _archive_extraction_is_reportable"
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _unpack_filter_is_safe"
+  - path: skylos/rules/danger/danger_fs/path_flow.py
+    symbol: "def _record_safety_tokens"
+    note: the member-check words that count as a guard.
+
+fix:
+  explanation: >-
+    On current Python, pass `filter="data"`. On older versions, check every
+    member before extracting: refuse links and any name whose resolved path
+    leaves the target folder.
+  filename: app/plugins.py
+  code: |
+    import os
+    import tarfile
+
+
+    def install_plugin(bundle_path, plugins_dir):
+        root = os.path.realpath(plugins_dir)
+        with tarfile.open(bundle_path) as bundle:
+            for member in bundle.getmembers():
+                target = os.path.realpath(os.path.join(root, member.name))
+                if member.issym() or member.islnk():
+                    raise ValueError(f"link in bundle: {member.name}")
+                if os.path.commonpath([root, target]) != root:
+                    raise ValueError(f"unsafe path in bundle: {member.name}")
+            bundle.extractall(root)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Extracting an archive your own build produced, such as a vendored
+      test fixture, is still reported: the rule does not ask where the
+      archive comes from.
+    - >-
+      A member check done in a helper function is not seen; only the words
+      in the extracting function count. Equally, mentioning one of those
+      words for another reason quiets the finding.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed call and say why. A bare `# noqa` does not hide HIGH
+        security findings.
+      language: python
+      code: |
+        bundle.extractall(dest)  # skylos: ignore[SKY-D326] members checked by verify_bundle()
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D326"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D215, SKY-D324, SKY-D325]

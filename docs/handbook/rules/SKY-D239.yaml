@@ -1,0 +1,182 @@
+id: SKY-D239
+title: LDAP injection
+family: security
+severity: CRITICAL
+languages: [Java]
+gate:
+  full: critical_blocks
+
+what_it_is: >-
+  LDAP is the protocol behind most company directories, such as Active
+  Directory. LDAP injection happens when outside text is pasted into a
+  search filter or a base DN (the directory path a search starts from).
+  Skylos reports SKY-D239 when request data reaches the base or filter of a
+  JNDI `DirContext`, Spring `LdapTemplate` or UnboundID `LDAPConnection`
+  search without being escaped.
+
+why_it_matters: >-
+  A user name of `*)(uid=*` turns `(uid=alice)` into a filter that matches
+  everyone. In a login or permission check that can let a visitor sign in
+  as someone else or list every account in the directory.
+
+flagged_example:
+  language: java
+  filename: src/main/java/com/example/PeopleController.java
+  expect_line: 24
+  code: |
+    package com.example;
+
+    import javax.naming.NamingEnumeration;
+    import javax.naming.NamingException;
+    import javax.naming.directory.DirContext;
+    import javax.naming.directory.SearchControls;
+    import javax.naming.directory.SearchResult;
+    import org.springframework.web.bind.annotation.GetMapping;
+    import org.springframework.web.bind.annotation.RequestParam;
+    import org.springframework.web.bind.annotation.RestController;
+
+    @RestController
+    public class PeopleController {
+        private final DirContext ctx;
+
+        public PeopleController(DirContext ctx) {
+            this.ctx = ctx;
+        }
+
+        @GetMapping("/people")
+        public boolean exists(@RequestParam String uid) throws NamingException {
+            String filter = "(&(objectClass=person)(uid=" + uid + "))";
+            NamingEnumeration<SearchResult> results =
+                    ctx.search("ou=people,dc=example,dc=com", filter, new SearchControls());
+            return results.hasMore();
+        }
+    }
+
+not_flagged_example:
+  language: java
+  filename: src/main/java/com/example/PeopleController.java
+  code: |
+    package com.example;
+
+    import javax.naming.NamingEnumeration;
+    import javax.naming.NamingException;
+    import javax.naming.directory.DirContext;
+    import javax.naming.directory.SearchControls;
+    import javax.naming.directory.SearchResult;
+    import org.springframework.web.bind.annotation.GetMapping;
+    import org.springframework.web.bind.annotation.RequestParam;
+    import org.springframework.web.bind.annotation.RestController;
+
+    @RestController
+    public class PeopleController {
+        private static final String BASE = "ou=people,dc=example,dc=com";
+        private static final String FILTER = "(&(objectClass=person)(uid={0}))";
+        private final DirContext ctx;
+
+        public PeopleController(DirContext ctx) {
+            this.ctx = ctx;
+        }
+
+        @GetMapping("/people")
+        public boolean exists(@RequestParam String uid) throws NamingException {
+            Object[] values = {uid};
+            NamingEnumeration<SearchResult> results =
+                    ctx.search(BASE, FILTER, values, new SearchControls());
+            return results.hasMore();
+        }
+    }
+  why: >-
+    The filter is fixed and the user id is passed as a `{0}` filter
+    argument. JNDI escapes filter arguments itself, so `*` and `)` in the id
+    are matched as plain characters. Skylos only checks the base and the
+    filter text.
+
+how_skylos_decides:
+  - >-
+    Finds searches on receivers whose declared type is known: `search()` on
+    a JNDI `DirContext`, `InitialDirContext` or `LdapContext`; `search()`,
+    `searchForObject()`, `find()`, `findOne()` and `authenticate()` on a
+    Spring `LdapTemplate`; and `search()` and `searchForEntry()` on an
+    UnboundID `LDAPConnection`. A `service.search(input)` is not matched.
+  - >-
+    Checks the base DN and the filter argument for request data: servlet
+    request getters, Spring and JAX-RS handler parameters, and helpers in
+    the file that return them.
+  - >-
+    Accepts values escaped by `LdapEncoder.filterEncode()` or
+    `nameEncode()`, `Rdn.escapeValue()`, UnboundID `Filter.encodeValue()` or
+    `createEqualityFilter()`, Spring LDAP filter objects other than
+    `HardcodedFilter`, and `LdapQueryBuilder.query().where(...).is(...)`.
+  - >-
+    Reports CRITICAL for the rest.
+
+source_refs:
+  - path: skylos/visitors/languages/java/models.py
+    symbol: "LDAP_SEARCH_SINKS = {"
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "LDAP query uses servlet-controlled data."
+  - path: skylos/visitors/languages/java/danger.py
+    symbol: "_JAVA_LDAP_RECEIVER_HINT = re.compile("
+    note: the servlet-style line check that reports the same rule.
+
+fix:
+  explanation: >-
+    Keep the filter fixed and pass values as `{0}` filter arguments, or
+    escape each value for its place: `LdapEncoder.filterEncode()` inside a
+    filter, `Rdn.escapeValue()` or `LdapEncoder.nameEncode()` inside a DN.
+  filename: src/main/java/com/example/PeopleController.java
+  code: |
+    package com.example;
+
+    import javax.naming.NamingEnumeration;
+    import javax.naming.NamingException;
+    import javax.naming.directory.DirContext;
+    import javax.naming.directory.SearchControls;
+    import javax.naming.directory.SearchResult;
+    import org.springframework.ldap.support.LdapEncoder;
+    import org.springframework.web.bind.annotation.GetMapping;
+    import org.springframework.web.bind.annotation.RequestParam;
+    import org.springframework.web.bind.annotation.RestController;
+
+    @RestController
+    public class PeopleController {
+        private final DirContext ctx;
+
+        public PeopleController(DirContext ctx) {
+            this.ctx = ctx;
+        }
+
+        @GetMapping("/people")
+        public boolean exists(@RequestParam String uid) throws NamingException {
+            String safe = LdapEncoder.filterEncode(uid);
+            String filter = "(&(objectClass=person)(uid=" + safe + "))";
+            NamingEnumeration<SearchResult> results =
+                    ctx.search("ou=people,dc=example,dc=com", filter, new SearchControls());
+            return results.hasMore();
+        }
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A value checked against a strict pattern, such as letters and digits
+      only, is still reported: the check is not recognised. Escape the value
+      as well, or suppress the line.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why. A bare `// noqa` does not hide
+        CRITICAL security findings.
+      language: java
+      code: |
+        ctx.search(base, filter, controls); // skylos: ignore[SKY-D239] uid matched [a-z0-9]+
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D239"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D229, SKY-D211, SKY-D237]

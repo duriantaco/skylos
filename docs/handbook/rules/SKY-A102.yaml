@@ -1,0 +1,268 @@
+id: SKY-A102
+title: High-risk change without tests
+family: ai-defects
+severity: LOW
+languages: [Python, TypeScript, JavaScript, Go, Java, Kotlin, C#, PHP, Rust, Dart]
+gate:
+  full: counted
+  note: >-
+    Counts toward `max_ai_defects`; LOW, so it never fails the gate on its
+    own. The finding is marked as a signal to review, not a defect.
+run_with: >-
+  `skylos . --ai-defects` (or `-a`) on a Git checkout with uncommitted
+  changes; in a `--diff` scan only when line 1 of the file changed
+
+what_it_is: >-
+  SKY-A102 notices when a change touches code in a sensitive area, such as
+  authentication, billing, payments, tokens or webhooks, judged by the file
+  path, and no test file in the same change gains an assertion. It is a
+  nudge to add or update a test, reported on line 1 of each such file.
+
+why_it_matters: >-
+  A coding agent can change a tax rate, a permission check or a token
+  expiry and report success because the existing tests still pass. In
+  these areas a silent behaviour change costs money or opens access, so the
+  change should come with a test that pins the new behaviour.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  scan_flags: ["--ai-defects"]
+  expect_file: billing/invoices.py
+  expect_line: 1
+  base_files:
+    - filename: billing/invoices.py
+      code: |
+        """Invoice maths for the checkout service."""
+
+        TAX_RATE = 0.2
+
+
+        def calculate_total(items):
+            subtotal = sum(item["price"] * item["qty"] for item in items)
+            return round(subtotal * (1 + TAX_RATE))
+    - filename: tests/test_invoices.py
+      code: |
+        from billing.invoices import calculate_total
+
+
+        def test_total_includes_tax():
+            items = [{"price": 1000, "qty": 2}]
+            total = calculate_total(items)
+
+            assert total == 2400
+  files:
+    - filename: billing/invoices.py
+      code: |
+        """Invoice maths for the checkout service."""
+
+        TAX_RATE = 0.25
+
+
+        def calculate_total(items):
+            subtotal = sum(item["price"] * item["qty"] for item in items)
+            return round(subtotal * (1 + TAX_RATE))
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  scan_flags: ["--ai-defects"]
+  base_files:
+    - filename: billing/invoices.py
+      code: |
+        """Invoice maths for the checkout service."""
+
+        TAX_RATE = 0.2
+
+
+        def calculate_total(items):
+            subtotal = sum(item["price"] * item["qty"] for item in items)
+            return round(subtotal * (1 + TAX_RATE))
+    - filename: tests/test_invoices.py
+      code: |
+        from billing.invoices import calculate_total
+
+
+        def test_total_includes_tax():
+            items = [{"price": 1000, "qty": 2}]
+            total = calculate_total(items)
+
+            assert total == 2400
+  files:
+    - filename: billing/invoices.py
+      code: |
+        """Invoice maths for the checkout service."""
+
+        TAX_RATE = 0.25
+
+
+        def calculate_total(items):
+            subtotal = sum(item["price"] * item["qty"] for item in items)
+            return round(subtotal * (1 + TAX_RATE))
+    - filename: tests/test_invoices.py
+      code: |
+        from billing.invoices import calculate_total
+
+
+        def test_total_includes_tax():
+            items = [{"price": 1000, "qty": 2}]
+            total = calculate_total(items)
+
+            assert total == 2500
+  why: >-
+    The same billing change now comes with a test edit that adds an
+    assertion. Skylos does not check that the test covers the changed line,
+    only that some test file in the change gained an assertion.
+
+more_examples:
+  - flagged:
+      language: typescript
+      setup: git_diff
+      scan_flags: ["--ai-defects"]
+      expect_file: src/payments/refunds.ts
+      expect_line: 1
+      base_files:
+        - filename: src/payments/refunds.ts
+          code: |
+            export const MAX_REFUND_DAYS = 30;
+
+            export function canRefund(daysSincePurchase: number): boolean {
+              return daysSincePurchase <= MAX_REFUND_DAYS;
+            }
+        - filename: src/payments/refunds.test.ts
+          code: |
+            import { canRefund } from "./refunds";
+
+            test("refunds are allowed inside the window", () => {
+              expect(canRefund(30)).toBe(true);
+            });
+      files:
+        - filename: src/payments/refunds.ts
+          code: |
+            export const MAX_REFUND_DAYS = 60;
+
+            export function canRefund(daysSincePurchase: number): boolean {
+              return daysSincePurchase <= MAX_REFUND_DAYS;
+            }
+    not_flagged:
+      language: typescript
+      setup: git_diff
+      scan_flags: ["--ai-defects"]
+      base_files:
+        - filename: src/payments/refunds.ts
+          code: |
+            export const MAX_REFUND_DAYS = 30;
+
+            export function canRefund(daysSincePurchase: number): boolean {
+              return daysSincePurchase <= MAX_REFUND_DAYS;
+            }
+        - filename: src/payments/refunds.test.ts
+          code: |
+            import { canRefund } from "./refunds";
+
+            test("refunds are allowed inside the window", () => {
+              expect(canRefund(30)).toBe(true);
+            });
+      files:
+        - filename: src/payments/refunds.ts
+          code: |
+            export const MAX_REFUND_DAYS = 60;
+
+            export function canRefund(daysSincePurchase: number): boolean {
+              return daysSincePurchase <= MAX_REFUND_DAYS;
+            }
+        - filename: src/payments/refunds.test.ts
+          code: |
+            import { canRefund } from "./refunds";
+
+            test("refunds are allowed inside the window", () => {
+              expect(canRefund(60)).toBe(true);
+              expect(canRefund(61)).toBe(false);
+            });
+      why: >-
+        The refund window change comes with new `expect(...)` checks in
+        `refunds.test.ts`, a file named like a test, so the change counts as
+        tested.
+
+how_skylos_decides:
+  - >-
+    Runs with `--ai-defects` when there is a change: in a full scan of a
+    Git checkout whose tracked files have uncommitted or staged changes, or
+    in a diff scan (`--diff` or `--diff-base`, where untracked files count
+    too). A diff scan keeps only findings on changed lines, so there the
+    finding survives only when line 1 of the file is part of the change.
+  - >-
+    Sorts the changed files into tests and source. Test files are those in
+    a `test` or `tests` folder, named `test_*`, or ending in `_test.py`,
+    `_test.go`, `.test.ts`, `.spec.js`, `Test.java`, `Tests.cs` and similar.
+  - >-
+    If any changed test file gains an assertion (`assert`, `expect(`,
+    `self.assertEqual(`, `pytest.raises(`, `t.Errorf(`, `assertThat(` and
+    others, outside strings and comments), the change counts as tested and
+    nothing is reported. A new test file with no diff is read whole.
+  - >-
+    Otherwise reports each changed source file (`.py`, `.ts`, `.js`, `.go`,
+    `.java`, `.kt`, `.cs`, `.php`, `.rs`, `.dart`) whose path contains a
+    high-risk word: `auth`, `login`, `password`, `token`, `jwt`, `session`,
+    `permission`, `policy`, `csrf`, `billing`, `checkout`, `invoice`,
+    `payment`, `subscription`, `tax`, `tenant`, `security`, `validation`,
+    `webhook` or `rate_limit`. At most ten files are reported, each on
+    line 1.
+
+source_refs:
+  - path: skylos/rules/ai_defect/test_impact.py
+    symbol: "def detect_test_impact_gaps("
+  - path: skylos/rules/ai_defect/test_impact.py
+    symbol: "_HIGH_RISK_HINTS = {"
+  - path: skylos/rules/ai_defect/test_impact.py
+    symbol: "def _is_test_path("
+  - path: skylos/rules/ai_defect/test_impact.py
+    symbol: "_ASSERTION_RE = re.compile("
+  - path: skylos/analyzer.py
+    symbol: "detect_test_impact_gaps("
+  - path: skylos/analyzer.py
+    symbol: "diff_signal_files = changed_files"
+    note: how a full scan finds uncommitted changes.
+
+fix:
+  explanation: >-
+    Add or update a test in the same change that checks the new behaviour,
+    ideally at the boundary that moved (the new tax amount, day 60 and day
+    61 of the refund window). If behaviour did not change, say so in the
+    pull request.
+  language: python
+  code: |
+    def test_total_includes_tax():
+        items = [{"price": 1000, "qty": 2}]
+        total = calculate_total(items)
+
+        assert total == 2500
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A pure refactor, a renamed variable or an added log line in a file
+      whose path holds a high-risk word is reported. The rule reads paths,
+      not what the change did.
+    - >-
+      Any assertion added to any test file clears the whole change, even a
+      test of something unrelated. Do not read a missing SKY-A102 as proof
+      that the risky change is tested.
+    - >-
+      Words are matched inside longer names too: `tokenizer.py` and
+      `taxonomy.py` count as high-risk.
+  suppress:
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-A102"]` turns the rule off for the
+        project.
+    - check: {kind: inline, expect: reported}
+      text: >-
+        An inline comment does not silence it in Skylos 5.6.0. The finding
+        names its file by a relative path, which the inline-comment lookup
+        does not match, so this line is still reported:
+      language: python
+      code: |
+        """Invoice maths for the checkout service."""  # skylos: ignore[SKY-A102] rate only
+
+related: [SKY-A101, SKY-A120, SKY-A110]

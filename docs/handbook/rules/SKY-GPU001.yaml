@@ -1,0 +1,155 @@
+id: SKY-GPU001
+title: CUDA image needs a newer NVIDIA driver than the targets have
+family: infrastructure
+severity: HIGH
+languages: [Dockerfile, GPU target contract (YAML)]
+gate:
+  full: counted
+  note: >-
+    Reported under reliability. It counts toward `max_reliability`, which is 0
+    by default, so one finding fails `--gate`.
+  opt_in: >-
+    A `.skylos/gpu-targets.yml` contract in the repository.
+
+what_it_is: >-
+  Each CUDA major version needs a minimum NVIDIA driver: CUDA 12 needs driver
+  branch 525 on Linux (528 on Windows), CUDA 13 needs 580. SKY-GPU001 reports
+  a Docker image built on `nvidia/cuda` whose CUDA version needs a newer
+  driver than a target in your GPU contract has.
+
+why_it_matters: >-
+  The container builds and passes CI on a developer's newer driver, then fails
+  on the production fleet with "CUDA driver version is insufficient for CUDA
+  runtime version" as soon as it touches the GPU.
+
+flagged_example:
+  language: dockerfile
+  expect_file: Dockerfile
+  expect_line: 1
+  files:
+    - filename: Dockerfile
+      code: |
+        FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+        COPY app /app
+        CMD ["python3", "/app/serve.py"]
+    - filename: .skylos/gpu-targets.yml
+      language: yaml
+      code: |
+        version: 1
+        targets:
+          - name: legacy-t4-fleet
+            vendor: nvidia
+            driver: "510.47.03"
+            platform: linux/amd64
+
+not_flagged_example:
+  language: dockerfile
+  files:
+    - filename: Dockerfile
+      code: |
+        FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+        COPY app /app
+        CMD ["python3", "/app/serve.py"]
+    - filename: .skylos/gpu-targets.yml
+      language: yaml
+      code: |
+        version: 1
+        targets:
+          - name: legacy-t4-fleet
+            vendor: nvidia
+            driver: "510.47.03"
+            platform: linux/amd64
+  why: >-
+    The same old fleet, but the image uses CUDA 11.8, which runs on driver
+    branch 450 and newer. Driver 510 is enough.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (or `-a`), and only when the repository has a GPU
+    target contract: `.skylos/gpu-targets.yml` (or `.yaml`), version 1,
+    listing each target's `name`, `vendor: nvidia`, and its `driver`,
+    `compute_capability` and `platform` (`linux` or `windows`, optionally
+    `/amd64` or `/arm64`). Without the file nothing is checked, unless an
+    `SKY-GPU` rule is selected explicitly with `--select`.
+  - >-
+    Reads Dockerfiles, CMake files, Makefiles, Bazel files, shell scripts,
+    Python, C/C++/CUDA sources and YAML as text, skipping `build`, `dist`,
+    `node_modules`, caches and virtual environments. It never runs a build or
+    probes a GPU.
+  - >-
+    Finds the final stage of each Dockerfile, following stage aliases and
+    literal `ARG` values, and reads its `nvidia/cuda:<version>` image tag.
+    Intermediate build stages do not count.
+  - >-
+    Compares the CUDA major version's minimum driver branch with each target's
+    `driver`, using the Windows floor for Windows targets.
+  - >-
+    A `cuda-compat` package in the image is not taken as proof that the old
+    driver works.
+  - >-
+    Reports HIGH on the `FROM` line, naming the targets that are too old.
+
+source_refs:
+  - path: skylos/rules/config/gpu/compatibility.py
+    symbol: "CUDA_MINIMUM_DRIVER_BRANCH = {"
+    note: the driver floor per CUDA major.
+  - path: skylos/rules/config/gpu/compatibility.py
+    symbol: "def _driver_finding("
+  - path: test/test_gpu_compatibility.py
+    symbol: "def test_cuda_12_image_rejects_target_driver_510("
+
+fix:
+  explanation: >-
+    Use a CUDA image the fleet's driver supports, or upgrade the drivers first
+    and then raise `driver` in the contract.
+  filename: Dockerfile
+  language: dockerfile
+  code: |
+    FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+    COPY app /app
+    CMD ["python3", "/app/serve.py"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Teams that rely on NVIDIA's forward-compatibility package
+      (`cuda-compat`) on data-centre GPUs are still reported, because that
+      path depends on the exact GPU, driver and loader setup.
+  suppress:
+    - check:
+        kind: example
+        example:
+          language: dockerfile
+          files:
+            - filename: Dockerfile
+              code: |
+                # skylos: ignore[SKY-GPU001] fleet uses the cuda-compat package, tested
+                FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+                COPY app /app
+                CMD ["python3", "/app/serve.py"]
+            - filename: .skylos/gpu-targets.yml
+              language: yaml
+              code: |
+                version: 1
+                targets:
+                  - name: legacy-t4-fleet
+                    vendor: nvidia
+                    driver: "510.47.03"
+                    platform: linux/amd64
+      text: >-
+        Put the marker in a comment on the line above `FROM`. A trailing `#`
+        on the `FROM` line itself is not a comment to Docker.
+      language: dockerfile
+      code: |
+        # skylos: ignore[SKY-GPU001] fleet uses the cuda-compat package, tested
+        FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-GPU001"]` turns the rule off for the
+        project.
+    - check: baseline
+      text: >-
+        A baseline (`skylos baseline .`, then `--baseline`) accepts the
+        findings that exist today and reports new ones.
+
+related: [SKY-GPU000, SKY-GPU002]

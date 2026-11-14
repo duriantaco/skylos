@@ -1,0 +1,116 @@
+id: SKY-L037
+title: Conditional returning bool literals
+family: logic
+severity: LOW
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Only when listed. This is advice outside the default set: the report
+    keeps it in JSON but does not list it, and the gate does not count it,
+    unless you pass `--all-advice` or select the rule (`--select SKY-L037`).
+
+what_it_is: >-
+  A conditional whose only job is to turn a condition into `True` or
+  `False`: `True if x else False`, or an `if`/`else` that returns (or
+  assigns) opposite bool literals. The condition can be used directly.
+
+why_it_matters: >-
+  Four lines say what one expression says, and the reader has to check
+  that the two branches really are opposite. Such code is typical of
+  generated or hurried code and hides the actual condition.
+
+flagged_example:
+  language: python
+  filename: billing/invoices.py
+  expect_line: 5
+  code: |
+    """Invoice status helpers."""
+
+
+    def is_overdue(invoice, today):
+        return True if invoice.due_date < today else False
+
+not_flagged_example:
+  language: python
+  filename: billing/invoices.py
+  code: |
+    """Invoice status helpers."""
+
+
+    def is_overdue(invoice, today):
+        if invoice.paid:
+            return False
+        elif invoice.due_date < today:
+            return True
+        else:
+            return False
+  why: >-
+    The `True`/`False` pair belongs to an `elif` link of a longer chain.
+    Folding just that link into one expression would not make the whole
+    chain clearer, so Skylos leaves `elif` links alone.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Looks at conditional expressions
+    (`a if c else b`) and at `if`/`else` statements whose branches each hold
+    one `return` or one assignment to the same name.
+  - >-
+    Reports when the two outcomes are the opposite literals `True` and
+    `False`. `elif` links of a chain are skipped.
+  - >-
+    For `False if c else True`, skips a condition that is an `==`, `<` or
+    similar comparison: `a != b` need not be its opposite for overloaded
+    types (numpy arrays, SQLAlchemy columns), and `not (a == b)` is itself a
+    lint finding.
+  - >-
+    Suggests the condition itself when it is always a bool (`is`, `in`,
+    `not`, `isinstance()`, `any()` and similar), and `bool(...)` around it
+    otherwise.
+  - >-
+    Skips files where the project's ruff configuration ignores `SIM103`,
+    `SIM210` or `SIM211`, and golden test fixtures. Reports LOW on the
+    line of the conditional.
+
+source_refs:
+  - path: skylos/rules/quality/slop.py
+    symbol: "class BooleanLiteralConditionalRule"
+  - path: skylos/rules/quality/slop.py
+    symbol: "def _yields_bool("
+  - path: skylos/reporting/advice_evidence.py
+    symbol: "DEFAULT_ADVICE_RULES ="
+    note: L037 is not in the default advice set, so it is not listed by default.
+
+fix:
+  explanation: >-
+    Return the condition. A `<` comparison of dates already gives a bool;
+    for a value that might not be one, wrap it in `bool()`.
+  filename: billing/invoices.py
+  code: |
+    """Invoice status helpers."""
+
+
+    def is_overdue(invoice, today):
+        return invoice.due_date < today
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      This is style advice: the code is not wrong. A team that prefers the
+      explicit `if`/`else` for readability will see findings it does not
+      want; turn the rule off in configuration.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported line (for an `if`/`else`, the `if`
+        line).
+      language: python
+      code: |
+        return True if mask.any() else False  # skylos: ignore[SKY-L037] numpy
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L037"]` turns the rule off for the
+        project. Ignoring ruff's `SIM103`, `SIM210` or `SIM211` in the
+        project's ruff configuration also turns it off.
+
+related: [SKY-L038, SKY-L039]

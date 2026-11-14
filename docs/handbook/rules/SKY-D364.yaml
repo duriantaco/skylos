@@ -1,0 +1,229 @@
+id: SKY-D364
+title: Long-lived publish token where trusted publishing exists
+family: ci-cd
+severity: MEDIUM
+severity_note: >-
+  MEDIUM, or LOW for an npm publish in a job that already grants
+  `id-token: write`, where npm tries trusted publishing first and the token
+  is only a fallback.
+languages: [GitHub Actions workflows]
+gate:
+  full: counted
+
+what_it_is: >-
+  PyPI and npm offer trusted publishing: the workflow proves who it is with
+  a short-lived OpenID Connect (OIDC) token from GitHub, so no registry
+  password is stored. SKY-D364 reports a workflow that still uploads to PyPI
+  or npm with a token kept in repository secrets.
+
+why_it_matters: >-
+  A stored publish token works from anywhere until someone revokes it. If
+  it leaks, through a log, a compromised action or a fork, the holder can
+  push a new version of your package to every user. A trusted-publishing
+  token lasts minutes and works only for the workflow you registered.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  expect_line: 18
+  code: |
+    name: Release
+    on:
+      release:
+        types: [published]
+    permissions:
+      contents: read
+    jobs:
+      pypi:
+        runs-on: ubuntu-latest
+        environment: pypi
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - run: python -m pip install build==1.2.2 && python -m build
+          - uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc
+            with:
+              password: ${{ secrets.PYPI_API_TOKEN }}
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      release:
+        types: [published]
+    permissions:
+      contents: read
+    jobs:
+      internal-index:
+        runs-on: ubuntu-latest
+        environment: internal-index
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - run: python -m pip install build==1.2.2 && python -m build
+          - uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc
+            with:
+              repository-url: https://pypi.acme.example/legacy/
+              password: ${{ secrets.ACME_INDEX_TOKEN }}
+  why: >-
+    The same action with a stored token, but it uploads to a company index.
+    Only PyPI and TestPyPI offer trusted publishing, so a token is the only
+    way to log in there.
+
+more_examples:
+  - flagged:
+      language: yaml
+      filename: .github/workflows/release.yml
+      expect_line: 20
+      code: |
+        name: Release
+        on:
+          release:
+            types: [published]
+        permissions:
+          contents: read
+        jobs:
+          npm:
+            runs-on: ubuntu-latest
+            environment: npm
+            steps:
+              - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                with:
+                  persist-credentials: false
+              - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+                with:
+                  node-version: 22
+                  registry-url: https://registry.npmjs.org
+              - run: npm ci --ignore-scripts
+              - run: npm publish --access public
+                env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    not_flagged:
+      language: yaml
+      filename: .github/workflows/release.yml
+      code: |
+        name: Release
+        on:
+          release:
+            types: [published]
+        permissions:
+          contents: read
+          packages: write
+        jobs:
+          github-packages:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                with:
+                  persist-credentials: false
+              - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+                with:
+                  node-version: 22
+                  registry-url: https://npm.pkg.github.com
+              - run: npm ci --ignore-scripts
+              - run: npm publish
+                env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      why: >-
+        This job publishes to GitHub Packages, which has no trusted
+        publishing, and logs in with the job's own `GITHUB_TOKEN`, which
+        expires when the job ends. Skylos checks npm uploads only to
+        `registry.npmjs.org`.
+
+how_skylos_decides:
+  - >-
+    Reads workflow files under `.github/workflows`. A workflow needs at
+    least one trigger. PyPI uploads are skipped when every trigger is
+    `pull_request_target`, `issue_comment` or `workflow_call`.
+  - >-
+    Finds publish steps: `pypa/gh-action-pypi-publish` with a `password`
+    input, and commands in `run:` (and in `changesets/action`'s `publish`
+    input) such as `twine upload`, `uv publish`, `poetry`, `pdm`, `hatch` or
+    `flit publish`, `maturin publish`, `npm`, `pnpm`, `yarn` or `bun
+    publish`, `semantic-release` and `changeset publish`, also through
+    `npx` and similar runners. Commands with `--dry-run` or `--help` are
+    skipped.
+  - >-
+    Needs a stored token: the `password` input, a token variable such as
+    `TWINE_PASSWORD`, `UV_PUBLISH_TOKEN`, `NODE_AUTH_TOKEN` or `NPM_TOKEN`
+    in step, job or workflow `env:`, a `--password` or `--token` option, or
+    an earlier step that writes `.pypirc` or `_authToken`, each made from a
+    `secrets.X` value. `secrets.GITHUB_TOKEN` does not count.
+  - >-
+    Needs a registry with trusted publishing: PyPI or TestPyPI (no other
+    `repository-url`, `--repository` or `TWINE_REPOSITORY_URL`), or
+    `registry.npmjs.org` from a GitHub-hosted runner (checked against
+    `--registry`, `NPM_CONFIG_REGISTRY` and `actions/setup-node`'s
+    `registry-url`).
+  - >-
+    Reports each such step once, on the `password` line or the command's
+    line: MEDIUM, or LOW for npm when the job grants `id-token: write`.
+
+source_refs:
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _audit_publishing("
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _token_publish("
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _credential_evidence("
+  - path: skylos/rules/config/cicd/workflow_audits.py
+    symbol: "def _default_target("
+  - path: test/test_github_actions_workflow_audits.py
+    symbol: "def test_npm_token_beside_trusted_publishing_is_low("
+
+fix:
+  explanation: >-
+    Register the workflow as a trusted publisher on PyPI (or npm), grant
+    `id-token: write` to the publish job only, drop the `password` input and
+    revoke the old token. Keep the `environment:` so a reviewer can require
+    approval before each release.
+  filename: .github/workflows/release.yml
+  code: |
+    name: Release
+    on:
+      release:
+        types: [published]
+    permissions:
+      contents: read
+    jobs:
+      pypi:
+        runs-on: ubuntu-latest
+        environment: pypi
+        permissions:
+          id-token: write
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - run: python -m pip install build==1.2.2 && python -m build
+          - uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A token kept on purpose as a fallback while trusted publishing is set
+      up is reported until it is removed (LOW for npm in a job with
+      `id-token: write`).
+    - >-
+      Uploads from a self-hosted runner to npm are not reported, because npm
+      offers trusted publishing only to GitHub-hosted runners.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D364]` and a reason on the reported line or
+        on the line directly above it, one rule per marker.
+      language: yaml
+      code: |
+        with:
+          # skylos: ignore[SKY-D364] trusted publisher pending, see #412
+          password: ${{ secrets.PYPI_API_TOKEN }}
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D364"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D373, SKY-D299, SKY-D340, SKY-D310]

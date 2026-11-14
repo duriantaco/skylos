@@ -1,0 +1,165 @@
+id: SKY-D319
+title: GitLab CI OIDC token in a job that runs repository scripts
+family: ci-cd
+severity: HIGH
+languages: [GitLab CI]
+gate:
+  full: counted
+
+what_it_is: >-
+  A GitLab job with `id_tokens:` (or `identity:`) receives OpenID Connect
+  (OIDC) tokens it can trade for cloud or registry credentials. SKY-D319
+  reports such a job when it also runs scripts kept in the repository, such
+  as `./scripts/release.sh`, `make` or `npm run build`.
+
+why_it_matters: >-
+  Anyone who can change those scripts, including a merge request author on
+  a branch that runs this job, decides what runs next to the token. A
+  changed build script can send the token to an outside server, which can
+  then publish a package or deploy as your project.
+
+flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  expect_line: 14
+  code: |
+    stages: [release]
+
+    release-pypi:
+      stage: release
+      image: python:3.12-slim
+      environment: pypi
+      timeout: 15 minutes
+      id_tokens:
+        PYPI_ID_TOKEN:
+          aud: pypi
+      rules:
+        - if: $CI_COMMIT_TAG
+      script:
+        - ./scripts/build-and-publish.sh
+
+not_flagged_example:
+  language: yaml
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [build, release]
+
+    build:
+      stage: build
+      image: python:3.12-slim
+      script:
+        - ./scripts/build.sh
+      artifacts:
+        paths: [dist/]
+
+    release-pypi:
+      stage: release
+      image: python:3.12-slim
+      environment: pypi
+      timeout: 15 minutes
+      needs: [build]
+      id_tokens:
+        PYPI_ID_TOKEN:
+          aud: pypi
+      rules:
+        - if: $CI_COMMIT_TAG
+      script:
+        - python -m pip install twine==6.1.0 id==1.5.0
+        - python -m twine upload dist/*
+  why: >-
+    The repository script still runs, but in the `build` job, which gets no
+    OIDC token. The job that holds the token only installs pinned tools and
+    uploads the files the build job left behind.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). Reads every file named exactly
+    `.gitlab-ci.yml` in the scanned folder, skipping `.git`, `node_modules`,
+    `.venv`, `venv`, `build`, `dist` and cache folders. Files pulled in with
+    `include:` are not read, and a file PyYAML's safe loader cannot read
+    (for example one that uses `!reference`) is skipped.
+  - >-
+    Looks at every job except hidden `.template` jobs. A job counts when it
+    has `id_tokens` or `identity`, its own or from `default:`.
+  - >-
+    Reads the job's `before_script`, `script` and `after_script` (its own,
+    else from `default:`, else top-level) and `hooks:pre_get_sources_script`.
+  - >-
+    Reports the job when a command line starts with `./scripts/`, `./ci/`,
+    `./build/`, `./tools/`, `./release/` or `./deploy/`, runs a file in those
+    folders with `bash`, `sh`, `python`, `node`, `ruby` or `pwsh`, or runs
+    `npm`, `pnpm`, `yarn` or `bun run`, or `make`.
+  - >-
+    One HIGH finding per job, on the first line of the file that holds the
+    first matching command.
+
+source_refs:
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _scan_oidc_local_scripts("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "LOCAL_SCRIPT_RE = re.compile("
+  - path: skylos/rules/config/cicd/gitlab_ci.py
+    symbol: "def _has_oidc("
+  - path: test/test_gitlab_ci_security.py
+    symbol: "def test_gitlab_ci_scanner_detects_workflow_supply_chain_risks"
+
+fix:
+  explanation: >-
+    Split the job. Build in a job without `id_tokens`, pass the result on as
+    artifacts, and give the token only to a small publish job that runs
+    pinned tools on those files.
+  filename: .gitlab-ci.yml
+  code: |
+    stages: [build, release]
+
+    build:
+      stage: build
+      image: python:3.12-slim
+      script:
+        - ./scripts/build.sh
+      artifacts:
+        paths: [dist/]
+
+    release-pypi:
+      stage: release
+      image: python:3.12-slim
+      environment: pypi
+      timeout: 15 minutes
+      needs: [build]
+      id_tokens:
+        PYPI_ID_TOKEN:
+          aud: pypi
+      rules:
+        - if: $CI_COMMIT_TAG
+      script:
+        - python -m pip install twine==6.1.0 id==1.5.0
+        - python -m twine upload dist/*
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Any `make` or `npm run` counts, also a short, reviewed target that
+      only calls a pinned tool.
+    - >-
+      Missed: a script outside the listed folders (`./publish.sh`,
+      `bash release.sh`) or one called through a variable.
+    - >-
+      If the same command text appears earlier in the file, the finding
+      points at that earlier line.
+  suppress:
+    - check: inline
+      text: >-
+        Put `# skylos: ignore[SKY-D319]` and a reason on the reported line,
+        or on the line directly above it. Skylos looks for that exact text,
+        so write one rule per marker, with the ID in upper case.
+      language: yaml
+      code: |
+        script:
+          # skylos: ignore[SKY-D319] script is protected by CODEOWNERS
+          - ./scripts/build-and-publish.sh
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D319"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D310, SKY-D373, SKY-D323, SKY-D321]

@@ -1,0 +1,196 @@
+id: SKY-D338
+title: Command reads host credentials or mounts the host root
+family: security
+severity: CRITICAL
+languages: [Shell, GitHub Actions, GitLab CI, Dockerfile, Python, TypeScript/JavaScript]
+gate:
+  full: critical_blocks
+cwe: [CWE-200]
+
+what_it_is: >-
+  A build or helper script should not need the machine's own credentials.
+  SKY-D338 reports a command that reads a credential file (SSH keys, cloud
+  and registry logins, `.env` files), writes into one, or starts a Docker
+  container with the whole host filesystem mounted.
+
+why_it_matters: >-
+  `docker run -v /:/host` gives the container every file on the host,
+  including `/root/.ssh` and the CI runner's cached tokens, so one compromised
+  image can read them all. A `cat ~/.docker/config.json` in a CI step prints
+  registry passwords into a log that many people can read.
+
+flagged_example:
+  language: shell
+  filename: scripts/collect-logs.sh
+  expect_line: 5
+  code: |
+    #!/usr/bin/env bash
+    # Gather host logs for the incident report.
+    set -euo pipefail
+
+    docker run --rm -v /:/host:ro ghcr.io/acme/log-collector:1.4 --root /host
+    tar -czf incident-logs.tgz ./collected
+
+not_flagged_example:
+  language: shell
+  filename: scripts/collect-logs.sh
+  code: |
+    #!/usr/bin/env bash
+    # Gather host logs for the incident report.
+    set -euo pipefail
+
+    docker run --rm -v /var/log:/host/var/log:ro ghcr.io/acme/log-collector:1.4 --root /host
+    tar -czf incident-logs.tgz ./collected
+  why: >-
+    The container gets only `/var/log`, read-only. Skylos reports a mount
+    whose host side is `/` itself, not a mount of one folder.
+
+more_examples:
+  - flagged:
+      language: yaml
+      filename: .github/workflows/build.yml
+      expect_line: 15
+      code: |
+        name: Build
+        on: [push]
+        permissions:
+          contents: read
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - uses: docker/login-action@v3
+                with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+              - run: base64 -w0 ~/.docker/config.json > docker-auth.b64
+              - uses: actions/upload-artifact@v4
+                with:
+                  name: docker-auth
+                  path: docker-auth.b64
+    not_flagged:
+      language: yaml
+      filename: .github/workflows/deploy.yml
+      code: |
+        name: Deploy
+        on: [push]
+        permissions:
+          contents: read
+        jobs:
+          deploy:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - name: Install deploy key
+                env:
+                  DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+                run: mkdir -p ~/.ssh && echo "$DEPLOY_KEY" | base64 -d > ~/.ssh/id_ed25519
+              - run: ./scripts/deploy.sh
+      why: >-
+        Writing a key into `~/.ssh/id_*` under the runner's own home folder is
+        routine setup. In a GitHub Actions step where no `env` sets `HOME`
+        and no run block reassigns it, Skylos does not report it. The same
+        line in a shell script, GitLab job or Dockerfile is reported.
+
+how_skylos_decides:
+  - >-
+    Reads shell commands in `.sh`, `.bash`, `.zsh`, `.ksh` and `.bats` files,
+    GitHub Actions `run:` steps, GitLab CI script items, Dockerfile `RUN`
+    instructions, fixed command strings in Python `os.system()`-style calls
+    or `shell=True` calls, and fixed strings passed to `child_process.exec()`
+    in TypeScript and JavaScript.
+  - >-
+    Splits each command at `;`, `&&`, `||` and `|`, and parses redirects
+    quote-aware (a quoted `">"` is an argument). Reports when the command is
+    a file reader (`cat`, `grep`, `rg`, `head`, `tail`, `less`, `more`,
+    `sed`, `awk`, `base64`, `tar`, `zip`) and one of its arguments, or a file
+    its output is redirected to, is a credential file.
+  - >-
+    A credential file is `.env` and `.env.*`, `*.env`, `.envrc`, `.netrc`,
+    `.npmrc`, `.pypirc`, `.git-credentials`, `credentials`, `auth.json`,
+    `config.json`, `id_rsa`, `id_ed25519`, `known_hosts`, a `.key`, `.pem`,
+    `.p12` or `.pfx` file, or anything under `.ssh/`, `.aws/`, `.azure/`,
+    `.kube/`, `.claude/`, `.codex/`, `.config/gh/`, `.docker/config.json`
+    or `/run/secrets/`.
+  - >-
+    Also reports `docker run` with a `-v`, `--volume` or `--mount` whose
+    host side is the root (`/:…`, `source=/`, `src=/`).
+  - >-
+    In GitHub Actions only, a reader writing `~/.ssh/known_hosts`,
+    `~/.ssh/id_*`, `~/.netrc` or `~/.pypirc` is routine setup and not
+    reported, when no workflow, job, container or step `env` sets `HOME` and
+    no run block in the job assigns it. A reader writing a project-relative
+    `.env` is not reported in a bash/sh step on a Linux or macOS runner that
+    starts in the workspace and contains nothing that may change directory
+    (`cd`, `pushd`, `source`, `eval`, function definitions and similar).
+    Shell scripts, GitLab CI and Dockerfiles get neither exception.
+  - >-
+    Targets with `..`, a glob, a variable other than a leading `$HOME`, and
+    every other credential path stay reported. Every finding is CRITICAL.
+
+source_refs:
+  - path: skylos/security/command_guard_policy.py
+    symbol: "def _is_sensitive_scope_access("
+  - path: skylos/security/command_guard_policy.py
+    symbol: "ROUTINE_CREDENTIAL_WRITES = ("
+  - path: skylos/security/command_guard_policy.py
+    symbol: "def _mount_value_exposes_root("
+  - path: skylos/security/command_guard_paths.py
+    symbol: "def is_sensitive_path("
+  - path: skylos/security/command_guard_parse.py
+    symbol: "def split_redirects("
+  - path: skylos/rules/config/cicd/github_actions.py
+    symbol: "def _home_is_default("
+    note: when the home-folder exception may apply.
+  - path: test/test_shell_security.py
+    symbol: "def test_docker_run_host_root_mount_flags_scope_violation"
+
+fix:
+  explanation: >-
+    Mount only the folders the container needs, read-only. Pass credentials
+    to a job through the tool that consumes them (a login action, a secret
+    mount, an environment variable scoped to one step) instead of reading or
+    copying the credential file.
+  filename: scripts/collect-logs.sh
+  code: |
+    #!/usr/bin/env bash
+    # Gather host logs for the incident report.
+    set -euo pipefail
+
+    docker run --rm -v /var/log:/host/var/log:ro ghcr.io/acme/log-collector:1.4 --root /host
+    tar -czf incident-logs.tgz ./collected
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Credential file names are matched without looking inside: reading
+      `config.json`, `.env.example`, `~/.ssh/id_rsa.pub` (a public key) or a
+      test `.pem` fixture is reported as CRITICAL.
+    - >-
+      Writing `~/.npmrc` or `~/.docker/config.json` in a CI step with `cat`
+      is reported even when it is ordinary login setup; only the routine
+      files listed above are exempt, and only in GitHub Actions.
+    - >-
+      Missed: readers that are not on the list (`jq`, `cp`, `python -c`), a
+      read inside `$(…)` as part of another command, `~/.ssh` without a
+      trailing slash, and in a GitHub Actions `run: |` block, or a multi-line
+      GitLab item, a read on a later line, because the block is split only at
+      `;`, `&&`, `||` and `|`, not at line breaks.
+  suppress:
+    - check: inline
+      text: >-
+        In a shell script, put the marker on the reported line as a real
+        comment. In GitHub Actions, GitLab CI and Dockerfiles the marker may
+        also sit on the line directly above, one rule per marker.
+      language: shell
+      code: |
+        cat ./fixtures/test-server.pem  # skylos: ignore[SKY-D338] test fixture
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D338"]` turns the rule off for the whole
+        project. Prefer a marker per reviewed line: this rule is CRITICAL and
+        fails the gate on its own.
+
+related: [SKY-D327, SKY-D339, SKY-S101, SKY-D343]

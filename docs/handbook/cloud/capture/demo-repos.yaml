@@ -1,0 +1,340 @@
+# seed-base.mjs joins these short parts to create the synthetic credentials.
+fragments:
+  DEMO_STRIPE_KEY: ["sk_live_", "51HandbookDemo0nly", "Qx7Lm2Vt9RbKc4Zp"]
+  DEMO_AWS_KEY: ["AKIA", "HANDBOOKDEMO7QX2"]
+
+repos:
+  storefront-api:
+    remote: https://github.com/example-co/storefront-api.git
+    states:
+      main:
+        files:
+          requirements.txt: |
+            flask==1.0
+            requests==2.19.0
+            pyyaml==5.1
+            jinja2==2.10
+          app/__init__.py: |
+            from flask import Flask
+
+            from app.routes.exports import exports
+            from app.routes.orders import orders
+            from app.routes.webhooks import webhooks
+
+
+            def create_app():
+                app = Flask(__name__)
+                app.register_blueprint(orders)
+                app.register_blueprint(exports)
+                app.register_blueprint(webhooks)
+                return app
+          app/config.py: |
+            DEBUG = True
+            DATABASE_PATH = "storefront.db"
+            STRIPE_SECRET_KEY = "{{DEMO_STRIPE_KEY}}"
+            AWS_ACCESS_KEY_ID = "{{DEMO_AWS_KEY}}"
+          app/db.py: |
+            import sqlite3
+
+            from app.config import DATABASE_PATH
+
+
+            def get_connection():
+                return sqlite3.connect(DATABASE_PATH)
+          app/routes/__init__.py: ""
+          app/routes/orders.py: |
+            from flask import Blueprint, jsonify, request
+
+            from app.services.order_lookup import find_orders
+
+            orders = Blueprint("orders", __name__)
+
+
+            @orders.route("/orders/search")
+            def order_search():
+                customer = request.args.get("customer", "")
+                rows = find_orders(customer)
+                return jsonify(rows)
+          app/services/__init__.py: ""
+          app/services/order_lookup.py: |
+            from app.db import get_connection
+
+
+            def build_filter(customer):
+                return "customer_name = '" + customer + "'"
+
+
+            def find_orders(customer):
+                connection = get_connection()
+                cursor = connection.cursor()
+                query = "SELECT id, total, status FROM orders WHERE " + build_filter(customer)
+                cursor.execute(query)
+                return cursor.fetchall()
+          app/routes/exports.py: |
+            import subprocess
+
+            from flask import Blueprint, request
+
+            exports = Blueprint("exports", __name__)
+
+
+            @exports.route("/exports/archive", methods=["POST"])
+            def archive_export():
+                name = request.form["name"]
+                subprocess.run("tar czf /tmp/" + name + ".tgz exports/", shell=True)
+                return "queued"
+          app/routes/webhooks.py: |
+            import requests
+            import yaml
+            from flask import Blueprint, request
+
+            webhooks = Blueprint("webhooks", __name__)
+
+
+            @webhooks.route("/webhooks/test", methods=["POST"])
+            def test_webhook():
+                callback = request.json["callback_url"]
+                response = requests.get(callback, timeout=5)
+                return str(response.status_code)
+
+
+            @webhooks.route("/webhooks/config", methods=["POST"])
+            def load_config():
+                settings = yaml.load(request.data)
+                return str(len(settings))
+          app/utils/__init__.py: ""
+          app/utils/legacy.py: |
+            import hashlib
+            import os
+            import pickle
+
+
+            def hash_password(password):
+                return hashlib.md5(password.encode()).hexdigest()
+
+
+            def load_session(blob):
+                return pickle.loads(blob)
+
+
+            def old_discount(total, tier, coupon, region, season, loyalty, staff):
+                if tier == "gold":
+                    if coupon:
+                        if region == "eu":
+                            if season == "winter":
+                                if loyalty > 3:
+                                    return total * 0.5
+                return total
+
+
+            def unused_report_helper():
+                return os.getcwd()
+      fixed:
+        files:
+          requirements.txt: |
+            flask==3.1.2
+            requests==2.32.5
+            pyyaml==6.0.3
+            jinja2==3.1.6
+          app/config.py: |
+            import os
+
+            DEBUG = False
+            DATABASE_PATH = "storefront.db"
+            STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+            AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
+          app/services/order_lookup.py: |
+            from app.db import get_connection
+
+
+            def find_orders(customer):
+                connection = get_connection()
+                cursor = connection.cursor()
+                cursor.execute(
+                    "SELECT id, total, status FROM orders WHERE customer_name = ?",
+                    (customer,),
+                )
+                return cursor.fetchall()
+          app/routes/exports.py: |
+            import subprocess
+
+            from flask import Blueprint, request
+            from werkzeug.utils import secure_filename
+
+            exports = Blueprint("exports", __name__)
+
+
+            @exports.route("/exports/archive", methods=["POST"])
+            def archive_export():
+                name = secure_filename(request.form["name"])
+                subprocess.run(["tar", "czf", "/tmp/" + name + ".tgz", "exports/"], check=True)
+                return "queued"
+          app/routes/webhooks.py: |
+            import yaml
+            from flask import Blueprint, request
+
+            webhooks = Blueprint("webhooks", __name__)
+
+
+            @webhooks.route("/webhooks/config", methods=["POST"])
+            def load_config():
+                settings = yaml.safe_load(request.data)
+                return str(len(settings))
+          app/__init__.py: |
+            from flask import Flask
+
+            from app.routes.exports import exports
+            from app.routes.orders import orders
+            from app.routes.webhooks import webhooks
+
+
+            def create_app():
+                app = Flask(__name__)
+                app.register_blueprint(orders)
+                app.register_blueprint(exports)
+                app.register_blueprint(webhooks)
+                return app
+          app/utils/legacy.py: null
+
+  web-checkout:
+    remote: https://github.com/example-co/web-checkout.git
+    states:
+      main:
+        files:
+          package.json: |
+            {
+              "name": "web-checkout",
+              "version": "2.4.0",
+              "private": true,
+              "type": "module",
+              "dependencies": {}
+            }
+          src/cart.ts: |
+            export type CartLine = { sku: string; quantity: number; unitPrice: number };
+
+            export function cartTotal(lines: CartLine[]): number {
+              let total = 0;
+              for (const line of lines) {
+                total += line.quantity * line.unitPrice;
+              }
+              return total;
+            }
+
+            export function formatPrice(amount: number): string {
+              return "$" + amount.toFixed(2);
+            }
+          src/checkout.ts: |
+            import { cartTotal, formatPrice, type CartLine } from "./cart";
+
+            export function renderSummary(target: HTMLElement, lines: CartLine[]): void {
+              target.textContent = formatPrice(cartTotal(lines));
+            }
+
+            function legacyCouponBanner(): string {
+              return "SPRING-SALE";
+            }
+          src/index.ts: |
+            import { renderSummary } from "./checkout";
+
+            const target = document.getElementById("summary");
+            if (target) {
+              renderSummary(target, [{ sku: "mug-01", quantity: 2, unitPrice: 12.5 }]);
+            }
+
+  ledger-service:
+    remote: https://github.com/example-co/ledger-service.git
+    states:
+      main:
+        files:
+          src/main/java/co/example/ledger/LedgerRepository.java: |
+            package co.example.ledger;
+
+            import java.sql.Connection;
+            import java.sql.ResultSet;
+            import java.sql.SQLException;
+            import java.sql.Statement;
+
+            public class LedgerRepository {
+                private final Connection connection;
+
+                public LedgerRepository(Connection connection) {
+                    this.connection = connection;
+                }
+
+                public ResultSet entriesForAccount(String accountId) throws SQLException {
+                    Statement statement = connection.createStatement();
+                    return statement.executeQuery(
+                        "SELECT * FROM ledger_entries WHERE account_id = '" + accountId + "'");
+                }
+
+                private int unusedRounding(int cents) {
+                    return cents / 100;
+                }
+            }
+          src/main/java/co/example/ledger/LedgerController.java: |
+            package co.example.ledger;
+
+            import java.sql.ResultSet;
+            import java.sql.SQLException;
+            import javax.servlet.http.HttpServletRequest;
+
+            public class LedgerController {
+                private final LedgerRepository repository;
+
+                public LedgerController(LedgerRepository repository) {
+                    this.repository = repository;
+                }
+
+                public ResultSet show(HttpServletRequest request) throws SQLException {
+                    String accountId = request.getParameter("account");
+                    return repository.entriesForAccount(accountId);
+                }
+            }
+
+  support-assistant:
+    remote: https://github.com/example-co/support-assistant.git
+    states:
+      main:
+        files:
+          requirements.txt: |
+            openai==1.99.0
+            flask==3.1.2
+          assistant/__init__.py: ""
+          assistant/chat.py: |
+            from flask import Flask, request
+            from openai import OpenAI
+
+            app = Flask(__name__)
+            client = OpenAI()
+
+            SYSTEM_PROMPT = "You are the Example Co support assistant."
+
+
+            def lookup_order(order_id):
+                return {"order_id": order_id, "status": "shipped"}
+
+
+            TOOLS = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "lookup_order",
+                        "description": "Look up an order by id",
+                        "parameters": {"type": "object", "properties": {"order_id": {"type": "string"}}},
+                    },
+                }
+            ]
+
+
+            @app.route("/chat", methods=["POST"])
+            def chat():
+                question = request.json["question"]
+                completion = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT + " Customer says: " + question},
+                        {"role": "user", "content": question},
+                    ],
+                    tools=TOOLS,
+                )
+                return completion.choices[0].message.content

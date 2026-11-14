@@ -1,0 +1,196 @@
+id: SKY-L007
+title: Empty error handler
+family: logic
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. Python reports HIGH for a bare `except:`
+  whose body only returns a placeholder such as `None`, and MEDIUM for every
+  other case. TypeScript and JavaScript always report MEDIUM.
+languages: [Python, TypeScript, JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  An error handler whose body does nothing: `except Exception: pass`, a
+  `with contextlib.suppress(Exception):` block, or an empty `catch {}` in
+  TypeScript or JavaScript. The error is caught and thrown away, and nothing
+  records that it happened.
+
+why_it_matters: >-
+  The failure disappears. In the example below a database outage means no
+  sign-in is written to the audit log, and nobody finds out until an
+  investigation needs a record that was never stored.
+
+flagged_example:
+  language: python
+  filename: accounts/audit.py
+  expect_line: 11
+  code: |
+    """Write audit events for sign-ins."""
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+
+    def record_login(db, user_id, ip_address):
+        try:
+            db.insert("audit_log", {"user": user_id, "ip": ip_address, "event": "login"})
+        except Exception:
+            pass
+
+not_flagged_example:
+  language: python
+  filename: accounts/audit.py
+  code: |
+    """Write audit events for sign-ins."""
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+
+    def record_login(db, user_id, ip_address):
+        try:
+            db.insert("audit_log", {"user": user_id, "ip": ip_address, "event": "login"})
+        except ConnectionError:
+            pass
+  why: >-
+    The handler is still empty, but it names one specific error. Skylos
+    treats a narrow exception type with a `pass` or placeholder body as a
+    deliberate fallback: the author chose which failure to ignore. Only
+    `Exception`, `BaseException` and a bare `except:` count as broad.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/profile/save.ts
+      expect_line: 7
+      code: |
+        import { audit } from "./audit";
+        import { db } from "../db";
+
+        export async function saveProfile(userId: string, profile: object): Promise<void> {
+          try {
+            await audit.record("profile.update", userId);
+          } catch (err) {
+          }
+          await db.profiles.update(userId, profile);
+        }
+    not_flagged:
+      language: typescript
+      filename: src/profile/save.ts
+      code: |
+        import { audit } from "./audit";
+        import { db } from "../db";
+
+        export async function saveProfile(userId: string, profile: object): Promise<void> {
+          try {
+            await audit.record("profile.update", userId);
+          } catch {
+            // best effort: the audit service may be down
+          }
+          await db.profiles.update(userId, profile);
+        }
+      why: >-
+        The comment says why the error is ignored. Skylos reads comments in
+        an empty `catch` and stays quiet when one documents the choice, with
+        words such as "best effort", "expected", "fallback", "optional" or
+        "ignore".
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`. In Python it visits every `except` clause and
+    every `with` statement.
+  - >-
+    A Python handler is reported when its body is trivial: only `pass`,
+    `continue`, `...`, a bare string, or a `return` of `None`, `""` or an
+    empty `[]`, `{}`, `()`, `set()`, `list()`, `dict()` or `tuple()`. Any
+    other statement, such as a call or an assignment, means the handler does
+    something and is not reported.
+  - >-
+    Skips handlers that name only specific exception types (anything other
+    than `Exception` or `BaseException`), and handlers for
+    `KeyboardInterrupt` or `SystemExit`. A handler that logs through a name
+    `logger`, `logging` or `log`, or that raises, is never reported.
+  - >-
+    Skips a broad handler that returns a placeholder; SKY-L030 reports that
+    case. A bare `except:` that returns a placeholder is reported here as
+    HIGH; other trivial handlers are MEDIUM.
+  - >-
+    Reports `with contextlib.suppress(Exception)` or `suppress(BaseException)`
+    as MEDIUM on the `with` line.
+  - >-
+    Skips handlers and `suppress` blocks inside a `finally` whose body only
+    deletes a temporary path (`os.remove`, `os.unlink`, `shutil.rmtree`,
+    `Path.unlink` and similar), unless they also swallow `BaseException` or
+    a bare `except:`.
+  - >-
+    In TypeScript and JavaScript files it reports a `catch` block that holds
+    no statements (comments do not count) as MEDIUM on the `catch` line. It
+    skips test, Cypress, e2e, fixture, mock and Storybook files, generated
+    files, a `catch` whose parameter starts with `_`, a `try` that is
+    followed at once by `return` or `throw`, and a block whose comment
+    documents the choice, unless the comment says TODO, FIXME or "do not
+    ignore".
+
+source_refs:
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "class EmptyErrorHandlerRule"
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "def _handler_body_is_trivial("
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "def _handler_is_narrow_trivial_fallback("
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _empty_catch_findings("
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _documents_intentional_ignore("
+  - path: test/test_vibe_rules.py
+    symbol: "class TestEmptyErrorHandlerSafeCases"
+  - path: test/test_typescript_quality_signals.py
+    symbol: "def test_l007_skips_handled_or_documented_catches"
+
+fix:
+  explanation: >-
+    Record the failure. Logging with the traceback keeps the sign-in working
+    and leaves evidence that the audit write was lost. If the caller must
+    know, re-raise instead.
+  filename: accounts/audit.py
+  code: |
+    """Write audit events for sign-ins."""
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+
+    def record_login(db, user_id, ip_address):
+        try:
+            db.insert("audit_log", {"user": user_id, "ip": ip_address, "event": "login"})
+        except Exception:
+            logger.exception("could not write the login audit event for %s", user_id)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A broad handler that really should ignore every error, such as a
+      best-effort metrics call, is reported. Python comments are not read,
+      so a comment that explains the choice does not help there; use the
+      marker below.
+    - >-
+      It misses `except ValueError: pass` and other narrow empty handlers,
+      even when they hide a real problem.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `except` line (in TypeScript and JavaScript,
+        `// skylos: ignore[SKY-L007]` on the `catch` line).
+      language: python
+      code: |
+        except Exception:  # skylos: ignore[SKY-L007] metrics are best effort
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L007"]` turns the rule off for the
+        project.
+
+related: [SKY-L002, SKY-L030, SKY-L039, SKY-L004]

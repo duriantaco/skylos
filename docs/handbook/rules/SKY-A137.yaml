@@ -1,0 +1,305 @@
+id: SKY-A137
+title: New code only tests call
+family: ai-defects
+severity: LOW
+languages: [Python, TypeScript/JavaScript (symbols and whole files), Java, Kotlin, Go (needs the skylos-go engine), PHP, Rust, and the other languages the dead-code engine reads]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` runs this rule, in its `branch_orphans` check, which
+    advises by default. It stays advice even with `branch_orphans =
+    "block"`, unless SKY-A137 is added to `branch_orphans_block_rules` in
+    the base commit's `pyproject.toml`.
+run_with: >-
+  `skylos done` after a change (default base `HEAD`, so uncommitted edits),
+  or `skylos done --base origin/main` for a pull request
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule; the handbook build checks examples
+    with `skylos .`, which never reports it. All four examples were run by
+    hand with `skylos done --no-tests`.
+
+what_it_is: >-
+  New code only tests call is a function, method, class or JavaScript file
+  the change added whose only callers are test files. The change added the
+  code and a test for it, but no production code uses it.
+
+why_it_matters: >-
+  A green test for code nothing runs proves nothing about the feature. It
+  is a common sign that an agent built and tested a helper but never wired
+  it into the code path the task was about.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: app/orders.py
+  expect_line: 8
+  base_files:
+    - filename: app/orders.py
+      code: |
+        """Order totals for the checkout service."""
+
+
+        def order_total(items):
+            return sum(item["cents"] * item["qty"] for item in items)
+    - filename: app/cli.py
+      code: |
+        from app.orders import order_total
+
+        if __name__ == "__main__":
+            print(order_total([{"cents": 1250, "qty": 2}]))
+    - filename: tests/test_orders.py
+      code: |
+        from app.orders import order_total
+
+
+        def test_order_total_multiplies_quantity():
+            assert order_total([{"cents": 1250, "qty": 2}]) == 2500
+  files:
+    - filename: app/orders.py
+      code: |
+        """Order totals for the checkout service."""
+
+
+        def order_total(items):
+            return sum(item["cents"] * item["qty"] for item in items)
+
+
+        def apply_coupon(total_cents, percent_off):
+            return round(total_cents * (100 - percent_off) / 100)
+    - filename: tests/test_orders.py
+      code: |
+        from app.orders import apply_coupon, order_total
+
+
+        def test_order_total_multiplies_quantity():
+            assert order_total([{"cents": 1250, "qty": 2}]) == 2500
+
+
+        def test_coupon_takes_percent_off():
+            assert apply_coupon(2500, 10) == 2250
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: app/orders.py
+      code: |
+        """Order totals for the checkout service."""
+
+
+        def order_total(items):
+            return sum(item["cents"] * item["qty"] for item in items)
+    - filename: app/cli.py
+      code: |
+        from app.orders import order_total
+
+        if __name__ == "__main__":
+            print(order_total([{"cents": 1250, "qty": 2}]))
+    - filename: tests/test_orders.py
+      code: |
+        from app.orders import order_total
+
+
+        def test_order_total_multiplies_quantity():
+            assert order_total([{"cents": 1250, "qty": 2}]) == 2500
+  files:
+    - filename: app/orders.py
+      code: |
+        """Order totals for the checkout service."""
+
+
+        def order_total(items, percent_off=0):
+            total = sum(item["cents"] * item["qty"] for item in items)
+            return apply_coupon(total, percent_off)
+
+
+        def apply_coupon(total_cents, percent_off):
+            return round(total_cents * (100 - percent_off) / 100)
+    - filename: tests/test_orders.py
+      code: |
+        from app.orders import apply_coupon, order_total
+
+
+        def test_order_total_multiplies_quantity():
+            assert order_total([{"cents": 1250, "qty": 2}]) == 2500
+
+
+        def test_coupon_takes_percent_off():
+            assert apply_coupon(2500, 10) == 2250
+  why: >-
+    The new `apply_coupon` and its test are the same, but `order_total`, which
+    the entry point runs, now calls it. With one production caller the new
+    code is wired in.
+
+more_examples:
+  - flagged:
+      language: typescript
+      setup: git_diff
+      expect_file: src/orders.ts
+      expect_line: 10
+      base_files:
+        - filename: package.json
+          language: json
+          code: |
+            {"name": "shop", "type": "module", "main": "src/index.ts"}
+        - filename: src/orders.ts
+          code: |
+            export interface Item {
+              cents: number;
+              qty: number;
+            }
+
+            export function orderTotal(items: Item[]): number {
+              return items.reduce((sum, item) => sum + item.cents * item.qty, 0);
+            }
+        - filename: src/index.ts
+          code: |
+            import { orderTotal } from "./orders.js";
+
+            console.log(orderTotal([{ cents: 1250, qty: 2 }]));
+      files:
+        - filename: src/orders.ts
+          code: |
+            export interface Item {
+              cents: number;
+              qty: number;
+            }
+
+            export function orderTotal(items: Item[]): number {
+              return items.reduce((sum, item) => sum + item.cents * item.qty, 0);
+            }
+
+            export function applyCoupon(total: number, percentOff: number): number {
+              return Math.round((total * (100 - percentOff)) / 100);
+            }
+        - filename: src/orders.test.ts
+          code: |
+            import { expect, test } from "vitest";
+            import { applyCoupon } from "./orders.js";
+
+            test("takes the percentage off", () => {
+              expect(applyCoupon(2500, 10)).toBe(2250);
+            });
+    not_flagged:
+      language: typescript
+      setup: git_diff
+      base_files:
+        - filename: package.json
+          language: json
+          code: |
+            {"name": "shop", "type": "module", "main": "src/index.ts"}
+        - filename: src/orders.ts
+          code: |
+            export interface Item {
+              cents: number;
+              qty: number;
+            }
+
+            export function orderTotal(items: Item[]): number {
+              return items.reduce((sum, item) => sum + item.cents * item.qty, 0);
+            }
+        - filename: src/index.ts
+          code: |
+            import { orderTotal } from "./orders.js";
+
+            console.log(orderTotal([{ cents: 1250, qty: 2 }]));
+      files:
+        - filename: src/orders.ts
+          code: |
+            export interface Item {
+              cents: number;
+              qty: number;
+            }
+
+            export function orderTotal(items: Item[], percentOff = 0): number {
+              const total = items.reduce((sum, i) => sum + i.cents * i.qty, 0);
+              return applyCoupon(total, percentOff);
+            }
+
+            export function applyCoupon(total: number, percentOff: number): number {
+              return Math.round((total * (100 - percentOff)) / 100);
+            }
+        - filename: src/orders.test.ts
+          code: |
+            import { expect, test } from "vitest";
+            import { applyCoupon } from "./orders.js";
+
+            test("takes the percentage off", () => {
+              expect(applyCoupon(2500, 10)).toBe(2250);
+            });
+      why: >-
+        `orderTotal` now calls `applyCoupon`, so the test is not its only
+        caller.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done` when the change touches production code. Copies
+    the base commit and the working tree (or pull request head) into private
+    temporary folders, removes test files from both, and runs the regular
+    dead-code analysis on each, with a confidence of 75 or more. Because
+    tests are removed, a symbol only tests call counts as unused.
+  - >-
+    A function, method or class the change added (its name on no removed
+    line, most of its body new) that is unused in that production view is a
+    candidate, like SKY-A136. Candidates the analyzer is unsure about, ones
+    named in a template, config file or unparsed file, and ones under a
+    registering decorator are not judged; the rest go through the grep
+    check `skylos .` uses.
+  - >-
+    A survivor whose name a test file references (a JS or TS file a test
+    imports) is reported as SKY-A137, and the message names that test.
+    Test files are `tests/` and `__tests__/` folders, `test_*.py`,
+    `conftest.py`, `*.test.*` and `*.spec.*` files, `*_test.go` and
+    `src/test/`.
+
+source_refs:
+  - path: skylos/done/orphans.py
+    symbol: "def find_branch_orphans("
+  - path: skylos/done/orphans.py
+    symbol: "def _strip_tests("
+  - path: skylos/done/orphans.py
+    symbol: "def describe("
+    note: an unused new symbol a test references becomes SKY-A137.
+  - path: skylos/done/orphans.py
+    symbol: "def _test_reference("
+  - path: skylos/done/orphans.py
+    symbol: "def _new_symbol_message("
+  - path: skylos/done/checks.py
+    symbol: "def check_branch_orphans("
+  - path: skylos/done/config.py
+    symbol: "DEFAULT_ORPHANS_BLOCK_RULES ="
+
+fix:
+  explanation: >-
+    Call the new code from the production path the task is about, and test
+    that path too. If the code is meant for a later change, move it and its
+    test to that change.
+  language: python
+  code: |
+    def order_total(items, percent_off=0):
+        total = sum(item["cents"] * item["qty"] for item in items)
+        return apply_coupon(total, percent_off)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A new public library function that other packages will call is
+      reported while only its own tests use it.
+    - >-
+      Which tests "call" the code is decided by name. A test that only
+      imports the name counts, and in JavaScript and TypeScript tests the
+      name on any non-comment line counts, even inside a string. Such a
+      symbol is reported as SKY-A137 rather than SKY-A136.
+  suppress:
+    - text: >-
+        `skylos done` does not read `# skylos: ignore` comments for this
+        rule. It is advice by default; to turn the whole check off, set its
+        mode in the base commit's `pyproject.toml`.
+      language: toml
+      code: |
+        [tool.skylos.done.checks]
+        branch_orphans = "off"
+
+related: [SKY-A135, SKY-A136, SKY-A120, SKY-U001]

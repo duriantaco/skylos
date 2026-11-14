@@ -1,0 +1,251 @@
+id: SKY-D373
+title: OIDC publish job without an environment
+family: ci-cd
+severity: HIGH
+languages: [GitHub Actions workflows, GitLab CI]
+gate:
+  full: listed
+  diff: counted
+  note: >-
+    A diff scan counts a finding whose rule, file and job name are not
+    among the merge base's findings. A baseline scan counts it like a diff
+    scan when the baseline's `rule_coverage` lists it.
+
+what_it_is: >-
+  Trusted publishing lets a CI job publish to PyPI or npm with a
+  short-lived OIDC token instead of a stored password. SKY-D373 reports a
+  job that can mint such a token (`id-token: write`) and publishes, but
+  does not run in a named deployment environment, so the registry cannot
+  insist on one.
+
+why_it_matters: >-
+  Without an environment, every branch and tag that can run the workflow
+  gets the same token. Someone who can push a branch, or start the
+  workflow, can publish a release; the Red Hat npm and TanStack incidents
+  in 2026 worked this way. An environment with required reviewers or
+  branch rules is the gate the registry can check.
+
+flagged_example:
+  language: yaml
+  filename: .github/workflows/publish.yml
+  expect_line: 8
+  code: |
+    name: Publish to PyPI
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        runs-on: ubuntu-latest
+        permissions:
+          id-token: write
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+            with:
+              python-version: "3.12"
+          - run: python -m pip install build==1.2.2
+          - run: python -m build
+          - uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc
+
+not_flagged_example:
+  language: yaml
+  filename: .github/workflows/publish.yml
+  code: |
+    name: Publish to PyPI
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        runs-on: ubuntu-latest
+        environment:
+          name: pypi
+          url: https://pypi.org/p/acme-sdk
+        permissions:
+          id-token: write
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+            with:
+              python-version: "3.12"
+          - run: python -m pip install build==1.2.2
+          - run: python -m build
+          - uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc
+  why: >-
+    The same job still mints an OIDC token and publishes, but it runs in the
+    fixed environment `pypi`. The PyPI trusted publisher can name that
+    environment, and the environment's protection rules decide who may
+    release.
+
+more_examples:
+  - flagged:
+      language: yaml
+      filename: .gitlab-ci.yml
+      expect_line: 3
+      code: |
+        stages: [publish]
+
+        publish-pypi:
+          stage: publish
+          image: python:3.12-slim
+          id_tokens:
+            PYPI_ID_TOKEN:
+              aud: pypi
+          rules:
+            - if: $CI_COMMIT_TAG
+          script:
+            - python -m pip install build==1.2.2 twine==6.1.0
+            - python -m build
+            - twine upload dist/*
+    not_flagged:
+      language: yaml
+      filename: .gitlab-ci.yml
+      code: |
+        stages: [publish]
+
+        publish-pypi:
+          stage: publish
+          image: python:3.12-slim
+          environment: pypi
+          id_tokens:
+            PYPI_ID_TOKEN:
+              aud: pypi
+          rules:
+            - if: $CI_COMMIT_TAG
+          script:
+            - python -m pip install build==1.2.2 twine==6.1.0
+            - python -m build
+            - twine upload dist/*
+      why: >-
+        The job runs in the GitLab environment `pypi`, which the PyPI trusted
+        publisher for GitLab can require.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). The `ca9` library reads every `*.yml`
+    and `*.yaml` file directly in `.github/workflows`, the local composite
+    actions they call, and `.gitlab-ci.yml` with its local includes.
+  - >-
+    Picks jobs that get an OIDC token: `id-token: write` in the job's
+    `permissions`, or in the workflow's when the job sets none, or
+    `write-all`; in GitLab, a job with `id_tokens:` (also from `default:`).
+  - >-
+    Keeps those that publish: a publish command (`twine upload`, `npm
+    publish`, `uv publish` and others), `pypa/gh-action-pypi-publish` or
+    `js-devtools/npm-publish`, a publish credential, or a script that asks
+    for an OIDC token and calls `registry.npmjs.org` or `upload.pypi.org`.
+  - >-
+    Skips the job when it names a fixed environment (`environment: pypi` or
+    `environment: {name: pypi}`). A name built from an expression (`${{ …
+    }}`, or a `$VARIABLE` in GitLab) is reported, because whoever starts the
+    run chooses it. The environment's reviewers and branch rules are
+    server settings and are not checked.
+  - >-
+    Reports one HIGH finding per job, on the job's name.
+
+source_refs:
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "\"oidc_publish_without_environment\": ("
+    note: >-
+      ca9 `audit_workflows` decides the rule (`ca9/ci/audit.py`
+      `_oidc_without_environment`); this page was checked against ca9
+      0.7.0.
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "def scan_agent_publish("
+  - path: skylos/core/gatekeeper.py
+    symbol: "FULL_SCAN_REPORT_ONLY_RULES = frozenset("
+
+fix:
+  explanation: >-
+    Run the publish job in a named environment, give that environment
+    required reviewers or deployment-branch rules in the repository
+    settings, and enter the same environment name in the PyPI or npm
+    trusted publisher, so tokens minted outside it are refused.
+  filename: .github/workflows/publish.yml
+  code: |
+    name: Publish to PyPI
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      publish:
+        runs-on: ubuntu-latest
+        environment: pypi
+        permissions:
+          id-token: write
+        steps:
+          - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+            with:
+              persist-credentials: false
+          - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+            with:
+              python-version: "3.12"
+          - run: python -m pip install build==1.2.2
+          - run: python -m build
+          - uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Any fixed environment name clears the finding, even one that has no
+      reviewers or branch rules configured, so an unprotected environment is
+      missed.
+    - >-
+      A job that holds `id-token: write` for something else, such as
+      signing with Sigstore, and publishes with a stored token is reported
+      too.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: yaml
+          filename: .github/workflows/publish.yml
+          code: |
+            name: Publish to PyPI
+            on:
+              push:
+                tags: ["v*"]
+            permissions:
+              contents: read
+            jobs:
+              publish:  # skylos: ignore[SKY-D373] handbook check
+                runs-on: ubuntu-latest
+                permissions:
+                  id-token: write
+                steps:
+                  - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+                    with:
+                      persist-credentials: false
+                  - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+                    with:
+                      python-version: "3.12"
+                  - run: python -m pip install build==1.2.2
+                  - run: python -m build
+                  - uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc
+      text: >-
+        Skylos reads no inline marker for this rule; a `# skylos: ignore`
+        comment on the job does not hide it.
+    - check: baseline
+      text: >-
+        Accept a reviewed job with a baseline: `skylos baseline .`, then
+        `--baseline`. The entry matches the rule, file and job name, not the
+        line. In pull-request CI (`SKYLOS_POLICY_BASE`), the entry must also
+        be in the base commit's `.skylos/baseline.json`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D373"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D364, SKY-D374, SKY-D371]

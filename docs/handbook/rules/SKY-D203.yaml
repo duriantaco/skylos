@@ -1,0 +1,189 @@
+id: SKY-D203
+title: OS command run through a shell
+family: security
+severity: CRITICAL
+severity_note: >-
+  Python `os.system()` and `os.popen()` are CRITICAL, or LOW when the
+  command is written directly as fixed text with no `$` or backtick
+  expansion and no risky command in it. Java and Kotlin `Runtime.exec()`
+  and PHP command functions are HIGH, or LOW for a fixed command. LOW
+  findings are hidden from the default list.
+languages: [Python, Java, Kotlin, PHP]
+gate:
+  full: critical_blocks
+  note: >-
+    LOW findings for fixed commands are hidden from the default list but
+    still counted.
+cwe: [CWE-78]
+
+what_it_is: >-
+  `os.system()` and `os.popen()` hand one string to the system shell, which
+  splits it into words and also obeys `;`, `|`, `$( )` and other shell
+  syntax. SKY-D203 reports these calls, and their equivalents in Java,
+  Kotlin and PHP, so that each one is reviewed.
+
+why_it_matters: >-
+  If any part of the string comes from a file name, form field or API
+  value, a name such as `a.png; rm -rf ~` runs a second command. Even when
+  today's input is safe, a shell string is easy to break with one later
+  change.
+
+flagged_example:
+  language: python
+  filename: app/thumbs.py
+  expect_line: 5
+  code: |
+    import os
+
+
+    def make_thumbnail(upload_path: str) -> None:
+        os.system(f"convert {upload_path} -resize 200x200 thumbs/out.png")
+
+not_flagged_example:
+  language: python
+  filename: app/thumbs.py
+  code: |
+    import subprocess
+
+
+    def make_thumbnail(upload_path: str) -> None:
+        subprocess.run(
+            ["convert", upload_path, "-resize", "200x200", "thumbs/out.png"],
+            check=True,
+        )
+  why: >-
+    The command is a list and no shell is involved: `upload_path` reaches
+    `convert` as one argument, whatever characters it contains. Skylos only
+    reports `subprocess` calls that start a shell (that is SKY-D209).
+
+more_examples:
+  - flagged:
+      language: java
+      filename: src/main/java/com/example/media/Thumbnails.java
+      expect_line: 8
+      code: |
+        package com.example.media;
+
+        import java.io.IOException;
+
+        public class Thumbnails {
+            public void make(String uploadPath) throws IOException, InterruptedException {
+                String command = "convert " + uploadPath + " out.png";
+                Process process = Runtime.getRuntime().exec(command);
+                process.waitFor();
+            }
+        }
+    not_flagged:
+      language: java
+      filename: src/main/java/com/example/media/Thumbnails.java
+      code: |
+        package com.example.media;
+
+        import java.io.IOException;
+
+        public class Thumbnails {
+            public void make(String uploadPath) throws IOException, InterruptedException {
+                ProcessBuilder builder = new ProcessBuilder("convert", uploadPath, "out.png");
+                builder.start().waitFor();
+            }
+        }
+      why: >-
+        `ProcessBuilder` gets the program and each argument separately, so
+        the path cannot add words or commands. Only `Runtime.exec()` is
+        reported under this rule.
+
+how_skylos_decides:
+  - >-
+    Python: resolves call names through imports and assignments (`from os
+    import system`, `run = os.system`) and matches `os.system` and
+    `os.popen`.
+  - >-
+    Keeps CRITICAL when the command is built (f-string, `+`, `%`), is a
+    variable or parameter, contains `$` or a backtick, or is a fixed command
+    that the shell-command guard rates as dangerous: it deletes broadly,
+    sends secrets out, pipes a download into a shell or reads credential
+    stores.
+  - >-
+    Lowers to LOW a command written directly as fixed text without any of
+    that, such as `os.system("clear")`. LOW findings are hidden from the
+    default list, stay in JSON output and are counted by the gate.
+  - >-
+    For `os.system()`, a variable that every path fills with fixed text is
+    also marked low-risk and hidden, but it keeps CRITICAL.
+  - >-
+    Java and Kotlin: reports `exec()` on `Runtime.getRuntime()` or a
+    `Runtime` variable as HIGH, or LOW when the only argument is a string
+    literal or an array of string literals.
+  - >-
+    PHP: `exec`, `system`, `shell_exec`, `passthru`, `popen`, `proc_open`,
+    backticks and `pcntl_exec` are HIGH when the command is not constant and
+    LOW when it is fixed (any inserted value a number or an
+    `escapeshellarg()` argument). Request data reaching the command is
+    reported as SKY-D212 instead.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: "DANGEROUS_CALLS = {"
+    note: "`os.system` and `os.popen` entries."
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _call_severity("
+    note: when a fixed command is lowered to LOW.
+  - path: skylos/rules/danger/calls.py
+    symbol: "def _has_shell_expansion("
+  - path: skylos/rules/danger/calls.py
+    symbol: "_DANGEROUS_COMMAND_RULES = frozenset("
+    note: fixed commands that keep CRITICAL.
+  - path: skylos/visitors/languages/java/danger.py
+    symbol: "def _exec_args_are_constant("
+  - path: skylos/visitors/languages/kotlin/security.py
+    symbol: "def _process_command("
+  - path: skylos/visitors/languages/php/danger.py
+    symbol: "def report_command("
+
+fix:
+  explanation: >-
+    Run the program directly with a list of arguments and no shell. If you
+    truly need shell features, quote every inserted value with
+    `shlex.quote()`.
+  filename: app/thumbs.py
+  code: |
+    import subprocess
+
+
+    def make_thumbnail(upload_path: str) -> None:
+        subprocess.run(
+            ["convert", upload_path, "-resize", "200x200", "thumbs/out.png"],
+            check=True,
+        )
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      The flagged example is also reported as SKY-D212 (command injection),
+      because function parameters count as untrusted. Both findings go away
+      with the fix.
+    - >-
+      `cmd = "clear"` followed by `os.system(cmd)` is hidden from the default
+      list as fixed text but is still CRITICAL, so it fails the gate on its
+      own. Writing `os.system("clear")` directly gives a LOW finding instead.
+    - >-
+      In PHP, a fixed command is still reported as LOW, even when it is
+      harmless.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed call on its own line. A bare `# noqa` does not hide
+        a HIGH or CRITICAL security finding.
+      language: python
+      code: |
+        os.system(command)  # skylos: ignore[SKY-D203] command is from MAINTENANCE_TASKS
+    - check: baseline
+      text: >-
+        Accept existing findings with `skylos baseline .`, then scan with
+        `--baseline`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D203"]` turns the rule off for the
+        whole project. It does not hide SKY-D212.
+
+related: [SKY-D212, SKY-D209, SKY-D235, SKY-D329, SKY-D200]

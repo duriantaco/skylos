@@ -1,0 +1,179 @@
+id: SKY-T101
+title: Missing parameter type annotations
+family: quality
+severity: LOW
+severity_note: >-
+  The catalog gives no severity. Every finding is reported LOW.
+languages: [Python]
+run_with: >-
+  `--quality`, when the project's mypy settings require annotations or
+  `typing_coverage_advice = true` is set under `[tool.skylos]`
+gate:
+  full: counted
+  opt_in: >-
+    a mypy policy that requires annotations for the file
+    (`disallow_untyped_defs`, `disallow_incomplete_defs` or `strict`), or
+    `typing_coverage_advice = true` under `[tool.skylos]`
+  note: >-
+    When it runs, it is listed and counted toward `max_quality`. A missing
+    return type on the same function (SKY-T102) is shown in the same
+    entry.
+
+what_it_is: >-
+  A type annotation states what a parameter accepts (`price: Decimal`). SKY-T101
+  reports a public Python function or method with parameters that have no
+  annotation, but only where the project has asked for annotations: when
+  its own mypy settings require them, or when annotation advice is turned
+  on.
+
+why_it_matters: >-
+  A type checker can only check what is annotated. `apply_discount("19.99",
+  10)` passes silently through an untyped function and fails at run time,
+  in a project whose mypy settings were meant to catch exactly that.
+
+flagged_example:
+  language: python
+  files:
+    - filename: app/pricing.py
+      code: |
+        """Price calculations for the checkout."""
+
+        from decimal import Decimal
+
+
+        def apply_discount(price, percent):
+            return price * (Decimal(100) - percent) / Decimal(100)
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.mypy]
+        files = ["app"]
+        disallow_untyped_defs = true
+  expect_file: app/pricing.py
+  expect_line: 6
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: app/pricing.py
+      code: |
+        """Price calculations for the checkout."""
+
+        from decimal import Decimal
+
+
+        def apply_discount(price: Decimal, percent: Decimal) -> Decimal:
+            return _round_cents(price * (Decimal(100) - percent) / Decimal(100))
+
+
+        def _round_cents(value):
+            return value.quantize(Decimal("0.01"))
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.mypy]
+        files = ["app"]
+        disallow_untyped_defs = true
+  why: >-
+    The public function is fully annotated. The untyped helper's name starts
+    with `_`, so it is private to the module and Skylos does not report it,
+    although mypy itself would.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, once per Python module. Test code is skipped, and
+    so are examples, benchmarks, a top-level `docs` folder and the root
+    `setup.py` unless the mypy policy covers them.
+  - >-
+    Looks at public functions: module-level functions and methods of
+    module-level classes whose names do not start with `_`, limited to the
+    names in `__all__` when the module has a literal one. `self`, `cls`
+    and pytest fixtures are left out, and a `# type:` comment counts as an
+    annotation.
+  - >-
+    Reads the project's mypy settings (`mypy.ini`, `.mypy.ini`,
+    `pyproject.toml`, `setup.cfg`, and mypy commands in pre-commit or tox
+    files). The file must be in the files mypy checks, given by `files` or
+    a command's targets. `disallow_untyped_defs` or `strict` requires
+    annotations on every public function; `disallow_incomplete_defs`
+    alone only on functions that are already partly annotated.
+  - >-
+    Without such a requirement it reports nothing, unless
+    `typing_coverage_advice = true` is set under `[tool.skylos]`; then it
+    reports functions that are explicitly part of an API, such as names in
+    a literal `__all__`.
+  - >-
+    Reports LOW on the `def` line, naming the untyped parameters.
+
+source_refs:
+  - path: skylos/rules/quality/practices.py
+    symbol: "class TypeAnnotationPracticeRule"
+  - path: skylos/rules/quality/practices.py
+    symbol: "def _iter_public_functions("
+  - path: skylos/analysis/typing_policy.py
+    symbol: "def annotation_policy("
+  - path: skylos/rules/quality/_annotation_contract.py
+    symbol: "class AnnotationContractEvidence"
+    note: the API evidence for typing_coverage_advice.
+  - path: skylos/config.py
+    symbol: '"typing_coverage_advice": False,'
+
+fix:
+  explanation: >-
+    Annotate every parameter, and the return type, so mypy can check each
+    call.
+  filename: app/pricing.py
+  code: |
+    """Price calculations for the checkout."""
+
+    from decimal import Decimal
+
+
+    def apply_discount(price: Decimal, percent: Decimal) -> Decimal:
+        return price * (Decimal(100) - percent) / Decimal(100)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      It misses untyped private functions (names starting with `_`) and
+      nested functions, which mypy's `disallow_untyped_defs` still rejects.
+    - >-
+      A mypy setup Skylos cannot read, such as a command in a Makefile or a
+      CI script, does not count as a policy, so nothing is reported there.
+  suppress:
+    - check: inline
+      text: >-
+        On the `def` line (the reported line):
+      language: python
+      code: |
+        def apply_discount(price, percent):  # skylos: ignore[SKY-T101] typed in a stub file
+    - check:
+        kind: example
+        example:
+          language: python
+          files:
+            - filename: app/pricing.py
+              code: |
+                """Price calculations for the checkout."""
+
+                from decimal import Decimal
+
+
+                def apply_discount(price, percent):
+                    return price * (Decimal(100) - percent) / Decimal(100)
+            - filename: pyproject.toml
+              language: toml
+              code: |
+                [tool.mypy]
+                files = ["app"]
+                disallow_untyped_defs = true
+
+                [tool.skylos]
+                ignore = ["SKY-T101"]
+      text: >-
+        `ignore = ["SKY-T101"]` under `[tool.skylos]` turns the rule off for
+        the project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-T102, SKY-R101]

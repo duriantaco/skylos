@@ -1,0 +1,251 @@
+id: SKY-A117
+title: Comparison rigged to always pass
+family: ai-defects
+severity: HIGH
+severity_note: >-
+  Reported as advice, not as a blocking finding, for weaker signs: an
+  ordering method (`__lt__` and friends) that returns a constant, a
+  constant `__hash__`, a constant `__str__`, `__repr__`, `toString()` or
+  `toJSON()` whose text a test expects, a rigged method on a class whose
+  name says it matches anything (`AnyValue`, `Matcher`), and anything in
+  generated code or in a new file nothing imports or runs.
+languages: [Python, JavaScript, TypeScript]
+gate:
+  full: not_run
+  note: >-
+    Only `skylos done` runs this rule, in its `test_special_casing` check.
+    That check blocks by default: a blocking SKY-A117 finding fails the
+    done verdict, and advice findings are listed without failing it. Set
+    the check to "advise" or "off" under `[tool.skylos.done.checks]` in the
+    base commit's `pyproject.toml` to change that.
+run_with: >-
+  `skylos done` after a change (default base `HEAD`, so uncommitted edits),
+  or `skylos done --base origin/main` for a pull request
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos done` runs this rule; the handbook build checks examples
+    with `skylos .`, which never reports it. All four examples were run by
+    hand with `skylos done --no-tests`.
+
+what_it_is: >-
+  A rigged comparison is an equality method that cannot say "not equal":
+  an `__eq__` that always returns `True` or never looks at the other value,
+  an `__ne__` that is always `False`, a `__contains__` that is always
+  `True`, or a JavaScript `equals()`, `compareTo()`, `valueOf()` or
+  `[Symbol.toPrimitive]` that returns a constant. SKY-A117 reports such
+  methods on lines a change added.
+
+why_it_matters: >-
+  Every `assert result == expected` that touches the class passes, whatever
+  the result is. An agent can turn a red suite green this way without
+  fixing anything, and later bugs in the real values go unnoticed by every
+  test that compares them.
+
+flagged_example:
+  language: python
+  setup: git_diff
+  expect_file: billing/money.py
+  expect_line: 11
+  base_files:
+    - filename: billing/money.py
+      code: |
+        """Money amounts with a currency."""
+
+        from decimal import Decimal
+
+
+        class Money:
+            def __init__(self, amount, currency):
+                self.amount = Decimal(amount)
+                self.currency = currency
+
+            def __eq__(self, other):
+                return (
+                    self.amount == other.amount
+                    and self.currency == other.currency
+                )
+  files:
+    - filename: billing/money.py
+      code: |
+        """Money amounts with a currency."""
+
+        from decimal import Decimal
+
+
+        class Money:
+            def __init__(self, amount, currency):
+                self.amount = Decimal(amount)
+                self.currency = currency
+
+            def __eq__(self, other):
+                return True
+
+not_flagged_example:
+  language: python
+  setup: git_diff
+  base_files:
+    - filename: app/options.py
+      code: |
+        """Options a caller may pass to the export job."""
+
+        DEFAULT_FORMAT = "csv"
+  files:
+    - filename: app/options.py
+      code: |
+        """Options a caller may pass to the export job."""
+
+        DEFAULT_FORMAT = "csv"
+
+
+        class Unset:
+            """Marks an option the caller left out."""
+
+            __hash__ = object.__hash__
+
+            def __eq__(self, other):
+                return False
+
+
+        UNSET = Unset()
+  why: >-
+    This `__eq__` also returns a constant and ignores the other value, but
+    the constant is `False`: a sentinel that equals nothing can only make
+    comparisons fail, never pass. Skylos reports only methods that make
+    comparisons succeed.
+
+more_examples:
+  - flagged:
+      language: javascript
+      setup: git_diff
+      expect_file: src/money.js
+      expect_line: 7
+      base_files:
+        - filename: src/money.js
+          code: |
+            export class Money {
+              constructor(amount, currency) {
+                this.amount = amount;
+                this.currency = currency;
+              }
+
+              equals(other) {
+                return (
+                  this.amount === other.amount &&
+                  this.currency === other.currency
+                );
+              }
+            }
+      files:
+        - filename: src/money.js
+          code: |
+            export class Money {
+              constructor(amount, currency) {
+                this.amount = amount;
+                this.currency = currency;
+              }
+
+              equals(other) {
+                return true;
+              }
+            }
+    not_flagged:
+      language: javascript
+      setup: git_diff
+      base_files:
+        - filename: src/options.js
+          code: |
+            export const DEFAULT_FORMAT = "csv";
+      files:
+        - filename: src/options.js
+          code: |
+            export const DEFAULT_FORMAT = "csv";
+
+            export class Unset {
+              equals(other) {
+                return false;
+              }
+            }
+
+            export const UNSET = new Unset();
+      why: >-
+        An `equals()` that always returns `false` cannot make a test pass,
+        so this sentinel is left alone.
+
+how_skylos_decides:
+  - >-
+    Runs in `skylos done`, which compares the working tree (or a pull
+    request) with a base commit. Reads changed non-test Python, JavaScript
+    and TypeScript files and keeps only methods whose definition line or a
+    `return` line the change added. Test files and test helper folders are
+    skipped.
+  - >-
+    In Python, looks at methods in a class body, at lambdas assigned to a
+    dunder attribute, and at `setattr(cls, "__eq__", lambda ...)`. A method
+    that can return `NotImplemented` is left alone.
+  - >-
+    Blocks on `__eq__` that always returns `True` or never reads its second
+    parameter (unless it always returns `False`), `__ne__` that always
+    returns `False`, and `__contains__` that always returns `True`.
+  - >-
+    In JavaScript and TypeScript, blocks on `equals()`, `isEqual()`, `eq()`,
+    `equalTo()`, `sameAs()` or `isSame()` that always returns `true` or never
+    reads its argument, `compareTo()` or `compare()` that always returns 0,
+    and `valueOf()` or `[Symbol.toPrimitive]` that returns a literal without
+    using `this`.
+  - >-
+    Gives advice instead for a constant ordering method or `__hash__`, for a
+    constant string form a test expects, for classes named like a wildcard
+    (`Any`, `Anything`, `Matcher`, `Wildcard`, `DontCare`), and for code in
+    generated files or in new files nothing imports or runs. A method that
+    was already there at the base is not new.
+
+source_refs:
+  - path: skylos/done/answer_sites.py
+    symbol: "def _py_rigged("
+  - path: skylos/done/answer_sites.py
+    symbol: "def _py_constant_method("
+  - path: skylos/done/answer_sites.py
+    symbol: "def _js_rigged("
+  - path: skylos/done/answer_sites.py
+    symbol: "def _js_constant_method("
+  - path: skylos/done/answer_sites.py
+    symbol: "_WILDCARD_RE = re.compile("
+  - path: skylos/done/special_cases.py
+    symbol: "def find_special_cases("
+  - path: skylos/done/checks.py
+    symbol: "def check_test_special_casing("
+
+fix:
+  explanation: >-
+    Compare the fields that define equality, and return `NotImplemented`
+    for values of another type so Python can try the other side. Then fix
+    the code whose result the test was rejecting.
+  language: python
+  code: |
+    def __eq__(self, other):
+        if not isinstance(other, Money):
+            return NotImplemented
+        return (self.amount, self.currency) == (other.amount, other.currency)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate "matches anything" helper whose class name does not say
+      so (for example `Placeholder`) blocks; naming it `AnyValue` or
+      `Matcher` turns the finding into advice.
+    - >-
+      It misses a rigged `__eq__` that also returns `NotImplemented` on
+      some path, one built from a helper function, and one that reads the
+      other value but still always holds (`return other is not None`).
+  suppress:
+    - text: >-
+        `skylos done` does not read `# skylos: ignore` comments. To make the
+        whole check advisory, set its mode in the base commit's
+        `pyproject.toml`; settings in the change itself are ignored.
+      language: toml
+      code: |
+        [tool.skylos.done.checks]
+        test_special_casing = "advise"
+
+related: [SKY-A115, SKY-A116, SKY-A101]

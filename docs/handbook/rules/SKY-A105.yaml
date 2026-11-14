@@ -1,0 +1,248 @@
+id: SKY-A105
+title: Contract route guard missing
+family: ai-defects
+severity: HIGH
+languages: [Python (Flask, FastAPI and other decorator-routed frameworks)]
+gate:
+  full: not_run
+  opt_in: >-
+    A `.skylos/ai-contract.yml` contract that lists route folders under
+    `security.routes.paths` and guard decorators under
+    `security.routes.require_any_decorator`.
+  note: >-
+    No `skylos .` scan reports it. `skylos verify` reports it and exits 1
+    (unless `--no-fail`), and the agent edit hook, which runs the same
+    check, blocks the agent on it.
+run_with: >-
+  `skylos verify .` or `skylos verify --diff` with a contract in
+  `.skylos/ai-contract.yml`
+verify:
+  mode: manual
+  reason: >-
+    Only `skylos verify` (and the agent hook built on it) runs this rule,
+    and only with a contract file; the handbook check runs `skylos .`,
+    which never reports SKY-A105. Checked by hand with `skylos verify .
+    --no-dependency-hallucinations --no-behavior` on Skylos 5.6.0.
+
+what_it_is: >-
+  An AI contract (`.skylos/ai-contract.yml`) is a file where a team writes
+  down rules for code agents. Its `security.routes` section names the
+  folders that hold web routes and the decorators that guard them, such as
+  `login_required`. SKY-A105 reports a route in those folders that has none
+  of the named guards.
+
+why_it_matters: >-
+  A route without its login or permission decorator is open to anyone who
+  can reach the server. Agents often copy a neighbouring route and drop the
+  decorator, and the endpoint still works in every manual test.
+
+flagged_example:
+  language: python
+  expect_file: apps/api/invoices.py
+  expect_line: 16
+  files:
+    - filename: apps/api/invoices.py
+      code: |
+        from flask import Blueprint, jsonify
+        from flask_login import login_required
+
+        from apps.api.store import load_invoice, refund_invoice
+
+        bp = Blueprint("invoices", __name__)
+
+
+        @bp.get("/invoices/<int:invoice_id>")
+        @login_required
+        def show_invoice(invoice_id):
+            return jsonify(load_invoice(invoice_id))
+
+
+        @bp.post("/invoices/<int:invoice_id>/refund")
+        def refund(invoice_id):
+            return jsonify(refund_invoice(invoice_id))
+    - filename: .skylos/ai-contract.yml
+      language: yaml
+      code: |
+        version: 1
+
+        security:
+          routes:
+            paths:
+              - "apps/api/**"
+            require_any_decorator:
+              - login_required
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: apps/public/status.py
+      code: |
+        from flask import Blueprint, jsonify
+
+        bp = Blueprint("status", __name__)
+
+
+        @bp.get("/status")
+        def status():
+            return jsonify({"ok": True})
+    - filename: .skylos/ai-contract.yml
+      language: yaml
+      code: |
+        version: 1
+
+        security:
+          routes:
+            paths:
+              - "apps/api/**"
+            require_any_decorator:
+              - login_required
+  why: >-
+    The status route has no guard, but it lives in `apps/public/`, outside
+    the folders the contract names. The contract decides which routes must
+    be guarded; public health checks are left to it.
+
+more_examples:
+  - flagged:
+      language: python
+      expect_file: apps/api/refunds.py
+      expect_line: 9
+      files:
+        - filename: apps/api/refunds.py
+          code: |
+            from fastapi import APIRouter
+
+            from apps.api.store import refund_invoice
+
+            router = APIRouter()
+
+
+            @router.post("/invoices/{invoice_id}/refund")
+            def refund(invoice_id: int):
+                return refund_invoice(invoice_id)
+        - filename: .skylos/ai-contract.yml
+          language: yaml
+          code: |
+            version: 1
+
+            security:
+              routes:
+                paths:
+                  - "apps/api/**"
+                require_any_decorator:
+                  - login_required
+    not_flagged:
+      language: python
+      files:
+        - filename: apps/api/refunds.py
+          code: |
+            from fastapi import APIRouter, Depends
+
+            from apps.api.auth import login_required
+            from apps.api.store import refund_invoice
+
+            router = APIRouter()
+
+
+            @router.post(
+                "/invoices/{invoice_id}/refund",
+                dependencies=[Depends(login_required)],
+            )
+            def refund(invoice_id: int):
+                return refund_invoice(invoice_id)
+        - filename: .skylos/ai-contract.yml
+          language: yaml
+          code: |
+            version: 1
+
+            security:
+              routes:
+                paths:
+                  - "apps/api/**"
+                require_any_decorator:
+                  - login_required
+      why: >-
+        There is no guard decorator, but the route's `dependencies=` names
+        `login_required`. A guard passed through `dependencies` or
+        `dependency_overrides` of the route decorator counts.
+
+how_skylos_decides:
+  - >-
+    Runs only in `skylos verify` (and the agent edit hook that uses it), and
+    only when a contract is found: `--contract PATH`, or
+    `.skylos/ai-contract.yml` in the target folder or one of its parents.
+    The contract must list both `security.routes.paths` and
+    `security.routes.require_any_decorator`.
+  - >-
+    Reads the `.py` files that match the contract's paths (a folder name,
+    a glob, or `folder/**`), or only the changed or chosen file when
+    `skylos verify` checks one file. Files that cannot be read or parsed
+    are listed as unchecked.
+  - >-
+    Finds functions with a route decorator: a dotted call such as
+    `bp.get`, `app.post`, `router.put` or `router.websocket` (`route`,
+    `get`, `post`, `put`, `patch`, `delete`, `api_route`, `websocket`), or a
+    bare `route` or `api_route`.
+  - >-
+    A route passes when one of its decorators has a required name (with or
+    without `@`, call brackets or a module prefix), or when the route
+    decorator's `dependencies=` or `dependency_overrides=` mentions one.
+  - >-
+    Reports each route that has none, at its `def` line, naming the route
+    path and the decorators the contract accepts. It checks that a
+    decorator is present, not that it really authenticates.
+
+source_refs:
+  - path: skylos/contracts/routes.py
+    symbol: "def scan_contract_route_guardrails("
+  - path: skylos/contracts/routes.py
+    symbol: "def _scan_python_file("
+  - path: skylos/contracts/routes.py
+    symbol: "def _is_route_decorator("
+  - path: skylos/contracts/routes.py
+    symbol: "def _has_required_guard("
+  - path: skylos/contracts/routes.py
+    symbol: "def _path_matches_pattern("
+  - path: skylos/contracts/schema.py
+    symbol: "DEFAULT_CONTRACT_PATH = \".skylos/ai-contract.yml\""
+  - path: skylos/verify_change.py
+    symbol: "def _add_contract_route_findings("
+  - path: skylos/commands/hook_policy.py
+    symbol: "CONTRACT_RULES = frozenset({\"SKY-A105\"})"
+
+fix:
+  explanation: >-
+    Add the guard the contract asks for. If the route really must be
+    public, move it out of the guarded folders, or narrow the contract's
+    `paths`, in a change a person reviews.
+  language: python
+  code: |
+    @bp.post("/invoices/<int:invoice_id>/refund")
+    @login_required
+    def refund(invoice_id):
+        return jsonify(refund_invoice(invoice_id))
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A route guarded some other way, by a blueprint-wide `before_request`
+      check, middleware or a guard with a name the contract does not list,
+      is reported. List that guard's name in `require_any_decorator`.
+    - >-
+      Any decorated function whose decorator ends in `.get`, `.post` and so
+      on counts as a route, so a non-web helper decorated with, say,
+      `cache.get` inside a guarded folder is reported.
+    - >-
+      A decorator with a required name passes even if it does nothing; the
+      rule checks presence, not behaviour.
+  suppress:
+    - text: >-
+        Change the contract: narrow `security.routes.paths` so it leaves out
+        the folder, or add the guard you use to `require_any_decorator`.
+    - text: >-
+        `skylos verify --no-contract` skips every contract check for one run.
+    - text: >-
+        In Skylos 5.6.0 neither `# skylos: ignore[SKY-A105]` on the `def`
+        line nor `[tool.skylos] ignore = ["SKY-A105"]` silences it: the
+        route check runs after those filters.
+
+related: [SKY-A102, SKY-L023]

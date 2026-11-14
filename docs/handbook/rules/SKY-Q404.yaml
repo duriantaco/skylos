@@ -1,0 +1,142 @@
+id: SKY-Q404
+title: Thread shared state mutation
+family: quality
+severity: MEDIUM
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A function started as a thread (`threading.Thread(target=...)`) changes a
+  module-level list, dict or set, or a global, without taking a lock. Every
+  thread running that function changes the same object.
+
+why_it_matters: >-
+  `view_counts[page] = view_counts.get(page, 0) + 1` is a read followed by
+  a write. Two threads can read the same old value and both write it back
+  plus one, so counts go missing. The numbers are a little wrong, never
+  raise an error, and change from run to run.
+
+flagged_example:
+  language: python
+  filename: analytics/views.py
+  expect_line: 10
+  code: |
+    """Count page views from several worker threads."""
+
+    import threading
+
+    view_counts = {}
+
+
+    def count_views(events):
+        for event in events:
+            view_counts[event.page] = view_counts.get(event.page, 0) + 1
+
+
+    def run(batches):
+        workers = [threading.Thread(target=count_views, args=(b,)) for b in batches]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        return view_counts
+
+not_flagged_example:
+  language: python
+  filename: analytics/views.py
+  code: |
+    """Count page views from several worker threads."""
+
+    import threading
+
+    view_counts = {}
+    counts_lock = threading.Lock()
+
+
+    def count_views(events):
+        for event in events:
+            with counts_lock:
+                view_counts[event.page] = view_counts.get(event.page, 0) + 1
+
+
+    def run(batches):
+        workers = [threading.Thread(target=count_views, args=(b,)) for b in batches]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        return view_counts
+  why: >-
+    The thread target takes `counts_lock` around the update, so only one
+    thread changes the dictionary at a time.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Collects module-level names
+    assigned a list, dict or set literal, a constant, or a `dict()`,
+    `list()`, `set()` or `defaultdict()` call.
+  - >-
+    Finds functions defined at module level and passed by name as
+    `target=` to a call of `Thread` (or `something.Thread`) in the same
+    file.
+  - >-
+    Skips the function when it uses any lock: a `with` on a name containing
+    "lock", "mutex" or "semaphore", or `.acquire()`/`.release()` on one.
+  - >-
+    Reports a write to an item or attribute of a shared name, a call of
+    `append`, `extend`, `insert`, `pop`, `popitem`, `remove`, `clear`,
+    `setdefault`, `sort` or `update` on it, or an assignment to it after
+    `global`. One finding per name, MEDIUM, on the first change.
+
+source_refs:
+  - path: skylos/rules/quality/concurrency.py
+    symbol: "class ThreadSharedStateRule"
+  - path: skylos/rules/quality/concurrency.py
+    symbol: "def _mutated_shared_names("
+  - path: skylos/rules/quality/concurrency.py
+    symbol: "def _has_lock_use("
+
+fix:
+  explanation: >-
+    Avoid shared state: let each worker count its own batch and combine the
+    results after the threads finish. A lock, as in the example above, also
+    works.
+  filename: analytics/views.py
+  code: |
+    """Count page views from several worker threads."""
+
+    from collections import Counter
+    from concurrent.futures import ThreadPoolExecutor
+
+
+    def count_views(events):
+        return Counter(event.page for event in events)
+
+
+    def run(batches):
+        with ThreadPoolExecutor() as pool:
+            return sum(pool.map(count_views, batches), Counter())
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Operations that are atomic in CPython, such as one `list.append()`
+      per thread, are reported, although they do not lose updates.
+    - >-
+      It misses targets given as methods (`target=self.run`), lambdas or
+      functions from another module, workers started through a thread pool,
+      and functions that take a lock for a different object.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the reported line.
+      language: python
+      code: |
+        results.append(row)  # skylos: ignore[SKY-Q404] list.append is atomic here
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q404"]` turns the rule off for the
+        project.
+
+related: [SKY-Q403, SKY-L001]

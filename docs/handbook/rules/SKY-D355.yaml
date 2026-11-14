@@ -1,0 +1,116 @@
+id: SKY-D355
+title: Jinja environment without autoescape
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  Autoescaping makes a template engine turn `<`, `>`, `&` and quotes in
+  inserted values into harmless text. Jinja's own `Environment` has it off
+  unless you turn it on (Flask turns it on for you, plain Jinja does not).
+  SKY-D355 reports a `jinja2.Environment` created without `autoescape`, or
+  with `autoescape=False`.
+
+why_it_matters: >-
+  Every `{{ value }}` in such a template is pasted into the HTML as is. A
+  user who sets their display name to `<script>...</script>` runs JavaScript
+  in the browser of everyone who views their profile, which can steal
+  sessions or act as the viewer.
+
+flagged_example:
+  language: python
+  filename: app/render.py
+  expect_line: 3
+  code: |
+    from jinja2 import Environment, FileSystemLoader
+
+    env = Environment(loader=FileSystemLoader("templates"))
+
+
+    def render_profile(user):
+        return env.get_template("profile.html").render(user=user)
+
+not_flagged_example:
+  language: python
+  filename: app/render.py
+  code: |
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+    env = Environment(
+        loader=FileSystemLoader("templates"),
+        autoescape=select_autoescape(["html", "xml"]),
+    )
+
+
+    def render_profile(user):
+        return env.get_template("profile.html").render(user=user)
+  why: >-
+    `select_autoescape()` turns escaping on for templates whose names end in
+    `.html` or `.xml`. Skylos reports only a missing `autoescape` or a
+    literal `False` or `None`; any other value is left alone.
+
+how_skylos_decides:
+  - >-
+    Finds calls that resolve through imports to `jinja2.Environment` or
+    Jinja's `SandboxedEnvironment`. A local class with the same name does
+    not match.
+  - >-
+    Reads `autoescape=`, or the seventeenth positional argument, which is
+    where `Environment` takes it.
+  - >-
+    Reports HIGH when `autoescape` is missing and the call passes no
+    `**options` or `*args`, or when it is a literal `False` or `None`.
+  - >-
+    Leaves `True`, `select_autoescape(...)`, a function and any value it
+    cannot read as a literal alone.
+
+source_refs:
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "\"jinja2.sandbox.SandboxedEnvironment\","
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "Jinja environment disables HTML autoescaping;"
+
+fix:
+  explanation: >-
+    Pass `autoescape=select_autoescape()` (or `autoescape=True` when the
+    environment only renders HTML). Mark values that really are trusted
+    HTML with `Markup` instead of turning escaping off.
+  filename: app/render.py
+  code: |
+    from jinja2 import Environment, FileSystemLoader
+
+    env = Environment(loader=FileSystemLoader("templates"), autoescape=True)
+
+
+    def render_profile(user):
+        return env.get_template("profile.html").render(user=user)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      An environment that only renders plain-text emails, YAML or other
+      non-HTML output, where HTML escaping would be wrong, is reported, even
+      with an explicit `autoescape=False`.
+    - >-
+      Options passed as `Environment(**settings)` are not read, so such a
+      call is never reported, whatever `settings` holds.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why, for example for a plain-text
+        environment.
+      language: python
+      code: |
+        env = Environment(loader=loader)  # skylos: ignore[SKY-D355] plain-text emails only
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D355"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D227, SKY-D226, SKY-D228, SKY-D349]

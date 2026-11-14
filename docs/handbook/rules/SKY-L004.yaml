@@ -1,0 +1,207 @@
+id: SKY-L004
+title: Try block too broad
+family: logic
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. The detector reports HIGH for more than
+  three `if`/`for`/`while` statements inside the `try`, MEDIUM for a broad
+  nested `try`, and LOW for more than 15 lines of code.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    This is advice that the default report does not list ("measurement"),
+    and unlisted advice is not counted. `--all-advice`, or naming the rule
+    in `[tool.skylos] select` or `[tool.skylos.gate] rules`, lists and
+    counts it.
+
+what_it_is: >-
+  A `try` block should wrap the one operation that can fail in the way the
+  handler expects. When it wraps loops, branches and many statements, the
+  handler also catches errors from code it was never meant to cover.
+
+why_it_matters: >-
+  In the example, a `KeyError` from a malformed row or a bug in
+  `add_line` is not a database error, but anything the handler does catch
+  rolls back the whole import and is logged as "order import failed".
+  Wide catch scopes turn programming errors into misleading log lines.
+
+flagged_example:
+  language: python
+  filename: orders/importer.py
+  expect_line: 12
+  code: |
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+
+    class DatabaseError(Exception):
+        pass
+
+
+    def import_orders(rows, db):
+        imported = []
+        try:
+            for row in rows:
+                if not row.get("sku"):
+                    continue
+                if row["qty"] <= 0:
+                    continue
+                order = db.find_order(row["id"])
+                if order is None:
+                    order = db.create_order(row["id"])
+                order.add_line(row["sku"], row["qty"])
+                imported.append(order)
+            db.commit()
+        except DatabaseError:
+            db.rollback()
+            logger.exception("order import failed")
+        logger.info("imported %d orders", len(imported))
+        return imported
+
+not_flagged_example:
+  language: python
+  filename: orders/importer.py
+  code: |
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+
+    class DatabaseError(Exception):
+        pass
+
+
+    def import_orders(rows, db):
+        """Import rows as orders; roll back everything on a database error."""
+        try:
+            imported = []
+            for row in rows:
+                if not row.get("sku"):
+                    continue
+                if row["qty"] <= 0:
+                    continue
+                order = db.find_order(row["id"])
+                if order is None:
+                    order = db.create_order(row["id"])
+                order.add_line(row["sku"], row["qty"])
+                imported.append(order)
+            db.commit()
+            return imported
+        except DatabaseError:
+            db.rollback()
+            logger.exception("order import failed")
+            return []
+  why: >-
+    Here the `try` is the whole function after its docstring: it is the
+    function's error boundary, an all-or-nothing import. Skylos does not
+    measure the size or branching of such a `try`; that is the function's
+    own size and complexity, which other rules report.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files and visits every `try` statement.
+    A `try` whose handlers all re-raise the caught exception catches
+    nothing and is skipped, unless its `finally` leaves with `return`,
+    `break` or `continue`.
+  - >-
+    Treats a `try` as the function's error boundary when it is the last
+    statement after only a docstring, imports, nested definitions and guard
+    clauses, or when only literal or name assignments come before it and a
+    `return` of names or literals comes after it. For a boundary, the line
+    and branch checks below are skipped.
+  - >-
+    Reports HIGH when the `try` body holds more than three `if`, `for` or
+    `while` statements, counted through nested blocks but not inside nested
+    function bodies.
+  - >-
+    Reports LOW when the body has more than 15 lines of code and more than
+    15 operations. Blank lines, comments, string statements used as
+    comments and the bodies of nested functions and lambdas are not
+    counted, so one long call split over many lines does not trip it.
+  - >-
+    Reports MEDIUM when the body contains another `try` that catches
+    something and is itself broad (more than three branches, or more than
+    15 lines and operations). An inner `try` inside a loop (per-item error
+    handling) or one that only catches `ImportError` is not counted.
+  - >-
+    Every finding is on the `try` line. The rule is advice: the findings
+    are in JSON output, but the terminal list shows them only with
+    `--all-advice`.
+
+source_refs:
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "class TryBlockPatternsRule"
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "def _is_function_level_try("
+    note: the whole-function error boundary.
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "def _scan_protected_body("
+    note: branch counting and the nested-try test.
+  - path: skylos/reporting/advice_policy.py
+    symbol: "def optional_advice_reason("
+    note: why the finding is not listed by default.
+  - path: test/test_quality_rules.py
+    symbol: "# --- SKY-L004: Try Block Patterns ---"
+
+fix:
+  explanation: >-
+    Keep the row handling outside the `try` and wrap only `db.commit()`,
+    the call that raises `DatabaseError`. A bad row now fails loudly
+    instead of being reported as a database problem.
+  filename: orders/importer.py
+  code: |
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+
+    class DatabaseError(Exception):
+        pass
+
+
+    def import_orders(rows, db):
+        imported = []
+        for row in rows:
+            if not row.get("sku"):
+                continue
+            if row["qty"] <= 0:
+                continue
+            order = db.find_order(row["id"])
+            if order is None:
+                order = db.create_order(row["id"])
+            order.add_line(row["sku"], row["qty"])
+            imported.append(order)
+        try:
+            db.commit()
+        except DatabaseError:
+            db.rollback()
+            logger.exception("order import failed")
+            return []
+        logger.info("imported %d orders", len(imported))
+        return imported
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A transaction that must succeed or fail as a whole, with work after
+      the `try` (a log line, a metric), is not recognised as a boundary and
+      is reported. Moving that work into the `try` or a caller, or a
+      suppression, is the answer.
+    - >-
+      The thresholds (15 lines, three branches) are fixed; there is no
+      setting for them.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `try:` line.
+      language: python
+      code: |
+        try:  # skylos: ignore[SKY-L004] all-or-nothing import
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L004"]` turns the rule off for the
+        project.
+
+related: [SKY-L030, SKY-L007, SKY-Q301]

@@ -1,0 +1,118 @@
+id: SKY-L030
+title: Broad exception with trivial handler
+family: logic
+severity: HIGH
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  HIGH.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  `except Exception:` (or `BaseException`) whose only action is to return a
+  placeholder such as `None`, `{}` or `[]`. Every possible error, including
+  bugs in your own code, turns into an ordinary-looking empty result.
+
+why_it_matters: >-
+  The caller cannot tell "no data" from "something broke". In the example
+  below a typo in `fetch_flags` or an expired API token makes every feature
+  flag read as off, and the service keeps running in the wrong mode with
+  no log line to explain why.
+
+flagged_example:
+  language: python
+  filename: config/flags.py
+  expect_line: 7
+  code: |
+    """Feature flags from the config service."""
+
+
+    def load_feature_flags(client):
+        try:
+            return client.fetch_flags()
+        except Exception:
+            return {}
+
+not_flagged_example:
+  language: python
+  filename: config/flags.py
+  code: |
+    """Feature flags from the config service."""
+
+
+    def load_feature_flags(client):
+        try:
+            return client.fetch_flags()
+        except (ConnectionError, TimeoutError):
+            return {}
+  why: >-
+    The handler names the failures it expects: the config service being
+    unreachable or slow. Anything else, such as a `TypeError` from a bug,
+    still raises. SKY-L030 only reports `Exception` and `BaseException`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Looks at every `except` clause
+    that names `Exception` or `BaseException`, alone or in a tuple. A bare
+    `except:` is left to SKY-L002 and SKY-L007.
+  - >-
+    The body must be trivial and contain a `return`: only `pass`,
+    `continue`, `...`, bare strings and `return` of `None`, `""`, an empty
+    `[]`, `{}` or `()`, or `list()`, `dict()`, `set()` or `tuple()` with no
+    arguments.
+  - >-
+    Skips the handler when it logs through a name `logger`, `logging` or
+    `log`, or raises. A trivial handler without a `return` is SKY-L007's
+    case, not this rule's.
+  - >-
+    Reports HIGH on the `except` line.
+
+source_refs:
+  - path: skylos/rules/quality/logic_maintainability.py
+    symbol: "class BroadExceptionRule"
+  - path: skylos/rules/quality/logic_foundation.py
+    symbol: "def _return_value_is_trivial_placeholder("
+
+fix:
+  explanation: >-
+    Catch the failures you expect, and log them so an outage leaves a
+    trace. Let other errors raise.
+  filename: config/flags.py
+  code: |
+    """Feature flags from the config service."""
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+
+    def load_feature_flags(client):
+        try:
+            return client.fetch_flags()
+        except (ConnectionError, TimeoutError):
+            logger.warning("config service unavailable; all flags off")
+            return {}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate top-level fallback, such as an optional plugin hook that
+      must never break the caller, is reported.
+    - >-
+      It misses a broad handler that returns any other fixed value, such as
+      `return False`, `return 0` or `return DEFAULT_FLAGS`, which hides
+      errors just as well.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the `except` line.
+      language: python
+      code: |
+        except Exception:  # skylos: ignore[SKY-L030] plugin hooks must never fail
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-L030"]` turns the rule off for the
+        project.
+
+related: [SKY-L007, SKY-L002, SKY-L004, SKY-L039]

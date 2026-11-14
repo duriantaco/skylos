@@ -1,0 +1,209 @@
+id: SKY-D267
+title: LLM call or agent loop with no limits
+family: security
+severity: MEDIUM
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-770]
+
+what_it_is: >-
+  Every call to a hosted model costs money per token and can take minutes
+  to answer. SKY-D267 reports a model call with no cap on the length of
+  the answer or no timeout, a model call inside a loop that never ends, and
+  an agent executor with no limit on how many steps it may take.
+
+why_it_matters: >-
+  One user can send long requests in a loop and run up the bill, or keep
+  the server's workers waiting on slow answers until other users time out.
+  An agent with no step limit can call tools and the model over and over on
+  a single request.
+
+flagged_example:
+  language: python
+  filename: app/translate.py
+  expect_line: 12
+  code: |
+    from flask import Flask, request
+    from openai import OpenAI
+
+    app = Flask(__name__)
+    client = OpenAI()
+
+    SYSTEM_PROMPT = "Translate the user's text into French."
+
+
+    @app.post("/translate")
+    def translate():
+        reply = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": request.json["text"]},
+            ],
+        )
+        return {"french": reply.choices[0].message.content}
+
+not_flagged_example:
+  language: python
+  filename: app/search.py
+  code: |
+    from flask import Flask, request
+    from openai import OpenAI
+
+    app = Flask(__name__)
+    client = OpenAI(timeout=20, max_retries=2)
+
+
+    @app.post("/search/embed")
+    def embed_query():
+        texts = request.json["texts"][:16]
+        result = client.embeddings.create(model="text-embedding-3-small", input=texts)
+        return {"vectors": [item.embedding for item in result.data]}
+  why: >-
+    This call has no `max_tokens` either, but it is an embeddings call: the
+    answer is a fixed-size list of numbers, so no token cap is needed. The
+    timeout is set once on the client, and Skylos reads limits from the
+    client's constructor as well as from the call.
+
+more_examples:
+  - flagged:
+      language: python
+      filename: app/agent.py
+      expect_line: 6
+      code: |
+        from langchain.agents import AgentExecutor, create_tool_calling_agent
+
+        from app.tools import TOOLS, model, prompt
+
+        agent = create_tool_calling_agent(model, TOOLS, prompt)
+        executor = AgentExecutor(agent=agent, tools=TOOLS)
+    not_flagged:
+      language: python
+      filename: app/agent.py
+      code: |
+        from langchain.agents import AgentExecutor, create_tool_calling_agent
+
+        from app.tools import TOOLS, model, prompt
+
+        agent = create_tool_calling_agent(model, TOOLS, prompt)
+        executor = AgentExecutor(
+            agent=agent,
+            tools=TOOLS,
+            max_iterations=8,
+            max_execution_time=60,
+        )
+      why: >-
+        The executor stops after 8 steps or 60 seconds. Either
+        `max_iterations`, `max_iter` or `max_execution_time` is enough.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files that mention an LLM library or an
+    agent API.
+  - >-
+    Finds model calls: a call ending in `.chat.completions.create`,
+    `.responses.create`, `.messages.create`, `.embeddings.create`,
+    `.invoke`, `.invoke_model`, `.predict` or `.generate` on a client built
+    in the same file with `OpenAI()`, `Anthropic()`, `ChatOpenAI()` and
+    similar, or on a name called `openai`, `anthropic`, `llm`, `chain` and
+    so on; also `litellm.completion()`.
+  - >-
+    Lists what is missing. "No max token limit" when neither the call nor
+    the client constructor sets `max_tokens`, `max_completion_tokens`,
+    `max_output_tokens` or `maxOutputTokens` (embedding calls are exempt).
+    "No request timeout" when neither sets `timeout`, `request_timeout` or
+    `timeout_seconds`. A value of `None` or `False` counts as missing.
+    Settings passed as `**params` are read when `params` is a dictionary
+    literal in the same function; an unknown `**` spread is trusted.
+  - >-
+    Adds "call runs inside an obvious unbounded loop" for a call inside
+    `while True:` or a `for` over `itertools.count()`, `cycle()` or
+    `repeat()` without a count.
+  - >-
+    Reports `AgentExecutor(...)`, `AgentExecutor.from_agent_and_tools(...)`
+    and `initialize_agent(...)` without `max_iterations`, `max_iter` or
+    `max_execution_time`.
+  - >-
+    Each case is one MEDIUM finding on the line where the call starts.
+
+source_refs:
+  - path: skylos/rules/danger/danger_llm/consumption.py
+    symbol: "def _check_llm_call"
+  - path: skylos/rules/danger/danger_llm/consumption.py
+    symbol: "TOKEN_LIMIT_KEYWORDS = {"
+  - path: skylos/rules/danger/danger_llm/consumption.py
+    symbol: "TIMEOUT_KEYWORDS = {"
+  - path: skylos/rules/danger/danger_llm/consumption.py
+    symbol: "def _constructor_bounds"
+    note: limits set on the client count for every call on it.
+  - path: skylos/rules/danger/danger_llm/consumption.py
+    symbol: "def _check_agent_executor"
+  - path: skylos/rules/danger/danger_llm/consumption.py
+    symbol: "def _is_unbounded_for"
+  - path: test/test_llm_consumption.py
+    symbol: "def test_unreadable_unpacked_kwargs_make_no_missing_limit_claim"
+
+fix:
+  explanation: >-
+    Set a timeout on the client, cap the answer with `max_tokens` (or
+    `max_output_tokens` for the Responses API) and cut the input to a size
+    you are willing to pay for. Add per-user rate limits in front of the
+    route as well; Skylos does not check for those.
+  filename: app/translate.py
+  code: |
+    from flask import Flask, request
+    from openai import OpenAI
+
+    app = Flask(__name__)
+    client = OpenAI(timeout=20, max_retries=2)
+
+    SYSTEM_PROMPT = "Translate the user's text into French."
+    MAX_INPUT_CHARS = 4000
+
+
+    @app.post("/translate")
+    def translate():
+        text = request.json["text"][:MAX_INPUT_CHARS]
+        reply = client.chat.completions.create(
+            model="gpt-4o-mini",
+            max_tokens=1200,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": text},
+            ],
+        )
+        return {"french": reply.choices[0].message.content}
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A timeout set another way is not seen:
+      `OpenAI(http_client=httpx.Client(timeout=20))` still gives "no
+      request timeout". The
+      OpenAI and Anthropic SDKs also have default timeouts of their own,
+      which the rule does not count.
+    - >-
+      Missed: clients built by a factory in another module and calls through
+      `client.with_options(...)` (neither is recognised as a model call),
+      the size of the input, rate limits per user, `while` loops whose
+      condition may never become false, LangGraph agents
+      (`create_react_agent`, limited by `recursion_limit`), and code in
+      other languages.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line where the call starts.
+      language: python
+      code: |
+        reply = client.chat.completions.create(  # skylos: ignore[SKY-D267] limits in factory
+    - check: baseline
+      text: >-
+        `skylos baseline .`, then `--baseline`, accepts reviewed calls and
+        reports new ones.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D267"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D261, SKY-D264]

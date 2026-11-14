@@ -1,0 +1,146 @@
+id: SKY-Q407
+title: Discarded async Array.map result
+family: quality
+severity: HIGH
+languages: [TypeScript, JavaScript]
+gate:
+  full: counted
+
+what_it_is: >-
+  `ids.map(async (id) => ...)` used as a statement on its own. `map` with an
+  `async` callback returns an array of promises; when nothing keeps that
+  array, nothing waits for the work or sees its errors. Skylos reports it
+  on values it can prove are plain arrays.
+
+why_it_matters: >-
+  The function returns before the notifications are sent, so a caller that
+  reports "done" is wrong, a serverless handler may be frozen with the work
+  half finished, and a failed send becomes an unhandled rejection that can
+  stop a Node.js process.
+
+flagged_example:
+  language: typescript
+  filename: src/notify.ts
+  expect_line: 5
+  code: |
+    import { sendNotification } from "./push";
+
+    export async function notifyAll(userIds: Iterable<string>): Promise<void> {
+      const ids = Array.from(userIds);
+      ids.map(async (id) => {
+        await sendNotification(id);
+      });
+    }
+
+not_flagged_example:
+  language: typescript
+  filename: src/notify.ts
+  code: |
+    import { sendNotification } from "./push";
+
+    export async function notifyAll(userIds: Iterable<string>): Promise<void> {
+      const ids = Array.from(userIds);
+      const sends = ids.map(async (id) => {
+        await sendNotification(id);
+      });
+      await Promise.all(sends);
+    }
+  why: >-
+    The array of promises is kept in `sends` and awaited. Skylos only
+    reports a `map` result that is thrown away.
+
+more_examples:
+  - flagged:
+      language: javascript
+      filename: src/warm.js
+      expect_line: 5
+      code: |
+        import { cache } from "./cache.js";
+
+        export async function warmCaches(keys) {
+          const list = Array.from(keys);
+          list.map(async (key) => {
+            await cache.refresh(key);
+          });
+        }
+    not_flagged:
+      language: javascript
+      filename: src/warm.js
+      code: |
+        import { cache } from "./cache.js";
+
+        export async function warmCaches(keys) {
+          const list = Array.from(keys);
+          return Promise.all(list.map(async (key) => cache.refresh(key)));
+        }
+      why: >-
+        The promises are passed to `Promise.all` and returned, so the caller
+        waits for them and sees any failure.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`,
+    `.mjs` and `.cjs` files. Generated and minified files, and files that do
+    not parse, are skipped.
+  - >-
+    Finds `x.map(callback)` whose callback is `async`: an inline `async`
+    arrow or function, or a name bound once to one. Async generators do not
+    count.
+  - >-
+    The receiver must provably be a built-in array, as for SKY-Q406: an
+    array literal, a `const` bound to one, `new Array()`, `Array.from()`,
+    `Array.of()` or an array method chain on these, not changed by other
+    code before the call.
+  - >-
+    The result must be discarded: the call is a statement on its own (also
+    after `void`, inside `a, b` or a ternary or `&&` chain used as a
+    statement), only its `.length` is read, or it is chained only through
+    `.filter(Boolean)`. Assigning, returning or passing it on counts as
+    using it. `await ids.map(...)` does not: awaiting an array does not wait
+    for the promises inside it.
+  - >-
+    Reports HIGH on the line where the call starts.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _is_discarded_expression("
+  - path: skylos/visitors/languages/typescript/quality_signals.py
+    symbol: "def _is_proven_array_receiver("
+  - path: test/test_typescript_quality_signals.py
+    symbol: "def test_q407_skips_consumed_sync_or_unproven_map_results"
+
+fix:
+  explanation: >-
+    Await all the promises, or use `Promise.allSettled` when one failure
+    should not stop the others. To send one at a time, use a
+    `for (const id of ids)` loop with `await`.
+  filename: src/notify.ts
+  code: |
+    import { sendNotification } from "./push";
+
+    export async function notifyAll(userIds: Iterable<string>): Promise<void> {
+      const ids = Array.from(userIds);
+      await Promise.all(ids.map((id) => sendNotification(id)));
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate fire-and-forget, where each callback catches its own
+      errors and nobody needs to wait, is still reported.
+    - >-
+      It misses the same bug on receivers it cannot prove are arrays, such
+      as a parameter typed `string[]`.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line where the call starts.
+      language: typescript
+      code: |
+        ids.map(async (id) => { // skylos: ignore[SKY-Q407] errors handled inside
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q407"]` turns the rule off for the
+        project.
+
+related: [SKY-Q406, SKY-Q405, SKY-Q402]

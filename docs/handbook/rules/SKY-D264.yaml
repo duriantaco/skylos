@@ -1,0 +1,166 @@
+id: SKY-D264
+title: AI agent given a shell, code runner or other broad tool
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-250]
+
+what_it_is: >-
+  An AI agent is a model that can call tools on its own: functions your
+  code hands it, which it runs with your program's permissions. SKY-D264
+  reports an agent built with a tool that can do almost anything: a shell,
+  a Python interpreter, unrestricted file or HTTP access, or a tool that
+  wraps `os.system`, `subprocess`, `eval` or `shutil.rmtree`.
+
+why_it_matters: >-
+  The agent decides which commands to run from text it reads, and that
+  text can come from a log line, a web page or a ticket written by an
+  attacker. With a shell tool, one injected sentence can read secrets,
+  delete data or open a connection out of your network.
+
+flagged_example:
+  language: python
+  filename: ops/agent.py
+  expect_line: 7
+  code: |
+    from langchain_community.tools import ShellTool
+    from langchain_openai import ChatOpenAI
+    from langgraph.prebuilt import create_react_agent
+
+    model = ChatOpenAI(model="gpt-4o-mini", max_tokens=800, timeout=30)
+
+    ops_agent = create_react_agent(
+        model,
+        tools=[ShellTool()],
+        prompt="Help the on-call engineer read service logs.",
+    )
+
+not_flagged_example:
+  language: python
+  filename: research/agent.py
+  code: |
+    from langchain_community.agent_toolkits.load_tools import load_tools
+    from langchain_openai import ChatOpenAI
+    from langgraph.prebuilt import create_react_agent
+
+    model = ChatOpenAI(model="gpt-4o-mini", max_tokens=800, timeout=30)
+
+    research_agent = create_react_agent(
+        model,
+        tools=load_tools(["wikipedia", "arxiv"]),
+        prompt="Answer questions about papers and cite your sources.",
+    )
+  why: >-
+    `load_tools()` is the same call that hands out a terminal, but these
+    two tools only search public sites. Skylos reads the tool names given
+    to `load_tools()` and reports only `terminal`, `shell`, `python_repl`,
+    `python_repl_ast`, `file_management` and `requests_all`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files that mention an agent or tool API
+    (`create_react_agent`, `initialize_agent`, `AgentExecutor`, `crewai`,
+    `load_tools`, `StructuredTool`, `tools=` and similar).
+  - >-
+    Finds agent constructors: calls whose name ends in `create_react_agent`,
+    `create_openai_tools_agent`, `create_openai_functions_agent`,
+    `create_structured_chat_agent`, `initialize_agent`, `AgentExecutor`,
+    `.assistants.create` or simply `Agent` (CrewAI and similar).
+  - >-
+    Reads the `tools=`, `tool=`, `toolkit=` or `toolkits=` argument and the
+    positional arguments, following lists and variables assigned in the
+    same function or module.
+  - >-
+    Reports HIGH when a tool is `ShellTool()`, `PythonREPLTool()` or
+    `PythonAstREPLTool()`; a `load_tools()` call naming one of the broad
+    tools above; an OpenAI tool `{"type": "code_interpreter"}` or
+    `{"type": "computer_use_preview"}`; or a `Tool(...)` or
+    `StructuredTool.from_function(...)` whose function is `eval`, `exec`,
+    `compile`, `os.system`, `os.popen`, `os.execve`, `os.execvp`,
+    `shutil.rmtree` or a `subprocess` call.
+  - >-
+    The finding sits on the line where the agent is created.
+
+source_refs:
+  - path: skylos/rules/danger/danger_agent/tool_privilege.py
+    symbol: "class _AgentToolPrivilegeChecker"
+  - path: skylos/rules/danger/danger_agent/tool_privilege.py
+    symbol: "DANGEROUS_TOOL_CONSTRUCTORS = {"
+  - path: skylos/rules/danger/danger_agent/tool_privilege.py
+    symbol: "DANGEROUS_LOAD_TOOL_NAMES = {"
+  - path: skylos/rules/danger/danger_agent/tool_privilege.py
+    symbol: "DANGEROUS_FUNCTION_REFS = {"
+  - path: skylos/rules/danger/danger_agent/tool_privilege.py
+    symbol: "AGENT_CALL_SUFFIXES = ("
+  - path: skylos/rules/danger/danger.py
+    symbol: "_AGENT_TOOL_TOKENS = ("
+    note: the file must mention one of these names.
+  - path: test/test_agent_tool_privilege.py
+    symbol: "def test_safe_lookup_tool_registered_to_agent_is_not_d264"
+
+fix:
+  explanation: >-
+    Give the agent small tools that do one job with fixed inputs, here
+    reading one of two known log files. Anything that changes state should
+    go through a person's approval, and the process should run with only
+    the permissions those tools need.
+  filename: ops/agent.py
+  code: |
+    from pathlib import Path
+
+    from langchain_core.tools import tool
+    from langchain_openai import ChatOpenAI
+    from langgraph.prebuilt import create_react_agent
+
+    model = ChatOpenAI(model="gpt-4o-mini", max_tokens=800, timeout=30)
+    LOG_FILES = {
+        "api": Path("/var/log/shop/api.log"),
+        "worker": Path("/var/log/shop/worker.log"),
+    }
+
+
+    @tool
+    def tail_service_log(service: str) -> str:
+        """Return the last 200 lines of the api or worker log."""
+        log_file = LOG_FILES.get(service)
+        if log_file is None:
+            return "unknown service"
+        return "\n".join(log_file.read_text(encoding="utf-8").splitlines()[-200:])
+
+
+    ops_agent = create_react_agent(
+        model,
+        tools=[tail_service_log],
+        prompt="Help the on-call engineer read service logs.",
+    )
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A shell or code tool that runs inside a throwaway sandbox (a
+      container with no secrets and no network, or OpenAI's hosted code
+      interpreter) is still reported.
+    - >-
+      Missed: your own `@tool` function that calls `subprocess.run()` or
+      `os.remove()` inside its body, MCP servers handed to an agent, tools
+      built in another module, and agents in TypeScript or other languages.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line where the agent is created and say what
+        contains the tool.
+      language: python
+      code: |
+        ops_agent = create_react_agent(  # skylos: ignore[SKY-D264] runs in no-network sandbox
+    - check: baseline
+      text: >-
+        `skylos baseline .`, then `--baseline`, accepts reviewed agents and
+        reports new ones.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D264"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D261, SKY-D262, SKY-D267, SKY-D212]

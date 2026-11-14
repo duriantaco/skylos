@@ -1,0 +1,288 @@
+id: SKY-D252
+title: Cookie sent without the Secure or HttpOnly flag
+family: security
+severity: MEDIUM
+severity_note: >-
+  Python, TypeScript/JavaScript and Go findings are MEDIUM, as in the
+  catalog. Java findings are reported as HIGH.
+languages: [Python, TypeScript/JavaScript, Java, Go]
+gate:
+  full: counted
+  note: Java findings are HIGH, so they also count toward `max_high`.
+cwe: [CWE-614]
+
+what_it_is: >-
+  Two cookie flags protect a login cookie. `Secure` tells the browser to
+  send it only over HTTPS; `HttpOnly` hides it from page scripts. SKY-D252
+  reports cookies written with `Secure` turned off, and in TypeScript,
+  JavaScript and Go also cookies that do not set both flags.
+
+why_it_matters: >-
+  A session cookie without `Secure` is sent in plain text whenever the user
+  opens any `http://` link to the site, so anyone on the same Wi-Fi can copy
+  it and take over the session. Without `HttpOnly`, one cross-site
+  scripting bug can read it with `document.cookie`.
+
+flagged_example:
+  language: python
+  filename: app/auth.py
+  expect_line: 12
+  code: |
+    from flask import Flask, make_response, request
+
+    from app.sessions import create_session
+
+    app = Flask(__name__)
+
+
+    @app.post("/login")
+    def login():
+        session_id = create_session(request.form["email"], request.form["password"])
+        response = make_response({"ok": True})
+        response.set_cookie("sid", session_id, httponly=True, secure=False)
+        return response
+
+not_flagged_example:
+  language: python
+  filename: app/auth.py
+  code: |
+    import secrets
+
+    from flask import Flask, make_response
+
+    app = Flask(__name__)
+
+
+    @app.get("/form")
+    def show_form():
+        token = secrets.token_urlsafe(32)
+        response = make_response({"csrf": token})
+        response.set_cookie("csrf_token", token, secure=True, httponly=False)
+        return response
+  why: >-
+    This CSRF token cookie is meant to be read by the page's own script, so
+    `httponly=False` is deliberate, and `secure=True` keeps it on HTTPS. In
+    Python the rule reports only a literal `secure=False`.
+
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/routes/login.ts
+      expect_line: 8
+      code: |
+        import express from "express";
+        import { createSession } from "../sessions";
+
+        const router = express.Router();
+
+        router.post("/login", async (req, res) => {
+          const sessionId = await createSession(req.body.email, req.body.password);
+          res.cookie("sid", sessionId, { httpOnly: true, sameSite: "lax" });
+          res.json({ ok: true });
+        });
+
+        export default router;
+    not_flagged:
+      language: typescript
+      filename: src/routes/login.ts
+      code: |
+        import express from "express";
+        import { createSession } from "../sessions";
+
+        const router = express.Router();
+
+        router.post("/login", async (req, res) => {
+          const sessionId = await createSession(req.body.email, req.body.password);
+          const options = { httpOnly: true, secure: true, sameSite: "lax" as const };
+          res.cookie("sid", sessionId, options);
+          res.json({ ok: true });
+        });
+
+        export default router;
+      why: >-
+        The options live in a variable, but Skylos follows it inside the
+        handler and sees `httpOnly: true` and `secure: true`, the only
+        combination it accepts for TypeScript and JavaScript.
+  - flagged:
+      language: java
+      filename: src/main/java/com/example/LoginController.java
+      expect_line: 11
+      code: |
+        package com.example;
+
+        import javax.servlet.http.Cookie;
+        import javax.servlet.http.HttpServletResponse;
+
+        public class LoginController {
+            void remember(HttpServletResponse response, String sessionId) {
+                Cookie cookie = new Cookie("SESSION", sessionId);
+                cookie.setHttpOnly(true);
+                cookie.setSecure(false);
+                response.addCookie(cookie);
+            }
+        }
+    not_flagged:
+      language: java
+      filename: src/main/java/com/example/ThemeController.java
+      code: |
+        package com.example;
+
+        import javax.servlet.http.Cookie;
+        import javax.servlet.http.HttpServletResponse;
+
+        public class ThemeController {
+            void saveTheme(HttpServletResponse response, String theme) {
+                Cookie cookie = new Cookie("theme", theme);
+                cookie.setHttpOnly(false);
+                cookie.setSecure(true);
+                response.addCookie(cookie);
+            }
+        }
+      why: >-
+        A theme cookie that page scripts read needs `HttpOnly` off, and it
+        holds nothing secret. The Java check reports only cookies whose
+        `setSecure()` call says `false`.
+  - flagged:
+      language: go
+      filename: session.go
+      expect_line: 6
+      code: |
+        package app
+
+        import "net/http"
+
+        func setSession(w http.ResponseWriter, sessionID string) {
+        	http.SetCookie(w, &http.Cookie{
+        		Name:     "sid",
+        		Value:    sessionID,
+        		Path:     "/",
+        		HttpOnly: true,
+        	})
+        }
+    not_flagged:
+      language: go
+      filename: session.go
+      code: |
+        package app
+
+        import "net/http"
+
+        func setSession(w http.ResponseWriter, sessionID string) {
+        	http.SetCookie(w, &http.Cookie{
+        		Name:     "sid",
+        		Value:    sessionID,
+        		Path:     "/",
+        		HttpOnly: true,
+        		Secure:   true,
+        		SameSite: http.SameSiteLaxMode,
+        	})
+        }
+      why: >-
+        Both flags are written as `true` in the `http.Cookie` literal, which
+        is what the Go check requires.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger`. Each language has its own check.
+  - >-
+    Python: finds `.set_cookie()` and `.set_signed_cookie()` calls with at
+    least a name and a value (Flask, Werkzeug, Django and Starlette share
+    this signature). Reports MEDIUM only when `secure` is the literal
+    `False`, by keyword or as the seventh positional argument. A missing,
+    `True` or computed flag is not reported, nor is `httponly=False` on its
+    own. Test modules are skipped.
+  - >-
+    TypeScript and JavaScript: finds `.cookie(name, value, options)` calls
+    on an HTTP response object, such as the `res` of an Express route.
+    Options held in a variable in the same function are followed. Reports
+    MEDIUM unless both `httpOnly` and `secure` are known to be `true`, so a
+    call with no options, or with options it cannot follow, is reported.
+  - >-
+    Java: follows a `Cookie` made with `new Cookie(...)`. When
+    `setSecure(...)` receives a value known to be `false` (a literal or a
+    constant) and the cookie is then passed to `addCookie()`, it reports
+    HIGH. `setHttpOnly` is not checked.
+  - >-
+    Go: the Go engine reports a `net/http` `Cookie{...}` literal that does
+    not write both `HttpOnly: true` and `Secure: true`. It reports it as
+    SKY-G221, shown as SKY-D252.
+
+source_refs:
+  - path: skylos/rules/danger/danger_web/cookie_flags.py
+    symbol: "def cookie_option_states"
+  - path: skylos/rules/danger/danger_web/cookie_flags.py
+    symbol: 'if states is not None and states["secure"] == "false":'
+  - path: skylos/visitors/languages/typescript/security_proofs.py
+    symbol: "def check_cookie_security"
+  - path: skylos/visitors/languages/typescript/security_flow.py
+    symbol: "def cookie_assessment"
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: 'if method == "setSecure" and receiver in state.cookie_vars and args:'
+  - path: skylos/visitors/languages/java/danger.py
+    symbol: 'if method == "setSecure" and receiver in cookie_vars:'
+    note: text fallback used only when the Java flow analysis fails.
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: 'if method == "addCookie" and self._args_mention_names('
+  - path: skylos/engines/go/internal/analyzer/analyzer.go
+    symbol: "// SKY-G221: Insecure Cookie"
+  - path: skylos/visitors/languages/go/go.py
+    symbol: '"SKY-G221": "SKY-D252"'
+
+fix:
+  explanation: >-
+    Set `secure=True` and `httponly=True` on every session or login
+    cookie, and add `samesite="Lax"` (or `"Strict"`) so other sites cannot
+    make the browser send it. In local development over plain HTTP, turn
+    `Secure` off through configuration, not in the code that ships.
+  filename: app/auth.py
+  code: |
+    from flask import Flask, make_response, request
+
+    from app.sessions import create_session
+
+    app = Flask(__name__)
+
+
+    @app.post("/login")
+    def login():
+        session_id = create_session(request.form["email"], request.form["password"])
+        response = make_response({"ok": True})
+        response.set_cookie(
+            "sid", session_id, httponly=True, secure=True, samesite="Lax"
+        )
+        return response
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      TypeScript, JavaScript and Go also report harmless cookies that lack
+      `HttpOnly` on purpose, such as a CSRF token or a UI preference the
+      page script reads.
+    - >-
+      TypeScript and JavaScript: safe options kept in a module-level
+      constant (`const sessionCookie = { httpOnly: true, secure: true }`
+      outside the handler) are not followed, so the call is reported with
+      both flags "unknown".
+    - >-
+      Missed: in Python, a cookie with `secure` left out (Flask then sends
+      it without `Secure` unless configured) and framework settings such as
+      `SESSION_COOKIE_SECURE = False`. In Java, cookies that never call
+      `setSecure()` at all.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the reported line and say why the cookie may travel over plain
+        HTTP.
+      language: python
+      code: |
+        response.set_cookie("dev_sid", sid, secure=False)  # skylos: ignore[SKY-D252] dev only
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D252"]` turns the rule off for the
+        whole project.
+    - check: baseline
+      text: >-
+        `skylos baseline .` and then `--baseline` accept the existing
+        findings and report only new ones.
+
+related: [SKY-D231, SKY-D270, SKY-D254]

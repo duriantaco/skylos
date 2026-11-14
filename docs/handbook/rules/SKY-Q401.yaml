@@ -1,0 +1,135 @@
+id: SKY-Q401
+title: Async blocking call
+family: quality
+severity: HIGH
+severity_note: >-
+  The catalog gives no severity for this rule; the detector always reports
+  HIGH.
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A blocking call, such as `requests.get()`, `time.sleep()` or
+  `subprocess.run()`, made directly inside an `async def`. An async server
+  runs many requests on one thread, and a blocking call holds that thread
+  until it returns.
+
+why_it_matters: >-
+  While one request waits five seconds for a slow rates API, every other
+  request on that event loop waits too, including health checks. Under load
+  the service looks hung and gets restarted, although nothing crashed.
+
+flagged_example:
+  language: python
+  filename: app/rates.py
+  expect_line: 13
+  code: |
+    """Exchange-rate endpoint."""
+
+    import requests
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    RATES_URL = "https://rates.example.com"
+
+
+    @app.get("/rates/{currency}")
+    async def get_rate(currency: str):
+        url = f"{RATES_URL}/{currency}"
+        response = requests.get(url, timeout=5)
+        return response.json()
+
+not_flagged_example:
+  language: python
+  filename: app/rates.py
+  code: |
+    """Exchange-rate endpoint."""
+
+    import asyncio
+
+    import requests
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    RATES_URL = "https://rates.example.com"
+
+
+    @app.get("/rates/{currency}")
+    async def get_rate(currency: str):
+        url = f"{RATES_URL}/{currency}"
+        response = await asyncio.to_thread(requests.get, url, timeout=5)
+        return response.json()
+  why: >-
+    `requests.get` is not called on the event loop here: it is handed to
+    `asyncio.to_thread()`, which runs it on a worker thread while the loop
+    keeps serving other requests.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality` on Python files. Looks at calls whose innermost
+    enclosing function is an `async def`; a call inside a nested `def` or
+    `lambda` is not counted, since that code may run elsewhere.
+  - >-
+    Reports a call to `time.sleep`, `requests.get`, `post`, `put`,
+    `delete`, `patch`, `head` or `request`, `urllib.request.urlopen`,
+    `subprocess.run`, `call`, `check_output` or `check_call`, or
+    `os.system`.
+  - >-
+    Resolves `import x as y` and `from x import f` aliases in the file, so
+    `from time import sleep` followed by `sleep(1)` is found. A name written
+    `module.func` is matched even without an import.
+  - >-
+    Reports HIGH on the line of the call; the message names the async
+    replacement.
+
+source_refs:
+  - path: skylos/rules/quality/async_blocking.py
+    symbol: "class AsyncBlockingRule"
+  - path: skylos/rules/quality/async_blocking.py
+    symbol: "BLOCKING_CALLS = {"
+
+fix:
+  explanation: >-
+    Use an async HTTP client and `await` it. (For a call that has no async
+    version, `await asyncio.to_thread(...)` as in the example above.)
+  filename: app/rates.py
+  code: |
+    """Exchange-rate endpoint."""
+
+    import httpx
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    RATES_URL = "https://rates.example.com"
+
+
+    @app.get("/rates/{currency}")
+    async def get_rate(currency: str):
+        url = f"{RATES_URL}/{currency}"
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.get(url)
+        return response.json()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A blocking call in an async command-line script that does nothing else
+      at the same time is reported, although nobody waits on the loop.
+    - >-
+      It misses `urllib.request.urlopen()` written with its full module
+      path, `requests.Session().get()`, blocking database drivers and file
+      reads, which are not on the list.
+  suppress:
+    - check: inline
+      text: >-
+        Put the marker on the line of the call.
+      language: python
+      code: |
+        time.sleep(0.1)  # skylos: ignore[SKY-Q401] startup only, before serving
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-Q401"]` turns the rule off for the
+        project.
+
+related: [SKY-Q402, SKY-L031]

@@ -1,0 +1,201 @@
+id: SKY-D366
+title: Editor task that runs when the folder opens
+family: supply-chain
+severity: HIGH
+severity_note: >-
+  CRITICAL when the command downloads and runs remote code (`curl … | sh`),
+  decodes and runs a payload (`base64 -d | sh`), or runs a script disguised
+  as another file type, such as `node logo.png`.
+languages: [VS Code task and workspace files]
+gate:
+  full: listed
+  diff: blocks
+  note: >-
+    A CRITICAL task fails a full scan too. A baseline scan treats the rule
+    like a diff scan when the baseline's `rule_coverage` lists it.
+
+what_it_is: >-
+  VS Code tasks can carry `"runOptions": {"runOn": "folderOpen"}`. Once a
+  developer allows automatic tasks, VS Code, Cursor and Windsurf run such a
+  task as soon as the folder is opened. SKY-D366 reports every committed task
+  that runs this way, and the tasks it depends on.
+
+why_it_matters: >-
+  A pull request that adds a folder-open task runs its command on the laptop
+  of everyone who opens the repository, with their SSH keys and cloud logins,
+  before anyone builds or tests the code. Worms such as Mini Shai-Hulud used
+  exactly this to persist.
+
+flagged_example:
+  language: json
+  filename: .vscode/tasks.json
+  expect_line: 7
+  code: |
+    {
+      "version": "2.0.0",
+      "tasks": [
+        {
+          "label": "dev server",
+          "type": "shell",
+          "command": "npm run dev",
+          "isBackground": true,
+          "runOptions": { "runOn": "folderOpen" }
+        },
+        {
+          "label": "lint",
+          "type": "shell",
+          "command": "npm run lint"
+        }
+      ]
+    }
+
+not_flagged_example:
+  language: json
+  filename: .vscode/tasks.json
+  code: |
+    {
+      "version": "2.0.0",
+      "tasks": [
+        {
+          "label": "dev server",
+          "type": "shell",
+          "command": "npm run dev",
+          "isBackground": true,
+          "runOptions": { "runOn": "default" }
+        },
+        {
+          "label": "lint",
+          "type": "shell",
+          "command": "npm run lint"
+        }
+      ]
+    }
+  why: >-
+    `"runOn": "default"` means the task runs only when someone starts it from
+    the Tasks menu. A task that never runs on folder open, and is not a
+    dependency of one that does, is not reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` (and `-a`). The `ca9` library reads
+    `.vscode/tasks.json` and the `tasks` block of `*.code-workspace` files,
+    anywhere in the scanned folder except dependency folders such as
+    `node_modules`, `.venv` and `site-packages`. Comments and trailing
+    commas are allowed.
+  - >-
+    A task runs on folder open when its `runOptions.runOn` is `folderOpen`,
+    in any letter case, on the task itself or in its `windows`, `osx` or
+    `linux` section. Every task it names in `dependsOn` is reported too,
+    and their dependencies in turn, because VS Code runs them first.
+  - >-
+    The finding shows the command line as it runs: the task's (or the
+    file's) `options.shell`, then `command` (or `npm run <script>` for an npm
+    task), then `args`, once for each different per-platform variant. It is
+    reported on the `command` line.
+  - >-
+    Keeps the same files as SKY-D365: regular files inside the scanned
+    folder; in Git, a full scan keeps tracked files and untracked files Git
+    does not ignore, and a diff scan keeps tracked files that changed.
+  - >-
+    No command is trusted by its name. The severity comes from ca9: HIGH,
+    or CRITICAL for remote code, decode-and-run payloads and disguised
+    scripts. The command is shown redacted.
+  - >-
+    In the gate, a full scan lists HIGH findings without counting them; a
+    CRITICAL one fails. In a diff scan a task is new when its rule, file and
+    a digest of its label and whole command are not among the merge base's
+    findings, so adding `runOn` to an existing task is new. A new one fails
+    the gate on its own.
+
+source_refs:
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "\"editor_folder_open_task\": (\"SKY-D366\""
+    note: >-
+      ca9 `agent_config` finds the tasks (`_tasks`, `_runs_on_folder_open`
+      in `ca9/agent_config/scanner.py`); this page was checked against ca9
+      0.7.0.
+  - path: skylos/rules/config/agent_publish.py
+    symbol: "class _Scope"
+    note: which files may carry findings.
+  - path: skylos/core/gatekeeper.py
+    symbol: "CHANGE_BLOCKING_RULES = frozenset("
+  - path: skylos/commands/scan_cmd.py
+    symbol: "def _config_findings_new_since_base("
+    note: what makes a finding new in a diff scan.
+
+fix:
+  explanation: >-
+    Remove `runOptions.runOn` (or the whole task) unless the team really
+    wants it to start on its own. A developer can still run it from the
+    Tasks menu. If it must stay, review the command and every script it
+    calls in each change.
+  filename: .vscode/tasks.json
+  code: |
+    {
+      "version": "2.0.0",
+      "tasks": [
+        {
+          "label": "dev server",
+          "type": "shell",
+          "command": "npm run dev",
+          "isBackground": true
+        },
+        {
+          "label": "lint",
+          "type": "shell",
+          "command": "npm run lint"
+        }
+      ]
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Every folder-open task is reported, however harmless, such as a watcher
+      or a dev server. VS Code asks before it runs automatic tasks for the
+      first time, but one "Allow" covers every later change to the file.
+    - >-
+      When a tasks file mentions `folderOpen` but does not parse, ca9
+      recovers every `"command"` string in its text and reports each one as
+      a folder-open task.
+  suppress:
+    - check:
+        kind: example
+        expect: reported
+        example:
+          language: json
+          filename: .vscode/tasks.json
+          code: |
+            {
+              "version": "2.0.0",
+              "tasks": [
+                {
+                  "label": "dev server",
+                  "type": "shell",
+                  // skylos: ignore[SKY-D366] handbook check
+                  "command": "npm run dev",
+                  "isBackground": true,
+                  "runOptions": { "runOn": "folderOpen" }
+                },
+                {
+                  "label": "lint",
+                  "type": "shell",
+                  "command": "npm run lint"
+                }
+              ]
+            }
+      text: >-
+        Skylos reads no inline marker for this rule, even though
+        `tasks.json` allows comments.
+    - check: baseline
+      text: >-
+        Accept a reviewed task with a baseline: `skylos baseline .`, then
+        `--baseline`. The entry matches the rule, file, task label and
+        command, not the line. In pull-request CI (`SKYLOS_POLICY_BASE`), the
+        entry must also be in the base commit's `.skylos/baseline.json`.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D366"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D365, SKY-D377, SKY-D367]

@@ -1,0 +1,242 @@
+id: SKY-C401
+title: Duplicated code clone
+family: quality
+severity: VARIES
+severity_note: >-
+  The catalog gives no severity. A group of exact copies, or copies that
+  differ only in local names and literal values, is MEDIUM; any other
+  group is LOW.
+languages: [Python]
+gate:
+  full: counted
+  note: >-
+    Advice that is measured on every `--quality` scan but not listed by
+    default. It is listed, and counted toward `max_quality`, with
+    `--all-advice` or when the rule is named in `[tool.skylos.gate] rules`.
+
+what_it_is: >-
+  A clone is a function, method or class that was copied and lightly
+  edited, for example with its variables renamed and its strings changed.
+  SKY-C401 reports each group of Python clones once, at its first member,
+  and lists up to four members in the message.
+
+why_it_matters: >-
+  A bug fixed in one copy stays in the others. When the currency filter in
+  one export is corrected, the copied export keeps sending the wrong rows
+  to finance until someone notices it is the same code.
+
+flagged_example:
+  language: python
+  files:
+    - filename: app/exports/invoices.py
+      code: |
+        """CSV export of invoices for the finance team."""
+
+        import csv
+        import io
+
+
+        def export_invoices(invoices, currency_code):
+            out = io.StringIO()
+            csv_writer = csv.writer(out)
+            csv_writer.writerow(["invoice", "email", "issued", "total"])
+            for invoice in invoices:
+                if invoice.currency != currency_code:
+                    continue
+                total = f"{invoice.total:.2f}"
+                csv_writer.writerow(
+                    [invoice.id, invoice.customer_email, invoice.created, total]
+                )
+            return out.getvalue()
+    - filename: app/exports/orders.py
+      code: |
+        """CSV export of orders for the finance team."""
+
+        import csv
+        import io
+
+
+        def export_orders(orders, currency):
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(["id", "customer", "date", "amount"])
+            for order in orders:
+                if order.currency != currency:
+                    continue
+                amount = f"{order.total:.2f}"
+                writer.writerow(
+                    [order.id, order.customer_email, order.created, amount]
+                )
+            return buffer.getvalue()
+  expect_file: app/exports/invoices.py
+  expect_line: 7
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: app/exports/orders.py
+      code: |
+        """CSV export of orders for the finance team."""
+
+        import csv
+        import io
+
+
+        def export_orders(orders, currency):
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(["id", "customer", "date", "amount"])
+            for order in orders:
+                if order.currency != currency:
+                    continue
+                amount = f"{order.total:.2f}"
+                writer.writerow(
+                    [order.id, order.customer_email, order.created, amount]
+                )
+            return buffer.getvalue()
+    - filename: tests/test_orders_export.py
+      code: |
+        from types import SimpleNamespace
+
+        from app.exports.orders import export_orders
+
+        EURO = SimpleNamespace(
+            id=1, customer_email="a@example.com", created="2026-01-02",
+            currency="EUR", total=10.0,
+        )
+        DOLLAR = SimpleNamespace(
+            id=2, customer_email="b@example.com", created="2026-01-03",
+            currency="USD", total=12.5,
+        )
+
+
+        def test_export_keeps_euro_orders():
+            text = export_orders([EURO, DOLLAR], "EUR")
+            lines = text.strip().splitlines()
+            assert len(lines) == 2
+            assert lines[1].startswith("1,a@example.com")
+            assert "10.00" in lines[1]
+            assert "USD" not in text
+            assert "b@example.com" not in text
+            assert lines[0] == "id,customer,date,amount"
+
+
+        def test_export_keeps_dollar_orders():
+            text = export_orders([EURO, DOLLAR], "USD")
+            lines = text.strip().splitlines()
+            assert len(lines) == 2
+            assert lines[1].startswith("2,b@example.com")
+            assert "12.50" in lines[1]
+            assert "EUR" not in text
+            assert "a@example.com" not in text
+            assert lines[0] == "id,customer,date,amount"
+  why: >-
+    The two tests are copies of each other with different inputs, but every
+    member of that group is test code, where one case per input is normal.
+    Skylos drops clone groups made only of tests. The same pair in a module
+    that is not test code is reported.
+
+how_skylos_decides:
+  - >-
+    Runs with `--quality`, on Python files. Every function, method and
+    class is a candidate when it spans at least 8 lines, 8 of them code
+    (not blank, comment or docstring lines), with at least 4 statements and
+    10 syntax nodes. Methods such as `__init__`, `__repr__`, `__eq__` and
+    `setUp` are skipped, and so are files in `examples` and `benchmarks`
+    folders, a top-level `docs` folder and the root `setup.py`.
+  - >-
+    Each candidate is reduced three ways: its tokens without comments and
+    layout; its syntax tree; and its syntax tree with local variable and
+    parameter names and literal values replaced by placeholders. Attribute
+    and method names, such as `.total` or `.writerow`, are kept.
+  - >-
+    Two candidates are compared only when one of these forms hashes to the
+    same bucket, which in practice means the forms are identical. A pair is
+    type 1 when the tokens match, type 2 when the renamed trees are at
+    least 95% similar, and type 3 when the plain trees are at least 88%
+    similar; pairs below 90% are dropped.
+  - >-
+    Pairs are joined into groups. A group whose members are all test code
+    is dropped unless code outside the tests imports one of those test
+    modules.
+  - >-
+    Reports one finding per group, on the first member by file path and
+    line. Type 1 and type 2 groups with a similarity of at least 0.95 are
+    MEDIUM, others LOW. The limits are fixed; there is no setting for them.
+
+source_refs:
+  - path: skylos/rules/quality/clones.py
+    symbol: "def extract_fragments("
+  - path: skylos/rules/quality/clones.py
+    symbol: "class CloneConfig"
+  - path: skylos/rules/quality/clones.py
+    symbol: "class _Type2Normalizer"
+  - path: skylos/rules/quality/clones.py
+    symbol: "def detect_clone_pairs("
+  - path: skylos/rules/quality/clones.py
+    symbol: "def classify_clone("
+  - path: skylos/rules/quality/clones.py
+    symbol: "def without_test_only_groups("
+  - path: skylos/analyzer.py
+    symbol: 'RULE_ID = "SKY-C401"'
+    note: the settings the scan uses and the severity.
+
+fix:
+  explanation: >-
+    Move the shared steps into one helper and keep only what really differs,
+    here the column headers, in the callers. A fix to the filter then
+    reaches every export.
+  code: |
+    """CSV exports for the finance team."""
+
+    import csv
+    import io
+
+
+    def _rows_to_csv(header, records, currency):
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(header)
+        for record in records:
+            if record.currency != currency:
+                continue
+            amount = f"{record.total:.2f}"
+            writer.writerow([record.id, record.customer_email, record.created, amount])
+        return buffer.getvalue()
+
+
+    def export_orders(orders, currency):
+        return _rows_to_csv(["id", "customer", "date", "amount"], orders, currency)
+
+
+    def export_invoices(invoices, currency):
+        return _rows_to_csv(["invoice", "email", "issued", "total"], invoices, currency)
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Copies that read different attributes or call different methods (for
+      example `refund.amount` where the original reads `order.total`) are
+      usually missed, because their reduced forms are no longer identical
+      and the pair is never compared.
+    - >-
+      Code that must be repeated on purpose, such as two migrations or two
+      plugin classes that a framework requires to stand alone, is reported.
+  suppress:
+    - check:
+        kind: inline
+        expect: reported
+      text: >-
+        An inline marker does **not** work for this rule: with this comment
+        on the reported `def` line, the group is still reported.
+      language: python
+      code: |
+        def export_invoices(invoices, currency_code):  # skylos: ignore[SKY-C401] kept apart
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-C401"]` turns the rule off for the
+        project. A baseline accepts existing findings, but it records the
+        absolute file path and the line, so an entry stops matching when the
+        checkout moves or the line shifts.
+
+related: [SKY-Q305, SKY-C304, SKY-L027]

@@ -1,0 +1,151 @@
+id: SKY-D243
+title: MCP server open on every network interface without authentication
+family: security
+severity: CRITICAL
+languages: [Python]
+gate:
+  full: critical_blocks
+cwe: [CWE-1327]
+
+what_it_is: >-
+  Binding a server to `0.0.0.0` makes it listen on every network interface
+  of the machine, not just on the machine itself. SKY-D243 reports a Python
+  MCP server started with `host="0.0.0.0"` and no authentication passed to
+  `run()`.
+
+why_it_matters: >-
+  Everyone on the same network, or on the internet if the port is open, can
+  connect and call the server's tools with no credentials: here, anyone on
+  the office Wi-Fi can issue refunds.
+
+flagged_example:
+  language: python
+  filename: server/billing.py
+  expect_line: 15
+  code: |
+    from fastmcp import FastMCP
+
+    from billing import payments
+
+    mcp = FastMCP("billing-tools")
+
+
+    @mcp.tool()
+    def refund(order_id: str, amount_cents: int) -> str:
+        """Refund part of an order."""
+        return payments.refund(order_id, amount_cents)
+
+
+    if __name__ == "__main__":
+        mcp.run(transport="http", host="0.0.0.0", port=8000)
+
+not_flagged_example:
+  language: python
+  filename: server/billing.py
+  code: |
+    from fastmcp import FastMCP
+
+    from billing import payments
+
+    mcp = FastMCP("billing-tools")
+
+
+    @mcp.tool()
+    def refund(order_id: str, amount_cents: int) -> str:
+        """Refund part of an order."""
+        return payments.refund(order_id, amount_cents)
+
+
+    if __name__ == "__main__":
+        mcp.run(transport="http", host="127.0.0.1", port=8000)
+  why: >-
+    `127.0.0.1` only accepts connections from the same machine. The call is
+    still an HTTP server without authentication, so SKY-D241 reports it; it
+    is not open to the network, which is what SKY-D243 is about.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files that import `mcp`, `fastmcp` or a
+    module under `mcp.`.
+  - >-
+    Looks at the same `run()` calls as SKY-D241: `X.run(...)` where `X` was
+    assigned from a call whose name ends in `FastMCP` or `Server`, or is
+    named `server`, `mcp` or `app`.
+  - >-
+    Reports CRITICAL when `host=` is the literal `"0.0.0.0"`, whatever the
+    transport, and the call passes none of `auth`, `authenticator`,
+    `auth_server_provider`, `middleware` or `auth_middleware`.
+  - >-
+    The same call is also reported as SKY-D241, the missing authentication
+    on a network transport.
+
+source_refs:
+  - path: skylos/rules/danger/danger_mcp/mcp_flow.py
+    symbol: "if host == \"0.0.0.0\" and not has_auth:"
+  - path: skylos/rules/danger/danger_mcp/mcp_flow.py
+    symbol: "def _check_server_run"
+  - path: test/test_mcp_rules.py
+    symbol: "def test_combined_d241_d243"
+
+fix:
+  explanation: >-
+    Bind to `127.0.0.1` when only this machine needs the server. When other
+    machines must reach it, for example from inside a container, keep
+    `0.0.0.0` but require a credential on every request; the same
+    middleware also clears SKY-D241.
+  filename: server/billing.py
+  code: |
+    from fastmcp import FastMCP
+    from starlette.middleware import Middleware
+
+    from billing import payments
+    from billing.auth import RequireBearerToken
+
+    mcp = FastMCP("billing-tools")
+
+
+    @mcp.tool()
+    def refund(order_id: str, amount_cents: int) -> str:
+        """Refund part of an order."""
+        return payments.refund(order_id, amount_cents)
+
+
+    if __name__ == "__main__":
+        mcp.run(
+            transport="http",
+            host="0.0.0.0",
+            port=8000,
+            middleware=[Middleware(RequireBearerToken)],
+        )
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Authentication configured on the server object, such as
+      `FastMCP("billing", auth=provider)`, is not seen, so the call is still
+      reported.
+    - >-
+      Any `middleware=` or `auth=` keyword silences it, even one that checks
+      no credential.
+    - >-
+      Missed: the IPv6 form `host="::"`, a host read from a variable or the
+      environment, and a host set on the server object (`FastMCP("x",
+      host="0.0.0.0")` in the official MCP SDK) or passed to `uvicorn.run()`.
+  suppress:
+    - check: inline
+      text: >-
+        Mark the `run(` line when a proxy or the server object enforces
+        authentication, and say which.
+      language: python
+      code: |
+        mcp.run(transport="http", host="0.0.0.0")  # skylos: ignore[SKY-D243] auth= on FastMCP()
+    - check: baseline
+      text: >-
+        `skylos baseline .`, then `--baseline`, accepts existing findings by
+        file and line.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D243"]` turns the check off for the
+        project.
+
+related: [SKY-D241, SKY-D240, SKY-D283]

@@ -1,0 +1,131 @@
+id: SKY-D357
+title: Untrusted dynamic Python import
+family: security
+severity: HIGH
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  `importlib.import_module(name)` and `__import__(name)` load a module chosen
+  at run time, and importing a module runs its top-level code. SKY-D357
+  reports these calls when the module name comes from an identified input
+  source, such as a route argument or request data, instead of from your own
+  code.
+
+why_it_matters: >-
+  A route like `/jobs/<name>` that imports `name` lets a visitor load any
+  module Python can find, including standard-library modules with side
+  effects and any `.py` file an upload put on the path. The next attribute
+  call then runs code the developer never meant to expose.
+
+flagged_example:
+  language: python
+  filename: app/jobs.py
+  expect_line: 10
+  code: |
+    import importlib
+
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+
+    @app.post("/jobs/<name>")
+    def run_job(name):
+        handler = importlib.import_module(name)
+        return handler.run(request.get_json())
+
+not_flagged_example:
+  language: python
+  filename: app/plugins.py
+  code: |
+    import importlib
+
+    ENABLED_PLUGINS = ("plugins.audit_log", "plugins.metrics")
+
+
+    def load_plugins():
+        return [importlib.import_module(name) for name in ENABLED_PLUGINS]
+  why: >-
+    The import name is a variable, but every value comes from a fixed tuple
+    in the code. No input source reaches the call, and Skylos does not report
+    a dynamic import just because its argument is not a literal.
+
+how_skylos_decides:
+  - >-
+    Finds `importlib.import_module()`, `builtins.__import__()` and the
+    builtin `__import__()` (when the module does not rebind it), resolved
+    through imports, and reads the module name: the first argument or
+    `name=`.
+  - >-
+    Reports HIGH when an identified source reaches that name: request data,
+    a route, CLI or MCP tool argument, `input()`, standard input or an
+    environment variable, directly or through assignments, f-strings and
+    local helper calls.
+  - >-
+    Also reports a function parameter used as the name when a call of that
+    function at module level passes such a source, and follows callers
+    across the project when it can resolve them.
+  - >-
+    Leaves names that come only from your own code alone, such as a
+    constant list of plugins. Unknown values are not treated as input.
+
+source_refs:
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "Untrusted input selects a Python module to import;"
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "def _module_import_source"
+  - path: skylos/rules/danger/project_security_sources.py
+    symbol: "def import_evidence"
+
+fix:
+  explanation: >-
+    Import the allowed modules normally and let the input choose from a
+    dictionary of them. Unknown names then fail with a 404 instead of
+    loading code.
+  filename: app/jobs.py
+  code: |
+    from flask import Flask, abort, request
+
+    from app.handlers import resize, thumbnail
+
+    app = Flask(__name__)
+    HANDLERS = {"resize": resize, "thumbnail": thumbnail}
+
+
+    @app.post("/jobs/<name>")
+    def run_job(name):
+        handler = HANDLERS.get(name)
+        if handler is None:
+            abort(404)
+        return handler.run(request.get_json())
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A name checked against an allowlist first, such as
+      `if name not in HANDLERS: abort(404)` followed by
+      `import_module(f"jobs.{name}")`, is still reported: the check is not
+      recognised.
+    - >-
+      A backend chosen by the operator through an environment variable, such
+      as `import_module(os.environ["CACHE_BACKEND"])`, is reported too.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why. A bare `# noqa` does not hide HIGH
+        security findings.
+      language: python
+      code: |
+        mod = importlib.import_module(path)  # skylos: ignore[SKY-D357] checked against JOBS
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D357"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D245, SKY-D201, SKY-D202, SKY-D255]

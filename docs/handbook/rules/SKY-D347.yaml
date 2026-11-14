@@ -1,0 +1,126 @@
+id: SKY-D347
+title: Logging configuration accepted over a socket
+family: security
+severity: MEDIUM
+languages: [Python]
+gate:
+  full: counted
+cwe: [CWE-306]
+
+what_it_is: >-
+  Python's `logging.config.listen()` starts a thread that waits on a local
+  TCP port (9030 by default) and applies any logging configuration sent to
+  it. SKY-D347 reports every call to it.
+
+why_it_matters: >-
+  A logging configuration can name classes and functions to create, so
+  whoever sends one can run code inside your process. The listener binds
+  to `localhost` and asks for no password: on a shared server, or in a pod
+  with other containers, any local user or process can connect and take
+  over the application.
+
+flagged_example:
+  language: python
+  filename: app/logging_setup.py
+  expect_line: 9
+  code: |
+    import logging
+    import logging.config
+
+    log = logging.getLogger("orders")
+
+
+    def start_logging():
+        logging.config.fileConfig("logging.ini")
+        listener = logging.config.listen(9030)
+        listener.daemon = True
+        listener.start()
+        log.info("logging configured; send changes to port 9030")
+
+not_flagged_example:
+  language: python
+  filename: app/logging_setup.py
+  code: |
+    import logging
+    import logging.config
+
+    import yaml
+
+    log = logging.getLogger("orders")
+
+
+    def start_logging():
+        with open("logging.yaml", encoding="utf-8") as handle:
+            logging.config.dictConfig(yaml.safe_load(handle))
+        log.info("logging configured")
+  why: >-
+    The configuration comes from a file the deployment owns and is read
+    once at start-up; nothing listens on a port. `dictConfig()` and
+    `fileConfig()` are not reported, only `listen()`.
+
+how_skylos_decides:
+  - >-
+    Runs with `--danger` on Python files. Resolves import aliases, so
+    `logging.config.listen(...)`, `from logging import config` followed by
+    `config.listen(...)`, and `from logging.config import listen` all
+    count.
+  - >-
+    Reports MEDIUM on every such call. The arguments are not read: a call
+    that passes `verify=` is reported too, and test files are not skipped.
+
+source_refs:
+  - path: skylos/rules/danger/calls.py
+    symbol: "\"logging.config.listen\": ("
+    note: the entry in `DANGEROUS_CALLS`.
+  - path: skylos/rules/danger/danger.py
+    symbol: "for rule_key, tup in DANGEROUS_CALLS.items():"
+    note: matches each call against the table.
+  - path: test/test_dangerous.py
+    symbol: "def test_logging_config_listen_flags"
+
+fix:
+  explanation: >-
+    Do not accept configuration over a socket. Keep it in a file the
+    deployment controls and reload it when the process gets a signal, or
+    restart the service to apply changes.
+  filename: app/logging_setup.py
+  code: |
+    import logging
+    import logging.config
+    import signal
+
+    log = logging.getLogger("orders")
+
+
+    def _reload(signum, frame):
+        logging.config.fileConfig("logging.ini", disable_existing_loggers=False)
+        log.info("logging reloaded")
+
+
+    def start_logging():
+        logging.config.fileConfig("logging.ini")
+        signal.signal(signal.SIGHUP, _reload)
+        log.info("logging configured; send SIGHUP to reload")
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Python's documentation recommends `listen(port, verify=check)`, where
+      `check` rejects any configuration without a valid signature. Skylos
+      still reports that call; mark it as reviewed.
+    - >-
+      A single-user machine or a container with no other process has no
+      one else to connect, but the call is reported all the same.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a call that verifies what it receives, and say how.
+      language: python
+      code: |
+        logging.config.listen(9030, verify=check_hmac)  # skylos: ignore[SKY-D347] signed
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D347"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D346, SKY-D241]

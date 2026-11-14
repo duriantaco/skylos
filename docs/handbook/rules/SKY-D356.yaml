@@ -1,0 +1,113 @@
+id: SKY-D356
+title: Cleartext outbound HTTP
+family: security
+severity: MEDIUM
+languages: [Python]
+gate:
+  full: counted
+
+what_it_is: >-
+  A URL that starts with `http://` is sent without encryption. SKY-D356
+  reports Python `requests`, `httpx` and `urllib` calls whose URL has an
+  explicit `http://` scheme and a host other than the local machine.
+
+why_it_matters: >-
+  Anyone on the network path, such as a shared Wi-Fi, a compromised router
+  or a cloud neighbour, can read the request and the reply, including
+  tokens, cookies and personal data, and can change the reply, for example
+  to send back wrong prices or a malicious download.
+
+flagged_example:
+  language: python
+  filename: app/rates.py
+  expect_line: 5
+  code: |
+    import requests
+
+
+    def fetch_rates(currency):
+        response = requests.get(f"http://rates.example.com/v1/{currency}", timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+not_flagged_example:
+  language: python
+  filename: app/health.py
+  code: |
+    import requests
+
+
+    def sidecar_ready():
+        response = requests.get("http://127.0.0.1:15000/ready", timeout=2)
+        return response.ok
+  why: >-
+    The request goes to a loopback address, so it never leaves the machine.
+    Skylos skips `localhost` and loopback IP addresses when the host part of
+    the URL is complete.
+
+how_skylos_decides:
+  - >-
+    Finds `get`, `post`, `put`, `patch`, `delete`, `head`, `options` and
+    `request` on the `requests` and `httpx` modules, and
+    `urllib.request.urlopen()` and `urllib.request.Request()`, resolved
+    through imports.
+  - >-
+    Reads the URL: the first argument (the second for `request(method,
+    url)`), or `url=`. It uses the literal value, or the fixed text at the
+    start of an f-string, `+` expression or local name.
+  - >-
+    Reports MEDIUM when that text starts with `http://` and names a host,
+    or when it is a fixed `http://` prefix followed by unknown text.
+  - >-
+    Skips `localhost` and loopback addresses such as `127.0.0.1` and
+    `[::1]`, once the host part is complete. The finding records a
+    transport choice; it does not claim that sensitive data is sent.
+
+source_refs:
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "_HTTP_CALLS = {"
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "def _url_prefix"
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: "Outbound request URL has an explicit cleartext HTTP scheme;"
+
+fix:
+  explanation: >-
+    Use `https://`. If the other side only speaks HTTP inside a private
+    network, put it behind TLS or keep the traffic on the local machine.
+  filename: app/rates.py
+  code: |
+    import requests
+
+
+    def fetch_rates(currency):
+        response = requests.get(f"https://rates.example.com/v1/{currency}", timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A call to a service on a private network or a container next to yours,
+      such as `http://redis-proxy:8080/`, is reported; only loopback hosts
+      are skipped.
+    - >-
+      Public data fetched over HTTP on purpose, such as a test fixture
+      server, is reported the same way.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why. Only the listed rule is hidden.
+      language: python
+      code: |
+        requests.get(url)  # skylos: ignore[SKY-D356] mesh sidecar adds mTLS
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D356"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D216, SKY-D210, SKY-D218]

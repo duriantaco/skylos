@@ -1,0 +1,220 @@
+id: SKY-D237
+title: Expression, JNDI or script injection
+family: security
+severity: CRITICAL
+languages: [Java, Kotlin]
+gate:
+  full: critical_blocks
+
+what_it_is: >-
+  Expression languages such as Spring SpEL, OGNL and MVEL, script engines,
+  Groovy and JNDI lookups all turn a string into running code or a loaded
+  class. SKY-D237 reports request data that reaches the expression, script
+  or lookup name of one of these APIs in Java or Kotlin.
+
+why_it_matters: >-
+  SpEL text such as `T(java.lang.Runtime).getRuntime().exec('id')` runs a
+  command, and a JNDI name such as `ldap://evil.example/x` can load a remote
+  class, the Log4Shell technique. Either one gives the visitor code
+  execution on the server.
+
+flagged_example:
+  language: java
+  filename: src/main/java/com/example/PriceController.java
+  expect_line: 16
+  code: |
+    package com.example;
+
+    import org.springframework.expression.Expression;
+    import org.springframework.expression.ExpressionParser;
+    import org.springframework.expression.spel.standard.SpelExpressionParser;
+    import org.springframework.web.bind.annotation.GetMapping;
+    import org.springframework.web.bind.annotation.RequestParam;
+    import org.springframework.web.bind.annotation.RestController;
+
+    @RestController
+    public class PriceController {
+        private final ExpressionParser parser = new SpelExpressionParser();
+
+        @GetMapping("/price")
+        public Object price(@RequestParam String formula) {
+            Expression expression = parser.parseExpression(formula);
+            return expression.getValue(new Order(100, 0.2));
+        }
+
+        public record Order(int base, double tax) {}
+    }
+
+not_flagged_example:
+  language: java
+  filename: src/main/java/com/example/PriceController.java
+  code: |
+    package com.example;
+
+    import org.springframework.expression.Expression;
+    import org.springframework.expression.ExpressionParser;
+    import org.springframework.expression.spel.standard.SpelExpressionParser;
+    import org.springframework.expression.spel.support.SimpleEvaluationContext;
+    import org.springframework.web.bind.annotation.GetMapping;
+    import org.springframework.web.bind.annotation.RequestParam;
+    import org.springframework.web.bind.annotation.RestController;
+
+    @RestController
+    public class PriceController {
+        private final ExpressionParser parser = new SpelExpressionParser();
+
+        @GetMapping("/price")
+        public Object price(@RequestParam String formula) {
+            SimpleEvaluationContext context =
+                    SimpleEvaluationContext.forReadOnlyDataBinding().build();
+            Expression expression = parser.parseExpression(formula);
+            return expression.getValue(context, new Order(100, 0.2));
+        }
+
+        public record Order(int base, double tax) {}
+    }
+  why: >-
+    Every evaluation of the parsed expression passes a
+    `SimpleEvaluationContext`, which has no type references, constructors or
+    bean lookups, so `T(...)` and `new` cannot be used. Skylos follows the
+    same rule as CodeQL here.
+
+more_examples:
+  - flagged:
+      language: kotlin
+      filename: src/main/kotlin/com/example/RuleController.kt
+      expect_line: 15
+      code: |
+        package com.example
+
+        import javax.script.ScriptEngine
+        import javax.script.ScriptEngineManager
+        import org.springframework.web.bind.annotation.GetMapping
+        import org.springframework.web.bind.annotation.RequestParam
+        import org.springframework.web.bind.annotation.RestController
+
+        @RestController
+        class RuleController {
+            private val engine: ScriptEngine =
+                ScriptEngineManager().getEngineByName("javascript")
+
+            @GetMapping("/rules/check")
+            fun check(@RequestParam rule: String): Any? = engine.eval(rule)
+        }
+    not_flagged:
+      language: kotlin
+      filename: src/main/kotlin/com/example/RuleController.kt
+      code: |
+        package com.example
+
+        import javax.script.ScriptEngine
+        import javax.script.ScriptEngineManager
+        import org.springframework.web.bind.annotation.GetMapping
+        import org.springframework.web.bind.annotation.RequestParam
+        import org.springframework.web.bind.annotation.RestController
+
+        @RestController
+        class RuleController {
+            private val engine: ScriptEngine =
+                ScriptEngineManager().getEngineByName("javascript")
+
+            @GetMapping("/rules/check")
+            fun check(@RequestParam input: String): Any? {
+                val bindings = engine.createBindings()
+                bindings["input"] = input
+                return engine.eval("input.length < 64", bindings)
+            }
+        }
+      why: >-
+        The script is a fixed string and the request value is passed in as a
+        variable through `Bindings`. The script can read the value but the
+        value can never become code.
+
+how_skylos_decides:
+  - >-
+    Finds calls on receivers whose declared type is known: SpEL
+    `ExpressionParser.parseExpression()`, JNDI `Context.lookup()` and
+    `InitialContext.doLookup()`, Spring `JndiTemplate` and `LdapTemplate`
+    lookups, `ScriptEngine.eval()`, `GroovyShell.evaluate()`, OGNL, MVEL,
+    Jakarta EL and JEXL evaluation, and similar APIs.
+  - >-
+    Checks the expression, script or name argument for request data:
+    servlet request getters, Spring and JAX-RS handler parameters
+    (`@RequestParam`, `@PathVariable`, `@RequestBody` and others), and
+    helpers in the file that return them.
+  - >-
+    Skips a SpEL `parseExpression()` whose result is only ever evaluated
+    with a `SimpleEvaluationContext`. A no-argument `getValue()` uses the
+    full context and does not count.
+  - >-
+    Reports CRITICAL for every other match. The finding names the kind:
+    expression language, script source or JNDI lookup.
+
+source_refs:
+  - path: skylos/visitors/languages/java/models.py
+    symbol: "EXPRESSION_SINKS = {"
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "def _process_expression_sinks"
+  - path: skylos/visitors/languages/java/flow.py
+    symbol: "def _spel_evaluated_safely"
+  - path: skylos/visitors/languages/kotlin/security.py
+    symbol: "_EXPRESSION_TYPES_NEEDING_IMPORT"
+
+fix:
+  explanation: >-
+    Do not evaluate input as an expression, script or JNDI name. Evaluate a
+    fixed expression and pass the input as a variable or root object. If
+    users must write expressions, evaluate them with a
+    `SimpleEvaluationContext` or a sandboxed engine with an allowlist.
+  filename: src/main/java/com/example/PriceController.java
+  code: |
+    package com.example;
+
+    import org.springframework.expression.Expression;
+    import org.springframework.expression.ExpressionParser;
+    import org.springframework.expression.spel.standard.SpelExpressionParser;
+    import org.springframework.web.bind.annotation.GetMapping;
+    import org.springframework.web.bind.annotation.RequestParam;
+    import org.springframework.web.bind.annotation.RestController;
+
+    @RestController
+    public class PriceController {
+        private final ExpressionParser parser = new SpelExpressionParser();
+        private final Expression total = parser.parseExpression("base * (1 + tax)");
+
+        @GetMapping("/price")
+        public Object price(@RequestParam double tax) {
+            return total.getValue(new Order(100, tax));
+        }
+
+        public record Order(int base, double tax) {}
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      An admin-only screen that evaluates expressions written by trusted
+      staff is reported the same way, because the text still comes from a
+      request.
+    - >-
+      A SpEL expression evaluated with a `SimpleEvaluationContext` that is
+      built in another method or class is not recognised and stays
+      reported.
+  suppress:
+    - check: inline
+      text: >-
+        Mark a reviewed line and say why. A bare `// noqa` does not hide
+        CRITICAL security findings.
+      language: java
+      code: |
+        Expression e = parser.parseExpression(formula); // skylos: ignore[SKY-D237] admin only
+    - check: baseline
+      text: >-
+        Accept the findings you already have with `skylos baseline .`, then
+        scan with `--baseline` so only new ones are listed.
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D237"]` turns the rule off for the
+        whole project.
+
+related: [SKY-D201, SKY-D202, SKY-D349, SKY-D239]

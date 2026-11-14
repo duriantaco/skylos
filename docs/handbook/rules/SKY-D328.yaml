@@ -1,0 +1,170 @@
+id: SKY-D328
+title: Remote script piped into a shell
+family: security
+severity: HIGH
+languages: [Dockerfile, Shell, GitHub Actions, GitLab CI, Python, TypeScript/JavaScript]
+gate:
+  full: counted
+cwe: [CWE-494]
+
+what_it_is: >-
+  "curl | bash" downloads a script and runs it in the same breath, so
+  nobody sees or checks what ran. SKY-D328 reports a `curl` or `wget` of an
+  outside URL whose output goes straight into a shell or interpreter.
+
+why_it_matters: >-
+  Whoever controls that URL, its DNS or its CDN at build time controls your
+  build. A swapped install script runs with the image's or runner's
+  permissions and secrets, and the next build may fetch something else
+  again, so the image cannot be reproduced.
+
+flagged_example:
+  language: dockerfile
+  filename: Dockerfile
+  expect_line: 4
+  code: |
+    FROM debian:bookworm-slim
+    RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+        && rm -rf /var/lib/apt/lists/*
+    RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+not_flagged_example:
+  language: dockerfile
+  filename: Dockerfile
+  code: |
+    FROM debian:bookworm-slim
+    ARG RUSTUP_SHA256
+    RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+        && rm -rf /var/lib/apt/lists/*
+    RUN curl -fsSLo /tmp/rustup-init \
+          https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init \
+        && echo "${RUSTUP_SHA256}  /tmp/rustup-init" | sha256sum -c - \
+        && chmod +x /tmp/rustup-init && /tmp/rustup-init -y
+  why: >-
+    The installer is saved to a file, its SHA-256 is checked against a value
+    pinned in the build, and only then is the saved copy run. No download is
+    piped into an interpreter; the one pipe feeds `sha256sum`.
+
+more_examples:
+  - flagged:
+      language: yaml
+      filename: .github/workflows/lint.yml
+      expect_line: 12
+      code: |
+        name: Lint
+        on: [push]
+        permissions:
+          contents: read
+        jobs:
+          lint:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - name: Install the linter
+                run: |
+                  curl -fsSL https://get.example-lint.dev/install.sh | bash
+                  example-lint --version
+              - run: example-lint check .
+    not_flagged:
+      language: yaml
+      filename: .github/workflows/lint.yml
+      code: |
+        name: Lint
+        on: [push]
+        permissions:
+          contents: read
+        jobs:
+          lint:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - name: Install the linter
+                run: |
+                  curl -fsSL https://get.example-lint.dev/example-lint-1.8.2.tar.gz | tar -xz
+                  ./example-lint --version
+              - run: ./example-lint check .
+      why: >-
+        This download is piped into `tar`, which unpacks a fixed release
+        archive. `tar` is not an interpreter, so nothing from the URL is run
+        as a script by the pipe itself.
+
+how_skylos_decides:
+  - >-
+    Reads shell commands in `.sh`, `.bash`, `.zsh`, `.ksh` and `.bats` files,
+    GitHub Actions `run:` steps, GitLab CI script items, Dockerfile `RUN`
+    instructions (continuation lines joined), fixed command strings in Python
+    `os.system()`-style calls or `shell=True` calls, and fixed strings passed
+    to `child_process.exec()` in TypeScript and JavaScript.
+  - >-
+    Splits each command at `;`, `&&` and `||`, then into pipeline parts at
+    `|`. Reports when a part whose command is `curl` or `wget` has an outside
+    `http(s)://` URL and a later part of the same pipeline runs `bash`, `sh`,
+    `dash`, `ksh`, `zsh`, `python`, `python3`, `node`, `ruby` or `perl`
+    (also after `sudo`, `nohup`, `time` or `command`).
+  - >-
+    Also reports an interpreter that runs a `$(curl …)` or `$(wget …)`
+    substitution of an `http(s)://` URL anywhere in the command, as in
+    `sh -c "$(curl -fsSL https://…)"`.
+  - >-
+    Skips `http://localhost`, `127.0.0.1` and `0.0.0.0` URLs, downloads piped
+    into tools that are not interpreters (`tar`, `jq`, `sha256sum`), and
+    downloads saved to a file and run in a later command. Every finding is
+    HIGH.
+
+source_refs:
+  - path: skylos/security/command_guard_exfil.py
+    symbol: "def _pipeline_has_remote_script_execution("
+  - path: skylos/security/command_guard_exfil.py
+    symbol: "REMOTE_EXEC_RE = re.compile("
+  - path: skylos/security/command_guard_exfil.py
+    symbol: "SHELL_INTERPRETERS = {"
+  - path: skylos/security/command_guard_paths.py
+    symbol: "def is_external_url("
+  - path: skylos/rules/config/container/dockerfile.py
+    symbol: "def scan_dockerfile_file("
+  - path: test/test_shell_security.py
+    symbol: "def test_remote_script_piped_to_shell_flags"
+
+fix:
+  explanation: >-
+    Download to a file, check it against a checksum or signature you pinned,
+    then run the saved copy. Better still, install a pinned release from a
+    package manager or copy the binary from a versioned image.
+  filename: Dockerfile
+  code: |
+    FROM debian:bookworm-slim
+    ARG RUSTUP_SHA256
+    RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+        && rm -rf /var/lib/apt/lists/*
+    RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup-init.sh https://sh.rustup.rs \
+        && echo "${RUSTUP_SHA256}  /tmp/rustup-init.sh" | sha256sum -c - \
+        && sh /tmp/rustup-init.sh -y
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      An installer from a host you trust and pin (a vendor's signed script
+      behind a fixed URL) is reported the same as any other, because Skylos
+      cannot see what the URL serves.
+    - >-
+      Missed: process substitution such as `bash <(curl -fsSL https://…)`;
+      and in a GitHub Actions `run: |` block, or a multi-line GitLab item, a
+      pipe that starts on a later line, because the block is split only at
+      `;`, `&&`, `||` and `|`, not at line breaks.
+  suppress:
+    - check: inline
+      text: >-
+        In a Dockerfile the marker goes on the first line of the `RUN`
+        instruction or on the line directly above it, one rule per marker.
+        Text after `#` on a `RUN` line becomes a shell comment, so the build
+        is unchanged.
+      language: dockerfile
+      code: |
+        # skylos: ignore[SKY-D328] vendor script, signature checked in CI
+        RUN curl -fsSL https://get.example-lint.dev/install.sh | sh
+    - check: config
+      text: >-
+        `[tool.skylos] ignore = ["SKY-D328"]` turns the rule off for the whole
+        project.
+
+related: [SKY-D341, SKY-D342, SKY-D327, SKY-D337]
