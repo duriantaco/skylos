@@ -108,7 +108,10 @@ _MAX_STEPS = 32
 _MAX_CALLER_DEPTH = 32
 _MAX_SITES = 512
 _MAX_WORK = 400000
-_MAX_RESOLUTION_WORK = 100000
+# Shared by every finding of one scan: once spent, every later finding is
+# kept as incomplete without analysis. Blind repositories needed 35k-320k
+# operations for complete caller resolution (a few seconds at most).
+_MAX_RESOLUTION_WORK = 1000000
 _MAX_RESOLUTION_DEPTH = 32
 _MAX_VALUE_DEPTH = 12
 _MAX_PARAM_VALUE_DEPTH = 3
@@ -509,6 +512,10 @@ class _Bind:
     value: ast.AST | None
     scope: object
     top_level: bool = False
+    # ``a, b = f()``: position of this name and the target's length, so a
+    # call whose returns are all tuples of that length is read element-wise.
+    index: int | None = None
+    arity: int | None = None
 
 
 @dataclass(eq=False)
@@ -905,9 +912,11 @@ class _Unit:
     def _bind_name(self, scope, name, bind):
         self._binding_scope(scope, name).add(name, bind)
 
-    def _bind_target(self, target, value, statement, scope, top, kind):
+    def _bind_target(self, target, value, statement, scope, top, kind, index=None, arity=None):
         if isinstance(target, ast.Name):
-            self._bind_name(scope, target.id, _Bind(kind, statement, value, scope, top))
+            self._bind_name(
+                scope, target.id, _Bind(kind, statement, value, scope, top, index, arity)
+            )
         elif isinstance(target, (ast.Tuple, ast.List)):
             pairs = None
             if (
@@ -920,8 +929,13 @@ class _Unit:
                 for item, item_value in pairs:
                     self._bind_target(item, item_value, statement, scope, top, kind)
             else:
-                for item in target.elts:
-                    self._bind_target(item, value, statement, scope, top, "unpack")
+                starred = any(isinstance(item, ast.Starred) for item in target.elts)
+                arity = None if starred else len(target.elts)
+                for position, item in enumerate(target.elts):
+                    self._bind_target(
+                        item, value, statement, scope, top, "unpack",
+                        None if starred else position, arity,
+                    )
         elif isinstance(target, ast.Starred):
             self._bind_target(target.value, value, statement, scope, top, "unpack")
         elif isinstance(target, ast.Attribute):
@@ -3566,6 +3580,12 @@ class _Tracer:
         kind = bind.kind
         if kind == "param":
             return self._param(unit, owner, bind.node, env)
+        if kind == "unpack" and bind.index is not None:
+            element = self._unpacked_call_element(unit, bind, env)
+            if element is not None:
+                return element.then(
+                    _step(unit, bind.node, f"`{name}` = item {bind.index} of {_describe(bind.value)}")
+                )
         if kind in {"assign", "unpack", "augassign"}:
             return self.trace(unit, bind.scope, bind.value, env).then(
                 _step(unit, bind.node, f"`{name}` = {_describe(bind.value)}")
@@ -5115,15 +5135,43 @@ class _Tracer:
         _, external = self.project.mro(cls_node)
         return bool(external) and all(name.startswith("argparse.") for name in external)
 
-    def _returns(self, unit, scope, call, value, prebound, prebound_keywords, env):
+    def _unpacked_call_element(self, unit, bind, env):
+        """``a, b = helper()`` where every return of each resolved helper is
+        a tuple literal of the target's length: only item ``index`` reaches
+        the name. Anything else returns None and the whole value is traced."""
+        call = bind.value
+        if not isinstance(call, ast.Call):
+            return None
+        values = self.project.values(unit, bind.scope, call.func)
+        if not values or not all(value.kind == "fn" for value in values):
+            return None
+        for value in values:
+            returned = self.project.returned_values(value.node)
+            if not returned or not all(
+                isinstance(expr, ast.Tuple)
+                and len(expr.elts) == bind.arity
+                and not any(isinstance(item, ast.Starred) for item in expr.elts)
+                for expr in returned
+            ):
+                return None
+        facts = _Facts()
+        for value in values:
+            facts.add(
+                self._returns(unit, bind.scope, call, value, [], [], env, element=bind.index)
+            )
+        return facts
+
+    def _returns(self, unit, scope, call, value, prebound, prebound_keywords, env, element=None):
         """What a resolved call returns: the callee's summary, with each
-        parameter that reaches a return replaced by what this call passes."""
+        parameter that reaches a return replaced by what this call passes.
+        ``element`` selects one item of tuple returns (see
+        ``_unpacked_call_element``)."""
         fn = value.node
         info = self.project.function_info.get(id(fn))
         if info is None:
             return _Facts.leaf(UNKNOWN, _step(unit, call, f"`{_describe(call)}` is not resolved"))
         escapes = []
-        if self.filename_proofs and self._filename_call(
+        if element is None and self.filename_proofs and self._filename_call(
             unit, scope, call, value, prebound, prebound_keywords, env, escapes
         ):
             step = _step(
@@ -5132,7 +5180,7 @@ class _Tracer:
                 "resolved helper produces only filename-component characters",
             )
             return _with_hidden_callers(_Facts.leaf(SAFE, step), escapes, step)
-        summary = self._summary(fn, info[0])
+        summary = self._summary(fn, info[0], element)
         facts = _Facts()
         for kind in _Facts.KINDS:
             if kind != PARAMETER:
@@ -7079,18 +7127,23 @@ class _Tracer:
             return None
         return bind.value
 
-    def _summary(self, fn, fn_unit):
+    def _summary(self, fn, fn_unit, element=None):
         """Return provenance of ``fn`` once: parameters that reach a return
-        stay placeholders (``parameter`` chains) for each call to fill in."""
-        key = ("summary", id(fn))
-        return self._memoized(self.summary_memo, key, lambda: self._summary_uncached(fn, fn_unit))
+        stay placeholders (``parameter`` chains) for each call to fill in.
+        With ``element``, only that item of each (tuple) return."""
+        key = ("summary", id(fn)) if element is None else ("summary", id(fn), element)
+        return self._memoized(
+            self.summary_memo, key, lambda: self._summary_uncached(fn, fn_unit, element)
+        )
 
-    def _summary_uncached(self, fn, fn_unit):
+    def _summary_uncached(self, fn, fn_unit, element=None):
         env = (id(fn), None, None)
         returned = self.project.returned_values(fn)
         name = getattr(fn, "name", "lambda")
         if not returned:
             return _Facts.leaf(SAFE, _step(fn_unit, fn, f"`{name}` returns None"))
+        if element is not None:
+            returned = [expr.elts[element] for expr in returned]
         facts = _Facts()
         for expr in returned:
             facts.add(self.trace(fn_unit, fn_unit.scope_of(expr), expr, env).then(
