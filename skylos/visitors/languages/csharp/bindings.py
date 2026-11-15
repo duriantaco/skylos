@@ -534,9 +534,9 @@ def collect_binding_references(masked, type_ranges, declarations, state, append_
             # Bare names in value positions may be method-group conversions.
             # The project binder still requires an exact enclosing type or a
             # proven using-static provider; locals and parameters were removed.
-            if re.search(r"(?:[=(,]|=>|\breturn)\s*$", before) and re.match(
-                r"\s*[,);}]", masked[position:]
-            ):
+            if re.search(
+                r"(?:[=(,]|=>|\breturn|[(,]\s*[A-Za-z_]\w*\s*:)\s*$", before
+            ) and re.match(r"\s*[,);}]", masked[position:]):
                 if not any(
                     lo <= start < hi and _looks_like_signature(masked, lo, hi)
                     for lo, hi in signatures

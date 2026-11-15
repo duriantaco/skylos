@@ -196,10 +196,11 @@ factor (`Confidence: 60% (default export ...)`) and JSON carries it in
 | JS/TS file imported only by unused files | 65 |
 | A module's default export that nothing imports (routers, mailers and config loaders consume default exports) | 60 |
 | An unused parameter (callback and override signatures often require it; like Ruff's opt-in `ARG` rules) | 50 |
+| An unused parameter of a private, undecorated Python function that is defined once and only ever called directly (no caller can require it) | not capped |
 | Rust (experimental) | 40 |
 
-The default threshold (60) shows everything except unused parameters and
-Rust; the scan says how many parameters it did not list, and
+The default threshold (60) shows everything except Rust and unused parameters
+whose signature a caller could require; the scan says how many parameters it did not list, and
 `--confidence 50` lists them. `--confidence 80` keeps the strongest findings; `skylos clean`'s non-interactive default (80)
 does not delete default exports or class attributes. SKY-E003/E004 findings
 carry a confidence for sorting and are not filtered by `--confidence`.

@@ -44,6 +44,9 @@ SECURITY_TAXONOMY: dict[str, str] = {
     "shell": "Shell security flow and sanitizer patterns.",
     "typescript": "TypeScript security flow and sanitizer patterns.",
     "csharp": "C# security flow and sanitizer patterns.",
+    "hardcoded_secret": "Credential literals, and public or structural values that only resemble them.",
+    "prompt_injection": "Hidden, disguised or encoded instructions aimed at AI tools, and text that only resembles them.",
+    "ci_workflow": "CI workflow permissions, references and environment-file writes.",
     "precision_guard": "Clean patterns that should stay free of noisy security findings.",
 }
 

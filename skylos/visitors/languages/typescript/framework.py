@@ -11,12 +11,15 @@ from .nextjs import (
     is_nextjs_project_pages_file,
 )
 from .conventions import (
+    CONF_TOOL_NAMED_EXPORTS,
     convention_reason,
     expo_router_exports,
+    is_conf_tool_config,
     is_jest_manual_mock,
     is_package_tool_config,
     is_rc_tool_config,
     is_react_email_template,
+    is_storybook_config_file,
 )
 from .tool_configs import is_tool_config_file
 from .site_generators import site_generator_entry
@@ -197,11 +200,17 @@ class TSFrameworkVisitor:
         # A tool reads every export of its config file (``export const auth``
         # for the better-auth CLI, ``export default`` for most), and Jest
         # substitutes every export of a manual mock for the real module's.
-        if is_package_tool_config(self._file_path) or is_jest_manual_mock(
-            self._file_path
+        if (
+            is_package_tool_config(self._file_path)
+            or is_jest_manual_mock(self._file_path)
+            or is_storybook_config_file(self._file_path)
         ):
             self._mark_default_export()
             self._mark_named_exports(self._exported_names())
+            return
+        if is_conf_tool_config(self._file_path):
+            self._mark_default_export()
+            self._mark_named_exports(set(CONF_TOOL_NAMED_EXPORTS))
             return
         site_entry = site_generator_entry(self._file_path)
         if site_entry is not None:

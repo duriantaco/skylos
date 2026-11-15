@@ -1,0 +1,16 @@
+{
+  "lockfileVersion": 2,
+  "workspaces": {
+    "": {
+      "name": "probe",
+      "dependencies": {
+        "left-pad": "^1.3.0",
+      },
+    },
+  },
+  "packages": {
+    "left-pad": ["left-pad@1.3.0", "", {}, "sha512-XRcglhh3p2lHAu4gFg75i5owZ3/uttIZh11iKj+W2fqc4Iu8OvwIHkDSftaw4gURo0WA2fT2oguwTa4HChLwJw=="],
+    "@acme/ui": ["@acme/ui@2.0.1", "", { "dependencies": { "left-pad": "^1.3.0" } }, "sha512-djrVF4j7jzmoodHXwlVXfN+DT5KXpncnM1Gj85afmzxnUISEfBTfTTjRR8Cs8ha8ZaiiIeOm4vihrmkQoN8nKg=="],
+    "sigtool": ["@acme/sigtool@github:AcmeWidgets/sigtool-node#1c30d7d", {}, "AcmeWidgets-sigtool-node-1c30d7d"],
+  }
+}

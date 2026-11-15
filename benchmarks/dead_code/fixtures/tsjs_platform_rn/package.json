@@ -1,0 +1,1 @@
+{"name": "fx", "private": true, "main": "App.tsx", "dependencies": {"react": "18.2.0", "react-native": "0.74.0", "react-native-web": "0.19.0"}}

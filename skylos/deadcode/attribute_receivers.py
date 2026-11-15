@@ -122,6 +122,33 @@ class AttributeReceiverEvidence:
             self._verdicts[key] = self._rules_out(definition)
         return self._verdicts[key]
 
+    def bare_reads_stay_local(self, definition):
+        """True when only the defining module can read this variable by bare name.
+
+        A bare name resolves in its own module's scopes. Another module reaches
+        a module variable only by importing it, by a star import of its module,
+        or through an attribute or string lookup.
+        """
+        if definition.type != "variable" or "." not in definition.name:
+            return False
+        if not _is_python(definition):
+            return False
+        owner = definition.name.rsplit(".", 1)[0]
+        if self.module_by_file.get(str(definition.filename)) != owner:
+            return False
+        return owner not in self._star_imported_modules()
+
+    def _star_imported_modules(self):
+        cache = self._memo["star_imported"]
+        if "modules" not in cache:
+            imported = set()
+            for sources in self.facts.star_sources.values():
+                for source in sources:
+                    imported.add(source)
+                    imported.update(self._module_index.matches(source))
+            cache["modules"] = imported
+        return cache["modules"]
+
     def _rules_out(self, definition):
         if definition.type != "variable" or "." not in definition.name:
             return False

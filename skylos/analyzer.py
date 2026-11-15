@@ -1794,6 +1794,7 @@ def _collect_grep_verify_candidates(
     definitions: dict,
     candidate_keys: frozenset | None = None,
     attribute_reads_resolved=None,
+    module_scoped_name=None,
 ) -> tuple[list[dict], dict]:
     candidates: list[dict] = []
     entries: dict = {}
@@ -1805,6 +1806,8 @@ def _collect_grep_verify_candidates(
         payload = defn.to_dict()
         if attribute_reads_resolved is not None and attribute_reads_resolved(defn):
             payload["attribute_reads_resolved"] = True
+        if module_scoped_name is not None and module_scoped_name(defn):
+            payload["module_scoped_name"] = True
         candidates.append(payload)
         entries[key] = (defn, payload)
     candidates.sort(key=_grep_verify_rescue_priority)
@@ -2841,16 +2844,30 @@ class Skylos:
         self._python_reachability_report = report
         self._apply_python_reachability(report)
 
+    def _unnamed_receiver_methods(self, report):
+        unnamed = report.unnamed_receiver_methods()
+        if not unnamed:
+            return unnamed
+        shared = Counter(
+            defn.simple_name for defn in self.defs.values() if defn.type == "method"
+        )
+        return {
+            key
+            for key in unnamed
+            if key in self.defs and shared[self.defs[key].simple_name] == 1
+        }
+
     def _retain_reachability_uncertainty(self, report):
+        unnamed = self._unnamed_receiver_methods(report)
         for key in report.protected_keys:
             defn = self.defs.get(key)
-            if defn is not None:
+            if defn is not None and key not in unnamed:
                 # Possible dynamic dispatch is retention evidence, not proof
                 # that this callable has an actual reachable invocation.
                 defn.references = max(1, defn.references)
                 defn.heuristic_refs.pop("dynamic_pattern", None)
                 defn.heuristic_refs["unresolved_receiver"] = 1.0
-        for key in report.protected_callback_keys:
+        for key in report.protected_callback_keys - unnamed:
             defn = self.defs.get(key)
             if defn is not None and defn.references <= 0:
                 defn.references = 1
@@ -2951,6 +2968,7 @@ class Skylos:
             self.defs,
             getattr(self, "_dead_code_scope_keys", None),
             getattr(receiver_evidence, "rules_out", None),
+            getattr(receiver_evidence, "bare_reads_stay_local", None),
         )
         if not candidates:
             return 0
@@ -3239,7 +3257,10 @@ class Skylos:
                 csharp_by_name[definition.name].append(definition)
                 csharp_by_simple[definition.simple_name].append(definition)
 
-        from skylos.deadcode.csharp_references import CSharpReferenceIndex
+        from skylos.deadcode.csharp_references import (
+            CSharpReferenceIndex,
+            _arity_matches as _csharp_arity_matches,
+        )
 
         csharp_references = CSharpReferenceIndex(
             csharp_by_name,
@@ -3275,13 +3296,7 @@ class Skylos:
             for definition in definitions:
                 if definition.type != "method":
                     continue
-                minimum = getattr(definition, "csharp_min_arity", None)
-                if minimum is None:
-                    if getattr(definition, "csharp_arity", None) == arity:
-                        matches.append(definition)
-                    continue
-                maximum = getattr(definition, "csharp_max_arity", None)
-                if minimum <= arity and (maximum is None or arity <= maximum):
+                if _csharp_arity_matches(definition, arity):
                     matches.append(definition)
             return matches
 
@@ -3430,6 +3445,13 @@ class Skylos:
                 continue
 
             if ref in self.defs and _compatible_family(self.defs[ref], ref_family):
+                if ref_family == "jvm" and str(self.defs[ref].filename) != str(
+                    ref_file
+                ):
+                    for definition in non_import_by_file_and_simple.get(
+                        (str(ref_file), ref), ()
+                    ):
+                        definition.references += 1
                 self.defs[ref].references += 1
                 if ref in import_to_original:
                     original = import_to_original[ref]
@@ -4353,6 +4375,7 @@ class Skylos:
         generated_keep_paths=None,
         all_advice=True,
         changed_file_exclude_folders=None,
+        config_exclude_folders=None,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -4696,7 +4719,11 @@ class Skylos:
                             configuration_coverage=result[
                                 "analysis_summary"
                             ].setdefault("configuration_coverage", {}),
-                            exclude_folders=exclude_folders,
+                            exclude_folders=(
+                                config_exclude_folders
+                                if config_exclude_folders is not None
+                                else exclude_folders
+                            ),
                         )
                         result["analysis_summary"]["analysis_error_count"] = len(
                             result["analysis_errors"]
@@ -5792,7 +5819,11 @@ class Skylos:
                     analysis_errors=analysis_errors,
                     scan_paths=path if isinstance(path, (list, tuple)) else None,
                     configuration_coverage=configuration_coverage,
-                    exclude_folders=exclude_folders,
+                    exclude_folders=(
+                        config_exclude_folders
+                        if config_exclude_folders is not None
+                        else exclude_folders
+                    ),
                 )
                 if config_findings:
                     all_dangers.extend(config_findings)
@@ -5865,6 +5896,10 @@ class Skylos:
                         candidate_path = Path(candidate)
                         if not candidate_path.is_absolute():
                             candidate_path = injection_root / candidate_path
+                        if should_exclude_path(
+                            candidate_path, injection_root, exclude_folders
+                        ):
+                            return False
                         rel_hint = None
                         try:
                             rel_hint = candidate_path.relative_to(injection_root)
@@ -6855,10 +6890,14 @@ class Skylos:
             progress_callback(0, 1, Path("PHASE: exports"))
         self._mark_exports()
 
+        from skylos.deadcode.csharp_markup_refs import credit_csharp_markup_names
         from skylos.visitors.languages.csharp.reachability import (
             demote_application_public_symbols,
         )
 
+        credit_csharp_markup_names(
+            self.defs.values(), project_root, files, exclude_folders=exclude_folders
+        )
         demote_application_public_symbols(
             self.defs.values(),
             project_root,
@@ -7264,6 +7303,7 @@ def analyze(
     generated_keep_paths=None,
     all_advice=True,
     changed_file_exclude_folders=None,
+    config_exclude_folders=None,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -7292,6 +7332,7 @@ def analyze(
         generated_keep_paths=generated_keep_paths,
         all_advice=all_advice,
         changed_file_exclude_folders=changed_file_exclude_folders,
+        config_exclude_folders=config_exclude_folders,
     )
 
 

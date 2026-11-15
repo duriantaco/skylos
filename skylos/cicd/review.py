@@ -746,7 +746,7 @@ _DEAD_CODE_REVIEW_KINDS = {
     "unused_parameters": ("SKY-U006", "Unused parameter"),
     "unused_files": ("SKY-E002", "Unused file"),
     "unused_fixtures": ("SKY-U000", "Unused fixture"),
-    "unused_exports": ("SKY-U000", "Unused export"),
+    "unused_exports": ("SKY-U000", "Unnecessary export"),
     "forgotten": ("SKY-U001", "Unused function"),
 }
 

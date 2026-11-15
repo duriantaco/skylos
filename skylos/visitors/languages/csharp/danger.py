@@ -232,7 +232,7 @@ _LOCATION_CALL_RE = re.compile(
 )
 _LOCAL_URL_GUARD_RE = re.compile(
     r"(?<![\w.])(?P<receiver>(?:(?:this|base)\s*\.\s*)?@?[A-Za-z_]\w*)\s*\.\s*"
-    r"IsLocalUrl\s*\(\s*@?(?P<var>[A-Za-z_]\w*)\s*\)"
+    r"IsLocalUrl\s*\(\s*@?(?P<var>[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*\)"
 )
 _BOOL_SUFFIX_RE = re.compile(
     r"(?:(?P<op>==|!=)\s*|(?<![\w.])is\s+(?:(?P<not>not)\s+)?)(?P<value>true|false)\s*\Z"
@@ -1843,6 +1843,12 @@ def _redirect_tainted(
         code, state.request_vars
     ):
         return True
+    expression = re.sub(r"\s+", "", code).lstrip("@")
+    if "." in expression and any(
+        guard_name == expression and start <= position < end
+        for guard_name, start, end in guards
+    ):
+        return False
     names = [name for name in tainted if _name_pattern((name,)).search(code)]
     return any(
         not any(
@@ -1983,8 +1989,9 @@ def _redirect_guards(masked_body: str) -> list[tuple[str, int, int, str]]:
         spans = _ternary_guard_spans(masked_body, call)
         if not spans:
             spans = _if_guard_spans(masked_body, call)
+        guarded = re.sub(r"\s+", "", match.group("var"))
         for start, end in spans:
-            guards.append((match.group("var"), start, end, match.group("receiver")))
+            guards.append((guarded, start, end, match.group("receiver")))
     return guards
 
 

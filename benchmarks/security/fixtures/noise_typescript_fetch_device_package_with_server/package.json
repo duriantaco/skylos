@@ -1,0 +1,1 @@
+{"name": "relay", "dependencies": {"fastify": "^5.12.6", "react-native": "0.74.0"}}

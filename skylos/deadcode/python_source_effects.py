@@ -774,10 +774,9 @@ def call_function(index, function, arguments, keywords):
             env[parameter.arg] = index.evaluate(
                 defaults.get(parameter.arg), function.path, env
             )
-    caller_budget = index.budget
-    caller_owner_steps = index.owner_steps
-    index.budget = 0
-    index.owner_steps = 0
+    # Nested calls spend the caller's budget. Resetting it for each callee
+    # allows a branching call graph to multiply the work without reaching
+    # either limit, and makes a caller appear complete after a child stops.
     active.add(id(function.node))
     index.reachable.add((function.path, id(function.node)))
     arguments_key = []
@@ -805,5 +804,3 @@ def call_function(index, function, arguments, keywords):
         return merge(values)
     finally:
         active.remove(id(function.node))
-        index.budget = caller_budget
-        index.owner_steps = caller_owner_steps

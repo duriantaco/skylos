@@ -13,6 +13,23 @@ SEPARATORS = ("/", "\\")
 SEPARATOR_NAMES = frozenset({"os.sep", "os.path.sep", "posixpath.sep", "ntpath.sep"})
 JOIN_NAMES = frozenset({"os.path.join", "posixpath.join", "ntpath.join"})
 _MAX_DEPTH = 8
+AMBIGUOUS_BINDING = object()
+
+
+def binding_value(values):
+    """A single expression, no expression, or a known ambiguous assignment.
+
+    Repeated imports have no expression here; their providers are checked by
+    module_level_imports. An expression captured before another assignment
+    must not be expanded as though an unknown later value proved its safety.
+    """
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    if any(value is not None for value in values):
+        return AMBIGUOUS_BINDING
+    return None
 
 
 def dotted(node):
@@ -26,96 +43,203 @@ def dotted(node):
     return ".".join(reversed(parts))
 
 
-def ends_with_separator(node, resolve, canonical):
-    """True when the prefix ``node`` provably ends with a separator.
+def module_level_imports(tree):
+    """Unambiguous module imports, without bindings from another scope.
 
-    ``resolve(name)`` returns the one expression a name is bound to, or None.
-    ``canonical(node)`` returns the standard-library name an expression
-    refers to (``"os.sep"``), or None when it is not a trusted import.
+    An unconditional import establishes a provider only when every import
+    of that name agrees. A conditional or relative import cannot replace it
+    with another provider and still supply a safety proof.
     """
-    if isinstance(node, ast.Tuple):
-        return bool(node.elts) and all(
-            ends_with_separator(item, resolve, canonical) for item in node.elts
-        )
-    value = _resolved(node, resolve, 0)
-    if value is None or _only_separators(value, resolve, canonical, 0):
+    providers = {}
+    unconditional = set()
+    pending = [(node, True) for node in ast.iter_child_nodes(tree)]
+    while pending:
+        node, direct = pending.pop()
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        imported = []
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.asname or alias.name.split(".", 1)[0]
+                target = alias.name if alias.asname else name
+                imported.append((name, target))
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "*":
+                    # A wildcard can replace any previously imported name.
+                    return {}
+                target = None
+                if node.module and not node.level:
+                    target = f"{node.module}.{alias.name}"
+                imported.append((alias.asname or alias.name, target))
+        for name, target in imported:
+            providers.setdefault(name, set()).add(target)
+            if direct:
+                unconditional.add(name)
+        pending.extend((child, False) for child in ast.iter_child_nodes(node))
+    return {
+        name: next(iter(targets))
+        for name, targets in providers.items()
+        if name in unconditional and len(targets) == 1 and None not in targets
+    }
+
+
+_MAX_WORK = 512
+
+
+class _ProofLimit(Exception):
+    pass
+
+
+def ends_with_separator(
+    node, resolve, canonical, module_resolve=None, module_canonical=None
+):
+    """Prove a non-vacuous string prefix, or one flat tuple of such strings.
+
+    The callbacks read the checking scope. A binding whose AST expression is
+    also returned by ``module_resolve`` belongs to the module, so its names
+    and imports must be read there even when the checking scope shadows them.
+    Inline and locally declared tuples retain the checking scope instead.
+
+    A shared work budget covers alias expansion and every string operation;
+    hitting a limit never supplies a partial safety proof.
+    """
+    proof = _PrefixProof(resolve, canonical, module_resolve, module_canonical)
+    try:
+        return proof.prefix(node, proof.local, 0)
+    except _ProofLimit:
         return False
-    return _terminal(value, resolve, canonical, 0)
 
 
-def _resolved(node, resolve, depth):
-    while isinstance(node, ast.Name) and depth <= _MAX_DEPTH:
-        node = resolve(node.id)
-        depth += 1
-    if isinstance(node, ast.Name):
-        return None
-    return node
-
-
-def _only_separators(node, resolve, canonical, depth):
-    """The prefix is empty or nothing but separators, so it admits any
-    absolute path."""
-    if depth > _MAX_DEPTH or node is None:
-        return False
-    if isinstance(node, ast.Name):
-        return _only_separators(resolve(node.id), resolve, canonical, depth + 1)
-    if isinstance(node, ast.Constant):
-        return isinstance(node.value, str) and node.value.strip("/\\") == ""
-    if isinstance(node, ast.Attribute):
-        return canonical(node) in SEPARATOR_NAMES
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _only_separators(
-            node.left, resolve, canonical, depth + 1
-        ) and _only_separators(node.right, resolve, canonical, depth + 1)
-    if isinstance(node, ast.JoinedStr):
-        return all(
-            _only_separators(part, resolve, canonical, depth + 1)
-            for part in node.values
+class _PrefixProof:
+    def __init__(self, resolve, canonical, module_resolve, module_canonical):
+        self.local = (resolve, canonical)
+        self.module = (
+            (module_resolve, module_canonical or canonical)
+            if module_resolve is not None
+            else None
         )
-    if isinstance(node, ast.FormattedValue):
-        return (
-            node.conversion == -1
-            and node.format_spec is None
-            and _only_separators(node.value, resolve, canonical, depth + 1)
-        )
-    return False
+        self.work = 0
 
+    def charge(self, depth):
+        self.work += 1
+        if self.work > _MAX_WORK or depth > _MAX_DEPTH:
+            raise _ProofLimit
 
-def _terminal(node, resolve, canonical, depth):
-    if depth > _MAX_DEPTH or node is None:
-        return False
-    if isinstance(node, ast.Name):
-        return _terminal(resolve(node.id), resolve, canonical, depth + 1)
-    if isinstance(node, ast.Constant):
-        return isinstance(node.value, str) and node.value.endswith(SEPARATORS)
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _terminal(node.right, resolve, canonical, depth + 1)
-    if isinstance(node, ast.JoinedStr):
-        if not node.values:
+    def resolved(self, node, context, depth):
+        while isinstance(node, ast.Name):
+            self.charge(depth)
+            value = context[0](node.id)
+            if value is AMBIGUOUS_BINDING:
+                raise _ProofLimit
+            if value is None:
+                break
+            if self.module is not None and value is self.module[0](node.id):
+                context = self.module
+            node = value
+            depth += 1
+        return node, context, depth
+
+    def prefix(self, node, context, depth, allow_tuple=True):
+        self.charge(depth)
+        node, context, depth = self.resolved(node, context, depth)
+        if isinstance(node, ast.Tuple):
+            # startswith accepts a tuple of strings, not nested tuples. Apart
+            # from being invalid at runtime, expanding nested aliases can
+            # multiply work exponentially even within a small depth limit.
+            return allow_tuple and bool(node.elts) and all(
+                self.prefix(item, context, depth + 1, allow_tuple=False)
+                for item in node.elts
+            )
+        if self.only_separators(node, context, depth):
             return False
-        return _terminal(node.values[-1], resolve, canonical, depth + 1)
-    if isinstance(node, ast.FormattedValue):
-        if node.conversion != -1 or node.format_spec is not None:
+        return self.terminal(node, context, depth)
+
+    def only_separators(self, node, context, depth):
+        self.charge(depth)
+        node, context, depth = self.resolved(node, context, depth)
+        if isinstance(node, (ast.Name, ast.Attribute)):
+            return context[1](node) in SEPARATOR_NAMES
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, str) and node.value.strip("/\\") == ""
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return self.only_separators(
+                node.left, context, depth + 1
+            ) and self.only_separators(node.right, context, depth + 1)
+        if isinstance(node, ast.JoinedStr):
+            return all(
+                self.only_separators(part, context, depth + 1)
+                for part in node.values
+            )
+        if isinstance(node, ast.FormattedValue):
+            return (
+                node.conversion == -1
+                and node.format_spec is None
+                and self.only_separators(node.value, context, depth + 1)
+            )
+        return False
+
+    def terminal(self, node, context, depth):
+        self.charge(depth)
+        node, context, depth = self.resolved(node, context, depth)
+        if isinstance(node, (ast.Name, ast.Attribute)):
+            return context[1](node) in SEPARATOR_NAMES
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, str) and node.value.endswith(SEPARATORS)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return self.terminal(node.right, context, depth + 1)
+        if isinstance(node, ast.JoinedStr):
+            return bool(node.values) and self.terminal(
+                node.values[-1], context, depth + 1
+            )
+        if isinstance(node, ast.FormattedValue):
+            return (
+                node.conversion == -1
+                and node.format_spec is None
+                and self.terminal(node.value, context, depth + 1)
+            )
+        if isinstance(node, ast.Call):
+            return self.join_ends_with_separator(node, context, depth)
+        return False
+
+    def join_ends_with_separator(self, call, context, depth):
+        provider = context[1](call.func)
+        if (
+            provider not in JOIN_NAMES
+            or call.keywords
+            or len(call.args) < 2
+            or any(isinstance(argument, ast.Starred) for argument in call.args)
+        ):
             return False
-        return _terminal(node.value, resolve, canonical, depth + 1)
-    if isinstance(node, ast.Attribute):
-        return canonical(node) in SEPARATOR_NAMES
-    if isinstance(node, ast.Call):
-        return _join_ends_with_separator(node, resolve, canonical, depth)
-    return False
+        last = call.args[-1]
+        if isinstance(last, ast.Constant) and last.value == "":
+            parts = []
+            for argument in call.args[:-1]:
+                value, owner, level = self.resolved(argument, context, depth + 1)
+                if self.root_only(value, owner, level, provider):
+                    # An absolute component discards earlier components:
+                    # join(BASE, '/', '') is '/', regardless of BASE.
+                    parts.clear()
+                parts.append(argument)
+            return not all(
+                self.only_separators(argument, context, depth + 1)
+                for argument in parts
+            )
+        if self.only_separators(last, context, depth + 1):
+            return False
+        return self.terminal(last, context, depth + 1)
 
-
-def _join_ends_with_separator(call, resolve, canonical, depth):
-    if canonical(call.func) not in JOIN_NAMES or call.keywords or len(call.args) < 2:
-        return False
-    if any(isinstance(argument, ast.Starred) for argument in call.args):
-        return False
-    last = call.args[-1]
-    if isinstance(last, ast.Constant) and last.value == "":
-        return True
-    if _only_separators(last, resolve, canonical, depth + 1):
-        return False
-    return _terminal(last, resolve, canonical, depth + 1)
+    def root_only(self, node, context, depth, provider):
+        self.charge(depth)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            separators = "/" if provider == "posixpath.join" else "/\\"
+            return bool(node.value) and not node.value.strip(separators)
+        target = context[1](node)
+        return target in SEPARATOR_NAMES and not (
+            provider == "posixpath.join" and target == "ntpath.sep"
+        )
 
 
 def bound_names(tree):
@@ -179,6 +303,13 @@ def scope_bindings(scope):
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
             for name in node.names:
                 add(name, None)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                add(alias.asname or alias.name.split(".")[0], None)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            add(node.name, None)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            add(node.name, None)
         elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             add(node.id, None)
         pending.extend(ast.iter_child_nodes(node))

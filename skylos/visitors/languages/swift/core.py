@@ -99,6 +99,9 @@ _LITERAL_TYPES = {
 }
 
 
+_CODABLE_PROTOCOLS = frozenset({"Codable", "Decodable", "Encodable"})
+
+
 class SwiftScanError(ValueError):
     def __init__(self, message, *, kind="source_complexity"):
         super().__init__(message)
@@ -665,6 +668,22 @@ class SwiftCore:
                     if body
                     else None
                 )
+                for index in range(node.child_count):
+                    if node.field_name_for_child(index) != "bound_identifier":
+                        continue
+                    following = node.child(index + 1)
+                    if following is not None and following.type in {
+                        "=",
+                        "type_annotation",
+                    }:
+                        continue
+                    binding = self._binding(node.child(index))
+                    if binding is not None and binding.symbol is not None:
+                        self._add(
+                            self.node_sources[node.id],
+                            binding.symbol,
+                            "shorthand optional binding",
+                        )
                 if target is not None:
                     for name in names:
                         self._bind(
@@ -840,6 +859,14 @@ class SwiftCore:
                 self._add(parent, symbol, "property wrapper or runtime property")
             if symbol.kind == "class" and "NSObject" in self.inherits[symbol.canonical]:
                 self._add(None, symbol, "Objective-C runtime type")
+            if (
+                symbol.kind == "class"
+                and symbol.name == "CodingKeys"
+                and parent is not None
+                and "CodingKey" in self.inherits[symbol.canonical]
+                and self.inherits[parent.canonical] & _CODABLE_PROTOCOLS
+            ):
+                self._add(parent, symbol, "synthesized Codable conformance")
             if self._unknown_macro:
                 self._add(None, symbol, "unexpanded source macro")
         inherited = {name: set(values) for name, values in self.inherits.items()}

@@ -276,6 +276,36 @@ class TestHelperFunctions:
         )
         assert get_non_library_dir_kind("/project/src/app.py") is None
 
+    def test_reserved_domain_package_is_not_an_examples_folder(self):
+        assert (
+            get_non_library_dir_kind(
+                "/project/src/main/java/com/example/shop/Cart.java"
+            )
+            is None
+        )
+        assert (
+            get_non_library_dir_kind("/project/src/main/kotlin/org/example/Basket.kt")
+            is None
+        )
+        assert (
+            get_non_library_dir_kind(
+                "/project/examples/quickstart/src/main/java/com/acme/Demo.java"
+            )
+            == "example"
+        )
+        assert (
+            get_non_library_dir_kind(
+                "/project/src/main/java/com/acme/example/Sample.java"
+            )
+            == "example"
+        )
+        assert (
+            get_non_library_dir_kind(
+                "/project/src/test/java/com/example/shop/CartTest.java"
+            )
+            == "test"
+        )
+
     def test_get_non_library_dir_kind_uses_project_relative_path(self):
         project_root = "/tmp/test/myproject"
 

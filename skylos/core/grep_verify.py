@@ -200,6 +200,8 @@ def _cache_key(cache: Any, group_name: str, finding: dict) -> str | None:
     )
     if finding.get("attribute_reads_resolved"):
         key += ":attribute-reads-resolved"
+    if finding.get("module_scoped_name"):
+        key += ":module-scoped-name"
     return key
 
 

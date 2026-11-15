@@ -1250,6 +1250,36 @@ def _line_for_yaml_path(lines: list[str], path: tuple[Any, ...]) -> int | None:
     return source.line_for_path(path) if source is not None else None
 
 
+def _grants_write(permissions: Any, permission: str) -> bool:
+    if isinstance(permissions, str):
+        return permissions != "read-all"
+    if isinstance(permissions, dict):
+        return str(permissions.get(permission, "")).lower() == "write"
+    return True
+
+
+def _called_workflow_drops_write(job: dict[str, Any], path: Path, permission: str) -> bool:
+    """The job calls a workflow file beside this one whose own ``permissions``
+    leave ``permission`` without write in every job. A called workflow can
+    only lower the token it is handed, so the caller's write scope does not
+    reach its steps. An unreadable, remote or permission-less target proves
+    nothing."""
+    target = local_workflow_reference(job.get("uses"))
+    if target is None:
+        return False
+    loaded = _load_yaml(path.parent / Path(target).name)
+    if loaded is None:
+        return False
+    called = loaded[0]
+    if "permissions" not in called or _grants_write(called["permissions"], permission):
+        return False
+    return not any(
+        "permissions" in called_job
+        and _grants_write(called_job["permissions"], permission)
+        for _job_id, called_job in _jobs(called)
+    )
+
+
 def _scan_permissions(
     data: dict[str, Any],
     path: Path,
@@ -1313,6 +1343,14 @@ def _scan_permissions(
         for permission, level in permissions.items():
             if str(level).lower() != "write":
                 continue
+            reached = [
+                str(job_id)
+                for job_id, job in _jobs(data)
+                if "permissions" not in job
+                and not _called_workflow_drops_write(job, path, str(permission))
+            ]
+            if len(reached) <= 1:
+                continue
             severity = WRITE_PERMISSION_SEVERITY.get(str(permission), "MEDIUM")
             _add_finding(
                 findings,
@@ -1322,7 +1360,7 @@ def _scan_permissions(
                     name="github-actions-broad-permissions",
                     message=(
                         f"Workflow-level permission {permission}: write reaches "
-                        f"{_job_list(inheriting)}. Grant write access only on the "
+                        f"{_job_list(reached)}. Grant write access only on the "
                         "job that needs it."
                     ),
                     file=path,
@@ -2226,7 +2264,7 @@ def _scan_secrets_inherit(
                         "Pass only the specific secrets it needs."
                     ),
                     file=path,
-                    line=_line_for_contains(lines, "secrets"),
+                    line=_line_for_job_field(lines, job_id, "secrets"),
                     severity="MEDIUM",
                     value=f"{job_id}:inherit",
                 ),
@@ -2288,7 +2326,18 @@ _CREDENTIAL_NAME_PARTS = frozenset(
     }
 )
 _NON_CREDENTIAL_NAME_ENDINGS = frozenset(
-    {"URL", "URI", "HOST", "HOSTNAME", "ENDPOINT", "DOMAIN", "REGION", "MODEL", "PORT"}
+    {
+        "URL",
+        "URI",
+        "HOST",
+        "HOSTNAME",
+        "ENDPOINT",
+        "DOMAIN",
+        "REGION",
+        "MODEL",
+        "PORT",
+        "ID",
+    }
 )
 
 
@@ -2355,6 +2404,11 @@ def _scan_secrets_outside_env(
                 _add_finding(findings, lines, finding)
 
 
+_LITERAL_ECHO_RE = re.compile(
+    r"echo\s+(?:'[^'$`]*'|\"[^\"$`]*\"|[A-Za-z0-9_./:\\@+=-]+)\s*"
+)
+
+
 def _run_line_writes_env_unsafely(line: str) -> bool:
     if not GITHUB_ENV_DEST_RE.search(line):
         return False
@@ -2373,6 +2427,8 @@ def _run_line_writes_env_unsafely(line: str) -> bool:
     )[0]
     stripped = before.strip()
     if re.fullmatch(r"echo\s+['\"][A-Za-z_][A-Za-z0-9_]*=[^$`]*['\"]\s*", stripped):
+        return False
+    if _LITERAL_ECHO_RE.fullmatch(stripped):
         return False
     return True
 
@@ -2772,23 +2828,28 @@ def _scan_broad_secret_env(
             ]
             if not matches:
                 continue
-            _add_finding(
-                findings,
-                lines,
-                _finding(
-                    rule_id=rule_id,
-                    name="github-actions-broad-secret-env",
-                    message=(
-                        f"{location} environment variable {name} exposes secret "
-                        f"{matches[0]} to every nested step. Move it to the one step "
-                        "that needs it."
-                    ),
-                    file=path,
-                    line=_line_for_value(lines, value),
-                    severity=severity,
-                    value=f"{location}:{name}",
+            finding = _finding(
+                rule_id=rule_id,
+                name="github-actions-broad-secret-env",
+                message=(
+                    f"{location} environment variable {name} exposes secret "
+                    f"{matches[0]} to every nested step. Move it to the one step "
+                    "that needs it."
                 ),
+                file=path,
+                line=_line_for_value(lines, value),
+                severity=severity,
+                value=f"{location}:{name}",
             )
+            if all(_names_non_credential_secret(match) for match in matches):
+                finding["low_risk_context"] = {
+                    "reason": "non-credential-secret",
+                    "detail": (
+                        f"{matches[0]} names a location, setting or identifier, "
+                        "not a credential"
+                    ),
+                }
+            _add_finding(findings, lines, finding)
 
     check_env(data.get("env"), "workflow", "HIGH")
     for job_id, job in _jobs(data):

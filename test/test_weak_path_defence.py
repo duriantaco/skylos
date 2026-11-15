@@ -5,13 +5,13 @@ import json
 import pytest
 
 from skylos.rules.danger.danger import scan_ctx
+from test.fixture_paths import write_fixture
 
 RULE = "SKY-D378"
 
 
 def scan(tmp_path, code):
-    path = tmp_path / "server.py"
-    path.write_text(code)
+    path = write_fixture(tmp_path, "server.py", code)
     return [f for f in scan_ctx(tmp_path, [path]) if f["rule_id"] == RULE]
 
 
@@ -203,6 +203,29 @@ def save(name, data):
         handle.write(data)
 """
 
+IMPORTED_SEPARATOR = """import os
+from os import sep
+
+def save(name, data):
+    if ".." in name:
+        raise ValueError
+    target = os.path.realpath(os.path.join(UPLOADS, name))
+    if not target.startswith(UPLOADS + sep):
+        raise ValueError
+    with open(target, "wb") as handle:
+        handle.write(data)
+"""
+
+IMPORTED_SEPARATOR_ALIAS = """import os
+from os import sep as S
+
+def save(name, data):
+    if ".." in name or name.startswith(S):
+        raise ValueError
+    with open(os.path.join(UPLOADS, name), "wb") as handle:
+        handle.write(data)
+"""
+
 JOINED_FIRST = """import os
 
 def listing(folder):
@@ -305,6 +328,8 @@ def read(name):
         IS_ABSOLUTE_REJECTED,
         BASENAME,
         SECURE_FILENAME,
+        IMPORTED_SEPARATOR,
+        IMPORTED_SEPARATOR_ALIAS,
         JOINED_FIRST,
         CONCATENATED_AFTER_BASE,
         NO_FILE_OPERATION,
@@ -398,3 +423,99 @@ def test_defences_in_test_files_stay_quiet(tmp_path):
     )
 
     assert [f for f in scan_ctx(tmp_path, [path]) if f["rule_id"] == RULE] == []
+
+
+def test_rebound_separator_import_does_not_prove_absolute_paths_are_rejected(tmp_path):
+    code = """import os
+from os import sep as S
+from os import extsep as S
+
+def save(name, data):
+    if ".." in name or name.startswith(S):
+        raise ValueError
+    with open(os.path.join(UPLOADS, name), "wb") as handle:
+        handle.write(data)
+"""
+
+    findings = scan(tmp_path, code)
+
+    assert [(row["line"], row["metadata"]["path_defence"]["kind"]) for row in findings] == [
+        (8, "absolute_path")
+    ]
+
+
+@pytest.mark.parametrize("base", ["", "/srv/uploads"], ids=["empty", "contained"])
+def test_weak_defence_checks_local_tuple_prefixes_in_function_scope(tmp_path, base):
+    code = (
+        "import os\n\ndef save(name, data):\n"
+        "    if '..' in name:\n        raise ValueError\n"
+        f"    local_base = {base!r}\n"
+        "    target = os.path.realpath(os.path.join(UPLOADS, name))\n"
+        "    if not target.startswith((local_base + '/',)):\n"
+        "        raise ValueError\n"
+        "    with open(target, 'wb') as handle:\n        handle.write(data)\n"
+    )
+
+    findings = scan(tmp_path, code)
+
+    assert [row["metadata"]["path_defence"]["kind"] for row in findings] == (
+        [] if base else ["absolute_path"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("imports", "parameter", "separator"),
+    [
+        ("from os import extsep as sep\n", "", "sep"),
+        ("from os import sep\n", ", sep", "sep"),
+        ("", ", os", "os.sep"),
+    ],
+    ids=["different-provider", "local-name", "local-module"],
+)
+def test_separator_spellings_alone_do_not_prove_absolute_path_rejection(
+    tmp_path, imports, parameter, separator
+):
+    code = (
+        "import os\n" + imports + f"\ndef save(name, data{parameter}):\n"
+        f"    if '..' in name or name.startswith({separator}):\n"
+        "        raise ValueError\n"
+        "    with open(os.path.join(UPLOADS, name), 'wb') as handle:\n"
+        "        handle.write(data)\n"
+    )
+
+    findings = scan(tmp_path, code)
+
+    assert [row["metadata"]["path_defence"]["kind"] for row in findings] == [
+        "absolute_path"
+    ]
+
+
+@pytest.mark.parametrize("scope", ["module", "local"])
+@pytest.mark.parametrize("tuple_prefix", [False, True], ids=["scalar", "tuple"])
+def test_weak_guard_does_not_borrow_a_later_base_assignment(
+    tmp_path, scope, tuple_prefix
+):
+    value = "captured_base + '/'"
+    if tuple_prefix:
+        value = f"({value},)"
+    bindings = (
+        "captured_base = ''\n"
+        f"captured_prefix = {value}\n"
+        "captured_base = '/srv/uploads'\n"
+    )
+    source = "import os\n" + (bindings if scope == "module" else "")
+    source += "\ndef save(name, data):\n"
+    source += "    if '..' in name:\n        raise ValueError\n"
+    if scope == "local":
+        source += "".join("    " + line + "\n" for line in bindings.splitlines())
+    source += (
+        "    target = os.path.realpath(os.path.join(UPLOADS, name))\n"
+        "    if not target.startswith(captured_prefix):\n        raise ValueError\n"
+        "    with open(target, 'wb') as handle:\n        handle.write(data)\n"
+    )
+
+    findings = scan(tmp_path, source)
+
+    assert [row["metadata"]["path_defence"]["kind"] for row in findings] == [
+        "absolute_path"
+    ]

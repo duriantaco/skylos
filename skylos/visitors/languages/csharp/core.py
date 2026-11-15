@@ -87,6 +87,71 @@ _TYPE_TOKEN_RE = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
 _GENERIC_ARGS_RE = re.compile(
     r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*<(?P<args>[^<>;{}]+)>"
 )
+_ATTRIBUTE_NAME_RE = re.compile(
+    r"(?:^|[\[,])\s*(?:[a-z]+\s*:\s*)?(?P<name>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)"
+)
+_INERT_ATTRIBUTES = frozenset(
+    {
+        "AllowNull",
+        "AttributeUsage",
+        "CLSCompliant",
+        "CallerArgumentExpression",
+        "CallerFilePath",
+        "CallerLineNumber",
+        "CallerMemberName",
+        "ComVisible",
+        "CompilerGenerated",
+        "Conditional",
+        "DebuggerBrowsable",
+        "DebuggerDisplay",
+        "DebuggerHidden",
+        "DebuggerNonUserCode",
+        "DebuggerStepThrough",
+        "DisallowNull",
+        "DllImport",
+        "DoesNotReturn",
+        "DoesNotReturnIf",
+        "DynamicallyAccessedMembers",
+        "EditorBrowsable",
+        "ExcludeFromCodeCoverage",
+        "Experimental",
+        "FieldOffset",
+        "Flags",
+        "GeneratedCode",
+        "Guid",
+        "LibraryImport",
+        "MaybeNull",
+        "MaybeNullWhen",
+        "MemberNotNull",
+        "MemberNotNullWhen",
+        "MethodImpl",
+        "NonSerialized",
+        "NotNull",
+        "NotNullIfNotNull",
+        "NotNullWhen",
+        "Obsolete",
+        "Pure",
+        "RequiresAssemblyFiles",
+        "RequiresDynamicCode",
+        "RequiresUnreferencedCode",
+        "Serializable",
+        "SkipLocalsInit",
+        "StackTraceHidden",
+        "StructLayout",
+        "SupportedOSPlatform",
+        "SuppressMessage",
+        "ThreadStatic",
+        "UnconditionalSuppressMessage",
+        "UnsupportedOSPlatform",
+    }
+)
+_REFLECTED_MEMBERS_RE = re.compile(
+    r"\btypeof\s*\(\s*(?:[A-Za-z_]\w*\s*\.\s*)*(?P<name>[A-Za-z_]\w*)\s*\)\s*"
+    r"(?:\.\s*GetTypeInfo\s*\(\s*\)\s*)?\.\s*"
+    r"(?:GetMethods|GetRuntimeMethods|GetMembers|GetDeclaredMethods|"
+    r"DeclaredMethods|DeclaredMembers)\b"
+)
+_GLOBAL_USINGS_KEY = "@global-usings"
 _TypeRange = tuple[int, int, str, bool]
 _NamespaceRange = tuple[int, int, str]
 
@@ -167,6 +232,7 @@ def scan_symbols(
     type_ranges = _type_ranges(masked, namespace_ranges)
     defs = _type_defs(file_path, source, masked, type_ranges, namespace_ranges)
     methods, method_decl_offsets = _method_defs(file_path, source, masked, type_ranges)
+    _mark_reflected_members(masked, methods)
     reference_mask = reference_expression_mask(source, masked)
     fields = _field_defs(file_path, source, masked, type_ranges, reference_mask)
     entrypoint_owners = {
@@ -186,7 +252,72 @@ def scan_symbols(
         method_decl_offsets,
         reference_context,
     )
+    if reference_context is not None:
+        global_usings = _global_usings(masked)
+        if global_usings:
+            reference_context[_GLOBAL_USINGS_KEY] = [global_usings]
     return defs + methods + fields, refs, []
+
+
+def _global_usings(masked: str) -> dict | None:
+    usings: list[str] = []
+    static_usings: list[str] = []
+    aliases: dict[str, str] = {}
+    for directive in re.finditer(
+        r"(?m)^\s*global\s+using\s+"
+        r"(?:(?P<alias>[A-Za-z_]\w*)\s*=\s*|(?P<static>static)\s+)?"
+        r"(?P<name>(?:global::)?[A-Za-z_]\w*(?:(?:\.|::)[A-Za-z_]\w*)*)\s*;",
+        masked,
+    ):
+        name = directive.group("name").replace("global::", "")
+        if directive.group("alias"):
+            aliases[directive.group("alias")] = name
+        elif directive.group("static"):
+            static_usings.append(name)
+        else:
+            usings.append(name)
+    if not usings and not static_usings and not aliases:
+        return None
+    return {"usings": usings, "static_usings": static_usings, "aliases": aliases}
+
+
+def _attribute_names(attrs: str) -> set[str]:
+    names: set[str] = set()
+    depth = 0
+    segment_start = 0
+    segments: list[str] = []
+    for index, char in enumerate(attrs):
+        if char in "([{":
+            if char == "[" and depth == 0:
+                segment_start = index
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if char == "]" and depth == 0:
+                segments.append(attrs[segment_start : index + 1])
+    for segment in segments:
+        for part, _ in _split_top_level(segment[1:-1], angle_brackets=True):
+            match = _ATTRIBUTE_NAME_RE.match(part)
+            if match:
+                name = match.group("name").rsplit(".", 1)[-1]
+                names.add(name.removesuffix("Attribute") or name)
+    return names
+
+
+def _consumed_by_attribute(attrs: str) -> bool:
+    return bool(_attribute_names(attrs) - _INERT_ATTRIBUTES)
+
+
+def _mark_reflected_members(masked: str, methods: list[Definition]) -> None:
+    reflected = {
+        match.group("name") for match in _REFLECTED_MEMBERS_RE.finditer(masked)
+    }
+    if not reflected:
+        return
+    for method in methods:
+        owner = method.name.rpartition(".")[0].rsplit(".", 1)[-1]
+        if owner in reflected:
+            method.references = max(1, method.references)
 
 
 def _type_defs(
@@ -210,7 +341,7 @@ def _type_defs(
         if definition.csharp_type_kind == "interface":
             definition.csharp_interface_methods = _interface_method_names(masked, match)
         definition.is_exported = _is_exported(match.group("mods"))
-        if definition.is_exported:
+        if definition.is_exported or _consumed_by_attribute(match.group("attrs")):
             definition.references = 1
         defs.append(definition)
     return defs
@@ -227,6 +358,8 @@ def _method_defs(
     for match in _METHOD_RE.finditer(masked):
         name = match.group("name")
         if name in _NON_CALL_KEYWORDS:
+            continue
+        if match.group("rtype").split()[-1] in _KIND_MAP:
             continue
         owner_range = _containing_type_range(type_ranges, match.start())
         if owner_range and not _is_direct_member(masked, owner_range, match.start()):
@@ -253,7 +386,7 @@ def _method_defs(
         definition.is_exported = _is_exported(match.group("mods")) or (
             name == "Main" and "static" in match.group("mods").split()
         )
-        if definition.is_exported:
+        if definition.is_exported or _consumed_by_attribute(match.group("attrs")):
             definition.references = 1
         defs.append(definition)
     defs.extend(_constructor_defs(file_path, source, masked, type_ranges))
@@ -331,9 +464,9 @@ def _private_constructor_called(
         close_paren = _matching_paren(masked, call.end() - 1)
         if close_paren is None:
             continue
-        arity = _argument_arity(masked[call.end() : close_paren])
-        if minimum <= arity and (maximum is None or arity <= maximum):
-            return True
+        for arity in _argument_arities(masked[call.end() : close_paren]):
+            if minimum <= arity and (maximum is None or arity <= maximum):
+                return True
     return False
 
 
@@ -346,6 +479,11 @@ def _field_defs(
 ) -> list[Definition]:
     defs: list[Definition] = []
     excluded = non_field_ranges(masked)
+    layout_types = {
+        match.group("name")
+        for match in _TYPE_RE.finditer(masked)
+        if "StructLayout" in _attribute_names(match.group("attrs"))
+    }
     for match in _FIELD_RE.finditer(masked):
         owner_range = _containing_type_range(type_ranges, match.start())
         if (
@@ -366,11 +504,15 @@ def _field_defs(
             definition.is_exported = bool(
                 re.search(r"\b(public|protected|internal)\b", match.group("mods"))
             )
-            if definition.is_exported or _has_field_use(
-                reference_mask if reference_mask is not None else masked,
-                owner_range,
-                name,
-                offset,
+            if (
+                definition.is_exported
+                or owner_range[2].rsplit(".", 1)[-1] in layout_types
+                or _has_field_use(
+                    reference_mask if reference_mask is not None else masked,
+                    owner_range,
+                    name,
+                    offset,
+                )
             ):
                 definition.references = 1
             defs.append(definition)
@@ -573,6 +715,13 @@ def _argument_arity(args: str) -> int:
     return len(_split_top_level(args))
 
 
+def _argument_arities(args: str) -> tuple[int, ...]:
+    arity = _argument_arity(args)
+    if arity == 0 and args:
+        return (0, 1)
+    return (arity,)
+
+
 def _refs(
     file_path: str,
     masked: str,
@@ -636,10 +785,16 @@ def _collect_call_refs(
             if namespace:
                 name = f"{namespace}.{name}"
         close_paren = _matching_paren(masked, match.end() - 1)
-        if close_paren is not None:
-            params = masked[match.end() : close_paren]
-            name = f"{name}#{_argument_arity(params)}"
-        _append_ref(name, match.start("name"), state, spelling=match.group("name"))
+        if close_paren is None:
+            _append_ref(name, match.start("name"), state, spelling=match.group("name"))
+            continue
+        for arity in _argument_arities(masked[match.end() : close_paren]):
+            _append_ref(
+                f"{name}#{arity}",
+                match.start("name"),
+                state,
+                spelling=match.group("name"),
+            )
 
 
 def _collect_new_refs(

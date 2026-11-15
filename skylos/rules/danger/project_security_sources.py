@@ -13,6 +13,7 @@ from .danger_fs.path_provenance import (
     UNTRUSTED,
     _Facts,
     _Project,
+    _ResolutionLimit,
     _Tracer,
     _V,
     _Site,
@@ -597,6 +598,17 @@ class ProjectSources:
         self.project = SecurityProject.load(self.root)
         self.tracer = SourceTracer(self.project, "SKY-D357")
         self.command_tracer = SourceTracer(self.project, "SKY-D212")
+        self._resolution_error = None
+
+    def _evidence(self, resolve, file_path, call):
+        if self._resolution_error is None:
+            try:
+                return resolve(file_path, call)
+            except _ResolutionLimit as error:
+                # This project is shared by both tracers. Interrupted indexes
+                # must not be reused to refute or substantiate another sink.
+                self._resolution_error = str(error)
+        return {"resolution_incomplete": self._resolution_error}
 
     def _production_chain(self, chain):
         return not any(
@@ -619,6 +631,9 @@ class ProjectSources:
         return None, None
 
     def import_evidence(self, file_path, call):
+        return self._evidence(self._import_evidence, file_path, call)
+
+    def _import_evidence(self, file_path, call):
         unit, target = self.locate_call(file_path, call)
         if target is None:
             return None
@@ -650,6 +665,9 @@ class ProjectSources:
         }
 
     def command_evidence(self, file_path, call):
+        return self._evidence(self._command_evidence, file_path, call)
+
+    def _command_evidence(self, file_path, call):
         unit, target = self.locate_call(file_path, call)
         if target is None or not self.command_tracer._external_call(
             unit,

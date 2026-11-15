@@ -13,6 +13,8 @@ from skylos.constants import (
     MIN_SECRET_LENGTH,
     get_non_library_dir_kind,
 )
+from skylos.rules import secret_shapes
+from skylos.rules.secrets import encodes_public_text
 from skylos.visitors.languages.statement_scan import iter_semicolon_assignments
 from skylos.visitors.languages.java.flow import scan_java_security_flows
 
@@ -274,6 +276,12 @@ def _shannon_entropy(s: str) -> float:
         freq[c] = freq.get(c, 0) + 1
     length = len(s)
     return -sum((count / length) * math.log2(count / length) for count in freq.values())
+
+
+def _is_unnamed_encoded_text(source_bytes: bytes, node, text: str) -> bool:
+    line_start = source_bytes.rfind(b"\n", 0, node.start_byte) + 1
+    prefix = source_bytes[line_start : node.start_byte].decode("utf-8", "replace")
+    return not secret_shapes.names_a_credential(prefix) and encodes_public_text(text)
 
 
 def _is_known_non_secret_alphabet(value: str) -> bool:
@@ -2025,6 +2033,7 @@ def scan_danger(root_node, file_path: str, lang: Language | None = None) -> list
             and len(text) >= MIN_LONG_SECRET_LENGTH
             and all(c in _BASE64_CHARS for c in text)
             and _shannon_entropy(text) > ENTROPY_THRESHOLD
+            and not _is_unnamed_encoded_text(source_bytes, node, text)
         ):
             findings.append(
                 {

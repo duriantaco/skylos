@@ -157,6 +157,9 @@ def test_agent_pre_commit_does_not_block_an_exact_reviewed_finding(
     assert exc_info.value.code == 0
     assert len(analyze_calls) == 1
     assert "include_review_proofs" not in analyze_calls[0]
+    assert ".vscode" in analyze_calls[0]["exclude_folders"]
+    assert ".vscode" not in analyze_calls[0]["config_exclude_folders"]
+    assert "node_modules" in analyze_calls[0]["config_exclude_folders"]
     rendered = " ".join(
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
