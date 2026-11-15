@@ -5,6 +5,7 @@
 ### Bug Fixes
 
 * **danger:** keep prefix aliases in their declaration scope, reject ambiguous separator imports and captured reassignments, and bound tuple and string proof expansion without suppressing unresolved path findings.
+* **danger:** resolve compiled filename pattern providers where the pattern was declared, so helper-local imports cannot change whether a pattern is trusted.
 * **deadcode:** stop reporting attributes declared on Protocol classes as unused variables.
 * **danger:** reach the graph-query check for compact or multi-line Cypher instead of skipping the whole security scan.
 * **danger:** prove a separator prefix the same way for an imported separator, a named tuple of prefixes and a base joined with an empty string, reading each name in the scope that declares it, so a valid containment guard is no longer reported and a vacuous one is no longer trusted.

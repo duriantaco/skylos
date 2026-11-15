@@ -25,7 +25,7 @@
       },
       "merged_fix": {
         "skylos/rules/danger/danger_fs/prefix_separator.py": "f7af824f21d40862e607f0b906266b56a17a1bf802dd5b604afce26c37c9e35e",
-        "skylos/rules/danger/danger_fs/path_flow.py": "f4935b6b5dd18f6cea26ddee49f36cb742e3a1eacff74b58ace1423632352f4e",
+        "skylos/rules/danger/danger_fs/path_flow.py": "df0b7ad1516760bdc40fb3dd32ac8c94aed692148491ebb4383a8f5a2cc39b25",
         "skylos/rules/danger/danger_fs/weak_path_defence.py": "73e70c4895f88af171d46d1311a9ba95d113603c57c4867b1223a4781a8ced82"
       }
     }
@@ -85,7 +85,7 @@
         "original_pr": 78.3269,
         "fixed_before_main": 68.1605,
         "current_main": 88.9013,
-        "merged_fix": 80.5399
+        "merged_fix": 48.3582
       },
       "prefix_checks": 120,
       "source_patterns": {
@@ -127,13 +127,7 @@
           "file": "tests/test_runner_apps/tagged/tests_syntax_error.py",
           "reason": "SyntaxError"
         }
-      ],
-      "finding_identity_sha256": {
-        "original_pr": "7b8ad4186a2fbfa0dc73e21f91e5fb7e8d528ee2cc076cd22835e311cc1e10f5",
-        "fixed_before_main": "7b8ad4186a2fbfa0dc73e21f91e5fb7e8d528ee2cc076cd22835e311cc1e10f5",
-        "current_main": "7b8ad4186a2fbfa0dc73e21f91e5fb7e8d528ee2cc076cd22835e311cc1e10f5",
-        "merged_fix": "7b8ad4186a2fbfa0dc73e21f91e5fb7e8d528ee2cc076cd22835e311cc1e10f5"
-      }
+      ]
     },
     {
       "id": "flask",
@@ -171,7 +165,7 @@
         "original_pr": 7.7298,
         "fixed_before_main": 2.7759,
         "current_main": 3.7776,
-        "merged_fix": 3.0721
+        "merged_fix": 1.7334
       },
       "prefix_checks": 6,
       "source_patterns": {
@@ -186,13 +180,7 @@
         "current_main": 0,
         "merged_fix": 0
       },
-      "skipped_files": [],
-      "finding_identity_sha256": {
-        "original_pr": "859bb73176f28c466a51973ebdc1f345b90d8bb5bdc884cb399bf33296614be4",
-        "fixed_before_main": "859bb73176f28c466a51973ebdc1f345b90d8bb5bdc884cb399bf33296614be4",
-        "current_main": "859bb73176f28c466a51973ebdc1f345b90d8bb5bdc884cb399bf33296614be4",
-        "merged_fix": "859bb73176f28c466a51973ebdc1f345b90d8bb5bdc884cb399bf33296614be4"
-      }
+      "skipped_files": []
     },
     {
       "id": "werkzeug",
@@ -230,7 +218,7 @@
         "original_pr": 11.5781,
         "fixed_before_main": 4.6954,
         "current_main": 5.9186,
-        "merged_fix": 5.2316
+        "merged_fix": 2.9053
       },
       "prefix_checks": 47,
       "source_patterns": {
@@ -246,13 +234,7 @@
         "current_main": 0,
         "merged_fix": 0
       },
-      "skipped_files": [],
-      "finding_identity_sha256": {
-        "original_pr": "7c615cd579277161b97dc2be13cb38de2959280f1fa419eafb78efad7adb2663",
-        "fixed_before_main": "7c615cd579277161b97dc2be13cb38de2959280f1fa419eafb78efad7adb2663",
-        "current_main": "7c615cd579277161b97dc2be13cb38de2959280f1fa419eafb78efad7adb2663",
-        "merged_fix": "7c615cd579277161b97dc2be13cb38de2959280f1fa419eafb78efad7adb2663"
-      }
+      "skipped_files": []
     },
     {
       "id": "starlette",
@@ -290,7 +272,7 @@
         "original_pr": 4.776,
         "fixed_before_main": 3.7877,
         "current_main": 4.8781,
-        "merged_fix": 4.1498
+        "merged_fix": 2.382
       },
       "prefix_checks": 30,
       "source_patterns": {
@@ -306,13 +288,7 @@
         "current_main": 0,
         "merged_fix": 0
       },
-      "skipped_files": [],
-      "finding_identity_sha256": {
-        "original_pr": "998c8bde4cc8700b5fe18e524a8ea86ebbf877b57cd37df19e487192e83dfecf",
-        "fixed_before_main": "998c8bde4cc8700b5fe18e524a8ea86ebbf877b57cd37df19e487192e83dfecf",
-        "current_main": "998c8bde4cc8700b5fe18e524a8ea86ebbf877b57cd37df19e487192e83dfecf",
-        "merged_fix": "998c8bde4cc8700b5fe18e524a8ea86ebbf877b57cd37df19e487192e83dfecf"
-      }
+      "skipped_files": []
     },
     {
       "id": "tornado",
@@ -350,7 +326,7 @@
         "original_pr": 8.2,
         "fixed_before_main": 8.4676,
         "current_main": 11.8546,
-        "merged_fix": 9.9443
+        "merged_fix": 5.6389
       },
       "prefix_checks": 42,
       "source_patterns": {
@@ -366,13 +342,7 @@
         "current_main": 0,
         "merged_fix": 0
       },
-      "skipped_files": [],
-      "finding_identity_sha256": {
-        "original_pr": "62a2fbb1f15e0fc952001e3ee1fb97b1bbd7d3fd42e35e51a621436e602d24ae",
-        "fixed_before_main": "62a2fbb1f15e0fc952001e3ee1fb97b1bbd7d3fd42e35e51a621436e602d24ae",
-        "current_main": "62a2fbb1f15e0fc952001e3ee1fb97b1bbd7d3fd42e35e51a621436e602d24ae",
-        "merged_fix": "62a2fbb1f15e0fc952001e3ee1fb97b1bbd7d3fd42e35e51a621436e602d24ae"
-      }
+      "skipped_files": []
     },
     {
       "id": "fastapi",
@@ -410,7 +380,7 @@
         "original_pr": 13.0104,
         "fixed_before_main": 12.7923,
         "current_main": 18.1453,
-        "merged_fix": 15.8496
+        "merged_fix": 9.0158
       },
       "prefix_checks": 44,
       "source_patterns": {
@@ -427,13 +397,7 @@
         "current_main": 0,
         "merged_fix": 0
       },
-      "skipped_files": [],
-      "finding_identity_sha256": {
-        "original_pr": "5b89d4874683bb1386ebf44ac037296652dd4118716d0f9504be5c95e8a19a8e",
-        "fixed_before_main": "5b89d4874683bb1386ebf44ac037296652dd4118716d0f9504be5c95e8a19a8e",
-        "current_main": "5b89d4874683bb1386ebf44ac037296652dd4118716d0f9504be5c95e8a19a8e",
-        "merged_fix": "5b89d4874683bb1386ebf44ac037296652dd4118716d0f9504be5c95e8a19a8e"
-      }
+      "skipped_files": []
     }
   ],
   "natural_comparisons": {
@@ -466,7 +430,7 @@
       "prefix_checks": 289,
       "changed_prefix_checks": 1,
       "before_seconds": 133.4755,
-      "after_seconds": 118.7873,
+      "after_seconds": 70.0336,
       "before_errors": 0,
       "after_errors": 0,
       "skipped_files": 6
@@ -517,7 +481,7 @@
       "original_pr_harness_limit_reached": false,
       "original_pr_public_helper_calls": 2,
       "merged_harness_limit_reached": false,
-      "merged_seconds": 0.051635
+      "merged_seconds": 0.004935
     },
     {
       "id": "unsafe_named_local_tuple",
@@ -541,7 +505,7 @@
       "original_pr_harness_limit_reached": false,
       "original_pr_public_helper_calls": 2,
       "merged_harness_limit_reached": false,
-      "merged_seconds": 0.003443
+      "merged_seconds": 0.002062
     },
     {
       "id": "unsafe_repeated_separator_import",
@@ -565,7 +529,7 @@
       "original_pr_harness_limit_reached": false,
       "original_pr_public_helper_calls": 1,
       "merged_harness_limit_reached": false,
-      "merged_seconds": 0.003117
+      "merged_seconds": 0.0025
     },
     {
       "id": "safe_inline_local_tuple",
@@ -581,7 +545,7 @@
       "original_pr_harness_limit_reached": false,
       "original_pr_public_helper_calls": 2,
       "merged_harness_limit_reached": false,
-      "merged_seconds": 0.003018
+      "merged_seconds": 0.001827
     },
     {
       "id": "safe_named_local_tuple",
@@ -599,7 +563,7 @@
       "original_pr_harness_limit_reached": false,
       "original_pr_public_helper_calls": 2,
       "merged_harness_limit_reached": false,
-      "merged_seconds": 0.002894
+      "merged_seconds": 0.001862
     },
     {
       "id": "safe_imported_separator",
@@ -617,7 +581,7 @@
       "original_pr_harness_limit_reached": false,
       "original_pr_public_helper_calls": 1,
       "merged_harness_limit_reached": false,
-      "merged_seconds": 0.003017
+      "merged_seconds": 0.001748
     },
     {
       "id": "branching_nested_tuple",
@@ -641,7 +605,99 @@
       "original_pr_harness_limit_reached": true,
       "original_pr_public_helper_calls": 5001,
       "merged_harness_limit_reached": false,
-      "merged_seconds": 0.036374
+      "merged_seconds": 0.022959
+    },
+    {
+      "id": "unsafe_compiled_pattern_module_module_evil_local_re",
+      "synthetic": true,
+      "source_bytes": 386,
+      "expected_rules": [
+        "SKY-D215"
+      ],
+      "observed_rules": {
+        "original_pr": [
+          "SKY-D215"
+        ],
+        "fixed_before_main": [
+          "SKY-D215"
+        ],
+        "current_main": [],
+        "merged_fix": [
+          "SKY-D215"
+        ]
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 0,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.001696
+    },
+    {
+      "id": "safe_compiled_pattern_module_module_re_local_evil",
+      "synthetic": true,
+      "source_bytes": 386,
+      "expected_rules": [],
+      "observed_rules": {
+        "original_pr": [
+          "SKY-D215"
+        ],
+        "fixed_before_main": [
+          "SKY-D215"
+        ],
+        "current_main": [
+          "SKY-D215"
+        ],
+        "merged_fix": []
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 0,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.001644
+    },
+    {
+      "id": "safe_compiled_pattern_local_module_evil_local_re",
+      "synthetic": true,
+      "source_bytes": 390,
+      "expected_rules": [],
+      "observed_rules": {
+        "original_pr": [
+          "SKY-D215"
+        ],
+        "fixed_before_main": [
+          "SKY-D215"
+        ],
+        "current_main": [],
+        "merged_fix": []
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 0,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.001797
+    },
+    {
+      "id": "unsafe_compiled_pattern_local_module_re_local_evil",
+      "synthetic": true,
+      "source_bytes": 390,
+      "expected_rules": [
+        "SKY-D215"
+      ],
+      "observed_rules": {
+        "original_pr": [
+          "SKY-D215"
+        ],
+        "fixed_before_main": [
+          "SKY-D215"
+        ],
+        "current_main": [
+          "SKY-D215"
+        ],
+        "merged_fix": [
+          "SKY-D215"
+        ]
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 0,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.002761
     }
   ],
   "limitations": [
@@ -668,9 +724,10 @@
   ],
   "local_checks": {
     "focused_prefix_and_filename": {
-      "passed": 217,
+      "passed": 225,
       "failed": 0,
-      "command": "python -m pytest -q test/test_path_prefix_containment.py test/test_weak_path_defence.py test/test_prefix_separator_bounds.py test/test_path_filename_proof.py test/test_path_filename_guard_forms.py test/test_path_filename_proof_routes.py"
+      "command": "python -m pytest -q test/test_path_prefix_containment.py test/test_weak_path_defence.py test/test_prefix_separator_bounds.py test/test_path_filename_proof.py test/test_path_filename_guard_forms.py test/test_path_filename_proof_routes.py",
+      "seconds": 3.43
     },
     "broader_related": {
       "passed": 1118,
@@ -678,7 +735,7 @@
       "failure": "test/test_path_closed_world.py::test_loader_targets_chosen_at_run_time[code10-False]",
       "also_fails_on_unchanged_main": true,
       "explanation": "Python 3.11.18 default recursion limit 1000 causes ast.parse of the existing 5000-part concatenation fixture to raise RecursionError. This is unchanged by the prefix fixes.",
-      "note": "Broad collection preceded the final eight helper-provider cases; those pass in the focused run. Test runs overlap."
+      "note": "Broad collection preceded the final sixteen helper-provider cases; those pass in the final focused run. Test runs overlap."
     },
     "review_and_capture_regressions_on_original_pr": {
       "cases": 39,
@@ -692,7 +749,25 @@
       "true_negatives": 2,
       "false_positives": 0,
       "false_negatives": 0,
-      "same_counts_on_main": true
+      "same_counts_on_main": true,
+      "analysis_status": "complete",
+      "seconds": 0.5423,
+      "case_ids": [
+        "path-traversal-tainted-join",
+        "path-traversal-basename",
+        "python-path-fullmatch-validated-name",
+        "python-path-prefix-match-name",
+        "python-path-search-checked-name"
+      ]
+    },
+    "compiled_pattern_declaration_provider_regressions": {
+      "cases": 8,
+      "passed": 8,
+      "failed": 0,
+      "previous_published_revision": "e110c82babe53b6ad8544c7c2fea88bff1838fa5",
+      "previous_passed": 4,
+      "previous_failed": 4,
+      "note": "Synthetic regression cases, separate from naturally occurring repository observations."
     }
   }
 }

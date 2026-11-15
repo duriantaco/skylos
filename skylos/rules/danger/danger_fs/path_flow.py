@@ -1182,11 +1182,26 @@ class _PathFlowChecker(TaintVisitor):
             if imports is None:
                 imports = module_level_imports(function)
                 self._function_import_aliases[key] = imports
+        module_call_functions = set()
 
         def binding(name):
-            return self._scope_binding(function, name)
+            value = self._scope_binding(function, name)
+            module_values = self._module_bindings.get(name)
+            if (
+                isinstance(value, ast.Call)
+                and module_values
+                and len(module_values) == 1
+                and value is module_values[0]
+            ):
+                # filename_match_subject also asks canonical() about the
+                # factory of a bound compiled pattern. That call was written
+                # at module level, so helper-local imports do not describe it.
+                module_call_functions.add(id(value.func))
+            return value
 
         def canonical(node):
+            if id(node) in module_call_functions:
+                return self._prefix_module_canonical(node)
             name = prefix_dotted(node)
             if name is not None:
                 head, _, rest = name.partition(".")

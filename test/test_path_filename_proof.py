@@ -128,3 +128,49 @@ view(Custom('input'))
 """
     kept, _ = _project_scan(tmp_path, FILTER, suffix=suffix)
     assert len(kept) == 2
+
+
+@pytest.mark.parametrize("unrelated_import", [False, True])
+@pytest.mark.parametrize(
+    ("pattern_scope", "module_provider", "local_provider", "trusted"),
+    [
+        ("module", "evil", "re", False),
+        ("module", "re", "evil", True),
+        ("local", "evil", "re", True),
+        ("local", "re", "evil", False),
+    ],
+    ids=[
+        "module-fake-pattern-local-real-provider",
+        "module-real-pattern-local-fake-provider",
+        "local-real-pattern-module-fake-provider",
+        "local-fake-pattern-module-real-provider",
+    ],
+)
+def test_compiled_filename_pattern_keeps_its_declaration_provider(
+    pattern_scope, module_provider, local_provider, trusted, unrelated_import
+):
+    source = (
+        f"import {module_provider} as rx\n"
+        "from pathlib import Path\nfrom fastapi import FastAPI\n"
+        "from fastapi.responses import FileResponse\napp = FastAPI()\n"
+    )
+    if pattern_scope == "module":
+        source += "PATTERN = rx.compile(r'[A-Za-z0-9_-]+')\n"
+    source += f"def checked(raw: str):\n    import {local_provider} as rx\n"
+    if pattern_scope == "local":
+        source += "    PATTERN = rx.compile(r'[A-Za-z0-9_-]+')\n"
+    source += (
+        "    if not PATTERN.fullmatch(raw):\n        raise ValueError\n"
+        "    return raw\n"
+    )
+    if unrelated_import:
+        source += "def unrelated():\n    import evil as rx\n    return rx\n"
+    source += (
+        "@app.get('/files/{raw}')\ndef view(raw: str):\n"
+        "    return FileResponse(Path('/srv') / checked(raw))\n"
+    )
+    findings = []
+    scan(ast.parse(source), "server.py", findings)
+
+    expected = [] if trusted else [len(source.splitlines())]
+    assert [f["line"] for f in findings if f["rule_id"] == "SKY-D215"] == expected
