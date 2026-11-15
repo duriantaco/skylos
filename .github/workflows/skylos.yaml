@@ -63,10 +63,11 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           uv venv --python 3.11
-          # 5.6.0 has unbounded callable-flow analysis. Use the reviewed
-          # performance/security fixes until they are released on PyPI.
+          # Reviewed callable-flow, source-evaluation and caller-resolution
+          # limits, including the inactive Django converter fast path.
+          # Use this snapshot until those fixes are released on PyPI.
           # Keep this immutable and independent of the PR's code or metadata.
-          uv pip install --python .venv/bin/python "skylos @ git+https://github.com/duriantaco/skylos.git@91546cb597054b1ee9a1f1b2d88e84a2577b8154"
+          uv pip install --python .venv/bin/python "skylos @ git+https://github.com/duriantaco/skylos.git@ca5cc8cf43c909558d918729caf36998ab86c643"
           .venv/bin/skylos --version
 
       - name: Use repo Skylos on trusted refs

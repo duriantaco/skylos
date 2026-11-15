@@ -506,7 +506,24 @@ class _Checker(ast.NodeVisitor):
             "symbol": self.symbols[-1],
         }
         if evidence:
-            finding["security_evidence"] = evidence
+            if evidence.get("resolution_incomplete"):
+                sink = (
+                    "dynamic Python import" if rule == "SKY-D357"
+                    else "subprocess argument vector"
+                )
+                finding["message"] = (
+                    f"Caller analysis could not complete for this {sink}; "
+                    "review its input source."
+                )
+                finding["metadata"] = {
+                    "source_status": "incomplete",
+                    "source_provenance": {
+                        "status": "incomplete",
+                        "limits": [evidence["resolution_incomplete"]],
+                    },
+                }
+            else:
+                finding["security_evidence"] = evidence
         self.findings.append(finding)
 
     def visit_Import(self, node):
