@@ -901,10 +901,20 @@ def test_node_test_runner_failures_are_labeled_from_junit(tmp_path: Path):
 
     assert result.verdict == "fail"
     origins = _tests_check(result).failure_origins
-    assert {t["test"]: t["origin"] for t in origins["tests"]} == {
-        "test > adds numbers": "introduced",
-        "test > multiplies numbers": "preexisting",
-    }
+    # Newer Node reporters include a file attribute, so Skylos can use a
+    # file-qualified ID. Older reporters only identify the class and test.
+    assert len(origins["tests"]) == 2
+    actual = {(t["test"], t["file"]): t["origin"] for t in origins["tests"]}
+    assert actual in (
+        {
+            ("test > adds numbers", None): "introduced",
+            ("test > multiplies numbers", None): "preexisting",
+        },
+        {
+            ("src/calc.test.js::adds numbers", "src/calc.test.js"): "introduced",
+            ("src/calc.test.js::multiplies numbers", "src/calc.test.js"): "preexisting",
+        },
+    )
     assert "whole command ran on the base" in origins["reason"]
     assert _snapshot(root, outputs=frozenset({"junit.xml"})) == before
 
