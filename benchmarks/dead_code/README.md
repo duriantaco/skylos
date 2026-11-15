@@ -636,6 +636,13 @@ Supported kinds:
 4. Add both `unused` and `used` expectations when the fixture can validate recall and precision together.
 5. Run `python scripts/dead_code_benchmark.py` before and after analyzer changes.
 
+GitHub indexes dependency manifests inside fixtures, including `package.json`,
+for Dependabot alerts. When a case only needs a package name to identify a
+framework or tool, use a real version with no known security advisories;
+do not copy an old version from an example. Check proposed upgrades against
+current advisories and rerun the affected static benchmark cases. Fixture
+dependencies do not need to be installed, and fixture programs must not run.
+
 Current stricter cases include FastAPI dependency entrypoints, Flask blueprint
 and CLI entrypoints, decorator registries, SQLAlchemy mixed model modules,
 multi-file service/repository layers, Django management commands, Celery tasks,

@@ -96,6 +96,13 @@ default suite.
 4. Prefer one semantic claim per fixture.
 5. Add both positive and negative cases for risky rule changes.
 
+GitHub indexes dependency manifests inside fixtures, including `package.json`,
+for Dependabot alerts. When a case only needs a package name to identify a
+framework or runtime, use a real version with no known security advisories;
+do not copy an old version from an example. Check proposed upgrades against
+current advisories and rerun the affected static benchmark cases. Fixture
+dependencies do not need to be installed, and fixture programs must not run.
+
 Current golden cases cover SQL injection, SSRF, command injection, YAML loader
 precision, path traversal, XSS, open redirect, JWT verification bypass, and CORS
 misconfiguration. The cross-language cases currently cover Go Zip Slip
