@@ -1,0 +1,773 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-15",
+  "status": "validated_prefix_rule_comparison",
+  "scope": "Static AST comparison of path_flow.scan and weak_path_defence.scan. Existing raw candidates are not reviewed vulnerability labels; no full-project accuracy or recall claim.",
+  "pull_request": "https://github.com/duriantaco/skylos/pull/1235",
+  "scanner_source": {
+    "initial_pr_revision": "6b38c752de369411e486b2128f72b6032afd2067",
+    "latest_main_revision": "ab09dfdbdebe3ef95100363ff9fb5285ce3bc70c",
+    "source_sha256": {
+      "original_pr": {
+        "skylos/rules/danger/danger_fs/prefix_separator.py": "6652e1a4a31e43056299ef35a4de3b335586ef1e3070d14a7769bf21484b377d",
+        "skylos/rules/danger/danger_fs/path_flow.py": "dd41ad6825d1d0d5792abbeae7f761188ea7d15ad006e6bbb40374bf04bc9a35",
+        "skylos/rules/danger/danger_fs/weak_path_defence.py": "aa52e041a6b995d39de5a9f2461744a8cac7367d7ec3374b33e8457f9f0e07e7"
+      },
+      "fixed_before_main": {
+        "skylos/rules/danger/danger_fs/prefix_separator.py": "f7af824f21d40862e607f0b906266b56a17a1bf802dd5b604afce26c37c9e35e",
+        "skylos/rules/danger/danger_fs/path_flow.py": "bbd8fbc023441827a7b6827a9256bfe2900ca0b207b22fe5d2c71f05b940507e",
+        "skylos/rules/danger/danger_fs/weak_path_defence.py": "73e70c4895f88af171d46d1311a9ba95d113603c57c4867b1223a4781a8ced82"
+      },
+      "current_main": {
+        "skylos/rules/danger/danger_fs/prefix_separator.py": "418146405c03199c29df1fdd2368116f1f0e0a7c1c61f52ba714658990c579fe",
+        "skylos/rules/danger/danger_fs/path_flow.py": "b372b8f5d31a6824d3dcd996a3134fb2204395b9d2ded0e098b8f3e572b9c462",
+        "skylos/rules/danger/danger_fs/weak_path_defence.py": "dc38efff9017a5bd31867bacdef647b8b5b100d31036d3ae0f64f91d7cfcd757"
+      },
+      "merged_fix": {
+        "skylos/rules/danger/danger_fs/prefix_separator.py": "f7af824f21d40862e607f0b906266b56a17a1bf802dd5b604afce26c37c9e35e",
+        "skylos/rules/danger/danger_fs/path_flow.py": "df0b7ad1516760bdc40fb3dd32ac8c94aed692148491ebb4383a8f5a2cc39b25",
+        "skylos/rules/danger/danger_fs/weak_path_defence.py": "73e70c4895f88af171d46d1311a9ba95d113603c57c4867b1223a4781a8ced82"
+      }
+    }
+  },
+  "environment": {
+    "python": "3.11.18",
+    "platform": "macOS-15.3.2-arm64-arm-64bit",
+    "target_code_execution": false,
+    "worker_timeout_seconds": 300,
+    "max_source_file_bytes": 2000000,
+    "excluded": [
+      ".git",
+      "__pycache__",
+      ".venv",
+      "node_modules",
+      "symlink files/directories"
+    ]
+  },
+  "natural_cohorts": [
+    {
+      "id": "django",
+      "repository": "https://github.com/django/django",
+      "revision": "f24f38c6b2825f15628c07bf2892f1664eed9361",
+      "kind": "production_framework_source_and_tests",
+      "scope": "All regular .py/.pyi/.pyw files in the pinned checkout; two affected rule passes only",
+      "python_files": 2943,
+      "parsed_files": 2937,
+      "source_bytes": 19406322,
+      "source_inventory_sha256": "a46a0c2981c3ef18e8e5c8833e513ce946f946357138fff0891d25d327b1b1f2",
+      "candidate_counts": {
+        "original_pr": {
+          "SKY-D215": 63,
+          "SKY-D324": 20,
+          "SKY-D325": 31,
+          "SKY-D326": 7
+        },
+        "fixed_before_main": {
+          "SKY-D215": 63,
+          "SKY-D324": 20,
+          "SKY-D325": 31,
+          "SKY-D326": 7
+        },
+        "current_main": {
+          "SKY-D215": 63,
+          "SKY-D324": 20,
+          "SKY-D325": 31,
+          "SKY-D326": 7
+        },
+        "merged_fix": {
+          "SKY-D215": 63,
+          "SKY-D324": 20,
+          "SKY-D325": 31,
+          "SKY-D326": 7
+        }
+      },
+      "seconds": {
+        "original_pr": 78.3269,
+        "fixed_before_main": 68.1605,
+        "current_main": 88.9013,
+        "merged_fix": 48.3582
+      },
+      "prefix_checks": 120,
+      "source_patterns": {
+        "inline_tuple_startswith_calls": 18,
+        "named_startswith_calls": 30,
+        "repeated_separator_alias_spellings": 0,
+        "separator_related_imports": 1,
+        "startswith_calls": 231,
+        "tuple_assignments": 1555
+      },
+      "scanner_errors": {
+        "original_pr": 0,
+        "fixed_before_main": 0,
+        "current_main": 0,
+        "merged_fix": 0
+      },
+      "skipped_files": [
+        {
+          "file": "tests/auth_tests/test_auth_backends.py",
+          "reason": "SyntaxError"
+        },
+        {
+          "file": "tests/deprecation/test_deprecate_posargs.py",
+          "reason": "SyntaxError"
+        },
+        {
+          "file": "tests/expressions/tests.py",
+          "reason": "SyntaxError"
+        },
+        {
+          "file": "tests/migrations/migrations_test_apps/with_generic_model/models.py",
+          "reason": "SyntaxError"
+        },
+        {
+          "file": "tests/template_tests/tests.py",
+          "reason": "SyntaxError"
+        },
+        {
+          "file": "tests/test_runner_apps/tagged/tests_syntax_error.py",
+          "reason": "SyntaxError"
+        }
+      ]
+    },
+    {
+      "id": "flask",
+      "repository": "https://github.com/pallets/flask",
+      "revision": "49943b5a94413a530761350f04e896f76e8d620e",
+      "kind": "production_framework_source_and_tests",
+      "scope": "All regular .py/.pyi/.pyw files in the pinned checkout; two affected rule passes only",
+      "python_files": 83,
+      "parsed_files": 83,
+      "source_bytes": 591255,
+      "source_inventory_sha256": "3171103040bc189b1c79acbb6468a5ff6fc0c88b04db2d7c6a04d3aa8658982c",
+      "candidate_counts": {
+        "original_pr": {
+          "SKY-D215": 11,
+          "SKY-D324": 25,
+          "SKY-D325": 20
+        },
+        "fixed_before_main": {
+          "SKY-D215": 11,
+          "SKY-D324": 25,
+          "SKY-D325": 20
+        },
+        "current_main": {
+          "SKY-D215": 11,
+          "SKY-D324": 25,
+          "SKY-D325": 20
+        },
+        "merged_fix": {
+          "SKY-D215": 11,
+          "SKY-D324": 25,
+          "SKY-D325": 20
+        }
+      },
+      "seconds": {
+        "original_pr": 7.7298,
+        "fixed_before_main": 2.7759,
+        "current_main": 3.7776,
+        "merged_fix": 1.7334
+      },
+      "prefix_checks": 6,
+      "source_patterns": {
+        "named_startswith_calls": 2,
+        "repeated_separator_alias_spellings": 0,
+        "startswith_calls": 6,
+        "tuple_assignments": 20
+      },
+      "scanner_errors": {
+        "original_pr": 0,
+        "fixed_before_main": 0,
+        "current_main": 0,
+        "merged_fix": 0
+      },
+      "skipped_files": []
+    },
+    {
+      "id": "werkzeug",
+      "repository": "https://github.com/pallets/werkzeug",
+      "revision": "0f43c6ebd426039e4b99ec22535c2c8a2ec2f69f",
+      "kind": "production_framework_source_and_tests",
+      "scope": "All regular .py/.pyi/.pyw files in the pinned checkout; two affected rule passes only",
+      "python_files": 142,
+      "parsed_files": 142,
+      "source_bytes": 1242790,
+      "source_inventory_sha256": "22a3a4e74c27c8c29fc1659968568b6251c7d93230d5e1a145ef341088067c5d",
+      "candidate_counts": {
+        "original_pr": {
+          "SKY-D215": 10,
+          "SKY-D324": 4,
+          "SKY-D325": 5
+        },
+        "fixed_before_main": {
+          "SKY-D215": 10,
+          "SKY-D324": 4,
+          "SKY-D325": 5
+        },
+        "current_main": {
+          "SKY-D215": 10,
+          "SKY-D324": 4,
+          "SKY-D325": 5
+        },
+        "merged_fix": {
+          "SKY-D215": 10,
+          "SKY-D324": 4,
+          "SKY-D325": 5
+        }
+      },
+      "seconds": {
+        "original_pr": 11.5781,
+        "fixed_before_main": 4.6954,
+        "current_main": 5.9186,
+        "merged_fix": 2.9053
+      },
+      "prefix_checks": 47,
+      "source_patterns": {
+        "inline_tuple_startswith_calls": 5,
+        "named_startswith_calls": 9,
+        "repeated_separator_alias_spellings": 0,
+        "startswith_calls": 57,
+        "tuple_assignments": 36
+      },
+      "scanner_errors": {
+        "original_pr": 0,
+        "fixed_before_main": 0,
+        "current_main": 0,
+        "merged_fix": 0
+      },
+      "skipped_files": []
+    },
+    {
+      "id": "starlette",
+      "repository": "https://github.com/Kludex/starlette",
+      "revision": "271c277da0ff64e2048a4d46ecc812b9d61db5f6",
+      "kind": "production_framework_source_and_tests",
+      "scope": "All regular .py/.pyi/.pyw files in the pinned checkout; two affected rule passes only",
+      "python_files": 84,
+      "parsed_files": 84,
+      "source_bytes": 816492,
+      "source_inventory_sha256": "ed802d165524f7c36cc097cef661e50f2908125dcf5e2f3558b72050a0d21801",
+      "candidate_counts": {
+        "original_pr": {
+          "SKY-D215": 4,
+          "SKY-D324": 2,
+          "SKY-D325": 1
+        },
+        "fixed_before_main": {
+          "SKY-D215": 4,
+          "SKY-D324": 2,
+          "SKY-D325": 1
+        },
+        "current_main": {
+          "SKY-D215": 4,
+          "SKY-D324": 2,
+          "SKY-D325": 1
+        },
+        "merged_fix": {
+          "SKY-D215": 4,
+          "SKY-D324": 2,
+          "SKY-D325": 1
+        }
+      },
+      "seconds": {
+        "original_pr": 4.776,
+        "fixed_before_main": 3.7877,
+        "current_main": 4.8781,
+        "merged_fix": 2.382
+      },
+      "prefix_checks": 30,
+      "source_patterns": {
+        "inline_tuple_startswith_calls": 1,
+        "named_startswith_calls": 1,
+        "repeated_separator_alias_spellings": 0,
+        "startswith_calls": 32,
+        "tuple_assignments": 27
+      },
+      "scanner_errors": {
+        "original_pr": 0,
+        "fixed_before_main": 0,
+        "current_main": 0,
+        "merged_fix": 0
+      },
+      "skipped_files": []
+    },
+    {
+      "id": "tornado",
+      "repository": "https://github.com/tornadoweb/tornado",
+      "revision": "48f6645edfd0ae1fc2ef58902c98876f1f5a37b7",
+      "kind": "production_framework_source_and_tests",
+      "scope": "All regular .py/.pyi/.pyw files in the pinned checkout; two affected rule passes only",
+      "python_files": 116,
+      "parsed_files": 116,
+      "source_bytes": 2080263,
+      "source_inventory_sha256": "45be9de475fd859d8a072ae4449099fa77906ab37a753b13101d4c0fd484b5d6",
+      "candidate_counts": {
+        "original_pr": {
+          "SKY-D215": 13,
+          "SKY-D324": 3,
+          "SKY-D325": 12
+        },
+        "fixed_before_main": {
+          "SKY-D215": 13,
+          "SKY-D324": 3,
+          "SKY-D325": 12
+        },
+        "current_main": {
+          "SKY-D215": 13,
+          "SKY-D324": 3,
+          "SKY-D325": 12
+        },
+        "merged_fix": {
+          "SKY-D215": 13,
+          "SKY-D324": 3,
+          "SKY-D325": 12
+        }
+      },
+      "seconds": {
+        "original_pr": 8.2,
+        "fixed_before_main": 8.4676,
+        "current_main": 11.8546,
+        "merged_fix": 5.6389
+      },
+      "prefix_checks": 42,
+      "source_patterns": {
+        "inline_tuple_startswith_calls": 1,
+        "named_startswith_calls": 9,
+        "repeated_separator_alias_spellings": 0,
+        "startswith_calls": 82,
+        "tuple_assignments": 45
+      },
+      "scanner_errors": {
+        "original_pr": 0,
+        "fixed_before_main": 0,
+        "current_main": 0,
+        "merged_fix": 0
+      },
+      "skipped_files": []
+    },
+    {
+      "id": "fastapi",
+      "repository": "https://github.com/fastapi/fastapi",
+      "revision": "913c68062c8990ea2c00d856d81b7e2383485155",
+      "kind": "production_framework_source_and_tests",
+      "scope": "All regular .py/.pyi/.pyw files in the pinned checkout; two affected rule passes only",
+      "python_files": 1223,
+      "parsed_files": 1223,
+      "source_bytes": 4687584,
+      "source_inventory_sha256": "f4d0a84f1f6cee8277f2fbe7f017a9bb60a9d61d1d1c56ace6c78955d3a2905c",
+      "candidate_counts": {
+        "original_pr": {
+          "SKY-D215": 12,
+          "SKY-D324": 7,
+          "SKY-D325": 34
+        },
+        "fixed_before_main": {
+          "SKY-D215": 12,
+          "SKY-D324": 7,
+          "SKY-D325": 34
+        },
+        "current_main": {
+          "SKY-D215": 12,
+          "SKY-D324": 7,
+          "SKY-D325": 34
+        },
+        "merged_fix": {
+          "SKY-D215": 12,
+          "SKY-D324": 7,
+          "SKY-D325": 34
+        }
+      },
+      "seconds": {
+        "original_pr": 13.0104,
+        "fixed_before_main": 12.7923,
+        "current_main": 18.1453,
+        "merged_fix": 9.0158
+      },
+      "prefix_checks": 44,
+      "source_patterns": {
+        "inline_tuple_startswith_calls": 6,
+        "named_startswith_calls": 16,
+        "repeated_separator_alias_spellings": 0,
+        "separator_related_imports": 1,
+        "startswith_calls": 83,
+        "tuple_assignments": 36
+      },
+      "scanner_errors": {
+        "original_pr": 0,
+        "fixed_before_main": 0,
+        "current_main": 0,
+        "merged_fix": 0
+      },
+      "skipped_files": []
+    }
+  ],
+  "natural_comparisons": {
+    "original_pr_vs_fixed_before_main": {
+      "repositories": 6,
+      "python_files": 4591,
+      "parsed_files": 4585,
+      "source_bytes": 28824706,
+      "before_findings": 284,
+      "after_findings": 284,
+      "added_findings": 0,
+      "removed_findings": 0,
+      "prefix_checks": 289,
+      "changed_prefix_checks": 0,
+      "before_seconds": 123.6212,
+      "after_seconds": 100.6794,
+      "before_errors": 0,
+      "after_errors": 0,
+      "skipped_files": 6
+    },
+    "current_main_vs_merged_fix": {
+      "repositories": 6,
+      "python_files": 4591,
+      "parsed_files": 4585,
+      "source_bytes": 28824706,
+      "before_findings": 284,
+      "after_findings": 284,
+      "added_findings": 0,
+      "removed_findings": 0,
+      "prefix_checks": 289,
+      "changed_prefix_checks": 1,
+      "before_seconds": 133.4755,
+      "after_seconds": 70.0336,
+      "before_errors": 0,
+      "after_errors": 0,
+      "skipped_files": 6
+    }
+  },
+  "existing_raw_candidate_counts": {
+    "SKY-D215": 113,
+    "SKY-D324": 61,
+    "SKY-D325": 103,
+    "SKY-D326": 7
+  },
+  "natural_observations": {
+    "reviewed_bug_instances_observed": 0,
+    "interpretation": "The sampled real-source rule passes produced no added or removed findings. This does not prove the repositories free of these bugs or other vulnerabilities.",
+    "intentional_proof_change": [
+      {
+        "cohort": "fastapi",
+        "revision": "913c68062c8990ea2c00d856d81b7e2383485155",
+        "pass": "path_flow",
+        "file": "scripts/doc_parsing_utils.py",
+        "line": 282,
+        "expression": "rel_url.startswith(ASSETS_URL_PREFIXES)",
+        "before": false,
+        "after": true
+      }
+    ]
+  },
+  "synthetic_canaries": [
+    {
+      "id": "unsafe_inline_local_tuple",
+      "synthetic": true,
+      "source_bytes": 366,
+      "expected_rules": [
+        "SKY-D215"
+      ],
+      "observed_rules": {
+        "original_pr": [],
+        "fixed_before_main": [
+          "SKY-D215"
+        ],
+        "current_main": [
+          "SKY-D215"
+        ],
+        "merged_fix": [
+          "SKY-D215"
+        ]
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 2,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.004935
+    },
+    {
+      "id": "unsafe_named_local_tuple",
+      "synthetic": true,
+      "source_bytes": 390,
+      "expected_rules": [
+        "SKY-D215"
+      ],
+      "observed_rules": {
+        "original_pr": [],
+        "fixed_before_main": [
+          "SKY-D215"
+        ],
+        "current_main": [
+          "SKY-D215"
+        ],
+        "merged_fix": [
+          "SKY-D215"
+        ]
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 2,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.002062
+    },
+    {
+      "id": "unsafe_repeated_separator_import",
+      "synthetic": true,
+      "source_bytes": 396,
+      "expected_rules": [
+        "SKY-D215"
+      ],
+      "observed_rules": {
+        "original_pr": [],
+        "fixed_before_main": [
+          "SKY-D215"
+        ],
+        "current_main": [
+          "SKY-D215"
+        ],
+        "merged_fix": [
+          "SKY-D215"
+        ]
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 1,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.0025
+    },
+    {
+      "id": "safe_inline_local_tuple",
+      "synthetic": true,
+      "source_bytes": 376,
+      "expected_rules": [],
+      "observed_rules": {
+        "original_pr": [],
+        "fixed_before_main": [],
+        "current_main": [],
+        "merged_fix": []
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 2,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.001827
+    },
+    {
+      "id": "safe_named_local_tuple",
+      "synthetic": true,
+      "source_bytes": 400,
+      "expected_rules": [],
+      "observed_rules": {
+        "original_pr": [],
+        "fixed_before_main": [],
+        "current_main": [
+          "SKY-D215"
+        ],
+        "merged_fix": []
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 2,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.001862
+    },
+    {
+      "id": "safe_imported_separator",
+      "synthetic": true,
+      "source_bytes": 369,
+      "expected_rules": [],
+      "observed_rules": {
+        "original_pr": [],
+        "fixed_before_main": [],
+        "current_main": [
+          "SKY-D215"
+        ],
+        "merged_fix": []
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 1,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.001748
+    },
+    {
+      "id": "branching_nested_tuple",
+      "synthetic": true,
+      "source_bytes": 2505,
+      "expected_rules": [
+        "SKY-D215"
+      ],
+      "observed_rules": {
+        "original_pr": [],
+        "fixed_before_main": [
+          "SKY-D215"
+        ],
+        "current_main": [
+          "SKY-D215"
+        ],
+        "merged_fix": [
+          "SKY-D215"
+        ]
+      },
+      "original_pr_harness_limit_reached": true,
+      "original_pr_public_helper_calls": 5001,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.022959
+    },
+    {
+      "id": "unsafe_compiled_pattern_module_module_evil_local_re",
+      "synthetic": true,
+      "source_bytes": 386,
+      "expected_rules": [
+        "SKY-D215"
+      ],
+      "observed_rules": {
+        "original_pr": [
+          "SKY-D215"
+        ],
+        "fixed_before_main": [
+          "SKY-D215"
+        ],
+        "current_main": [],
+        "merged_fix": [
+          "SKY-D215"
+        ]
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 0,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.001696
+    },
+    {
+      "id": "safe_compiled_pattern_module_module_re_local_evil",
+      "synthetic": true,
+      "source_bytes": 386,
+      "expected_rules": [],
+      "observed_rules": {
+        "original_pr": [
+          "SKY-D215"
+        ],
+        "fixed_before_main": [
+          "SKY-D215"
+        ],
+        "current_main": [
+          "SKY-D215"
+        ],
+        "merged_fix": []
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 0,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.001644
+    },
+    {
+      "id": "safe_compiled_pattern_local_module_evil_local_re",
+      "synthetic": true,
+      "source_bytes": 390,
+      "expected_rules": [],
+      "observed_rules": {
+        "original_pr": [
+          "SKY-D215"
+        ],
+        "fixed_before_main": [
+          "SKY-D215"
+        ],
+        "current_main": [],
+        "merged_fix": []
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 0,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.001797
+    },
+    {
+      "id": "unsafe_compiled_pattern_local_module_re_local_evil",
+      "synthetic": true,
+      "source_bytes": 390,
+      "expected_rules": [
+        "SKY-D215"
+      ],
+      "observed_rules": {
+        "original_pr": [
+          "SKY-D215"
+        ],
+        "fixed_before_main": [
+          "SKY-D215"
+        ],
+        "current_main": [
+          "SKY-D215"
+        ],
+        "merged_fix": [
+          "SKY-D215"
+        ]
+      },
+      "original_pr_harness_limit_reached": false,
+      "original_pr_public_helper_calls": 0,
+      "merged_harness_limit_reached": false,
+      "merged_seconds": 0.002761
+    }
+  ],
+  "limitations": [
+    "Only the two prefix-dependent rule passes were run; no targets were imported and no target tests, scripts or build commands were executed.",
+    "Five Django test files require Python 3.12 PEP695 syntax and one Django fixture intentionally has invalid syntax; all six are excluded from parsed-file counts.",
+    "Timings are observations from a single machine with warm caches and concurrent jobs, not a speed or performance guarantee.",
+    "The synthetic branching probe stops the original PR after 5000 public helper calls to avoid hanging. Fixed internal bounded work is not represented by that public-wrapper call counter.",
+    "Synthetic probes and unit regressions are development evidence, separate from naturally occurring repository findings."
+  ],
+  "reproduction": {
+    "inputs": "Fetch the exact repository revisions in natural_cohorts; do not execute target code.",
+    "method": "For each regular Python source file, parse with ast.parse and invoke path_flow.scan(tree, filename, findings, project_root=root), followed by weak_path_defence.scan(tree, filename, findings). Compare identities using finding_identity_fields. Instrument _PathFlowChecker._separator_prefix and _Scope.separator_prefix to compare proof decisions.",
+    "scope_and_limits": "Use environment.excluded and max_source_file_bytes. Record parse failures separately; do not count them as parsed or clean.",
+    "analyzer_versions": "Compare the original PR source and fixed_before_main hashes for a causal comparison; compare latest_main_revision and merged_fix hashes for integration. All natural-source input inventories are identical between arms.",
+    "focused_command": "python -m pytest -q test/test_path_prefix_containment.py test/test_weak_path_defence.py test/test_prefix_separator_bounds.py test/test_path_filename_proof.py test/test_path_filename_guard_forms.py test/test_path_filename_proof_routes.py"
+  },
+  "finding_identity_fields": [
+    "rule_id",
+    "file",
+    "line",
+    "column",
+    "symbol",
+    "severity"
+  ],
+  "local_checks": {
+    "focused_prefix_and_filename": {
+      "passed": 225,
+      "failed": 0,
+      "command": "python -m pytest -q test/test_path_prefix_containment.py test/test_weak_path_defence.py test/test_prefix_separator_bounds.py test/test_path_filename_proof.py test/test_path_filename_guard_forms.py test/test_path_filename_proof_routes.py",
+      "seconds": 3.43
+    },
+    "broader_related": {
+      "passed": 1118,
+      "failed": 1,
+      "failure": "test/test_path_closed_world.py::test_loader_targets_chosen_at_run_time[code10-False]",
+      "also_fails_on_unchanged_main": true,
+      "explanation": "Python 3.11.18 default recursion limit 1000 causes ast.parse of the existing 5000-part concatenation fixture to raise RecursionError. This is unchanged by the prefix fixes.",
+      "note": "Broad collection preceded the final sixteen helper-provider cases; those pass in the final focused run. Test runs overlap."
+    },
+    "review_and_capture_regressions_on_original_pr": {
+      "cases": 39,
+      "failed": 29,
+      "passed_controls": 10
+    },
+    "selected_python_path_benchmark": {
+      "complete_cases": 5,
+      "passed": 5,
+      "true_positives": 3,
+      "true_negatives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "same_counts_on_main": true,
+      "analysis_status": "complete",
+      "seconds": 0.5423,
+      "case_ids": [
+        "path-traversal-tainted-join",
+        "path-traversal-basename",
+        "python-path-fullmatch-validated-name",
+        "python-path-prefix-match-name",
+        "python-path-search-checked-name"
+      ]
+    },
+    "compiled_pattern_declaration_provider_regressions": {
+      "cases": 8,
+      "passed": 8,
+      "failed": 0,
+      "previous_published_revision": "e110c82babe53b6ad8544c7c2fea88bff1838fa5",
+      "previous_passed": 4,
+      "previous_failed": 4,
+      "note": "Synthetic regression cases, separate from naturally occurring repository observations."
+    }
+  }
+}

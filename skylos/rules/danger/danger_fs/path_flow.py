@@ -15,9 +15,12 @@ from skylos.rules.danger.import_proof import provider_binding_is_stable
 from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
 from skylos.rules.danger.danger_fs.prefix_separator import (
+    AMBIGUOUS_BINDING,
+    binding_value,
     bound_names,
     dotted as prefix_dotted,
     ends_with_separator,
+    module_level_imports,
     scope_bindings,
 )
 from skylos.rules.danger.danger_fs.filename_match import (
@@ -653,8 +656,10 @@ class _PathFlowChecker(TaintVisitor):
         self._path_parents = {}
         self._module_rebound = frozenset()
         self._module_bindings = {}
+        self._module_import_aliases = {}
         self._global_names = frozenset()
         self._function_bindings = {}
+        self._function_import_aliases = {}
         self._module_functions = {}
         self._filename_validators = {}
 
@@ -663,6 +668,7 @@ class _PathFlowChecker(TaintVisitor):
         self._builtin_string_refs = builtin_references(node, {"str"})
         self._module_rebound = frozenset(bound_names(node))
         self._module_bindings = scope_bindings(node)
+        self._module_import_aliases = module_level_imports(node)
         self._module_functions = {
             statement.name: statement
             for statement in node.body
@@ -1167,11 +1173,45 @@ class _PathFlowChecker(TaintVisitor):
         return None
 
     def _filename_matched(self, test, function):
+        # A helper's regex import belongs to that helper, even while its
+        # return value is being checked from another function's call site.
+        imports = {}
+        if function is not None:
+            key = id(function)
+            imports = self._function_import_aliases.get(key)
+            if imports is None:
+                imports = module_level_imports(function)
+                self._function_import_aliases[key] = imports
+        module_call_functions = set()
+
         def binding(name):
-            return self._scope_binding(function, name)
+            value = self._scope_binding(function, name)
+            module_values = self._module_bindings.get(name)
+            if (
+                isinstance(value, ast.Call)
+                and module_values
+                and len(module_values) == 1
+                and value is module_values[0]
+            ):
+                # filename_match_subject also asks canonical() about the
+                # factory of a bound compiled pattern. That call was written
+                # at module level, so helper-local imports do not describe it.
+                module_call_functions.add(id(value.func))
+            return value
+
+        def canonical(node):
+            if id(node) in module_call_functions:
+                return self._prefix_module_canonical(node)
+            name = prefix_dotted(node)
+            if name is not None:
+                head, _, rest = name.partition(".")
+                if head in imports and head not in self._module_rebound:
+                    base = imports[head]
+                    return f"{base}.{rest}" if rest else base
+            return self._prefix_scope_canonical(node, function)
 
         def call_names(call):
-            subject = filename_match_subject(call, binding, self._prefix_canonical)
+            subject = filename_match_subject(call, binding, canonical)
             if isinstance(subject, ast.Name) and native_text_name(
                 subject.id, function, binding
             ):
@@ -1292,8 +1332,19 @@ class _PathFlowChecker(TaintVisitor):
         if len(call.args) != 1 or call.keywords:
             return False
         return ends_with_separator(
-            call.args[0], self._prefix_binding, self._prefix_canonical
+            call.args[0],
+            self._prefix_binding,
+            self._prefix_canonical,
+            self._prefix_module_binding,
+            self._prefix_module_canonical,
         )
+
+    def _prefix_module_binding(self, name):
+        """The module-level value of ``name``: a tuple's members belong to the
+        scope that declared them, not to the scope doing the check."""
+        if name in self._global_names:
+            return AMBIGUOUS_BINDING
+        return binding_value(self._module_bindings.get(name))
 
     def _prefix_binding(self, name):
         function = self._current_function()
@@ -1304,25 +1355,36 @@ class _PathFlowChecker(TaintVisitor):
                 bindings = scope_bindings(function)
                 self._function_bindings[key] = bindings
             if name in bindings:
-                values = bindings[name]
-                if len(values) == 1:
-                    return values[0]
-                return None
+                return binding_value(bindings[name])
         if name in self._global_names:
-            return None
-        values = self._module_bindings.get(name)
-        if values and len(values) == 1:
-            return values[0]
-        return None
+            return AMBIGUOUS_BINDING
+        return binding_value(self._module_bindings.get(name))
 
     def _prefix_canonical(self, node):
+        return self._prefix_scope_canonical(node, self._current_function())
+
+    def _prefix_scope_canonical(self, node, function):
+        name = prefix_dotted(node)
+        if name is None:
+            return None
+        if function is not None:
+            key = id(function)
+            bindings = self._function_bindings.get(key)
+            if bindings is None:
+                bindings = scope_bindings(function)
+                self._function_bindings[key] = bindings
+            if name.split(".", 1)[0] in bindings:
+                return None
+        return self._prefix_module_canonical(node)
+
+    def _prefix_module_canonical(self, node):
         name = prefix_dotted(node)
         if name is None:
             return None
         head, _, rest = name.partition(".")
         if head in self._module_rebound or "*" in self._module_rebound:
             return None
-        base = self.import_aliases.get(head)
+        base = self._module_import_aliases.get(head)
         if base is None:
             return None
         if rest:
