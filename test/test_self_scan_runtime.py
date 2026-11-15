@@ -59,19 +59,32 @@ def main():
         Path(os.environ["REPORT"]).write_text(json.dumps({"danger": [], "secrets": []}))
     raise SystemExit(int(os.environ["SCAN_STUB_STATUS"]))
 """)
-    # Observe the actual inline bootstrap's diagnostics call, while retaining
-    # faulthandler's real scheduling rather than substituting a dummy result.
+    # Observe the actual inline bootstrap's diagnostics, while keeping the real
+    # faulthandler and threading calls rather than substituting dummy results.
     write_fixture(purelib, "watchdog_probe.py", """import faulthandler
 import json
 import os
+import threading
 from pathlib import Path
 
-original = faulthandler.dump_traceback_later
-def observed(delay, repeat=False, **kwargs):
+original_later = faulthandler.dump_traceback_later
+def observed_later(delay, repeat=False, **kwargs):
     if os.environ.get("SCAN_TIMER_INVOCATION"):
         Path(os.environ["SCAN_TIMER_INVOCATION"]).write_text(json.dumps({"delay": delay, "repeat": repeat}))
-    return original(delay, repeat=repeat, **kwargs)
-faulthandler.dump_traceback_later = observed
+    return original_later(delay, repeat=repeat, **kwargs)
+faulthandler.dump_traceback_later = observed_later
+
+original_start = threading.Thread.start
+def observed_start(self):
+    if os.environ.get("SCAN_PROGRESS_INVOCATION"):
+        target = getattr(self, "_target", None)
+        Path(os.environ["SCAN_PROGRESS_INVOCATION"]).write_text(json.dumps({
+            "target": getattr(target, "__name__", None),
+            "daemon": self.daemon,
+            "faulthandler": faulthandler.is_enabled(),
+        }))
+    return original_start(self)
+threading.Thread.start = observed_start
 """)
     write_fixture(purelib, "watchdog_probe.pth", "import watchdog_probe\n")
     help_script = write_fixture(environment, "bin/skylos", """#!/bin/sh
@@ -125,6 +138,7 @@ raise RuntimeError("untrusted checkout import")
             "GITHUB_OUTPUT": str(tmp_path / "outputs"),
             "SCAN_INVOCATION": str(tmp_path / "invocation.json"),
             "SCAN_TIMER_INVOCATION": str(tmp_path / "timer.json"),
+            "SCAN_PROGRESS_INVOCATION": str(tmp_path / "progress.json"),
             "SCAN_TIMEOUT_INVOCATION": str(tmp_path / "timeout.json"),
             "SCAN_HOSTILE_IMPORT": str(tmp_path / "hostile-imported"),
             "SCAN_WRITE_REPORT": str(int(report)),
@@ -225,9 +239,13 @@ def test_actual_isolated_entry_preserves_security_flags_and_diff_scope(
         installed_scanner[2] / "skylos" / "entry.py"
     )
     assert not (tmp_path / "hostile-imported").exists()
-    assert json.loads((tmp_path / "timer.json").read_text()) == {
-        "delay": 300,
-        "repeat": True,
+    # faulthandler's watchdog reads other threads' frames without the GIL and
+    # crashed CI scans with SIGSEGV; progress stacks come from a Python thread.
+    assert not (tmp_path / "timer.json").exists()
+    assert json.loads((tmp_path / "progress.json").read_text()) == {
+        "target": "report_progress",
+        "daemon": True,
+        "faulthandler": True,
     }
     watchdog = json.loads((tmp_path / "timeout.json").read_text())
     assert watchdog[:6] == [
