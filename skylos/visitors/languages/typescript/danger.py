@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 import os
 import re
 from html.parser import HTMLParser
@@ -26,6 +27,13 @@ from skylos.security.command_guard import findings_for_command, is_external_url
 from skylos.visitors.languages.statement_scan import iter_semicolon_assignments
 from skylos.visitors.languages.typescript.client_runtime import runs_only_on_client
 from skylos.visitors.languages.typescript.security_flow import build_security_flow
+from skylos.visitors.languages.typescript.archive_guard import (
+    ARCHIVE_SCOPE_NODE_TYPES,
+    ArchiveGuard,
+    archive_parent_segment_guards,
+    archive_path_validators,
+    archive_startswith_guards,
+)
 from skylos.visitors.languages.typescript.express_taint import (
     merge_express_taint_findings,
     safe_redirect_prefix,
@@ -3930,11 +3938,61 @@ _ARCHIVE_LIBRARY_HINTS = (
     "adm-zip",
     'require("unzipper")',
     "require('unzipper')",
+    'from "unzipper"',
+    "from 'unzipper'",
+    'from "adm-zip"',
+    "from 'adm-zip'",
     'require("adm-zip")',
     "require('adm-zip')",
     'from "yauzl"',
     "from 'yauzl'",
 )
+
+# yauzl rejects absolute names, backslashes and `..` parts before it emits
+# an entry, unless the archive is opened with `decodeStrings: false`.
+_YAUZL_SOURCE = re.compile(r"""(?:\bfrom|\brequire\(|\bimport\()\s*['"]yauzl['"]""")
+_YAUZL_RAW_NAMES = re.compile(r"\bdecodeStrings\s*:\s*false\b")
+_ARCHIVE_UNVALIDATED_PROPERTY_PATTERN = re.compile(
+    r"\b(?:(?:entry|header|[A-Za-z_$][A-Za-z0-9_$]*Entry)\.(?:path|name))\b"
+)
+_BASENAME_CALL = re.compile(r"\b(?:path\.)?basename\((?:[^()]|\([^()]*\))*\)")
+def _path_import(name: str) -> re.Pattern:
+    return re.compile(
+        rf"""(?:import\s+(?:[\w$]+\s*,\s*)?\{{[^}}]*\b{name}\b[^}}]*\}}\s*from|\{{[^}}]*\b{name}\b[^}}]*\}}\s*=\s*require\()\s*['"](?:node:)?path['"]"""
+    )
+
+
+def _archive_entry_pattern(source_text: str) -> re.Pattern:
+    if _YAUZL_SOURCE.search(source_text) and not _YAUZL_RAW_NAMES.search(source_text):
+        return _ARCHIVE_UNVALIDATED_PROPERTY_PATTERN
+    return _ARCHIVE_ENTRY_PROPERTY_PATTERN
+
+
+def _archive_normalizing_call(source_text: str) -> re.Pattern:
+    """``normalize``, ``path.join``, ``path.resolve`` and the same functions
+    imported from ``path`` all return a path with its ``..`` parts already
+    collapsed, so a ``startsWith`` check on the result is meaningful."""
+    alternatives = [r"normalize\(", r"\bpath\.(?:resolve|join)\("]
+    for name in ("resolve", "join"):
+        if _path_import(name).search(source_text):
+            alternatives.append(rf"(?<![\w.$]){name}\(")
+    return re.compile("|".join(alternatives))
+
+
+_QUOTED_STRING = re.compile(r"'(?:\\.|[^'\\\n])*'" + r'|"(?:\\.|[^"\\\n])*"')
+_TEMPLATE_TEXT = re.compile(r"`((?:\\.|\$\{[^}]*\}|[^`\\])*)`", re.S)
+
+
+def _archive_code(text: str) -> str:
+    """The expression without string text: a name inside ``"report.json"`` is
+    not a value, while ``${name}`` in a template still is. ``basename``
+    drops every directory, so what it returns cannot climb either."""
+    text = _QUOTED_STRING.sub('""', text)
+    text = _TEMPLATE_TEXT.sub(
+        lambda m: " ".join(re.findall(r"\$\{([^}]*)\}", m.group(1))) or '""', text
+    )
+    return _BASENAME_CALL.sub("", text)
+
 
 _ARCHIVE_ENTRY_PROPERTY_PATTERN = re.compile(
     r"\b(?:(?:entry|header|[A-Za-z_$][A-Za-z0-9_$]*Entry)\.(?:path|fileName|name))\b"
@@ -3950,23 +4008,8 @@ _ARCHIVE_SINK_ARGS = {
     "writeFileSync(": (0,),
 }
 
-_ARCHIVE_GUARD_TOKENS = (
-    ".includes('..')",
-    '.includes("..")',
-    ".indexOf('..')",
-    '.indexOf("..")',
-)
+_ARCHIVE_SCOPE_NODE_TYPES = ARCHIVE_SCOPE_NODE_TYPES
 
-_ARCHIVE_SCOPE_NODE_TYPES = frozenset(
-    {
-        "function_declaration",
-        "function_expression",
-        "arrow_function",
-        "method_definition",
-    }
-)
-
-_ARCHIVE_CONTROL_FLOW_HINTS = ("return", "continue", "throw", "break")
 
 
 def _check_unverified_webhook_handler(
@@ -4010,13 +4053,29 @@ def _check_archive_extraction_path_traversal(
     source_text = source_bytes.decode("utf-8", errors="replace")
     if not any(hint in source_text for hint in _ARCHIVE_LIBRARY_HINTS):
         return
+    guards = archive_startswith_guards(root_node, source_bytes)
+    segment_guards = archive_parent_segment_guards(root_node, source_bytes)
+    entry_pattern = _archive_entry_pattern(source_text)
+    normalizing = _archive_normalizing_call(source_text)
+    validators = archive_path_validators(
+        root_node, source_bytes, guards, segment_guards
+    )
+    validator_call = _archive_call_pattern(validators.complete)
+    prefix_validator_call = _archive_call_pattern(validators.prefix_only)
 
-    for scope_lines, start_line in _iter_archive_scopes(root_node, source_text):
+    for scope_lines, start_line, scope_start in _iter_archive_scopes(
+        root_node, source_bytes
+    ):
         scope_text = "\n".join(scope_lines)
         if not scope_text.strip():
             continue
         tainted_names: set[str] = set()
         latest_assignment: dict[str, int] = {}
+        # The tainted names each tainted value was built from directly, so a
+        # check on `name` still counts when the write uses
+        # `out = join(root, name)`.
+        built_from: dict[str, set[str]] = {}
+        relative_of: set[str] = set()
         events: list[tuple[int, int, object]] = []
         events.extend(
             (line_offset, 0, (alias, expr))
@@ -4031,28 +4090,66 @@ def _check_archive_extraction_path_traversal(
         for line_offset, kind, payload in events:
             if kind == 0:
                 alias, expr = payload
-                if _ARCHIVE_ENTRY_PROPERTY_PATTERN.search(expr) or any(
-                    re.search(rf"\b{re.escape(name)}\b", expr) for name in tainted_names
-                ):
+                expr = _archive_code(expr)
+                sources = set(_IDENTIFIER.findall(expr)) & tainted_names
+                entry_reads = {
+                    match.group(0).split(".", 1)[0]
+                    for match in entry_pattern.finditer(expr)
+                }
+                if validator_call is not None and validator_call.match(expr):
+                    # `out = safeEntryPath(root, entry.path)`: checked in this file.
+                    tainted_names.discard(alias)
+                    built_from.pop(alias, None)
+                    relative_of.discard(alias)
+                elif entry_reads or sources:
                     tainted_names.add(alias)
+                    # `entry` itself stands in for a direct read, so a check on
+                    # `entry.path` covers `dest = join(root, entry.path)`.
+                    built_from[alias] = (sources | entry_reads) - {alias}
+                    if _CHECKABLE_VIEW_CALL.search(expr):
+                        relative_of.add(alias)
+                    else:
+                        relative_of.discard(alias)
                 else:
                     tainted_names.discard(alias)
+                    built_from.pop(alias, None)
+                    relative_of.discard(alias)
                 latest_assignment[alias] = line_offset
                 continue
 
+            payload = [_archive_code(arg) for arg in payload]
             used_names = _archive_sink_tainted_names(payload, tainted_names)
-            direct_entry = bool(_archive_sink_tainted_names(payload, set(), True))
+            direct_entry = bool(
+                _archive_sink_tainted_names(payload, set(), True, entry_pattern)
+            )
             if not used_names and not direct_entry:
                 continue
 
             guard_start = 0
+            chain = set(used_names)
             if used_names:
                 guard_start = max(latest_assignment.get(name, 0) for name in used_names)
+                chain = _archive_value_chain(used_names, built_from, relative_of)
+                guard_start = min(
+                    [guard_start]
+                    + [latest_assignment.get(name, 0) for name in chain - used_names]
+                )
             if _archive_lines_have_guard(
                 scope_lines[guard_start : line_offset + 1],
-                used_names,
+                chain & tainted_names,
+                chain,
                 direct_entry,
                 line_offset - guard_start,
+                _ArchiveGuardFacts(
+                    guards,
+                    segment_guards,
+                    entry_pattern,
+                    normalizing,
+                    validator_call,
+                    prefix_validator_call,
+                ),
+                start_line + guard_start,
+                scope_start,
             ):
                 continue
 
@@ -4077,221 +4174,142 @@ def _iter_nodes(root_node):
         stack.extend(reversed(node.children))
 
 
-def _iter_archive_scopes(root_node, source_text: str) -> list[tuple[list[str], int]]:
-    all_lines = source_text.splitlines()
+# A name read as a value: `x` and `...x`, not the property in `obj.x`.
+_IDENTIFIER = re.compile(r"(?<![\w$])(?:(?<=\.\.\.)|(?<!\.))[A-Za-z_$][\w$]*")
+# A value read through these still shows where the one it came from points:
+# `rel = path.relative(root, out)`, `parts = name.split("/")` and
+# `dir = realpath(dirname(out))`, so a check on it checks the write.
+_CHECKABLE_VIEW_CALL = re.compile(
+    r"\b(?:path\.)?(?:relative|dirname|realpath)\(|\.split\(|\brealpathSync\("
+)
+
+
+def _archive_call_pattern(names: frozenset[str]) -> re.Pattern | None:
+    if not names:
+        return None
+    return re.compile(
+        r"^\s*(?:return\s+)?(?:await\s+)?(?:"
+        + "|".join(re.escape(name) for name in sorted(names))
+        + r")\("
+    )
+
+
+def _archive_value_chain(
+    names: set[str], built_from: dict[str, set[str]], relative_of: set[str]
+) -> set[str]:
+    """The written names, every tainted name they were built from, and any
+    ``path.relative`` or ``split`` taken of them: a check on any of these
+    checks the write."""
+    chain = set(names)
+    pending = list(names)
+    while pending:
+        for parent in built_from.get(pending.pop(), ()):
+            if parent not in chain:
+                chain.add(parent)
+                pending.append(parent)
+    grew = True
+    while grew:
+        grew = False
+        for name in relative_of:
+            if name not in chain and built_from.get(name, set()) & chain:
+                chain.add(name)
+                grew = True
+    return chain
+
+
+def _iter_archive_scopes(
+    root_node, source_bytes: bytes
+) -> list[tuple[list[str], int, int]]:
     scopes = [root_node]
     scopes.extend(
         node
         for node in _iter_nodes(root_node)
         if node.type in _ARCHIVE_SCOPE_NODE_TYPES
     )
-    return [_scope_lines_without_nested_scopes(scope, all_lines) for scope in scopes]
+    return [
+        (*_scope_lines_without_nested_scopes(scope, source_bytes), scope.start_byte)
+        for scope in scopes
+    ]
 
 
-def _archive_guard_block_contains_sink(
-    lines: list[str], guard_idx: int, sink_idx: int
+@dataclass(frozen=True)
+class _ArchiveGuardFacts:
+    guards: dict[tuple[int, int], ArchiveGuard]
+    segment_guards: dict[tuple[int, int], frozenset[str]]
+    entry_pattern: re.Pattern
+    normalizing: re.Pattern
+    validator_call: re.Pattern | None
+    prefix_validator_call: re.Pattern | None
+
+
+def _archive_guard_subject_matches(
+    guard: ArchiveGuard, names: set[str], direct_entry: bool, entry_pattern: re.Pattern
 ) -> bool:
-    depth = 0
-    opened = False
-
-    for idx in range(guard_idx, sink_idx + 1):
-        line = lines[idx]
-        opens = line.count("{")
-        closes = line.count("}")
-        if opens:
-            opened = True
-        depth += opens
-        depth -= closes
-        if idx < sink_idx and opened and depth <= 0:
-            return False
-
-    return opened and depth > 0
-
-
-def _archive_guard_without_braces_contains_sink(
-    lines: list[str], guard_idx: int, sink_idx: int
-) -> bool:
-    line = lines[guard_idx]
-    if "{" in line:
-        return False
-    if sink_idx == guard_idx:
-        return True
-    for idx in range(guard_idx + 1, len(lines)):
-        if not lines[idx].strip():
+    for subject in guard.subjects:
+        if direct_entry and entry_pattern.search(subject):
             continue
-        return idx == sink_idx
-    return False
-
-
-_QUOTED_TEXT = re.compile(r"""^(['"])(.*)\1$""", re.S)
-_PLAIN_TEMPLATE = re.compile(r"^`([^`$]*)`$")
-_SEPARATOR_MEMBER = re.compile(r"^(?:path\.)?sep$")
-_PATH_JOIN_CALL = re.compile(r"^path\.(?:join|normalize)\((.*)\)$", re.S)
-
-
-def _call_argument_texts(line: str, token: str) -> list[str]:
-    """The argument text of each ``token(...)`` call on the line."""
-    found = []
-    start = line.find(token)
-    while start != -1:
-        index = start + len(token)
-        depth = 1
-        quote = None
-        while index < len(line) and depth:
-            char = line[index]
-            if quote:
-                if char == "\\":
-                    index += 1
-                elif char == quote:
-                    quote = None
-            elif char in "'\"`":
-                quote = char
-            elif char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-            index += 1
-        if depth:
-            return []
-        found.append(line[start + len(token) : index - 1].strip())
-        start = line.find(token, index)
-    return found
-
-
-def _split_last_plus(text: str) -> str | None:
-    depth = 0
-    quote = None
-    last = None
-    for index, char in enumerate(text):
-        if quote:
-            if char == quote and text[index - 1] != "\\":
-                quote = None
-        elif char in "'\"`":
-            quote = char
-        elif char in "([{":
-            depth += 1
-        elif char in ")]}":
-            depth -= 1
-        elif char == "+" and depth == 0:
-            last = index
-    if last is None:
-        return None
-    return text[last + 1 :].strip()
-
-
-def _declared_value(name: str, lines: list[str]) -> str | None:
-    declaration = re.compile(
-        rf"^\s*(?:export\s+)?(?:const|let|var)\s+{re.escape(name)}\s*(?::[^=]+)?=\s*(.+?);?\s*$"
-    )
-    assignment = re.compile(rf"(?<![\w.$]){re.escape(name)}\s*(?:[-+*/]?=)(?!=)")
-    values = []
-    writes = 0
-    for line in lines:
-        matched = declaration.match(line)
-        if matched:
-            values.append(matched.group(1))
-        writes += len(assignment.findall(line))
-    if len(values) != 1 or writes != 1:
-        return None
-    return values[0]
-
-
-def _text_ends_with_separator(text: str, lines: list[str], depth: int = 0) -> bool:
-    text = text.strip()
-    if depth > 6 or not text:
-        return False
-    quoted = _QUOTED_TEXT.match(text) or _PLAIN_TEMPLATE.match(text)
-    if quoted:
-        value = quoted.group(quoted.lastindex)
-        return value.endswith(("/", "\\"))
-    if text.startswith("`") and text.endswith("`"):
-        if text.endswith("}`"):
-            inner = text[text.rfind("${") + 2 : -2]
-            return _text_ends_with_separator(inner, lines, depth + 1)
-        return text.endswith(("/`", "\\\\`"))
-    right = _split_last_plus(text)
-    if right is not None:
-        return _text_ends_with_separator(right, lines, depth + 1)
-    if _SEPARATOR_MEMBER.match(text):
-        return True
-    joined = _PATH_JOIN_CALL.match(text)
-    if joined:
-        arguments = [part.strip() for part in joined.group(1).split(",")]
-        return _text_ends_with_separator(arguments[-1], lines, depth + 1)
-    if re.fullmatch(r"[A-Za-z_$][\w$]*", text):
-        value = _declared_value(text, lines)
-        if value is None:
+        if not any(re.search(rf"\b{re.escape(name)}\b", subject) for name in names):
             return False
-        return _text_ends_with_separator(value, lines, depth + 1)
-    return False
-
-
-def _only_separator_text(text: str) -> bool:
-    if _SEPARATOR_MEMBER.match(text.strip()):
-        return True
-    quoted = _QUOTED_TEXT.match(text.strip()) or _PLAIN_TEMPLATE.match(text.strip())
-    return bool(quoted) and quoted.group(quoted.lastindex).strip("/\\") == ""
-
-
-def _starts_with_separator_prefix(line: str, lines: list[str]) -> bool:
-    """Every ``startsWith`` prefix on the guard line ends at a separator:
-    ``'/tmp/out2/x'.startsWith('/tmp/out')`` is true."""
-    arguments = _call_argument_texts(line, "startsWith(")
-    if not arguments:
-        return False
-    for argument in arguments:
-        if _only_separator_text(argument):
-            return False
-        if not _text_ends_with_separator(argument, lines):
-            return False
-    return True
+    return bool(guard.subjects)
 
 
 def _archive_lines_have_guard(
-    lines: list[str], names: set[str], direct_entry: bool, sink_idx: int
+    lines: list[str],
+    names: set[str],
+    segment_names_checked: set[str],
+    direct_entry: bool,
+    sink_idx: int,
+    facts: _ArchiveGuardFacts,
+    first_line: int,
+    scope_start: int,
 ) -> bool:
     has_normalize = False
+    sink_line = first_line + sink_idx
 
     for idx, line in enumerate(lines):
         if direct_entry:
-            mentioned = bool(_ARCHIVE_ENTRY_PROPERTY_PATTERN.search(line))
+            mentioned = bool(facts.entry_pattern.search(line))
         else:
             mentioned = any(
                 re.search(rf"\b{re.escape(name)}\b", line) for name in names
             )
-        if not mentioned:
-            continue
-
-        if "if" in line and any(token in line for token in _ARCHIVE_GUARD_TOKENS):
-            trailing = "\n".join(lines[idx : min(len(lines), idx + 4)])
-            if any(token in trailing for token in _ARCHIVE_CONTROL_FLOW_HINTS):
-                return True
-        if "normalize(" in line:
+        if mentioned and facts.normalizing.search(line):
             has_normalize = True
-        if (
-            has_normalize
-            and "if" in line
-            and "startsWith(" in line
-            and ("!" in line or "=== false" in line or "== false" in line)
-            and _starts_with_separator_prefix(line, lines)
-        ):
-            trailing = "\n".join(lines[idx : min(len(lines), idx + 4)])
-            if any(token in trailing for token in _ARCHIVE_CONTROL_FLOW_HINTS):
+        if mentioned and idx <= sink_idx:
+            # `assertSafePath(root, target)` on its own line; a helper that
+            # only compares prefixes needs the path normalized first.
+            if facts.validator_call is not None and facts.validator_call.match(line):
                 return True
+            if (
+                has_normalize
+                and facts.prefix_validator_call is not None
+                and facts.prefix_validator_call.match(line)
+            ):
+                return True
+
+        # Guards are keyed by scope, so an `if` inside a nested callback never
+        # stands in for one in this scope.
+        key = (first_line + idx, scope_start)
+        segment_names = facts.segment_guards.get(key)
+        if segment_names and (
+            segment_names_checked & segment_names
+            or (direct_entry and any(_is_archive_entry_name(n) for n in segment_names))
+        ):
+            return True
+        guard = facts.guards.get(key)
         if (
-            idx <= sink_idx
-            and has_normalize
-            and "if" in line
-            and "startsWith(" in line
-            and _starts_with_separator_prefix(line, lines)
-            and "!" not in line
-            and "=== false" not in line
-            and "== false" not in line
-            and (
-                _archive_guard_block_contains_sink(lines, idx, sink_idx)
-                or _archive_guard_without_braces_contains_sink(lines, idx, sink_idx)
+            guard is None
+            or not has_normalize
+            or not guard.separator_prefixes
+            or not _archive_guard_subject_matches(
+                guard, names, direct_entry, facts.entry_pattern
             )
         ):
+            continue
+        if guard.negated:
+            if guard.exits:
+                return True
+        elif guard.body_start_line <= sink_line <= guard.body_end_line:
             return True
 
     return False
@@ -4330,11 +4348,18 @@ def _extract_call_args(line: str, token: str) -> list[str]:
     return args
 
 
+def _is_archive_entry_name(name: str) -> bool:
+    return name in {"entry", "header"} or name.endswith("Entry")
+
+
 def _archive_sink_tainted_names(
-    args: list[str], names: set[str], direct_entry: bool = False
+    args: list[str],
+    names: set[str],
+    direct_entry: bool = False,
+    entry_pattern: re.Pattern = _ARCHIVE_ENTRY_PROPERTY_PATTERN,
 ) -> set[str]:
     for arg in args:
-        if direct_entry and _ARCHIVE_ENTRY_PROPERTY_PATTERN.search(arg):
+        if direct_entry and entry_pattern.search(arg):
             return {"__direct__"}
         matched = {name for name in names if re.search(rf"\b{re.escape(name)}\b", arg)}
         if matched:
@@ -4355,19 +4380,27 @@ def _nearest_archive_child_scopes(node) -> list:
 
 
 def _scope_lines_without_nested_scopes(
-    node, all_lines: list[str]
+    node, source_bytes: bytes
 ) -> tuple[list[str], int]:
-    start = node.start_point[0]
-    end = node.end_point[0]
-    scope_lines = list(all_lines[start : end + 1])
+    """The scope's lines with each nested function's own text blanked.
 
+    Only the nested function is blanked, not the lines it touches, so
+    `const parts = entry.path.split("/").filter((p) => p)` keeps its
+    assignment while the callback body stays out of this scope.
+    """
+    first = source_bytes.rfind(b"\n", 0, node.start_byte) + 1
+    last = source_bytes.find(b"\n", node.end_byte)
+    if last < 0:
+        last = len(source_bytes)
+    chunk = bytearray(source_bytes[first:last])
     for child in _nearest_archive_child_scopes(node):
-        child_start = max(child.start_point[0] - start, 0)
-        child_end = min(child.end_point[0] - start, len(scope_lines) - 1)
-        for idx in range(child_start, child_end + 1):
-            scope_lines[idx] = ""
-
-    return scope_lines, start
+        for index in range(
+            max(child.start_byte - first, 0), min(child.end_byte - first, len(chunk))
+        ):
+            if chunk[index] not in (0x0A, 0x0D):
+                chunk[index] = 0x20
+    lines = chunk.decode("utf-8", errors="replace").split("\n")
+    return [line.rstrip("\r") for line in lines], node.start_point[0]
 
 
 def _iter_archive_sink_calls(text: str) -> list[tuple[int, list[str]]]:
