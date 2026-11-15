@@ -1,6 +1,8 @@
 import textwrap
+from pathlib import Path
 
 from skylos.rules.config import scan_config_files
+from test.fixture_paths import write_fixture
 
 WORKFLOW = textwrap.dedent(
     """\
@@ -18,10 +20,8 @@ WORKFLOW = textwrap.dedent(
 
 
 def _write_workflow(root, folder):
-    path = root / folder / ".github" / "workflows" / "release.yml"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(WORKFLOW, encoding="utf-8")
-    return path
+    relative = Path(folder) / ".github" / "workflows" / "release.yml"
+    return write_fixture(root, relative, WORKFLOW)
 
 
 def _workflow_rules(root, exclude_folders):
@@ -55,8 +55,8 @@ def _injection_files(root, changed):
 
     from skylos.analyzer import analyze
 
-    (root / "app.py").write_text("print('ok')\n", encoding="utf-8")
-    (root / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+    write_fixture(root, "app.py", "print('ok')\n")
+    write_fixture(root, "pyproject.toml", "[tool.skylos]\n")
     result = json.loads(
         analyze(
             str(root),

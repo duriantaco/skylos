@@ -11,29 +11,25 @@ from skylos.rules.danger.danger import scan_ctx
 from skylos.rules.danger.danger_fs.path_flow import scan as scan_paths
 from skylos.visitors.languages.rust import scan_rust_file
 from skylos.visitors.languages.typescript import scan_typescript_file
+from test.fixture_paths import write_fixture
 
 
 def _rust_lines(tmp_path, code, name="lib.rs", rule="SKY-D215"):
-    path = tmp_path / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(code, encoding="utf-8")
+    path = write_fixture(tmp_path, name, code)
     return sorted(
         f["line"] for f in scan_rust_file(str(path), {})[7] if f["rule_id"] == rule
     )
 
 
 def _ts_lines(tmp_path, rule, code, name="module.ts"):
-    path = tmp_path / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(code, encoding="utf-8")
+    path = write_fixture(tmp_path, name, code)
     return sorted(
         f["line"] for f in scan_typescript_file(str(path))[7] if f["rule_id"] == rule
     )
 
 
 def _py_lines(tmp_path, rule, code, name="app.py"):
-    path = tmp_path / name
-    path.write_text(code, encoding="utf-8")
+    path = write_fixture(tmp_path, name, code)
     return sorted(f["line"] for f in scan_ctx(tmp_path, [path]) if f["rule_id"] == rule)
 
 

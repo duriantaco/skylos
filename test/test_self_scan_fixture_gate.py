@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from test.fixture_paths import write_fixture
+
 
 def _gate(tmp_path, category, path):
     workflow = yaml.safe_load(Path(".github/workflows/skylos.yaml").read_text())
@@ -16,8 +18,9 @@ def _gate(tmp_path, category, path):
         if item.get("name") == "Block high-risk security findings"
     )
     script = step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
-    report = tmp_path / "report.json"
-    report.write_text(
+    report = write_fixture(
+        tmp_path,
+        "report.json",
         json.dumps(
             {
                 category: [

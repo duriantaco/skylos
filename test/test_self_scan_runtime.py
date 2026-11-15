@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from test.fixture_paths import write_fixture
+
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/skylos.yaml"
 
@@ -41,10 +43,8 @@ def installed_scanner(tmp_path_factory):
             text=True,
         ).strip()
     )
-    package = purelib / "skylos"
-    package.mkdir()
-    (package / "__init__.py").write_text("")
-    (package / "entry.py").write_text("""import faulthandler
+    write_fixture(purelib, "skylos/__init__.py", "")
+    write_fixture(purelib, "skylos/entry.py", """import faulthandler
 import json
 import os
 import sys
@@ -61,7 +61,7 @@ def main():
 """)
     # Observe the actual inline bootstrap's diagnostics call, while retaining
     # faulthandler's real scheduling rather than substituting a dummy result.
-    (purelib / "watchdog_probe.py").write_text("""import faulthandler
+    write_fixture(purelib, "watchdog_probe.py", """import faulthandler
 import json
 import os
 from pathlib import Path
@@ -73,9 +73,8 @@ def observed(delay, repeat=False, **kwargs):
     return original(delay, repeat=repeat, **kwargs)
 faulthandler.dump_traceback_later = observed
 """)
-    (purelib / "watchdog_probe.pth").write_text("import watchdog_probe\n")
-    help_script = environment / "bin/skylos"
-    help_script.write_text("""#!/bin/sh
+    write_fixture(purelib, "watchdog_probe.pth", "import watchdog_probe\n")
+    help_script = write_fixture(environment, "bin/skylos", """#!/bin/sh
 if [ "$1" = "--help" ]; then
   if [ "$SCAN_AI_SUPPORTED" = "1" ]; then echo "--ai-defects"; else echo "--quality"; fi
   exit 0
@@ -83,8 +82,9 @@ fi
 exit 99
 """)
     help_script.chmod(0o755)
-    timeout = root / "timeout"
-    timeout.write_text(
+    timeout = write_fixture(
+        root,
+        "timeout",
         f"#!{sys.executable}\n"
         + """import json
 import os
@@ -110,9 +110,7 @@ def _run_scan(tmp_path, installed_scanner, *, status=0, report=True, diff="", ai
         pytest.skip("workflow execution requires bash")
     root, environment, _purelib = installed_scanner
     (tmp_path / ".venv").symlink_to(environment, target_is_directory=True)
-    hostile = tmp_path / "skylos"
-    hostile.mkdir()
-    (hostile / "__init__.py").write_text("""import os
+    write_fixture(tmp_path, "skylos/__init__.py", """import os
 from pathlib import Path
 Path(os.environ["SCAN_HOSTILE_IMPORT"]).write_text("checkout code imported")
 raise RuntimeError("untrusted checkout import")

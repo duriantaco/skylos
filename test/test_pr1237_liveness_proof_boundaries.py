@@ -10,19 +10,19 @@ from skylos.analyzer import Skylos, analyze
 from skylos.benchmarks.dead_code import run_manifest
 from skylos.deadcode.class_protocol_liveness import find_class_protocol_members
 from skylos.deadcode.python_ast import ParsedPythonFile
+from test.fixture_paths import write_fixture
 
 
 def _scan(tmp_path, code):
-    (tmp_path / "app.py").write_text(textwrap.dedent(code).lstrip())
+    write_fixture(tmp_path, "app.py", textwrap.dedent(code).lstrip())
     result = json.loads(analyze(str(tmp_path), conf=60, grep_verify=True))
     assert not result.get("analysis_errors")
     return {item["full_name"] for item in result.get("unused_functions", [])}
 
 
 def _protocol_targets(tmp_path, code):
-    path = tmp_path / "app.py"
     source = textwrap.dedent(code).lstrip()
-    path.write_text(source)
+    path = write_fixture(tmp_path, "app.py", source)
     scanner = Skylos()
     scanner.analyze(str(tmp_path))
     parsed = ParsedPythonFile(path, ast.parse(source))

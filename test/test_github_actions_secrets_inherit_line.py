@@ -1,14 +1,13 @@
 from pathlib import Path
 
 from skylos.rules.config.cicd.github_actions import scan_github_actions
+from test.fixture_paths import write_fixture
 
 _SHA = "de0fac2e4500dabe0009e67214ff5f5447ce83dd"
 
 
 def _scan(root: Path, text: str):
-    workflows = root / ".github" / "workflows"
-    workflows.mkdir(parents=True)
-    (workflows / "call.yml").write_text(text, encoding="utf-8")
+    write_fixture(root, ".github/workflows/call.yml", text)
     return sorted(
         (finding["line"], finding["value"])
         for finding in scan_github_actions(root)

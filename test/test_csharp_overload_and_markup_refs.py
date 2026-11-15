@@ -4,12 +4,11 @@ import json
 from pathlib import Path
 
 from skylos.analyzer import analyze
+from test.fixture_paths import write_fixture
 
 
 def _write(root: Path, name: str, source: str) -> None:
-    path = root / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source, encoding="utf-8")
+    write_fixture(root, name, source)
 
 
 def _unused(root: Path, category: str) -> list[tuple[str, int]]:
