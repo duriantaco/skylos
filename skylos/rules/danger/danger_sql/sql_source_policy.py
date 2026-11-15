@@ -175,6 +175,7 @@ def resolve_source_required_findings(findings, *, scan_path, project_root, suppr
         }
         result = []
         source_digests = {}
+        resolution_error = None
         for finding in findings:
             if not _candidate(finding):
                 result.append(finding)
@@ -182,6 +183,12 @@ def resolve_source_required_findings(findings, *, scan_path, project_root, suppr
             updated = {**finding, "metadata": dict(finding["metadata"])}
             metadata = updated["metadata"]
             spec = _SPECS[finding["rule_id"]]
+            if resolution_error is not None:
+                metadata[spec["provenance"]] = _record(
+                    graph.INCOMPLETE, finding, limits=[resolution_error]
+                )
+                result.append(updated)
+                continue
             tracer = tracers[finding["rule_id"]]
             try:
                 path = Path(str(finding["file"])).resolve()
@@ -253,6 +260,12 @@ def resolve_source_required_findings(findings, *, scan_path, project_root, suppr
                     updated["category"] = "danger"
                     updated["reason"] = spec["reason"]
                     suppressed.append(updated)
+            except graph._ResolutionLimit as error:
+                resolution_error = str(error)
+                metadata[spec["provenance"]] = _record(
+                    graph.INCOMPLETE, finding, limits=[resolution_error]
+                )
+                result.append(updated)
             except (
                 OSError,
                 RuntimeError,

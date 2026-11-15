@@ -241,3 +241,145 @@ def test_short_caller_chains_still_resolve_safe_and_untrusted_values(
         == ("untrusted" if untrusted else "safe")
         for row in rows
     )
+
+
+@pytest.mark.parametrize("command", [False, True])
+def test_dynamic_import_and_argv_limits_remain_visible_without_source_claims(
+    tmp_path, monkeypatch, command
+):
+    from skylos.rules.danger.python_security_gaps import scan
+
+    monkeypatch.setattr(path_provenance, "_MAX_RESOLUTION_WORK", 0)
+    if command:
+        source = (
+            "import subprocess, shlex\n"
+            "def consume(cmd):\n    return subprocess.run(cmd)\n"
+            "def another(cmd):\n    return subprocess.run(cmd)\n"
+        )
+    else:
+        source = (
+            "import importlib\n"
+            "def load(name):\n    return importlib.import_module(name)\n"
+            "def another(name):\n    return importlib.import_module(name)\n"
+        )
+    path = write_fixture(tmp_path, "app.py", source)
+    charges = []
+    original = path_provenance._Project._charge_resolution
+
+    def charging(project):
+        charges.append(project)
+        return original(project)
+
+    monkeypatch.setattr(path_provenance._Project, "_charge_resolution", charging)
+    findings = []
+
+    scan(ast.parse(source), path, findings, project_root=tmp_path)
+
+    rows = [row for row in findings if row["rule_id"] in {"SKY-D357", "SKY-D212"}]
+    assert [row["rule_id"] for row in rows] == [
+        "SKY-D212" if command else "SKY-D357"
+    ] * 2
+    assert len(charges) == 1
+    for row in rows:
+        record = row["metadata"]["source_provenance"]
+        assert record["status"] == "incomplete"
+        assert "caller resolution work budget" in record["limits"][0]
+        assert "security_evidence" not in row
+        assert "could not complete" in row["message"]
+
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+    report = json.loads(analyze(str(tmp_path), enable_danger=True))
+    reported = [
+        row
+        for row in report.get("danger", [])
+        if row["rule_id"] in {"SKY-D357", "SKY-D212"}
+    ]
+    assert len(reported) == 2
+    assert all(
+        row["metadata"]["source_provenance"]["status"] == "incomplete"
+        for row in reported
+    )
+    assert not any(
+        row.get("rule_id") == "analysis_error"
+        for row in report.get("danger", [])
+    )
+
+
+@pytest.mark.parametrize("command_first", [False, True])
+def test_import_and_command_tracers_do_not_share_interrupted_project_caches(
+    tmp_path, monkeypatch, command_first
+):
+    from skylos.rules.danger.project_security_sources import ProjectSources
+
+    monkeypatch.setattr(path_provenance, "_MAX_RESOLUTION_WORK", 0)
+    cases = [
+        (
+            "loader.py",
+            "import importlib\ndef load(name):\n    importlib.import_module(name)\n",
+            "import_evidence",
+        ),
+        (
+            "command.py",
+            "import subprocess, shlex\ndef consume(cmd):\n    subprocess.run(cmd)\n",
+            "command_evidence",
+        ),
+    ]
+    # Construct a single shared graph after both source files exist.
+    for relative, source, _ in cases:
+        write_fixture(tmp_path, relative, source)
+    sources = ProjectSources(tmp_path)
+    if command_first:
+        cases.reverse()
+    markers = []
+    for relative, source, method in cases:
+        call = next(
+            node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
+        )
+        markers.append(getattr(sources, method)(tmp_path / relative, call))
+
+    assert markers[0] == markers[1]
+    assert "caller resolution work budget" in markers[0]["resolution_incomplete"]
+    assert sources.project._resolution_work == 1
+
+
+def test_sql_and_redirect_limits_share_a_sticky_incomplete_verdict(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+    monkeypatch.setattr(path_provenance, "_MAX_RESOLUTION_WORK", 0)
+    charges = []
+    original = path_provenance._Project._charge_resolution
+
+    def charging(project):
+        charges.append(project)
+        return original(project)
+
+    monkeypatch.setattr(path_provenance._Project, "_charge_resolution", charging)
+
+    report = _scan(
+        tmp_path,
+        "from flask import redirect\n"
+        "def lookup(query):\n    cursor.execute(query)\n"
+        "def finish(target):\n    return redirect(target)\n",
+    )
+
+    rows = [
+        row
+        for row in report.get("danger", [])
+        if row["rule_id"] in {"SKY-D211", "SKY-D230"}
+    ]
+    assert {row["rule_id"] for row in rows} == {"SKY-D211", "SKY-D230"}
+    assert len(charges) == 1
+    for row in rows:
+        provenance = (
+            "sql_provenance" if row["rule_id"] == "SKY-D211"
+            else "redirect_provenance"
+        )
+        record = row["metadata"][provenance]
+        assert record["status"] == "incomplete"
+        assert "caller resolution work budget" in record["limits"][0]
+        assert not row["metadata"].get("security_evidence")
+    assert not any(
+        row["rule_id"] in {"SKY-D211", "SKY-D230"}
+        for row in report.get("suppressed", [])
+    )
