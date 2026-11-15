@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from keyword import iskeyword as _is_python_keyword
 import re
 import sys
 from contextlib import contextmanager
@@ -748,6 +749,52 @@ _TYPE_VARIABLE_FACTORIES = frozenset(
 )
 
 
+_UNITTEST_CASE_BASES = frozenset(
+    {
+        "unittest.TestCase",
+        "unittest.case.TestCase",
+        "unittest.IsolatedAsyncioTestCase",
+        "unittest.async_case.IsolatedAsyncioTestCase",
+    }
+)
+
+
+def _class_body_bound_names(statement: ast.stmt) -> set[str]:
+    """Names one class-body statement binds directly in the class namespace."""
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return {statement.name}
+    if isinstance(statement, ast.Assign):
+        return {
+            target.id for target in statement.targets if isinstance(target, ast.Name)
+        }
+    if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+        return {statement.target.id}
+    return set()
+
+
+def _class_dict_string_ids(node: ast.ClassDef) -> set[int]:
+    """ids of string constants inside dict literals of class-level statements."""
+    found: set[int] = set()
+    stack = [
+        statement
+        for statement in node.body
+        if not isinstance(
+            statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        )
+    ]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, ast.Dict):
+            for child in ast.walk(current):
+                if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                    found.add(id(child))
+            continue
+        if isinstance(current, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        stack.extend(ast.iter_child_nodes(current))
+    return found
+
+
 def _nested_forward_references(node: ast.expr, resolve_origin) -> list:
     """String constants inside a type expression that name types, as in
     ``Union["Parameter", None]`` or ``Callable[["Context"], None]``: forward
@@ -997,6 +1044,8 @@ class Visitor(ast.NodeVisitor):
         self.pattern_tracker = pattern_tracker
         self._param_stack = []
         self._typed_dict_stack = []
+        # Function depth at which each enclosing class body is visited.
+        self._class_body_depths: list[int] = []
         self._shadowed_module_aliases = {}
         self._alternative_import_names: set[str] = set()
         self._module_import_bindings: dict[str, set[str]] = {}
@@ -1061,6 +1110,7 @@ class Visitor(ast.NodeVisitor):
         self._nested_class_names = set()
         self._conditional_import_targets = set()
         self.local_registration_decorators = set()
+        self._class_table_constants: set[int] = set()
         self._type_checking_function_ids: set[int] = set()
         self._module_shadows_getattr = False
         # Computed attribute names bound to variables, per enclosing function:
@@ -2382,6 +2432,14 @@ class Visitor(ast.NodeVisitor):
 
         self.class_bases[cname] = base_qnames
 
+        if _UNITTEST_CASE_BASES.intersection(base_qnames) and any(
+            "runTest" in _class_body_bound_names(statement) for statement in node.body
+        ):
+            # TestCase() defaults to methodName="runTest": __init__ looks the
+            # member up and shortDescription() reads its docstring, so an
+            # assigned runTest is used even outside test discovery.
+            self.add_ref(f"{cname}.runTest")
+
         for d in self.defs:
             if d.name == cname and d.type == "class":
                 d.base_classes = base_qnames
@@ -2485,6 +2543,7 @@ class Visitor(ast.NodeVisitor):
                     break
 
         self._typed_dict_stack.append(is_typed_dict)
+        self._class_body_depths.append(len(self.current_function_scope))
 
         is_cst = False
         is_dc = False
@@ -2534,6 +2593,7 @@ class Visitor(ast.NodeVisitor):
         previous_class_owner = self._binding_class_owner
         self._binding_scope_owner = None
         self._binding_class_owner = (cname, node.lineno)
+        self._class_table_constants.update(_class_dict_string_ids(node))
         for b in node.body:
             self.visit(b)
         self._binding_scope_owner = previous_binding_owner
@@ -2542,6 +2602,7 @@ class Visitor(ast.NodeVisitor):
         self.cls = prev
         self._dataclass_stack.pop()
         self._typed_dict_stack.pop()
+        self._class_body_depths.pop()
 
         if is_cst:
             self.in_cst_class -= 1
@@ -2796,10 +2857,16 @@ class Visitor(ast.NodeVisitor):
                 in_typeddict = bool(
                     self._typed_dict_stack and self._typed_dict_stack[-1]
                 )
-                is_class_body = bool(self.cls and not self.current_function_scope)
+                # A TypedDict declared inside a function still has a class
+                # body: its annotations are dict keys, not local variables.
+                in_typeddict_body = bool(
+                    self.cls
+                    and self._class_body_depths
+                    and self._class_body_depths[-1] == len(self.current_function_scope)
+                )
                 is_annotation_only = node.value is None
 
-                if in_typeddict and is_class_body and is_annotation_only:
+                if in_typeddict and in_typeddict_body and is_annotation_only:
                     return
 
                 if (
@@ -3268,6 +3335,10 @@ class Visitor(ast.NodeVisitor):
                     val = self.local_constants[-1].get(node.args[1].id)
                     if val:
                         self.pattern_tracker.known_refs.add(val)
+                    elif node.func.id in ("getattr", "hasattr"):
+                        self.pattern_tracker.opaque_member_lookup = True
+                elif not fstring_pattern and node.func.id in ("getattr", "hasattr"):
+                    self.pattern_tracker.opaque_member_lookup = True
 
                 if fstring_pattern:
                     self.pattern_tracker.add_pattern_ref(
@@ -4131,6 +4202,19 @@ class Visitor(ast.NodeVisitor):
         value = node.value
         if not isinstance(value, str) or len(value) > 200:
             return
+        # A keyed class-attribute table (a dict literal) is evaluated by finite
+        # dispatch, which can prove an entry is never selected; leave those
+        # spellings to it. Sequences and method-built values have no such
+        # proof and every listed name may be looked up.
+        owner = self._class_owner()
+        if (
+            owner
+            and not self.current_function_scope
+            and id(node) in self._class_table_constants
+        ):
+            owner = None
+        if owner and value.isidentifier() and not _is_python_keyword(value):
+            self.pattern_tracker.class_member_strings.add((owner, value))
         text = value.strip()
         if text.endswith(".py"):
             text = text[:-3].replace("/", ".").replace("\\", ".").strip(".")

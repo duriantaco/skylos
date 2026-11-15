@@ -3620,7 +3620,8 @@ class Skylos:
 
         from skylos.analysis.implicit_refs import pattern_tracker as global_tracker
 
-        if global_tracker._class_patterns:
+        global_tracker.apply_class_member_strings()
+        if global_tracker._class_patterns or global_tracker.has_class_member_names():
             global_tracker.set_class_hierarchy(self._python_subclass_map())
 
         if (
@@ -3629,6 +3630,7 @@ class Skylos:
             or global_tracker.known_refs
             or global_tracker._compiled_patterns
             or global_tracker._class_patterns
+            or global_tracker.has_class_member_names()
             or getattr(global_tracker, "known_qualified_refs", None)
         ):
             for def_obj in self.defs.values():
