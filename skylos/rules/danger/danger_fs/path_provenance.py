@@ -108,6 +108,8 @@ _MAX_STEPS = 32
 _MAX_CALLER_DEPTH = 32
 _MAX_SITES = 512
 _MAX_WORK = 400000
+_MAX_RESOLUTION_WORK = 100000
+_MAX_RESOLUTION_DEPTH = 32
 _MAX_VALUE_DEPTH = 12
 _MAX_PARAM_VALUE_DEPTH = 3
 _MAX_FIXPOINT_ROUNDS = 8
@@ -1035,6 +1037,10 @@ class _Unit:
             current = self.parents.get(id(current))
 
 
+class _ResolutionLimit(RuntimeError):
+    """Caller/value resolution stopped before it could prove a verdict."""
+
+
 class _Project:
     """Source of every Python file under the scan root, indexed for lookups."""
 
@@ -1081,6 +1087,16 @@ class _Project:
         self._importers = None
         self._dynamic_loaders = {}
         self._string_annotations = {}
+        self._resolution_work = 0
+
+    def _charge_resolution(self):
+        # Caller discovery can enter values() again with depth=0. Its work is
+        # separate from _Tracer.trace(), and shared across every finding.
+        self._resolution_work += 1
+        if self._resolution_work > _MAX_RESOLUTION_WORK:
+            raise _ResolutionLimit(
+                f"caller resolution work budget reached ({_MAX_RESOLUTION_WORK} operations)"
+            )
 
     @classmethod
     def load(cls, root, files=None, complete=True):
@@ -1596,6 +1612,7 @@ class _Project:
             return self._value_cache[key]
         if key in self._value_active:
             return None
+        self._charge_resolution()
         self._value_active.add(key)
         try:
             result = self._values(unit, scope, expr, depth)
@@ -1652,6 +1669,7 @@ class _Project:
         return frozenset(result)
 
     def bind_values(self, unit, owner, bind, depth):
+        self._charge_resolution()
         if bind.kind == "def":
             cls_node = None
             if owner.kind == "class":
@@ -2265,6 +2283,11 @@ class _Project:
             return cached
         if id(fn) in self._sites_active:
             return _Sites(escapes=[_step(unit, fn, "call graph cycle while resolving callers")])
+        self._charge_resolution()
+        if len(self._sites_active) >= _MAX_RESOLUTION_DEPTH:
+            raise _ResolutionLimit(
+                f"caller resolution depth limit reached ({_MAX_RESOLUTION_DEPTH} nested functions)"
+            )
         self._sites_active.add(id(fn))
         try:
             sites = self._call_sites(unit, fn)
@@ -2334,19 +2357,23 @@ class _Project:
         seen_refs = set()
         index = 0
         while index < len(keys):
+            self._charge_resolution()
             key = keys[index]
             index += 1
             for call_unit, call, scope in self.calls_by_name.get(key, ()):
+                self._charge_resolution()
                 if id(call) in seen_calls:
                     continue
                 seen_calls.add(id(call))
                 self._classify_call(call_unit, scope, call, fn, owner, sites)
             for ref_unit, ref, scope in self.loads_by_name.get(key, ()):
+                self._charge_resolution()
                 if id(ref) in seen_refs:
                     continue
                 seen_refs.add(id(ref))
                 self._classify_ref(ref_unit, scope, ref, fn, owner, sites, keys)
         for call_unit, call, scope in self.dynamic_calls:
+            self._charge_resolution()
             if id(call) in seen_calls:
                 continue
             values = self.values(call_unit, scope, call.func)
@@ -2354,6 +2381,7 @@ class _Project:
                 seen_calls.add(id(call))
                 self._classify_call(call_unit, scope, call, fn, owner, sites)
         for call_unit, call, scope in self.computed_calls:
+            self._charge_resolution()
             if id(call) not in seen_calls and self._computed_call_reaches(call_unit, scope, call, unit, fn, definer):
                 step = _step(
                     call_unit,
@@ -7287,14 +7315,25 @@ def _resolve(findings, root, files, complete, suppressed):
     project = _Project.load(root, files, complete)
     tracers = {}
     kept = []
+    resolution_error = None
     for finding in findings:
         if not needs_provenance(finding):
             kept.append(finding)
             continue
-        try:
-            verdict = _classify(project, tracers, finding)
-        except (RecursionError, MemoryError, ValueError, TypeError, AttributeError, KeyError, IndexError) as error:
-            verdict = _failed_verdict(finding, project, type(error).__name__)
+        if resolution_error is not None:
+            verdict = _failed_verdict(finding, project, resolution_error)
+        else:
+            try:
+                verdict = _classify(project, tracers, finding)
+            except _ResolutionLimit as error:
+                # Interrupted project indexes can contain provisional entries.
+                # Preserve every later candidate as incomplete instead of
+                # reusing any partial project or tracer cache as a proof.
+                resolution_error = str(error)
+                tracers.clear()
+                verdict = _failed_verdict(finding, project, resolution_error)
+            except (RecursionError, MemoryError, ValueError, TypeError, AttributeError, KeyError, IndexError) as error:
+                verdict = _failed_verdict(finding, project, type(error).__name__)
         if verdict is None:
             kept.append(finding)
             continue
