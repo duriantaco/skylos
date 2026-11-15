@@ -8,6 +8,7 @@ sibling directory such as ``/srv/files2``.
 import pytest
 
 from skylos.rules.danger.danger import scan_ctx
+from test.fixture_paths import write_fixture
 
 HEADER = """import os
 from pathlib import Path
@@ -21,8 +22,7 @@ BASE = "/srv/files"
 
 
 def traversal_lines(tmp_path, code):
-    path = tmp_path / "server.py"
-    path.write_text(code)
+    path = write_fixture(tmp_path, "server.py", code)
     return [f["line"] for f in scan_ctx(tmp_path, [path]) if f["rule_id"] == "SKY-D215"]
 
 
@@ -321,6 +321,155 @@ def download(name: str):
         raise HTTPException(404)
     return FileResponse(target)
 """
+
+    assert traversal_lines(tmp_path, code) == [sink_line(code)]
+
+
+@pytest.mark.parametrize("named", [False, True], ids=["inline", "local-name"])
+@pytest.mark.parametrize("base", ["", "/srv/files"], ids=["empty", "contained"])
+def test_local_tuple_members_keep_their_function_bindings(tmp_path, named, base):
+    body = (
+        f"    local_base = {base!r}\n"
+        "    local_prefixes = (local_base + '/',)\n"
+        "    target = os.path.normpath(os.path.join(BASE, name))\n"
+    )
+    prefixes = "local_prefixes" if named else "(local_base + '/',)"
+    code = route(f"target.startswith({prefixes})", body)
+
+    expected = [] if base else [sink_line(code)]
+    assert traversal_lines(tmp_path, code) == expected
+
+
+@pytest.mark.parametrize(
+    "imports",
+    [
+        "from os import sep as S\nfrom os import extsep as S\n",
+        "if choose_separator:\n    from os import sep as S\n"
+        "else:\n    from os import extsep as S\n",
+    ],
+    ids=["later-import", "conditional-import"],
+)
+def test_ambiguous_separator_imports_do_not_hide_a_sibling_path(tmp_path, imports):
+    code = route("target.startswith(BASE + S)", prefix_lines=imports)
+
+    assert traversal_lines(tmp_path, code) == [sink_line(code)]
+
+
+def test_repeated_imports_of_the_same_separator_still_prove_containment(tmp_path):
+    code = route(
+        "target.startswith(BASE + S)",
+        prefix_lines="from os import sep as S\nfrom os import sep as S\n",
+    )
+
+    assert traversal_lines(tmp_path, code) == []
+
+
+def test_function_import_cannot_borrow_a_module_separator_binding(tmp_path):
+    body = (
+        "    from os import extsep as S\n"
+        "    target = os.path.normpath(os.path.join(BASE, name))\n"
+    )
+    code = route("target.startswith(BASE + S)", body, "from os import sep as S\n")
+
+    assert traversal_lines(tmp_path, code) == [sink_line(code)]
+
+
+def test_inline_tuple_can_use_a_local_base_that_shadows_the_module(tmp_path):
+    body = (
+        "    BASE = '/srv/other'\n"
+        "    target = os.path.normpath(os.path.join(BASE, name))\n"
+    )
+    code = route("target.startswith((BASE + '/',))", body)
+
+    assert traversal_lines(tmp_path, code) == []
+
+
+@pytest.mark.parametrize(
+    ("module_base", "local_base"),
+    [("", "/srv/files"), ("/srv/files", "")],
+    ids=["vacuous-module-prefix", "contained-module-prefix"],
+)
+def test_scalar_prefix_alias_keeps_its_declaration_scope(
+    tmp_path, module_base, local_base
+):
+    code = (
+        "import os\nfrom fastapi import FastAPI, HTTPException\n"
+        "from fastapi.responses import FileResponse\napp = FastAPI()\n"
+        f"BASE = {module_base!r}\nPREFIX = BASE + '/'\n"
+        "@app.get('/files/{name}')\ndef download(name: str):\n"
+        f"    BASE = {local_base!r}\n"
+        "    target = os.path.normpath(os.path.join('/srv/files', name))\n"
+        "    if not target.startswith(PREFIX):\n        raise HTTPException(404)\n"
+        "    return FileResponse(target)\n"
+    )
+
+    expected = [] if module_base else [sink_line(code)]
+    assert traversal_lines(tmp_path, code) == expected
+
+
+@pytest.mark.parametrize(
+    ("check", "imports"),
+    [
+        ("target.startswith(os.path.join(BASE, '/', ''))", ""),
+        (
+            r"target.startswith(ntpath.join(BASE, '\\', ''))",
+            "import ntpath\n",
+        ),
+    ],
+    ids=["posix-root-reset", "windows-root-reset"],
+)
+def test_join_that_resets_the_base_to_a_root_is_not_containment(
+    tmp_path, check, imports
+):
+    code = route(check, prefix_lines=imports)
+
+    assert traversal_lines(tmp_path, code) == [sink_line(code)]
+
+
+def test_join_to_a_real_subdirectory_with_trailing_empty_part_stays_quiet(tmp_path):
+    code = route("target.startswith(os.path.join(BASE, 'public', ''))")
+
+    assert traversal_lines(tmp_path, code) == []
+
+
+@pytest.mark.parametrize("scope", ["module", "local"])
+@pytest.mark.parametrize("tuple_prefix", [False, True], ids=["scalar", "tuple"])
+@pytest.mark.parametrize("literal", [False, True], ids=["captured-name", "literal"])
+def test_prefix_capture_does_not_borrow_a_later_base_assignment(
+    tmp_path, scope, tuple_prefix, literal
+):
+    value = "'/srv/files/'" if literal else "captured_base + '/'"
+    if tuple_prefix:
+        value = f"({value},)"
+    bindings = (
+        "captured_base = ''\n"
+        f"captured_prefix = {value}\n"
+        "captured_base = '/srv/files'\n"
+    )
+    body = "    target = os.path.normpath(os.path.join(BASE, name))\n"
+    prefix_lines = bindings if scope == "module" else ""
+    if scope == "local":
+        body = "".join("    " + line + "\n" for line in bindings.splitlines()) + body
+    code = route("target.startswith(captured_prefix)", body, prefix_lines)
+
+    expected = [] if literal else [sink_line(code)]
+    assert traversal_lines(tmp_path, code) == expected
+
+
+@pytest.mark.parametrize("tuple_prefix", [False, True], ids=["scalar", "tuple"])
+def test_prefix_capture_does_not_borrow_a_function_global_reassignment(
+    tmp_path, tuple_prefix
+):
+    value = "captured_base + '/'"
+    if tuple_prefix:
+        value = f"({value},)"
+    code = route(
+        "target.startswith(captured_prefix)",
+        "    global captured_base\n"
+        "    captured_base = '/srv/files'\n"
+        "    target = os.path.normpath(os.path.join(BASE, name))\n",
+        "captured_base = ''\n" + f"captured_prefix = {value}\n",
+    )
 
     assert traversal_lines(tmp_path, code) == [sink_line(code)]
 

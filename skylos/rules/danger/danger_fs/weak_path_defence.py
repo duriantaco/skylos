@@ -16,7 +16,9 @@ from __future__ import annotations
 import ast
 
 from skylos.rules.danger.danger_fs.prefix_separator import (
+    AMBIGUOUS_BINDING,
     SEPARATOR_NAMES,
+    binding_value,
     bound_names,
     dotted,
     ends_with_separator,
@@ -210,11 +212,8 @@ class _Module:
         """The module-level value of ``name``, for a tuple whose members were
         written where the module binds them."""
         if name in self.globals:
-            return None
-        values = self.bindings.get(name)
-        if values and len(values) == 1:
-            return values[0]
-        return None
+            return AMBIGUOUS_BINDING
+        return binding_value(self.bindings.get(name))
 
     def canonical(self, node):
         name = dotted(node)
@@ -282,23 +281,24 @@ class _Scope:
 
     def binding(self, name):
         if name in self.own:
-            values = self.own[name]
-            if len(values) == 1:
-                return values[0]
-            return None
+            return binding_value(self.own[name])
         if name in self.module.globals:
-            return None
-        values = self.module.bindings.get(name)
-        if values and len(values) == 1:
-            return values[0]
-        return None
+            return AMBIGUOUS_BINDING
+        return binding_value(self.module.bindings.get(name))
 
     def separator_prefix(self, call):
         if len(call.args) != 1 or call.keywords:
             return False
         return ends_with_separator(
-            call.args[0], self.binding, self.module.canonical, self.module.binding
+            call.args[0], self.binding, self.canonical, self.module.binding,
+            self.module.canonical,
         )
+
+    def canonical(self, node):
+        name = dotted(node)
+        if name is None or name.split(".", 1)[0] in self.own:
+            return None
+        return self.module.canonical(node)
 
     def absolute_handled(self, name):
         for call in self.calls:
@@ -332,10 +332,7 @@ class _Scope:
             return any(self.separator(item) for item in node.elts)
         if _text(node) in _SEPARATORS:
             return True
-        return (
-            _dotted(node) in {"os.sep", "os.path.sep", "os.altsep", "sep"}
-            or self.module.canonical(node) in SEPARATOR_NAMES
-        )
+        return self.canonical(node) in SEPARATOR_NAMES | {"os.altsep"}
 
     def otherwise_validated(self, names):
         """True when a condition checks a tracked name in some other way: a

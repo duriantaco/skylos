@@ -15,6 +15,8 @@ from skylos.rules.danger.import_proof import provider_binding_is_stable
 from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
 from skylos.rules.danger.danger_fs.prefix_separator import (
+    AMBIGUOUS_BINDING,
+    binding_value,
     bound_names,
     dotted as prefix_dotted,
     ends_with_separator,
@@ -1204,17 +1206,15 @@ class _PathFlowChecker(TaintVisitor):
             self._prefix_binding,
             self._prefix_canonical,
             self._prefix_module_binding,
+            self._prefix_module_canonical,
         )
 
     def _prefix_module_binding(self, name):
         """The module-level value of ``name``: a tuple's members belong to the
         scope that declared them, not to the scope doing the check."""
         if name in self._global_names:
-            return None
-        values = self._module_bindings.get(name)
-        if values and len(values) == 1:
-            return values[0]
-        return None
+            return AMBIGUOUS_BINDING
+        return binding_value(self._module_bindings.get(name))
 
     def _prefix_binding(self, name):
         function = self._current_function()
@@ -1225,18 +1225,27 @@ class _PathFlowChecker(TaintVisitor):
                 bindings = scope_bindings(function)
                 self._function_bindings[key] = bindings
             if name in bindings:
-                values = bindings[name]
-                if len(values) == 1:
-                    return values[0]
-                return None
+                return binding_value(bindings[name])
         if name in self._global_names:
-            return None
-        values = self._module_bindings.get(name)
-        if values and len(values) == 1:
-            return values[0]
-        return None
+            return AMBIGUOUS_BINDING
+        return binding_value(self._module_bindings.get(name))
 
     def _prefix_canonical(self, node):
+        name = prefix_dotted(node)
+        if name is None:
+            return None
+        function = self._current_function()
+        if function is not None:
+            key = id(function)
+            bindings = self._function_bindings.get(key)
+            if bindings is None:
+                bindings = scope_bindings(function)
+                self._function_bindings[key] = bindings
+            if name.split(".", 1)[0] in bindings:
+                return None
+        return self._prefix_module_canonical(node)
+
+    def _prefix_module_canonical(self, node):
         name = prefix_dotted(node)
         if name is None:
             return None

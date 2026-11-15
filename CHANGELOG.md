@@ -1314,6 +1314,8 @@ These changes are included from [#1006](https://github.com/duriantaco/skylos/pul
 
 ## [Unreleased]
 
+* **danger:** keep prefix aliases in their declaration scope, reject ambiguous separator imports and captured reassignments, and bound tuple and string proof expansion without suppressing unresolved path findings.
+
 ### Documentation
 - Document SKY-D282 webhook signature verification coverage.
 
