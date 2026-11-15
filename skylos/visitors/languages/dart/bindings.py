@@ -143,6 +143,9 @@ def apply_dart_project_bindings(definitions, metadata_by_file, project_root):
         }
         unresolved = False
         for member in units[owner]:
+            for name in metadata[member].get("declared_names", []):
+                if not name.startswith("_"):
+                    found.setdefault(name, [])
             for directive in metadata[member].get("exports", []):
                 for source in directive.get("sources", []):
                     provider = resolve(member, source)
@@ -236,6 +239,31 @@ def apply_dart_project_bindings(definitions, metadata_by_file, project_root):
         ]
         return candidates[0] if len(candidates) == 1 else None
 
+    def open_receiver_dispatch(owner, use):
+        member = use.get("member")
+        receiver = use["name"].rpartition(".")[0]
+        if (
+            not member
+            or use.get("receiver_type")
+            or use.get("unknown_receiver")
+            or use.get("known_receiver_member")
+            or not use.get("import_eligible", True)
+            or use.get("kind") == "type"
+            or re.fullmatch(r"[A-Z]\w*", receiver)
+            or local[owner].get(use.get("target"))
+            or members[owner].get(use.get("target"))
+        ):
+            return []
+        found = []
+        for extension in visible_extensions[owner].values():
+            provider = unit(str(Path(extension.filename).resolve()))
+            if member.startswith("_") and provider != owner:
+                continue
+            methods = members[provider].get(f"{extension.name}.{member}", [])
+            if methods:
+                found.append((extension, methods))
+        return found
+
     call_graph = {
         id_to_key[id(definition)]: set()
         for values in by_file.values()
@@ -304,6 +332,11 @@ def apply_dart_project_bindings(definitions, metadata_by_file, project_root):
                     extension, values = dispatch
                     credit([extension], "dart_extension_dispatch")
                     connect(owner, use, [extension])
+                elif not values:
+                    for extension, methods in open_receiver_dispatch(owner, use):
+                        credit([extension], "dart_open_receiver_extension")
+                        credit(methods, "dart_open_receiver_extension")
+                        connect(owner, use, [extension, *methods])
             credit(values, "dart_library_reference")
             connect(owner, use, values)
         for directive in facts.get("exports", []):
@@ -370,6 +403,10 @@ def apply_dart_project_bindings(definitions, metadata_by_file, project_root):
                 dispatch = extension_dispatch(owner, record)
                 if dispatch and id(dispatch[0]) in provided_extensions:
                     read_names.add(provided_extensions[id(dispatch[0])])
+                if not dispatch and record["name"].partition(".")[0] not in prefixes:
+                    for extension, _methods in open_receiver_dispatch(owner, record):
+                        if id(extension) in provided_extensions:
+                            read_names.add(provided_extensions[id(extension)])
                 if not record.get("import_eligible", True):
                     continue
                 use = record["name"]

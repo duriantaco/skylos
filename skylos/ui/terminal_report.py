@@ -66,7 +66,7 @@ CATEGORY_SPECS = (
     ("unused_parameters", "Dead Code", "unused parameter"),
     ("unused_files", "Dead Code", "unused file"),
     ("unused_fixtures", "Dead Code", "unused fixture"),
-    ("unused_exports", "Dead Code", "unused export"),
+    ("unused_exports", "Dead Code", "unnecessary export"),
 )
 
 DEAD_CODE_TYPES = {

@@ -23,6 +23,12 @@ from skylos.rules.danger.danger_fs.prefix_separator import (
     module_level_imports,
     scope_bindings,
 )
+from skylos.rules.danger.danger_fs.filename_match import (
+    filename_match_subject,
+    names_when,
+    native_text_name,
+    validated_return,
+)
 from skylos.security.receiver_resolution import ReceiverResolver
 from skylos.rules.danger.danger_fs.path_open_modes import PathOpenModes
 from skylos.rules.danger.danger_fs.open_read_evidence import UpdateHandleReads
@@ -650,8 +656,12 @@ class _PathFlowChecker(TaintVisitor):
         self._path_parents = {}
         self._module_rebound = frozenset()
         self._module_bindings = {}
+        self._module_import_aliases = {}
         self._global_names = frozenset()
         self._function_bindings = {}
+        self._function_import_aliases = {}
+        self._module_functions = {}
+        self._filename_validators = {}
 
     def visit_Module(self, node):
         self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
@@ -659,6 +669,12 @@ class _PathFlowChecker(TaintVisitor):
         self._module_rebound = frozenset(bound_names(node))
         self._module_bindings = scope_bindings(node)
         self._module_import_aliases = module_level_imports(node)
+        self._module_functions = {
+            statement.name: statement
+            for statement in node.body
+            if isinstance(statement, ast.FunctionDef)
+        }
+        self._filename_validators = {}
         self._global_names = frozenset(
             name
             for item in ast.walk(node)
@@ -1031,6 +1047,8 @@ class _PathFlowChecker(TaintVisitor):
     def is_tainted(self, node):
         if _is_path_name_projection(node) or is_traversal_safe_value(node):
             return False
+        if isinstance(node, ast.Call) and self._is_filename_validator_call(node):
+            return False
         # The common taint visitor does not seed stdin readers. Keep them as
         # candidates here so repository provenance can distinguish a local
         # program's operator input from a web/tool application's input stream.
@@ -1112,12 +1130,109 @@ class _PathFlowChecker(TaintVisitor):
         when_false = self._validation_names(node.test, False)
         if not when_true and not when_false:
             self.generic_visit(node)
+            self._clear_filename_matched(node)
             return
         self.visit(node.test)
         self._visit_block(node.body, when_true)
         self._visit_block(node.orelse, when_false)
         if when_false and _body_terminates(node.body):
             self._current_validated().update(when_false)
+        self._clear_filename_matched(node)
+
+    def _clear_filename_matched(self, node):
+        """After a top-level ``if`` that rejects every value but one made of
+        filename characters, that name cannot carry a separator or dot."""
+        function = self._current_function()
+        if (
+            function is None
+            or node.orelse
+            or not any(statement is node for statement in function.body)
+            or not _body_terminates(node.body)
+        ):
+            return
+        for name in self._filename_matched(node.test, function):
+            self._set(name, False)
+
+    def _scope_binding(self, function, name):
+        if function is not None:
+            key = id(function)
+            bindings = self._function_bindings.get(key)
+            if bindings is None:
+                bindings = scope_bindings(function)
+                self._function_bindings[key] = bindings
+            if name in bindings:
+                values = bindings[name]
+                if len(values) == 1:
+                    return values[0]
+                return None
+        if name in self._global_names:
+            return None
+        values = self._module_bindings.get(name)
+        if values and len(values) == 1:
+            return values[0]
+        return None
+
+    def _filename_matched(self, test, function):
+        # A helper's regex import belongs to that helper, even while its
+        # return value is being checked from another function's call site.
+        imports = {}
+        if function is not None:
+            key = id(function)
+            imports = self._function_import_aliases.get(key)
+            if imports is None:
+                imports = module_level_imports(function)
+                self._function_import_aliases[key] = imports
+
+        def binding(name):
+            return self._scope_binding(function, name)
+
+        def canonical(node):
+            name = prefix_dotted(node)
+            if name is not None:
+                head, _, rest = name.partition(".")
+                if head in imports and head not in self._module_rebound:
+                    base = imports[head]
+                    return f"{base}.{rest}" if rest else base
+            return self._prefix_scope_canonical(node, function)
+
+        def call_names(call):
+            subject = filename_match_subject(call, binding, canonical)
+            if isinstance(subject, ast.Name) and native_text_name(
+                subject.id, function, binding
+            ):
+                return {subject.id}
+            return set()
+
+        return names_when(test, False, call_names)
+
+    def _is_filename_validator_call(self, node):
+        """A call to a same-module function that only returns a name it
+        proved to be filename characters."""
+        if not isinstance(node.func, ast.Name) or len(node.args) != 1 or node.keywords:
+            return False
+        name = node.func.id
+        helper = self._module_functions.get(name)
+        if helper is None or name in self._global_names:
+            return False
+        if "*" in self._module_bindings or len(self._module_bindings.get(name, ())) != 1:
+            return False
+        function = self._current_function()
+        if function is not None:
+            key = id(function)
+            bindings = self._function_bindings.get(key)
+            if bindings is None:
+                bindings = scope_bindings(function)
+                self._function_bindings[key] = bindings
+            if name in bindings:
+                return False
+        known = self._filename_validators.get(name)
+        if known is None:
+            known = self._filename_validators[name] = validated_return(
+                helper,
+                lambda test: self._filename_matched(test, helper),
+                _body_terminates,
+            )
+        return known
 
     def visit_Assert(self, node):
         names = self._validation_names(node.test, True)
@@ -1231,10 +1346,12 @@ class _PathFlowChecker(TaintVisitor):
         return binding_value(self._module_bindings.get(name))
 
     def _prefix_canonical(self, node):
+        return self._prefix_scope_canonical(node, self._current_function())
+
+    def _prefix_scope_canonical(self, node, function):
         name = prefix_dotted(node)
         if name is None:
             return None
-        function = self._current_function()
         if function is not None:
             key = id(function)
             bindings = self._function_bindings.get(key)
@@ -1250,7 +1367,7 @@ class _PathFlowChecker(TaintVisitor):
         if name is None:
             return None
         head, _, rest = name.partition(".")
-        if head in self._module_rebound:
+        if head in self._module_rebound or "*" in self._module_rebound:
             return None
         base = self._module_import_aliases.get(head)
         if base is None:
@@ -1953,6 +2070,3 @@ def scan(tree, file_path, findings, *, project_root=None):
         checker.visit(tree)
     except Exception as e:
         print(f"Path traversal analysis failed for {file_path}: {e}", file=sys.stderr)
-
-
-

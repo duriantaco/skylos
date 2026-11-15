@@ -406,6 +406,7 @@ func ExtractScoped(root string, sourceFiles map[string]bool) (*Result, error) {
 	})
 
 	markReferencedInterfaceMethods(result, projectInterfaceMethods)
+	markPluginLookupSymbols(result, reachabilityFiles)
 	typeImporter := newProjectSourceImporter(root, modulePath, fset, reachabilityFiles, newHostStdlibImporter(fset))
 	if project, ok := typeImporter.(*projectSourceImporter); ok {
 		project.incompleteDirs = incompleteDirs

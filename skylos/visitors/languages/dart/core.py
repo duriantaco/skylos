@@ -873,6 +873,22 @@ class DartCore:
         # Mixin/interface dispatch is not resolved by this syntax-only pass.
         return None
 
+    def _enclosing_type_name(self, node) -> str | None:
+        parent = node.parent
+        while parent is not None:
+            if parent.type in {
+                "class_definition",
+                "mixin_declaration",
+                "extension_declaration",
+                "enum_declaration",
+            }:
+                name = self._name_node(parent)
+                if name is None:
+                    return None
+                return self._node_name_text(name)
+            parent = parent.parent
+        return None
+
     def _resolve_call_sites(self) -> None:
         from .references import _shadowed
 
@@ -906,6 +922,12 @@ class DartCore:
                     # Imports and other library files may supply this name;
                     # absence from this class does not make it a class member.
                     owner = None
+            elif receiver is None and current_callable is None:
+                member = self._member_target(
+                    self._enclosing_type_name(node), name, classes, definitions
+                )
+                if member in definitions:
+                    target = member
             elif owner is not None:
                 target = self._member_target(owner, name, classes, definitions) or name
                 self._credit_constructor(owner, name, current_callable)

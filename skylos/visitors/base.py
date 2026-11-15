@@ -596,6 +596,27 @@ def _scope_nodes(statements):
             pending.extend(ast.iter_child_nodes(node))
 
 
+def _parameter_import_reaches(function_node, name: str, read_line: int) -> bool:
+    import_line = None
+    for child in _scope_nodes(function_node.body):
+        if not isinstance(child, (ast.Import, ast.ImportFrom)):
+            continue
+        if name not in _import_binding_names(child) or child.lineno > read_line:
+            continue
+        if import_line is None or child.lineno > import_line:
+            import_line = child.lineno
+    if import_line is None:
+        return False
+    for statement in function_node.body:
+        if statement.lineno <= import_line:
+            continue
+        if (statement.end_lineno or statement.lineno) >= read_line:
+            continue
+        if name in _assigned_names(statement):
+            return False
+    return True
+
+
 def _arm_bindings(statements: list) -> tuple[set[str], set[str]]:
     imported = set()
     assigned = set()
@@ -714,6 +735,19 @@ def _function_import_fallback_reads(node: ast.AST) -> set[int]:
     }
 
 
+_IMPORT_EFFECT_STDLIB_MODULES = frozenset({"readline", "rlcompleter"})
+_TYPE_EXPRESSION_MODULES = ("typing.", "typing_extensions.", "collections.abc.")
+_GENERIC_BUILTINS = frozenset({"dict", "frozenset", "list", "set", "tuple", "type"})
+_TYPE_VARIABLE_FACTORIES = frozenset(
+    {
+        "typing.TypeVar",
+        "typing_extensions.TypeVar",
+        "typing.NewType",
+        "typing_extensions.NewType",
+    }
+)
+
+
 def _nested_forward_references(node: ast.expr, resolve_origin) -> list:
     """String constants inside a type expression that name types, as in
     ``Union["Parameter", None]`` or ``Callable[["Context"], None]``: forward
@@ -809,6 +843,7 @@ class Definition:
         "module_shadows_getattr",
         "confidence_factors",
         "unread_type_checking_import",
+        "direct_call_owner",
         "python_local_owner",
         "python_class_owner",
         "rust_reference_facts",
@@ -868,6 +903,7 @@ class Definition:
         # making it uncertain (see skylos/deadcode/confidence.py).
         self.confidence_factors = []
         self.unread_type_checking_import = False
+        self.direct_call_owner = False
 
     def to_dict(self) -> dict[str, Any]:
         if self.type == "method" and "." in self.name:
@@ -1400,6 +1436,20 @@ class Visitor(ast.NodeVisitor):
             return True
         return False
 
+    def _credit_parameter_import_read(self, node: ast.Name) -> None:
+        if not self._local_import_maps or not self._function_node_stack:
+            return
+        targets = self._local_import_maps[-1].get(node.id)
+        if not targets:
+            return
+        if not _parameter_import_reaches(
+            self._function_node_stack[-1], node.id, node.lineno
+        ):
+            return
+        for target in targets:
+            self.first_read_lineno.setdefault(target, node.lineno)
+            self.add_ref(target)
+
     def _credit_fallback_import_read(self, node: ast.Name, index: int) -> None:
         if index >= len(self._local_import_fallback_reads):
             return
@@ -1454,6 +1504,8 @@ class Visitor(ast.NodeVisitor):
                     getattr(node, "end_lineno", line),
                 },
             )
+            if full in _IMPORT_EFFECT_STDLIB_MODULES:
+                self.add_ref(target)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         module = node.module
@@ -3174,6 +3226,16 @@ class Visitor(ast.NodeVisitor):
             if annotation_str is not None:
                 self.visit_string_annotation(annotation_str)
 
+        if callee in _TYPE_VARIABLE_FACTORIES:
+            type_arguments = list(node.args[1:])
+            for keyword in node.keywords:
+                if keyword.arg in {"bound", "default"}:
+                    type_arguments.append(keyword.value)
+            for type_argument in type_arguments:
+                annotation_str = self._annotation_string_value(type_argument)
+                if annotation_str is not None:
+                    self.visit_string_annotation(annotation_str)
+
         if (
             isinstance(node.func, ast.Name)
             and node.func.id in ("getattr", "hasattr", "setattr", "delattr")
@@ -3989,6 +4051,7 @@ class Visitor(ast.NodeVisitor):
                 if node.id == param_name:
                     self.first_read_lineno.setdefault(param_full_name, node.lineno)
                     self.add_ref(param_full_name)
+                    self._credit_parameter_import_read(node)
                     return
 
         if self._param_stack:
@@ -4412,6 +4475,13 @@ class Visitor(ast.NodeVisitor):
                     self.add_ref(f"{owner}.{key}")
                 else:
                     self.add_ref(f"{self.qual(obj_name)}.{key}")
+
+        origin = self._annotation_origin(node.value)
+        if origin.startswith(_TYPE_EXPRESSION_MODULES) or origin in _GENERIC_BUILTINS:
+            for forward_reference in _nested_forward_references(
+                node, self._annotation_origin
+            ):
+                self.visit_string_annotation(forward_reference)
 
         self.visit(node.value)
         self.visit(node.slice)

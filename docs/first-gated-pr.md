@@ -250,7 +250,7 @@ Expected: **Skylos Quality Gate** fails with
 `1 critical AI-code issue (SKY-L012 phantom symbol reference)`, because
 `verify_signature` is never defined or imported. Critical AI-code issues fail
 the gate by default. To change that, set `block_ai_defect_severities` under
-`[tool.skylos.gate]`; see the [gate settings](../README.md#cicd).
+`[tool.skylos.gate]`; see the [gate settings](#gate-settings).
 
 ## 7. Optional: connect Skylos Cloud (3 to 5 minutes, needs the browser)
 
@@ -440,3 +440,37 @@ Useful options: `--upload` / `--no-upload`, `--done` / `--no-done`, `--default-b
 `--scan-path apps/api` for one project in a monorepo, `--advisory-gate` to
 report without failing, and `--python-version`. See
 `skylos cicd init --help`.
+
+## Gate settings
+
+The gate (`skylos . --gate`, `skylos cicd gate`, and the generated workflow)
+fails on any critical security issue, any secret, and any critical AI-code
+issue, such as an import of a package that does not exist on PyPI (SKY-D222)
+or a call to a function that is never defined or imported (SKY-L012). Other
+findings fail it only above count limits. Change the limits under
+`[tool.skylos.gate]` in `pyproject.toml`, for example:
+
+```toml
+[tool.skylos.gate]
+max_high = 5          # high-severity security issues allowed
+max_quality = 10      # quality issues allowed
+max_ai_defects = 10   # AI-code issues allowed (defaults to max_quality)
+# AI-code issues at these severities fail the gate whatever max_ai_defects
+# allows. Add "HIGH" to block more; [] turns the rule off.
+block_ai_defect_severities = ["CRITICAL"]
+```
+
+`max_ai_defects` and `block_ai_defect_severities` are separate checks; the
+gate fails if either one fails. In a pull request, `skylos cicd gate
+--diff-base` reads this policy from the base branch, so a pull request cannot
+turn the rule off for itself. `max_critical`, `max_secrets` and
+`fail_on_critical = false` cannot loosen the critical-issue and secret rule; a
+gate run prints a warning when they try.
+
+A gate policy synced from Skylos Cloud replaces the repository's
+`[tool.skylos.gate]` section; see
+[Cloud configuration sync](./cloud-sync.md). For the verdict line
+(`PASSED`, `FAILED`, `INCOMPLETE`), its exit codes and the JSON `gate` object,
+see [Gate verdict](./cli-output.md#gate-verdict); for coverage gaps and
+`require_complete`, see
+[Exit Codes And Incomplete Analysis](./cli-output.md#exit-codes-and-incomplete-analysis).

@@ -68,7 +68,8 @@ boundaries, and severity classification.
 
 ## Reference docs
 
-- `README.md` — overview, workflow table, language support.
+- `README.md` — short pitch, quick start and links only. Put details in
+  `docs/` or the docs site, not the README.
 - `docs/cli-output.md` — output modes and TUI keys.
 - `dictionary.md` — every rule ID and product term.
 - `CONTRIBUTING.md` / `QUALITY.md` — repo workflow and quality-gate expectations.

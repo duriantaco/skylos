@@ -473,3 +473,94 @@ def test_prefix_capture_does_not_borrow_a_function_global_reassignment(
 
     assert traversal_lines(tmp_path, code) == [sink_line(code)]
 
+
+@pytest.mark.parametrize(
+    ("helper_shadow", "caller_shadow", "unrelated_shadow"),
+    [
+        (True, False, False),
+        (True, True, False),
+        (False, False, False),
+        (False, True, False),
+        (False, False, True),
+        (False, True, True),
+    ],
+    ids=[
+        "helper-provider-is-not-re",
+        "both-scopes-shadow-re",
+        "module-provider-is-re",
+        "caller-shadow-does-not-change-helper",
+        "unrelated-shadow-does-not-change-helper",
+        "caller-and-unrelated-shadows",
+    ],
+)
+def test_filename_helper_reads_regex_provider_in_its_own_scope(
+    tmp_path, helper_shadow, caller_shadow, unrelated_shadow
+):
+    code = (
+        "import re\nfrom pathlib import Path\nfrom fastapi import FastAPI\n"
+        "from fastapi.responses import FileResponse\napp = FastAPI()\n"
+        "def checked(raw: str):\n"
+    )
+    if helper_shadow:
+        code += "    import evil as re\n"
+    code += (
+        "    if not re.fullmatch(r'[A-Za-z0-9_-]+', raw):\n"
+        "        raise ValueError\n    return raw\n"
+    )
+    if unrelated_shadow:
+        code += "def unrelated():\n    import evil as re\n    return re\n"
+    code += "@app.get('/files/{raw}')\ndef view(raw: str):\n"
+    if caller_shadow:
+        code += "    import evil as re\n"
+    code += "    return FileResponse(Path('/srv') / checked(raw))\n"
+    line = len(code.splitlines())
+
+    assert traversal_lines(tmp_path, code) == ([line] if helper_shadow else [])
+
+
+@pytest.mark.parametrize(
+    ("parameters", "bindings", "receiver", "trusted"),
+    [
+        ("", "    import re\n", "re", True),
+        ("", "    import re as rx\n", "rx", True),
+        ("", "    import evil as re\n", "re", False),
+        ("", "    import evil as rx\n", "rx", False),
+        ("", "    import re\n    import evil as re\n", "re", False),
+        (
+            "",
+            "    if choose_provider:\n        import re\n"
+            "    else:\n        import evil as re\n",
+            "re",
+            False,
+        ),
+        (", re=provider", "", "re", False),
+        ("", "    re = provider\n", "re", False),
+    ],
+    ids=[
+        "local-stdlib-import",
+        "local-stdlib-alias",
+        "fake-local-provider",
+        "fake-local-alias",
+        "conflicting-local-imports",
+        "conditional-local-imports",
+        "parameter-shadows-provider",
+        "assignment-shadows-provider",
+    ],
+)
+def test_filename_helper_requires_its_actual_local_regex_provider(
+    tmp_path, parameters, bindings, receiver, trusted
+):
+    code = (
+        "import re\nimport evil as provider\nfrom pathlib import Path\n"
+        "from fastapi import FastAPI\nfrom fastapi.responses import FileResponse\n"
+        "app = FastAPI()\n"
+        f"def checked(raw: str{parameters}):\n"
+        + bindings
+        + f"    if not {receiver}.fullmatch(r'[A-Za-z0-9_-]+', raw):\n"
+        "        raise ValueError\n    return raw\n"
+        "@app.get('/files/{raw}')\ndef view(raw: str):\n"
+        "    return FileResponse(Path('/srv') / checked(raw))\n"
+    )
+
+    expected = [] if trusted else [len(code.splitlines())]
+    assert traversal_lines(tmp_path, code) == expected

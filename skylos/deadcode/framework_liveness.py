@@ -170,9 +170,20 @@ def _qualified(node: ast.AST | None, bindings: dict[str, str | None]) -> str | N
     return None
 
 
+def _is_package_directory(directory: Path) -> bool:
+    try:
+        return (directory / "__init__.py").is_file()
+    except OSError:
+        return False
+
+
 def _module_name(path: Path, root: Path) -> str:
     parts = list(path.relative_to(root).with_suffix("").parts)
-    if parts and parts[0] in _SOURCE_ROOTS:
+    if (
+        parts
+        and parts[0] in _SOURCE_ROOTS
+        and not _is_package_directory(root / parts[0])
+    ):
         parts.pop(0)
     if parts and parts[-1] == "__init__":
         parts.pop()

@@ -13,6 +13,22 @@ state of the art.
 
 ## Current Regression Suites
 
+Skylos has checked-in regression suites for dead code, security, quality,
+agent review and AI-code defects. They are regression gates, not independent
+benchmarks: we wrote the cases, so we don't quote their scores as accuracy.
+Case counts change as the suites grow; the manifests are the current source.
+
+| Suite | Cases | How to run |
+|:---|:---|:---|
+| Dead code | `benchmarks/dead_code/manifest.json` | `python scripts/dead_code_benchmark.py` |
+| Security | `benchmarks/security/manifest.json` | `python scripts/security_benchmark.py` |
+| Quality | `benchmarks/quality/manifest.json` | `python scripts/quality_benchmark.py`; also runs in CI on every pull request |
+| Agent review | `benchmarks/agent_review/manifest.json` | `python scripts/agent_review_benchmark.py` (needs an LLM API key) |
+| AI-code defects | `benchmarks/ai_code_defects/manifest.json` | `python scripts/ai_code_defect_benchmark.py` |
+
+The [done-gate benchmark](./docs/done-gate-benchmark.md) replays published
+agent runs and reports what the gate missed.
+
 ### Dead Code
 
 Run:
@@ -88,6 +104,9 @@ Broad-LLM call counts exclude TypeSafe usage.
 The newer [125-label repository-style v2 suite](./benchmark_jev.md#expanded-repository-style-suite-v2-no-paid-results-yet)
 adds 66 labels and has only a local pure-Skylos baseline so far: 71/125
 (56.8%). It is not comparable to the paid 59-label arms as if run together.
+The paid Jev runs so far are small development runs on synthetic suites, not
+an independent holdout, and on some suites Jev did not improve
+classification. Normal Skylos scans need no Jev key.
 Full method and holdout procedure:
 [benchmarks/dead_code/README.md](./benchmarks/dead_code/README.md#jev-semantic-research-benchmark).
 

@@ -9,8 +9,33 @@ synthetic fixture scores below.
 
 The benchmark framework lives in the Skylos repo because it must version with analyzer output and CI. Larger realistic targets, such as `/Users/oha/skylos-demo`, stay external and are referenced by config.
 
-The default manifest contains **98 cases and 466 symbol labels**: 149 unused and
-317 used. The first 65 cases and their 351 labels retain their expectations.
+The default manifest contains **128 cases and 619 symbol labels**: 216 unused and
+403 used. The first 65 cases and their 351 labels retain their expectations.
+Twenty-two cases (92 labels: 47 unused, 45 used) are paired TS/JS liveness
+contracts for reads and loads that no import statement spells out:
+
+| TS/JS loaded-file and implicit-read contracts | Cases / labels |
+|---|---:|
+| Classic JSX factory bindings (tsconfig `jsx`, `jsxFactory`, `@jsx`) with automatic-runtime controls | 4 / 9 |
+| Destructuring defaults, qualified type names, same-name member calls, dependency-base overrides | 4 / 15 |
+| Storybook and `karma.conf` / `wdio.conf` files, with projects that do not use the tool | 4 / 12 |
+| Files named by a tool config, `tsconfig` `include`, `package.json`, `path.join`, a runtime command or a Markdown shell block | 6 / 42 |
+| React Native platform extensions, with a project that has no React Native dependency | 2 / 8 |
+| Default exports re-exported by name; `export ... from` beside an unused import | 2 / 6 |
+
+Each used label has a dead lookalike in the same case: a comment, prose, an
+inline code mention, an `exclude`/`ignore` entry, a glob, a local object named
+`path`, or a class that extends nothing. Fixtures are original; no program runs.
+
+Five cases from a labelled scan of eight open-source Go, Rust, Java and Kotlin
+repositories cover Go `plugin.Lookup` symbols, Java calls on a variable of a
+declared type, a Kotlin member extension shadowed by another file's private
+function, Rust return-type and header-bound imports, and application code under
+the `com.example` / `org.example` default package namespace.
+
+Three Python cases cover module variables that share a name across modules,
+methods of an escaped instance that nothing names, and unread parameters of
+private functions that are only called directly, each with its live lookalikes.
 Five new cases cover nested namespace exports, contained Go workspaces and Rust
 source-module trait identity. Twenty-eight Swift cases cover private declarations,
 lexical and owner identity, callbacks, overloads, call cycles and runtime consumers.
@@ -260,8 +285,8 @@ First inspect the request plan. This does not use the network or require a key:
 python3 scripts/jev_dead_code_benchmark.py
 ```
 
-The default checked-in manifest contains 466 ground-truth symbols: 149 unused
-and 317 used. It is useful for request validation and regression testing.
+The default checked-in manifest contains 496 ground-truth symbols: 154 unused
+and 342 used. It is useful for request validation and regression testing.
 A Jev tie on an already-correct static result does not demonstrate incremental
 value. The runner always asks the
 `original` question, and adds a second arm only when safe:

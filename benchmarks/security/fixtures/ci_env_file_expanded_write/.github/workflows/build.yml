@@ -1,0 +1,10 @@
+name: build
+on: [pull_request]
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "$HOME/tools/bin" >> $GITHUB_PATH
+      - run: echo "TITLE=${{ github.event.pull_request.title }}" >> "$GITHUB_ENV"
+      - run: echo "EXTRA=$(make print-path)" >> "$GITHUB_ENV"

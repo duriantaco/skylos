@@ -196,10 +196,11 @@ factor (`Confidence: 60% (default export ...)`) and JSON carries it in
 | JS/TS file imported only by unused files | 65 |
 | A module's default export that nothing imports (routers, mailers and config loaders consume default exports) | 60 |
 | An unused parameter (callback and override signatures often require it; like Ruff's opt-in `ARG` rules) | 50 |
+| An unused parameter of a private, undecorated Python function that is defined once and only ever called directly (no caller can require it) | not capped |
 | Rust (experimental) | 40 |
 
-The default threshold (60) shows everything except unused parameters and
-Rust; the scan says how many parameters it did not list, and
+The default threshold (60) shows everything except Rust and unused parameters
+whose signature a caller could require; the scan says how many parameters it did not list, and
 `--confidence 50` lists them. `--confidence 80` keeps the strongest findings; `skylos clean`'s non-interactive default (80)
 does not delete default exports or class attributes. SKY-E003/E004 findings
 carry a confidence for sorting and are not filtered by `--confidence`.
@@ -923,8 +924,8 @@ The separate `skylos debt` and `skylos defend` scores retain their own contracts
 |---|---|
 | Risk | Highest severity and count of risk findings: every listed issue except dead-code candidates and Advice. The row reads e.g. `CRITICAL · 353 risk findings (all issues except dead code and advice)`. Correctness findings in `quality` are included. |
 | Maintainability | Advice counts and groups, affected code units where measurable, and observed values against their rule limits. The row reads e.g. `0 advice findings · 5 rules checked · 0 affected files`: listed Advice, the maintainability rules that measured code, and the files with listed Advice. |
-| Dead code | Candidate counts, confidence and evidence for deciding what to review or remove. |
-| Gate | PASS or FAIL against the configured policy when a gate is evaluated, INCOMPLETE when required analysis did not finish; otherwise not evaluated. JSON: the top-level `gate` object ([Gate verdict](#gate-verdict)). |
+| Dead code | Candidate counts, confidence and evidence for deciding what to review or remove. Review dynamic calls and public APIs before deleting. |
+| Gate | PASS or FAIL against the configured policy when a gate is evaluated, INCOMPLETE when required analysis did not finish; otherwise not evaluated. Passing means within policy, not zero findings. JSON: the top-level `gate` object ([Gate verdict](#gate-verdict)). |
 
 One critical secret stays critical regardless of repository size, other clean
 categories or the amount of Advice. A critical Review finding still requires
@@ -1025,6 +1026,9 @@ Diff-scoped reports cannot be combined with `--upload`, because Cloud treats
 uploaded scans as full-project results. Run a separate full scan to upload.
 Removing a call can make an unchanged function dead; neither diff mode currently
 reports that function unless its definition is also in the selected scope.
+A removed security control, such as a deleted auth decorator (SKY-L021), is
+still reported with `--diff`, including when the change only deletes the
+decorator line.
 
 ### Code health metrics in diff scans
 

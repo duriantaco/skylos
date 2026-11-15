@@ -36,6 +36,18 @@ change was intentional. See [Python behavior comparison](behavior-preservation.m
 for the supported model and its limits. Stdin verification retains its existing
 checks; it does not compare the provided source with Git.
 
+Verify a repository, file, or range:
+
+```bash
+skylos verify . --file src/app.py --range 40:75 --project-context
+```
+
+For a directory such as `.`, the AI-defect scan covers the selected tree. The
+separate `behavior` result models supported Python working-tree changes against
+Git HEAD; it is not the scope selector for the AI-defect scan. Dependency
+hallucination checks are enabled for path targets and can query package
+registries; use `--no-dependency-hallucinations` to disable those lookups.
+
 ## Security and secret findings
 
 `skylos verify` and MCP `verify_change` also run the security (`danger`) and
@@ -80,6 +92,10 @@ Schema-version-2 responses use three statuses:
 | `pass` | `0` | No verified findings, every applicable expected check completed, and no behavior comparison requires review |
 | `fail` | `1` | At least one verified AI-code, security, or secret finding exists |
 | `incomplete` | `2` | No finding exists, but a check was unsupported, skipped, uncertain, or missing, or a modeled behavior change needs review |
+
+`incomplete` means a requested proof could not be established, such as a
+missing local TS/JS import, computed namespace member, unsupported
+language-local API check, or parser surface that Skylos could not prove.
 
 Findings take precedence over incomplete coverage. `--no-fail` changes the
 process exit code to `0`, but does not change the JSON status.

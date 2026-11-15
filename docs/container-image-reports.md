@@ -14,7 +14,10 @@ skylos image scan "$IMAGE_REF" \
 
 Set `IMAGE_REF` to the full repository reference from your trusted build, such
 as `registry.example.com/team/app@sha256:<64-hex-digest>`. Install Trivy
-separately before using `skylos image scan`. The command scans
+separately before using `skylos image scan`; Skylos runs it only as a trusted
+executable on `PATH`. Registry network access and any registry credentials must
+already be available. Without `--fail-on`, a completed scan exits `0` even when
+it reports vulnerabilities. The command scans
 the pinned image from a remote registry and lets Trivy access its vulnerability
 databases over the network. It does not start the scanned container or upload
 results to Skylos Cloud. Skylos checks that Trivy's report names the exact

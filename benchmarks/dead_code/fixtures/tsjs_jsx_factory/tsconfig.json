@@ -1,0 +1,4 @@
+{
+  // classic runtime with a custom factory
+  "compilerOptions": {"jsx": "react", "jsxFactory": "h", "jsxFragmentFactory": "Fragment",},
+}

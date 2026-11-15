@@ -77,7 +77,7 @@ class State:
                         value, api=api if guards <= self.conditions else None
                     )
                 return value
-        if name in {"std", "tokio", "async_std"}:
+        if name in {"std", "tokio", "async_std", "axum", "actix_web"}:
             return Value(api=name)
         if name == "String":
             return Value(api="std::string::String")

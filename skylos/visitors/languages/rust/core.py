@@ -1301,6 +1301,7 @@ class RustCore:
 
         if node.type == "type_item":
             self._scan_type_alias_rhs(node, namespace=namespace)
+        self._scan_header_bound_refs(node, namespace=namespace)
 
         decl_list = self._child_by_type(node, "declaration_list")
         if decl_list is None:
@@ -1392,6 +1393,7 @@ class RustCore:
                 current_callable=None,
             )
 
+        self._scan_header_bound_refs(node, namespace=namespace)
         qualified_owner = self._impl_owner(node, namespace)
         if qualified_owner is None:
             qualified_owner = self._qualified_symbol(owner, namespace)
@@ -1537,11 +1539,24 @@ class RustCore:
                 continue
             if child.type == "block":
                 break
+            self._scan_refs_in_node(child, current_callable=current_callable)
             self._scan_block(
                 child,
                 namespace=namespace,
                 current_type=current_type,
                 current_callable=current_callable,
+                pending_attrs=[],
+            )
+
+    def _scan_header_bound_refs(self, node, *, namespace: str) -> None:
+        for child in node.children:
+            if child.type not in {"type_parameters", "trait_bounds", "where_clause"}:
+                continue
+            self._scan_block(
+                child,
+                namespace=namespace,
+                current_type=None,
+                current_callable=None,
                 pending_attrs=[],
             )
 

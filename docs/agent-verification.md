@@ -284,6 +284,13 @@ calling agent gets a ground-truth verdict, not another model's opinion.
 What this verifies: the presence and placement of guardrail code patterns at
 LLM integration points, before deployment, deterministically.
 
+`skylos discover` and `skylos defend` scan Python and TypeScript/JavaScript
+for recognized LLM integrations, plus agent tools, prompt sites, and input
+sources. They do not inspect integrations in other languages. If discovery
+finds no supported integration, `defend` returns an empty inventory; do not
+treat the resulting score by itself as proof that an unsupported or
+unrecognized agent implementation has guardrails.
+
 What it does not do: observe runtime behavior, evaluate prompt quality, catch
 semantic failures (an agent doing an allowed-but-wrong action), or replace
 runtime controls. Pair pre-deployment verification with runtime measures

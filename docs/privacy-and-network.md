@@ -18,6 +18,11 @@ option.
 A token on its own is not consent. `SKYLOS_TOKEN`, a saved `skylos login` or a
 CI OIDC token never makes a command upload a scan, findings or a run summary.
 
+`--ai-review` and `--verify-security` never send anything to Skylos Cloud by
+themselves; they talk to your own model provider, and `--ai-review` also to
+Jev when `TYPESAFE_API_KEY` is set (see [Other hosts](#other-hosts)). The
+verdicts reach Skylos Cloud only with `--upload` or `skylos cloud`.
+
 Three things contact Skylos Cloud without one of those commands or flags. None
 of them sends source code, file paths or findings:
 
@@ -25,7 +30,7 @@ of them sends source code, file paths or findings:
 |:---|:---|:---|:---|
 | A scan (`skylos .`, `skylos agent scan --changed`, `skylos agent audit`) while a token can be found | `GET /api/sync/rules`: downloads your project's Cloud custom rules | your token | set `SKYLOS_CUSTOM_RULES='[]'` (or to your rules as JSON), or remove the token (see below). `--no-upload` does not stop it |
 | `skylos doctor` in text mode while a token can be found | `GET /api/credits/balance` | your token | `skylos doctor --format json` |
-| The MCP server started with `SKYLOS_API_KEY` | `GET /api/sync/whoami` at start and every 15 minutes; `POST /api/credits/deduct` with the tool's credit key for each call of the scan tools (`analyze`, `security_scan`, `quality_check`, `architecture_check`, `health_score`, `secrets_scan`, `provenance_scan`), which cost 0 credits, and for each `remediate` run right before its first model call (10 credits; not for dry runs, refused calls or runs with nothing to fix) | your API key, the credit key | start the server without `SKYLOS_API_KEY` (local-only mode). It uses `SKYLOS_CLOUD_URL`, not `SKYLOS_API_URL` |
+| The MCP server started with `SKYLOS_API_KEY` | `GET /api/sync/whoami` at start and every 15 minutes; `POST /api/credits/deduct` with the tool's credit key for each call of the scan tools (`analyze`, `security_scan`, `quality_check`, `architecture_check`, `health_score`, `secrets_scan`, `provenance_scan`), which cost 0 credits, and for each `remediate` run right before its first model call (0 credits; not sent for dry runs, refused calls or runs with nothing to fix) | your API key, the credit key | start the server without `SKYLOS_API_KEY` (local-only mode). It uses `SKYLOS_CLOUD_URL`, not `SKYLOS_API_URL` |
 
 "A token can be found" means `SKYLOS_TOKEN`, a saved login in
 `~/.skylos/credentials.json`, or, in a CI job that grants an OIDC token (for
@@ -116,8 +121,8 @@ that cleanup operation from persisting a receipt. See [Cleanup](cleanup.md).
 | deps.dev | `skylos sbom --license-lookup` | package names and versions | leave out `--license-lookup` |
 | PyPI (`pypi.org`, `files.pythonhosted.org`), npm registry, Go module proxy, JSR | checks for packages that don't exist and made-up package APIs: `--ai-defects`, `-a`, config `ai_defects_enabled`; always in `skylos agent scan`, `skylos agent pre-commit`, `skylos baseline`, `skylos suite`, `skylos review` and `skylos verify` on a path; `skylos done` (the `unknown_imports` check, on by default as advice); the agent hook on package-install commands; MCP `validate_code_change` | package names (and ranged reads of public wheel files) | `skylos verify --no-dependency-hallucinations`; `unknown_imports = "off"` under `[tool.skylos.done.checks]`; MCP `check_dependencies=false`; remove the hook |
 | PyPI (`pypi.org`) | the upgrade notice: `skylos doctor` in text mode, and a scan printed to a terminal, at most once a day (the answer is kept under `~/.cache/skylos`); never in CI, with JSON or other machine output, or when output is piped | an anonymous `GET /pypi/skylos/json`: no token, no project data, no installed version | `SKYLOS_NO_TELEMETRY=1` |
-| The model provider you configure (default OpenAI) | `skylos agent ...` commands, `skylos cleanup --review`, `skylos . --verify-security`, `skylos debt --with-agent`, MCP remediation and verification tools | code excerpts and prompts; cleanup review also includes bounded task and static graph context | don't run LLM commands; `--base-url` on agent and cleanup review commands points them at a local model |
-| `api.typesafe.ai` | `skylos agent verify --jev-precheck`, `--jev-judge`, `--jev-only`, `skylos agent scan --dead-code-review jev-llm`, with `TYPESAFE_API_KEY` set | the dead-code candidates to judge | unset `TYPESAFE_API_KEY` |
+| The model provider you configure (default OpenAI) | `skylos agent ...` commands, `skylos cleanup --review`, `skylos . --ai-review`, `skylos . --verify-security`, `skylos debt --with-agent`, MCP remediation and verification tools | code excerpts and prompts; cleanup review also includes bounded task and static graph context. `--ai-review` and `--verify-security` send the flagged file (comments removed) and the rule's message, with your key | don't run LLM commands; `--base-url` on agent and cleanup review commands points them at a local model |
+| `api.typesafe.ai` | `skylos agent verify --dead-code-review jev` or `jev-llm`, `--jev-precheck`, `--jev-judge`, `skylos agent scan --dead-code-review jev-llm`, `skylos . --ai-review`, with `TYPESAFE_API_KEY` set | the dead-code candidates to judge, and a bounded copy of your first-party source (at most 64 KB) | unset `TYPESAFE_API_KEY` |
 | Your agent endpoint | `skylos agent test` | test scenarios. Only loopback addresses unless `--allow-remote` | — |
 | `raw.githubusercontent.com` or the URL you give | `skylos rules install <pack or URL>` | nothing | — |
 | Your container registry and the Trivy database | `skylos image scan` | registry credentials Trivy already has | — |

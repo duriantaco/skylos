@@ -79,7 +79,7 @@ repository SCA does not inspect the built image.
 | `packages.lock.json` versions 1, 2 | Recorded NuGet packages for every target framework, including transitives; `Project` entries are the build's own projects; see [NuGet lockfile](#nuget-lockfile) |
 | `requirements.txt`, `pyproject.toml`, `package.json`, `go.mod` | Supported direct entries with exact versions; manifest ranges are not resolved. `requirements.txt` includes its `-r` files inside the project (constraint `-c` files install nothing and are not scanned) |
 | `pom.xml` | Direct dependencies whose version Maven would resolve from this POM, its `<properties>`, `<dependencyManagement>` and parent POMs inside the scan root; see [Maven](#maven) |
-| `Cargo.toml`, `composer.json`, `pubspec.yaml` | Exact pins only: Cargo `=x.y.z`, a bare Composer version, a bare pub version. Ranges are counted as unresolved; Git, path, SDK and private-registry declarations are left to the lockfile |
+| `Cargo.toml`, `composer.json`, `pubspec.yaml`, `*.csproj` | Exact pins only: Cargo `=x.y.z`, a bare Composer version, a bare pub version, NuGet `[x.y.z]`. Ranges are counted as unresolved; Git, path, SDK and private-registry declarations are left to the lockfile |
 | `setup.cfg`, `setup.py` | Exact `install_requires` pins, like `[project].dependencies`. `setup.cfg` is read as INI (including `file:` requirement lists inside the project); `setup.py` is parsed, never run, and only literal lists (or module-level names bound to them) are read. A file without static `install_requires` is not a dependency manifest |
 
 The scanner discovers these files recursively, excluding dependency/build
@@ -666,7 +666,8 @@ An OSV record is treated as malware when its ID or an alias starts with
 is `CRITICAL`, sets `metadata.malicious: true` with `malicious_evidence`
 (the original label stays in `advisory_severity`), and says to remove the
 package, reinstall from a clean lockfile and rotate every credential an
-install could read. The terminal package table shows "remove (malicious
+install could read. The hijacked `chalk`, `debug` and `xrpl` releases are
+reported this way. The terminal package table shows "remove (malicious
 package)" instead of an upgrade.
 
 Malware is never demoted: the dev-only listing demotion does not apply

@@ -28,9 +28,9 @@ covered languages. Expand cloud rule families with resource coverage and explici
 unknown outcomes. Avoid repository-name exceptions or suppressions to improve a
 benchmark total.
 
-The 200-case default manifest now has both polarities for every Go rule it
-labels. Java `SKY-D216`/`229`/`230`/`239` and Shell `SKY-D212` still need
-negative counterparts; TS `SKY-D211` and Python `SKY-D206` need positive
+The 225-case default manifest now has both polarities for every Go, Java and
+Kotlin rule it labels. Shell `SKY-D212` still needs a
+negative counterpart; TS `SKY-D211` and Python `SKY-D206` need positive
 counterparts. Python `SKY-D231`/`232` need negative counterparts. C#
 `SKY-D233` and PHP `SKY-D255` retain both polarities.
 This is a corpus inventory result; it is

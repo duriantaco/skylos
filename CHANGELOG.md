@@ -4,6 +4,7 @@
 
 ### Bug Fixes
 
+* **danger:** keep prefix aliases in their declaration scope, reject ambiguous separator imports and captured reassignments, and bound tuple and string proof expansion without suppressing unresolved path findings.
 * **deadcode:** stop reporting attributes declared on Protocol classes as unused variables.
 * **danger:** reach the graph-query check for compact or multi-line Cypher instead of skipping the whole security scan.
 * **danger:** prove a separator prefix the same way for an imported separator, a named tuple of prefixes and a base joined with an empty string, reading each name in the scope that declares it, so a valid containment guard is no longer reported and a vacuous one is no longer trusted.
@@ -1313,8 +1314,6 @@ These changes are included from [#1006](https://github.com/duriantaco/skylos/pul
 * **security:** document webhook signature rule ([#290](https://github.com/duriantaco/skylos/issues/290)) ([3024850](https://github.com/duriantaco/skylos/commit/3024850207ee929c15bba459a04bd5a4aa0aa50d))
 
 ## [Unreleased]
-
-* **danger:** keep prefix aliases in their declaration scope, reject ambiguous separator imports and captured reassignments, and bound tuple and string proof expansion without suppressing unresolved path findings.
 
 ### Documentation
 - Document SKY-D282 webhook signature verification coverage.

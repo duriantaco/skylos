@@ -197,6 +197,37 @@ observations are capped at 250 returned tool calls per scenario. A complete
 replay; an oversized run is reported as incomplete instead of producing a pass
 that cannot be replayed.
 
+## Run artifacts and replay
+
+`skylos agent verify .` and `skylos agent test` record replayable artifacts
+under `.skylos/runs/<run-id>` and print the run directory in table output. JSON
+output includes the same harness summary under the `harness` key.
+
+```bash
+skylos agent replay .skylos/runs/<run-id>
+skylos agent replay .skylos/runs/<run-id> --format json
+```
+
+`skylos agent replay` validates and inspects a saved run without making LLM
+calls. Add `--format json` when another agent or CI job needs machine-readable
+status. A valid replay exits `0`; an invalid or corrupt artifact set exits `1`
+with issue codes. Replay output includes `schema_version` so CI and agents can
+detect artifact-contract changes. Replay checks internal consistency and
+corruption; artifacts are not signed and are not proof against an actor that
+can rewrite the entire run directory.
+
+Each run directory contains:
+
+- `events.jsonl`: chronological run, phase, and tool-call events.
+- `state.json`: full observable state, including phases, tool calls, decisions,
+  and budget usage.
+- `summary.json`: compact status, counts, budget, and artifact paths.
+- `behavior-results.json`: normalized runtime assertions, provenance, coverage,
+  and a digest-bound evidence report for `skylos agent test` runs.
+
+The current harness state is observable and replay-validated. It is not yet a
+resume mechanism for continuing interrupted verification runs.
+
 ## Version 1 Boundaries
 
 - The OpenAI-compatible adapter observes final text and returned function tool

@@ -1257,6 +1257,14 @@ def test_symbols_a_decorator_may_register_are_not_judged(tmp_path):
                 def load_path_and_files(request, schema):
                     return request
             """,
+            "app/hooks.py": """\
+                from plugins import registry
+
+
+                @registry.add
+                def refresh_rates(rates):
+                    return rates
+            """,
             "src/main/java/shop/Checkout.java": JAVA_BASE[
                 "src/main/java/shop/Checkout.java"
             ].replace(
@@ -1272,8 +1280,6 @@ def test_symbols_a_decorator_may_register_are_not_judged(tmp_path):
     result = _check(root)
 
     assert _found(result) == []
-    # The webargs loader is a candidate the guard holds back; the analyzer
-    # already keeps annotated Java members alive.
     assert result.evidence["not_judged"] >= 1
 
 

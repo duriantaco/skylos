@@ -1304,6 +1304,9 @@ boundaries needs the CI runner or an external sandbox.
 
 ## Not yet
 
+- Tests outside test functions: Skylos compares test functions (pytest,
+  unittest, JavaScript/TypeScript), so rewriting a custom test-runner script
+  or deleting cases from a test data file is not caught.
 - Per-test accounting for JavaScript/TypeScript runs is only as good as the
   JUnit XML the runner writes: Skylos does not add its own reporter to a
   Jest or Vitest command, check that every inventoried JS/TS test reported a
