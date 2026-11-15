@@ -428,6 +428,203 @@ def test_startswith_guard_admitting_a_sibling_folder_is_reported(
     assert "SKY-D215" in _rule_ids(findings)
 
 
+MULTILINE_GUARD = """import fs from "fs";
+import path from "path";
+import yauzl from "yauzl";
+
+function extract(entry: { fileName: string }) {
+  const base = "/tmp/out";
+  const outputPath = path.normalize(path.join(base, entry.fileName));
+  if (outputPath.startsWith(
+    PREFIX
+  )) {
+    fs.writeFileSync(outputPath, "data");
+    return;
+  }
+  throw new Error("bad path");
+}
+"""
+
+
+@pytest.mark.parametrize("prefix", ["base + path.sep", "base + '/'", "'/tmp/out/'"])
+def test_multiline_startswith_guard_ending_at_a_separator_is_safe(tmp_path, prefix):
+    source = MULTILINE_GUARD.replace("PREFIX", prefix)
+    findings = _scan_ts_file(tmp_path, "archive.ts", source)
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+@pytest.mark.parametrize("prefix", ["base", "'/tmp/out'", "'/'", "path.sep"])
+def test_multiline_startswith_guard_admitting_a_sibling_is_reported(tmp_path, prefix):
+    source = MULTILINE_GUARD.replace("PREFIX", prefix)
+    findings = _scan_ts_file(tmp_path, "archive.ts", source)
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+_HEADER = 'import fs from "fs";\nimport path from "path";\nimport yauzl from "yauzl";\n'
+_GUARDED_BODY = """  const out = path.normalize(path.join("/tmp/out", entry.fileName));
+  if (!out.startsWith(ROOT)) { throw new Error("bad"); }
+  fs.writeFileSync(out, "d");
+"""
+
+SAFE_RESOLVED_PREFIXES = {
+    "module_const": 'const ROOT = "/tmp/out/";\n'
+    "function extract(entry: { fileName: string }) {\n" + _GUARDED_BODY + "}\n",
+    "local_const": "function extract(entry: { fileName: string }) {\n"
+    '  const ROOT = "/tmp/out/";\n' + _GUARDED_BODY + "}\n",
+    "module_const_beside_other_local": 'function other() { const ROOT = "/a/"; return ROOT; }\n'
+    'const ROOT = "/tmp/out/";\n'
+    "function extract(entry: { fileName: string }) {\n" + _GUARDED_BODY + "}\n",
+    "module_concat_with_sep": 'const ROOT = "/tmp/out" + path.sep;\n'
+    "function extract(entry: { fileName: string }) {\n" + _GUARDED_BODY + "}\n",
+    "outer_function_const": "function extractAll(zip: any) {\n"
+    '  const ROOT = "/tmp/out/";\n'
+    '  zip.on("entry", (entry: { fileName: string }) => {\n'
+    + _GUARDED_BODY.replace('throw new Error("bad")', "return")
+    + "  });\n}\n",
+}
+
+
+@pytest.mark.parametrize("case", sorted(SAFE_RESOLVED_PREFIXES))
+def test_guard_prefix_resolved_through_its_binding_is_safe(tmp_path, case):
+    source = _HEADER + SAFE_RESOLVED_PREFIXES[case]
+    findings = _scan_ts_file(tmp_path, "archive.ts", source)
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+def test_guard_prefix_module_const_in_commonjs_is_safe(tmp_path):
+    source = (
+        'const fs = require("fs");\nconst path = require("path");\n'
+        'const yauzl = require("yauzl");\nconst { sep } = require("path");\n'
+        'const ROOT = "/tmp/out" + sep;\n'
+        "function extract(entry) {\n" + _GUARDED_BODY + "}\n"
+    )
+    findings = _scan_ts_file(tmp_path, "archive.js", source)
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+# Each prefix name below is bound to something other than the module-level
+# `ROOT = "/tmp/out/"` the text would suggest, so the guard proves nothing.
+SHADOWED_PREFIXES = {
+    "parameter": "function extract(entry: { fileName: string }, ROOT: string) {\n"
+    + _GUARDED_BODY
+    + "}\n",
+    "destructured_parameter": "function extract(entry: { fileName: string }, "
+    "{ ROOT }: { ROOT: string }) {\n" + _GUARDED_BODY + "}\n",
+    "default_parameter": 'function extract(entry: { fileName: string }, ROOT = "") {\n'
+    + _GUARDED_BODY
+    + "}\n",
+    "outer_closure_parameter": "function extractAll(zip: any, ROOT: string) {\n"
+    '  zip.on("entry", (entry: { fileName: string }) => {\n'
+    + _GUARDED_BODY.replace('throw new Error("bad")', "return")
+    + "  });\n}\n",
+    "for_of_variable": "function extract(entry: { fileName: string }, roots: string[]) {\n"
+    "  for (const ROOT of roots) {\n"
+    + _GUARDED_BODY.replace('throw new Error("bad")', "continue")
+    + "  }\n}\n",
+    "catch_parameter": "function extract(entry: { fileName: string }) {\n"
+    "  try { load(); } catch (ROOT) {\n" + _GUARDED_BODY + "  }\n}\n",
+    "hoisted_var": "function extract(entry: { fileName: string }, r: string) {\n"
+    "  if (r) { var ROOT = r; }\n" + _GUARDED_BODY + "}\n",
+}
+
+
+@pytest.mark.parametrize("case", sorted(SHADOWED_PREFIXES))
+def test_guard_prefix_shadowing_the_module_const_is_reported(tmp_path, case):
+    source = _HEADER + 'const ROOT = "/tmp/out/";\n' + SHADOWED_PREFIXES[case]
+    findings = _scan_ts_file(tmp_path, "archive.ts", source)
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_guard_prefix_from_an_import_is_reported(tmp_path):
+    source = (
+        _HEADER
+        + 'import { ROOT } from "./config";\n'
+        + 'function other() { const ROOT = "/tmp/a/"; return ROOT; }\n'
+        + "function extract(entry: { fileName: string }) {\n"
+        + _GUARDED_BODY
+        + "}\n"
+    )
+    findings = _scan_ts_file(tmp_path, "archive.ts", source)
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+@pytest.mark.parametrize(
+    "reassign",
+    [
+        "export function configure(o: { root: string }) { ({ root: ROOT } = o); }",
+        "export function configure(r: string) { ROOT = r; }",
+        "export function configure(r: string) { ROOT += r; }",
+    ],
+)
+def test_guard_prefix_let_written_elsewhere_is_reported(tmp_path, reassign):
+    source = (
+        _HEADER
+        + 'let ROOT = "/tmp/out/";\n'
+        + reassign
+        + "\nfunction extract(entry: { fileName: string }) {\n"
+        + _GUARDED_BODY
+        + "}\n"
+    )
+    findings = _scan_ts_file(tmp_path, "archive.ts", source)
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+@pytest.mark.parametrize("value", ['"/"', "path.sep", '"" + "/"'])
+def test_guard_prefix_resolving_to_only_a_separator_is_reported(tmp_path, value):
+    source = (
+        _HEADER
+        + f"const ROOT = {value};\n"
+        + "function extract(entry: { fileName: string }) {\n"
+        + _GUARDED_BODY
+        + "}\n"
+    )
+    findings = _scan_ts_file(tmp_path, "archive.ts", source)
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        # The write runs when the path is outside the prefix.
+        'out.startsWith("/tmp/out/") || entry.fileName !== "x"',
+        'out.startsWith(\n    "/tmp/out/"\n  ) || entry.fileName !== "x"',
+        'out.startsWith("/tmp/out/") === true',
+        '!out.startsWith("/tmp/out/") && entry.fileName !== "x"',
+    ],
+)
+def test_condition_that_does_not_exit_on_escape_is_reported(tmp_path, condition):
+    source = (
+        _HEADER
+        + "function extract(entry: { fileName: string }) {\n"
+        + '  const out = path.normalize(path.join("/tmp/out", entry.fileName));\n'
+        + f"  if ({condition}) {{\n    return;\n  }}\n"
+        + '  fs.writeFileSync(out, "d");\n}\n'
+    )
+    findings = _scan_ts_file(tmp_path, "archive.ts", source)
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        '!out.startsWith("/tmp/out/") || entry.fileName === ""',
+        'out.startsWith("/tmp/out/") === false',
+        'false == out.startsWith(\n    "/tmp/out/"\n  )',
+        '!(out.startsWith("/tmp/out/"))',
+    ],
+)
+def test_condition_that_exits_on_escape_is_safe(tmp_path, condition):
+    source = (
+        _HEADER
+        + "function extract(entry: { fileName: string }) {\n"
+        + '  const out = path.normalize(path.join("/tmp/out", entry.fileName));\n'
+        + f"  if ({condition}) {{\n    return;\n  }}\n"
+        + '  fs.writeFileSync(out, "d");\n}\n'
+    )
+    findings = _scan_ts_file(tmp_path, "archive.ts", source)
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
 def test_semicolonless_archive_alias_storm_does_not_dos_scan(tmp_path):
     aliases = "\n".join(f"    const alias{index} = entry.path" for index in range(1500))
     started = perf_counter()

@@ -26,6 +26,10 @@ from skylos.security.command_guard import findings_for_command, is_external_url
 from skylos.visitors.languages.statement_scan import iter_semicolon_assignments
 from skylos.visitors.languages.typescript.client_runtime import runs_only_on_client
 from skylos.visitors.languages.typescript.security_flow import build_security_flow
+from skylos.visitors.languages.typescript.archive_guard import (
+    ArchiveGuard,
+    archive_startswith_guards,
+)
 from skylos.visitors.languages.typescript.express_taint import (
     merge_express_taint_findings,
     safe_redirect_prefix,
@@ -4010,6 +4014,7 @@ def _check_archive_extraction_path_traversal(
     source_text = source_bytes.decode("utf-8", errors="replace")
     if not any(hint in source_text for hint in _ARCHIVE_LIBRARY_HINTS):
         return
+    guards = archive_startswith_guards(root_node, source_bytes)
 
     for scope_lines, start_line in _iter_archive_scopes(root_node, source_text):
         scope_text = "\n".join(scope_lines)
@@ -4053,6 +4058,8 @@ def _check_archive_extraction_path_traversal(
                 used_names,
                 direct_entry,
                 line_offset - guard_start,
+                guards,
+                start_line + guard_start,
             ):
                 continue
 
@@ -4088,169 +4095,27 @@ def _iter_archive_scopes(root_node, source_text: str) -> list[tuple[list[str], i
     return [_scope_lines_without_nested_scopes(scope, all_lines) for scope in scopes]
 
 
-def _archive_guard_block_contains_sink(
-    lines: list[str], guard_idx: int, sink_idx: int
+def _archive_guard_subject_matches(
+    guard: ArchiveGuard, names: set[str], direct_entry: bool
 ) -> bool:
-    depth = 0
-    opened = False
-
-    for idx in range(guard_idx, sink_idx + 1):
-        line = lines[idx]
-        opens = line.count("{")
-        closes = line.count("}")
-        if opens:
-            opened = True
-        depth += opens
-        depth -= closes
-        if idx < sink_idx and opened and depth <= 0:
-            return False
-
-    return opened and depth > 0
-
-
-def _archive_guard_without_braces_contains_sink(
-    lines: list[str], guard_idx: int, sink_idx: int
-) -> bool:
-    line = lines[guard_idx]
-    if "{" in line:
-        return False
-    if sink_idx == guard_idx:
-        return True
-    for idx in range(guard_idx + 1, len(lines)):
-        if not lines[idx].strip():
+    for subject in guard.subjects:
+        if direct_entry and _ARCHIVE_ENTRY_PROPERTY_PATTERN.search(subject):
             continue
-        return idx == sink_idx
-    return False
-
-
-_QUOTED_TEXT = re.compile(r"""^(['"])(.*)\1$""", re.S)
-_PLAIN_TEMPLATE = re.compile(r"^`([^`$]*)`$")
-_SEPARATOR_MEMBER = re.compile(r"^(?:path\.)?sep$")
-_PATH_JOIN_CALL = re.compile(r"^path\.(?:join|normalize)\((.*)\)$", re.S)
-
-
-def _call_argument_texts(line: str, token: str) -> list[str]:
-    """The argument text of each ``token(...)`` call on the line."""
-    found = []
-    start = line.find(token)
-    while start != -1:
-        index = start + len(token)
-        depth = 1
-        quote = None
-        while index < len(line) and depth:
-            char = line[index]
-            if quote:
-                if char == "\\":
-                    index += 1
-                elif char == quote:
-                    quote = None
-            elif char in "'\"`":
-                quote = char
-            elif char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-            index += 1
-        if depth:
-            return []
-        found.append(line[start + len(token) : index - 1].strip())
-        start = line.find(token, index)
-    return found
-
-
-def _split_last_plus(text: str) -> str | None:
-    depth = 0
-    quote = None
-    last = None
-    for index, char in enumerate(text):
-        if quote:
-            if char == quote and text[index - 1] != "\\":
-                quote = None
-        elif char in "'\"`":
-            quote = char
-        elif char in "([{":
-            depth += 1
-        elif char in ")]}":
-            depth -= 1
-        elif char == "+" and depth == 0:
-            last = index
-    if last is None:
-        return None
-    return text[last + 1 :].strip()
-
-
-def _declared_value(name: str, lines: list[str]) -> str | None:
-    declaration = re.compile(
-        rf"^\s*(?:export\s+)?(?:const|let|var)\s+{re.escape(name)}\s*(?::[^=]+)?=\s*(.+?);?\s*$"
-    )
-    assignment = re.compile(rf"(?<![\w.$]){re.escape(name)}\s*(?:[-+*/]?=)(?!=)")
-    values = []
-    writes = 0
-    for line in lines:
-        matched = declaration.match(line)
-        if matched:
-            values.append(matched.group(1))
-        writes += len(assignment.findall(line))
-    if len(values) != 1 or writes != 1:
-        return None
-    return values[0]
-
-
-def _text_ends_with_separator(text: str, lines: list[str], depth: int = 0) -> bool:
-    text = text.strip()
-    if depth > 6 or not text:
-        return False
-    quoted = _QUOTED_TEXT.match(text) or _PLAIN_TEMPLATE.match(text)
-    if quoted:
-        value = quoted.group(quoted.lastindex)
-        return value.endswith(("/", "\\"))
-    if text.startswith("`") and text.endswith("`"):
-        if text.endswith("}`"):
-            inner = text[text.rfind("${") + 2 : -2]
-            return _text_ends_with_separator(inner, lines, depth + 1)
-        return text.endswith(("/`", "\\\\`"))
-    right = _split_last_plus(text)
-    if right is not None:
-        return _text_ends_with_separator(right, lines, depth + 1)
-    if _SEPARATOR_MEMBER.match(text):
-        return True
-    joined = _PATH_JOIN_CALL.match(text)
-    if joined:
-        arguments = [part.strip() for part in joined.group(1).split(",")]
-        return _text_ends_with_separator(arguments[-1], lines, depth + 1)
-    if re.fullmatch(r"[A-Za-z_$][\w$]*", text):
-        value = _declared_value(text, lines)
-        if value is None:
+        if not any(re.search(rf"\b{re.escape(name)}\b", subject) for name in names):
             return False
-        return _text_ends_with_separator(value, lines, depth + 1)
-    return False
-
-
-def _only_separator_text(text: str) -> bool:
-    if _SEPARATOR_MEMBER.match(text.strip()):
-        return True
-    quoted = _QUOTED_TEXT.match(text.strip()) or _PLAIN_TEMPLATE.match(text.strip())
-    return bool(quoted) and quoted.group(quoted.lastindex).strip("/\\") == ""
-
-
-def _starts_with_separator_prefix(line: str, lines: list[str]) -> bool:
-    """Every ``startsWith`` prefix on the guard line ends at a separator:
-    ``'/tmp/out2/x'.startsWith('/tmp/out')`` is true."""
-    arguments = _call_argument_texts(line, "startsWith(")
-    if not arguments:
-        return False
-    for argument in arguments:
-        if _only_separator_text(argument):
-            return False
-        if not _text_ends_with_separator(argument, lines):
-            return False
-    return True
+    return bool(guard.subjects)
 
 
 def _archive_lines_have_guard(
-    lines: list[str], names: set[str], direct_entry: bool, sink_idx: int
+    lines: list[str],
+    names: set[str],
+    direct_entry: bool,
+    sink_idx: int,
+    guards: dict[int, ArchiveGuard],
+    first_line: int,
 ) -> bool:
     has_normalize = False
+    sink_line = first_line + sink_idx
 
     for idx, line in enumerate(lines):
         if direct_entry:
@@ -4259,39 +4124,28 @@ def _archive_lines_have_guard(
             mentioned = any(
                 re.search(rf"\b{re.escape(name)}\b", line) for name in names
             )
-        if not mentioned:
-            continue
+        if mentioned:
+            if "if" in line and any(token in line for token in _ARCHIVE_GUARD_TOKENS):
+                trailing = "\n".join(lines[idx : min(len(lines), idx + 4)])
+                if any(token in trailing for token in _ARCHIVE_CONTROL_FLOW_HINTS):
+                    return True
+            if "normalize(" in line:
+                has_normalize = True
 
-        if "if" in line and any(token in line for token in _ARCHIVE_GUARD_TOKENS):
-            trailing = "\n".join(lines[idx : min(len(lines), idx + 4)])
-            if any(token in trailing for token in _ARCHIVE_CONTROL_FLOW_HINTS):
-                return True
-        if "normalize(" in line:
-            has_normalize = True
+        # Nested scopes are blanked out of `lines`, so an `if` that belongs to
+        # an inner function never shows its keyword here.
+        guard = guards.get(first_line + idx) if "if" in line else None
         if (
-            has_normalize
-            and "if" in line
-            and "startsWith(" in line
-            and ("!" in line or "=== false" in line or "== false" in line)
-            and _starts_with_separator_prefix(line, lines)
+            guard is None
+            or not has_normalize
+            or not guard.separator_prefixes
+            or not _archive_guard_subject_matches(guard, names, direct_entry)
         ):
-            trailing = "\n".join(lines[idx : min(len(lines), idx + 4)])
-            if any(token in trailing for token in _ARCHIVE_CONTROL_FLOW_HINTS):
+            continue
+        if guard.negated:
+            if guard.exits:
                 return True
-        if (
-            idx <= sink_idx
-            and has_normalize
-            and "if" in line
-            and "startsWith(" in line
-            and _starts_with_separator_prefix(line, lines)
-            and "!" not in line
-            and "=== false" not in line
-            and "== false" not in line
-            and (
-                _archive_guard_block_contains_sink(lines, idx, sink_idx)
-                or _archive_guard_without_braces_contains_sink(lines, idx, sink_idx)
-            )
-        ):
+        elif guard.body_start_line <= sink_line <= guard.body_end_line:
             return True
 
     return False
