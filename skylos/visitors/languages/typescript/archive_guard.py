@@ -9,6 +9,7 @@ imports. Anything that cannot be resolved to a value is not trusted.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from skylos.visitors.languages.typescript.express_taint import (
@@ -46,6 +47,15 @@ _EXIT_STATEMENTS = frozenset(
     {"return_statement", "throw_statement", "continue_statement", "break_statement"}
 )
 _PATH_MODULES = frozenset({"path", "node:path", "path/posix", "path/win32"})
+# The scopes the archive check reads one at a time.
+ARCHIVE_SCOPE_NODE_TYPES = frozenset(
+    {
+        "function_declaration",
+        "function_expression",
+        "arrow_function",
+        "method_definition",
+    }
+)
 _MAX_DEPTH = 6
 
 # A binding the guard cannot see through: a parameter, loop variable, import,
@@ -71,10 +81,24 @@ class ArchiveGuard:
     body_end_line: int
 
 
-def archive_startswith_guards(root_node, source: bytes) -> dict[int, ArchiveGuard]:
-    """Map the 0-based line of each ``if`` keyword to the guard it carries."""
+def archive_scope_start(node) -> int:
+    """The start byte of the archive scope that holds ``node``."""
+    current = node.parent
+    while current is not None:
+        if current.type in ARCHIVE_SCOPE_NODE_TYPES:
+            return current.start_byte
+        if current.parent is None:
+            return current.start_byte
+        current = current.parent
+    return node.start_byte
+
+
+def archive_startswith_guards(
+    root_node, source: bytes
+) -> dict[tuple[int, int], ArchiveGuard]:
+    """Map ``(line of the if keyword, scope start)`` to the guard it carries."""
     resolver = _Resolver(root_node, source)
-    guards: dict[int, ArchiveGuard] = {}
+    guards: dict[tuple[int, int], ArchiveGuard] = {}
     for node in _walk(root_node):
         if node.type != "if_statement":
             continue
@@ -82,7 +106,7 @@ def archive_startswith_guards(root_node, source: bytes) -> dict[int, ArchiveGuar
         consequence = node.child_by_field_name("consequence")
         if condition is None or consequence is None:
             continue
-        shape = _condition_shape(source, condition)
+        shape = _condition_shape(source, condition, resolver.value_text)
         if shape is None:
             continue
         negated, calls = shape
@@ -95,7 +119,7 @@ def archive_startswith_guards(root_node, source: bytes) -> dict[int, ArchiveGuar
             args = _call_args(call)
             if len(args) != 1 or not resolver.separator_prefix(args[0]):
                 separator_prefixes = False
-        guards[node.start_point[0]] = ArchiveGuard(
+        guards[(node.start_point[0], archive_scope_start(node))] = ArchiveGuard(
             negated=negated,
             subjects=tuple(subjects),
             separator_prefixes=separator_prefixes,
@@ -124,7 +148,7 @@ def _is_startswith_call(source: bytes, node) -> bool:
     return prop is not None and _text(source, prop) == "startsWith"
 
 
-def _condition_shape(source: bytes, node):
+def _condition_shape(source: bytes, node, expand=None):
     """``(negated, calls)`` when the condition is decided by ``startsWith``.
 
     ``negated`` means the branch runs when the path is *outside* the prefix,
@@ -141,7 +165,9 @@ def _condition_shape(source: bytes, node):
     if node.type == "unary_expression":
         operator = node.child_by_field_name("operator")
         if operator is not None and _text(source, operator) == "!":
-            inner = _condition_shape(source, node.child_by_field_name("argument"))
+            inner = _condition_shape(
+                source, node.child_by_field_name("argument"), expand
+            )
             return None if inner is None else (not inner[0], inner[1])
         return None
     if node.type != "binary_expression":
@@ -154,7 +180,7 @@ def _condition_shape(source: bytes, node):
         literal, other = (left, right) if _is_boolean(source, left) else (right, left)
         if not _is_boolean(source, literal):
             return None
-        inner = _condition_shape(source, other)
+        inner = _condition_shape(source, other, expand)
         if inner is None:
             return None
         flip = (_text(source, literal) == "false") != (op in {"!==", "!="})
@@ -164,7 +190,24 @@ def _condition_shape(source: bytes, node):
     # `&&` keeps a non-negated guard: the body runs only inside the prefix.
     # `||` keeps a negated guard: the body runs whenever the path escapes.
     keeps_negated = op == "||"
-    shapes = [_condition_shape(source, left), _condition_shape(source, right)]
+    shapes = [
+        _condition_shape(source, left, expand),
+        _condition_shape(source, right, expand),
+    ]
+    if op == "&&":
+        # `x !== root && !x.startsWith(root + sep)` only lets the root itself
+        # through, which is still inside it.
+        for guard, other in ((0, 1), (1, 0)):
+            shape = shapes[guard]
+            if (
+                shape is not None
+                and shape[0]
+                and shapes[other] is None
+                and _excludes_subject_equality(
+                    source, (left, right)[other], shape[1], expand
+                )
+            ):
+                return True, shape[1]
     calls = []
     for shape, side in zip(shapes, (left, right)):
         if shape is None:
@@ -177,6 +220,151 @@ def _condition_shape(source: bytes, node):
     if not calls:
         return None
     return keeps_negated, calls
+
+
+def _excludes_subject_equality(source: bytes, node, calls, expand=None) -> bool:
+    node = _unwrap(node)
+    if node is None or node.type != "binary_expression":
+        return False
+    operator = node.child_by_field_name("operator")
+    if operator is None or _text(source, operator) not in {"!==", "!="}:
+        return False
+    subjects = set()
+    for call in calls:
+        callee = call.child_by_field_name("function")
+        subject = callee.child_by_field_name("object") if callee else None
+        if subject is not None:
+            subjects.add(_text(source, _unwrap(subject)))
+    pieces = []
+    for call in calls:
+        for arg in _call_args(call):
+            pieces.append(_text(source, arg))
+            if (
+                expand is not None
+                and _unwrap(arg) is not None
+                and _unwrap(arg).type == "identifier"
+            ):
+                pieces.append(expand(_unwrap(arg)))
+    prefixes = " ".join(pieces)
+    texts = [
+        _text(source, _unwrap(operand))
+        for operand in (
+            node.child_by_field_name("left"),
+            node.child_by_field_name("right"),
+        )
+        if operand is not None
+    ]
+    if len(texts) != 2:
+        return False
+    # One side is the checked path, the other the root its prefix is built
+    # from: `out !== root && !out.startsWith(root + sep)`.
+    for subject, other in (texts, texts[::-1]):
+        if subject in subjects and re.search(
+            rf"(?<![\w$.]){re.escape(other)}(?![\w$])", prefixes
+        ):
+            return True
+    return False
+
+
+def archive_parent_segment_guards(
+    root_node, source: bytes
+) -> dict[tuple[int, int], frozenset[str]]:
+    """Map the line of each ``if`` that exits when a path has a ``..`` part to
+    the names that check reads.
+
+    ``if (rel.split(sep).includes("..")) throw``,
+    ``if (parts.some((p) => p === "..")) return`` and
+    ``if (relative.startsWith("..") || isAbsolute(relative)) throw`` all
+    qualify. The check must decide the branch on its own: it may sit under
+    ``||`` but not under ``&&`` or ``!``.
+    """
+    guards: dict[tuple[int, int], frozenset[str]] = {}
+    for node in _walk(root_node):
+        if node.type != "if_statement":
+            continue
+        condition = node.child_by_field_name("condition")
+        consequence = node.child_by_field_name("consequence")
+        if condition is None or consequence is None or not _always_exits(consequence):
+            continue
+        names: set[str] = set()
+        for leaf in _or_operands(source, condition):
+            if _is_parent_segment_check(source, leaf):
+                names.update(
+                    _text(source, n) for n in _walk(leaf) if n.type == "identifier"
+                )
+        if names:
+            guards[(node.start_point[0], archive_scope_start(node))] = frozenset(names)
+    return guards
+
+
+def _or_operands(source: bytes, node):
+    node = _unwrap(node)
+    if node is None:
+        return
+    if node.type == "binary_expression":
+        operator = node.child_by_field_name("operator")
+        if operator is not None and _text(source, operator) == "||":
+            yield from _or_operands(source, node.child_by_field_name("left"))
+            yield from _or_operands(source, node.child_by_field_name("right"))
+            return
+    yield node
+
+
+def _is_dotdot(source: bytes, node) -> bool:
+    return _string_value(source, node) in {"..", "../", "..\\"}
+
+
+def _is_parent_segment_check(source: bytes, node) -> bool:
+    node = _unwrap(node)
+    if node is None:
+        return False
+    if node.type == "binary_expression":
+        operator = node.child_by_field_name("operator")
+        op = _text(source, operator) if operator is not None else ""
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+        if op in {"===", "=="}:
+            return _is_dotdot(source, left) or _is_dotdot(source, right)
+        # `x.indexOf("..") !== -1` / `>= 0` / `> -1`
+        if op in {"!==", "!=", ">=", ">"}:
+            return _is_parent_segment_check(source, left)
+        return False
+    if node.type != "call_expression":
+        return False
+    callee = node.child_by_field_name("function")
+    if callee is None or callee.type != "member_expression":
+        return False
+    prop = callee.child_by_field_name("property")
+    method = _text(source, prop) if prop is not None else ""
+    args = _call_args(node)
+    if method in {"includes", "indexOf", "startsWith"}:
+        return len(args) == 1 and _is_dotdot(source, args[0])
+    if method == "some" and len(args) == 1:
+        callback = _unwrap(args[0])
+        if callback is None or callback.type not in {
+            "arrow_function",
+            "function_expression",
+            "function",
+        }:
+            return False
+        body = callback.child_by_field_name("body")
+        if body is None:
+            return False
+        if body.type == "statement_block":
+            returns = [n for n in _walk(body) if n.type == "return_statement"]
+            return any(
+                any(
+                    _is_parent_segment_check(source, leaf)
+                    for leaf in _or_operands(source, r.named_children[0])
+                )
+                for r in returns
+                if r.named_children
+            )
+        return any(
+            _is_parent_segment_check(source, leaf)
+            for leaf in _or_operands(source, body)
+        )
+    return False
 
 
 def _is_boolean(source: bytes, node) -> bool:
@@ -407,6 +595,13 @@ class _Resolver:
 
     # -- prefix values ------------------------------------------------------
 
+    def value_text(self, identifier) -> str:
+        """The source text a name is bound to, or ``""`` when unknown."""
+        value = self._value(identifier, 0)
+        if value is None or value is _PATH_SEP:
+            return ""
+        return _text(self.source, value)
+
     def _value(self, node, depth: int):
         """Follow identifiers to the expression they hold."""
         node = _unwrap(node)
@@ -524,3 +719,85 @@ class _Resolver:
         if self._only_separators(node, 0):
             return False
         return self._ends_with_separator(node, 0)
+
+
+_NORMALIZING_TEXT = ("normalize(", "resolve(", "join(", "realpath")
+
+
+_TERNARY_SEGMENT_CHECK = re.compile(
+    r"""\.every\([^;]*!==?\s*(['"])\.\.\1"""
+    r"""|!\s*[\w$.]+(?:\.split\([^)]*\))?\.includes\(\s*(['"])\.\.\2\s*\)""",
+    re.DOTALL,
+)
+
+
+@dataclass(frozen=True)
+class ArchiveValidators:
+    """Functions in this file that refuse a path escaping its root.
+
+    ``complete`` ones check on their own: what they return, and what they are
+    handed as a bare assertion call, is safe. ``prefix_only`` ones compare a
+    path the caller must already have normalized.
+    """
+
+    complete: frozenset[str]
+    prefix_only: frozenset[str]
+
+
+def archive_path_validators(
+    root_node,
+    source: bytes,
+    guards: dict[tuple[int, int], ArchiveGuard],
+    segment_guards: dict[tuple[int, int], frozenset[str]],
+) -> ArchiveValidators:
+    """A function qualifies when its own body exits on a ``..`` part, returns
+    a name only when no part is ``..`` (``parts.every((p) => p !== "..") ?
+    name : null``), or exits when a path fails a separator-terminated
+    ``startsWith``."""
+    by_scope: dict[int, list[str]] = {}
+    functions: dict[int, object] = {}
+    for node in _walk(root_node):
+        name_node = None
+        function = None
+        if node.type in {"function_declaration", "generator_function_declaration"}:
+            name_node, function = node.child_by_field_name("name"), node
+        elif node.type == "variable_declarator":
+            value = _unwrap(node.child_by_field_name("value"))
+            if value is not None and value.type in ARCHIVE_SCOPE_NODE_TYPES:
+                name_node, function = node.child_by_field_name("name"), value
+        if name_node is None or function is None or name_node.type != "identifier":
+            continue
+        by_scope.setdefault(function.start_byte, []).append(_text(source, name_node))
+        functions[function.start_byte] = function
+
+    complete: set[str] = set()
+    prefix_only: set[str] = set()
+    for (_line, scope), names in segment_guards.items():
+        if names and scope in by_scope:
+            complete.update(by_scope[scope])
+    for (_line, scope), guard in guards.items():
+        if not (
+            scope in by_scope
+            and guard.negated
+            and guard.exits
+            and guard.separator_prefixes
+        ):
+            continue
+        body = _text(source, functions[scope])
+        if any(token in body for token in _NORMALIZING_TEXT):
+            complete.update(by_scope[scope])
+        else:
+            prefix_only.update(by_scope[scope])
+    for scope, function in functions.items():
+        for node in _walk(function):
+            if node.type in ARCHIVE_SCOPE_NODE_TYPES and node is not function:
+                continue
+            if node.type != "return_statement" or not node.named_children:
+                continue
+            value = _unwrap(node.named_children[0])
+            if value is None or value.type != "ternary_expression":
+                continue
+            test = value.child_by_field_name("condition")
+            if test is not None and _TERNARY_SEGMENT_CHECK.search(_text(source, test)):
+                complete.update(by_scope[scope])
+    return ArchiveValidators(frozenset(complete), frozenset(prefix_only - complete))

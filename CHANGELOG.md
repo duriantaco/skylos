@@ -6,6 +6,8 @@
 
 * **danger:** keep prefix aliases in their declaration scope, reject ambiguous separator imports and captured reassignments, and bound tuple and string proof expansion without suppressing unresolved path findings.
 * **danger:** resolve compiled filename pattern providers where the pattern was declared, so helper-local imports cannot change whether a pattern is trusted.
+* **danger:** stop reporting archive writes that are already safe: yauzl entry names (yauzl rejects `..` and absolute names unless `decodeStrings: false`), `basename()` of the name, `path.resolve`/`path.join` results checked with `startsWith(root + sep)` or `x !== root && !x.startsWith(root + sep)`, checks that reject `..` parts (`split(...).includes('..')`, `parts.some(p => p === '..')`, `path.relative(...)`), and paths returned or asserted by a checking helper defined in the same file.
+* **danger:** recognise `import ... from "unzipper"`/`"adm-zip"` in the archive check, stop semicolon-less assignments at the end of their statement, keep an assignment's taint when the line also holds an inline callback, and ignore names that only appear inside string literals.
 * **danger:** read archive `startsWith` guards from the syntax tree, so a guard split across lines or a prefix held in a module or outer-function constant no longer reports, while a prefix shadowed by a parameter, loop variable, catch clause, import or reassigned `let` still does, and `startsWith(p) || other` is no longer taken as a guard.
 * **deadcode:** stop reporting attributes declared on Protocol classes as unused variables.
 * **danger:** reach the graph-query check for compact or multi-line Cypher instead of skipping the whole security scan.
