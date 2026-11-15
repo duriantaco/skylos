@@ -7,7 +7,7 @@ from pathlib import Path
 from skylos.core.grep_search_state import grep_evidence_strategy, limit_grep_evidence
 from skylos.core.safe_cache_io import read_text_no_symlink
 from skylos.core.notebook_sources import is_notebook, notebook_tree
-from skylos.core.python_local_bindings import local_binding_reads
+from skylos.core.python_local_bindings import local_binding_reads, module_binding_reads
 
 from skylos.core.grep_verify_common import (
     _deduplicate_grep_results,
@@ -226,6 +226,113 @@ def _local_variable_evidence(
     return results
 
 
+def _module_scoped_references(
+    finding: dict,
+    project_root: str,
+    *,
+    simple_name: str,
+    file_path: str,
+    own_reads: list[int],
+    max_per_strategy: int,
+) -> list[str]:
+    """Reads that can reach a module variable no other module star-imports.
+
+    A bare name resolves in its own module, so equal spellings in other
+    modules are other bindings. Attribute loads and notebooks keep counting.
+    """
+    usages = [f"{file_path}:{number}:{simple_name}" for number in own_reads]
+    escaped = re.escape(simple_name)
+    searches = [(rf"\b{escaped}\b", ["*.ipynb"])]
+    if not finding.get("attribute_reads_resolved"):
+        searches.append((rf"\.[[:space:]]*{escaped}\b", ["*.py", "*.pyi"]))
+    for pattern, globs in searches:
+        refs = _strategy_search(
+            "references",
+            pattern,
+            project_root,
+            use_regex=True,
+            include_globs=globs,
+            max_results=max_per_strategy * 2,
+        )
+        refs = [
+            ref
+            for ref in refs or []
+            if not is_substring_match(ref, simple_name)
+            and _is_python_source_reference(ref, simple_name)
+        ]
+        _defs, found = filter_grep_results(refs, finding)
+        usages.extend(found)
+    return usages
+
+
+def _confirmed_name_imports(
+    hits: list[str],
+    project_root: str,
+    module_names: list[str],
+    name: str,
+    *,
+    is_package: bool,
+) -> list[str]:
+    """Import lines that can bind ``name`` from one of ``module_names``."""
+    tails = {candidate.rsplit(".", 1)[-1] for candidate in module_names}
+    confirmed: list[str] = []
+    parsed: set[str] = set()
+    for path, tree in _parsed_hit_files(hits, project_root):
+        parsed.add(path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            if not any(alias.name == name for alias in node.names):
+                continue
+            if node.module is None:
+                if not is_package:
+                    continue
+            elif node.module.rsplit(".", 1)[-1] not in tails:
+                continue
+            confirmed.append(f"{path}:{node.lineno}: import {name}")
+            break
+    confirmed.extend(hit for hit in hits if _grep_line_path(hit) not in parsed)
+    return confirmed
+
+
+def _module_scoped_imports(
+    finding: dict,
+    project_root: str,
+    module_names: list[str],
+    name: str,
+    *,
+    is_package: bool,
+) -> list[str]:
+    """Imports of ``name`` from the defining module, on one line or several."""
+    tails = sorted({candidate.rsplit(".", 1)[-1] for candidate in module_names})
+    patterns = [rf"import.*\b{re.escape(name)}\b"]
+    for tail in tails:
+        patterns.append(
+            rf"from[[:space:]]+[.[:alnum:]_]*\b{re.escape(tail)}[[:space:]]+import"
+        )
+    if is_package:
+        patterns.append(r"from[[:space:]]+[.]+[[:space:]]+import")
+    hits: list[str] = []
+    for pattern in patterns:
+        importers = _strategy_search(
+            "imports",
+            pattern,
+            project_root,
+            use_regex=True,
+            include_globs=["*.py"],
+            max_results=_MAX_IMPORTER_FILES,
+        )
+        hits.extend(
+            limit_grep_evidence(
+                importers or [], _MAX_IMPORTER_FILES, strategy="imports"
+            )
+        )
+    _defs, usages = filter_grep_results(hits, finding)
+    return _confirmed_name_imports(
+        usages, project_root, module_names, name, is_package=is_package
+    )
+
+
 def multi_strategy_search(
     finding: dict,
     project_root: str,
@@ -294,8 +401,25 @@ def multi_strategy_search(
                 return True
         return False
 
+    module_reads = None
+    if kind == "variable" and file_path and finding.get("module_scoped_name"):
+        module_reads = module_binding_reads(file_path, simple_name)
+
     boundary_pattern = rf"\b{simple_name}\b"
-    if kind != "import":
+    if module_reads is not None:
+        usages = _module_scoped_references(
+            finding,
+            project_root,
+            simple_name=simple_name,
+            file_path=file_path,
+            own_reads=module_reads,
+            max_per_strategy=max_per_strategy,
+        )
+        if usages:
+            results["references"] = limit_grep_evidence(
+                usages, max_per_strategy, strategy="references"
+            )
+    elif kind != "import":
         refs = _strategy_search(
             "references",
             boundary_pattern,
@@ -415,7 +539,17 @@ def multi_strategy_search(
                     usages, max_per_strategy, strategy="method_calls"
                 )
 
-    if kind != "import":
+    if module_reads is not None:
+        usages = _module_scoped_imports(
+            finding,
+            project_root,
+            module_names,
+            simple_name,
+            is_package=Path(file_path).name == "__init__.py",
+        )
+        if usages:
+            results["imports"] = usages[:max_per_strategy]
+    elif kind != "import":
         import_pattern = rf"import.*\b{simple_name}\b"
         import_refs = _strategy_search(
             "imports",
@@ -551,10 +685,17 @@ def multi_strategy_search(
                         )
 
     test_refs = None
+    test_pattern = rf"\b{simple_name}\b"
+    if module_reads is not None:
+        quotes = "\"'"
+        test_pattern = (
+            rf"(\.[[:space:]]*{re.escape(simple_name)}\b"
+            rf"|[{quotes}][^{quotes}]*\b{re.escape(simple_name)}\b)"
+        )
     if kind != "import":
         test_refs = _strategy_search(
             "test_references",
-            rf"\b{simple_name}\b",
+            test_pattern,
             project_root,
             use_regex=True,
             include_globs=["test_*.py", "*_test.py", "conftest.py"],

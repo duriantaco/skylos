@@ -21,6 +21,9 @@ exported-but-unimported 85, public methods/class attributes and unimported
 files 80, files imported only by unused files 65, default exports 60,
 unused parameters 50 (hidden by default; `--confidence 50`), Rust
 (experimental) 40, so parameters and Rust are hidden at the default threshold.
+One parameter shape is not capped: a private, undecorated Python function that
+is defined once and only ever called directly has no caller that can require
+the parameter, so it is listed by default.
 
 ## False-Positive Reduction Ladder
 

@@ -506,6 +506,22 @@ def _changed_file_scope_options(args, config, changed_files):
     }
 
 
+def _config_scope_options(args, config):
+    """Source defaults such as .vscode must not hide active security config."""
+    from skylos.constants import parse_config_exclude_folders
+
+    return {
+        "config_exclude_folders": sorted(
+            parse_config_exclude_folders(
+                user_exclude_folders=getattr(args, "exclude_folders", None),
+                config_exclude_folders=(config or {}).get("exclude"),
+                use_defaults=not getattr(args, "no_default_excludes", False),
+                include_folders=getattr(args, "include_folders", None),
+            )
+        ),
+    }
+
+
 # Commands dispatched by name before a scan path is read (`skylos done`, ...).
 # Removed commands are left out so a typo is never steered to them.
 _REMOVED_COMMANDS = frozenset({"city", "run"})
@@ -1054,6 +1070,7 @@ def _run_scan_command(
                 include_review_context=include_review_context,
                 **report_scope_options,
                 **changed_file_scope_options,
+                **_config_scope_options(args, config),
             )
 
         def run_main_analysis(progress_callback=None):

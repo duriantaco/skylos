@@ -18,6 +18,7 @@ CONSTANT_ARGUMENT_REASON = "constant-argument"
 LOW_RISK_REASONS = {
     "SKY-D292": frozenset({"github-owned-action-tag"}),
     "SKY-D299": frozenset({"non-credential-secret"}),
+    "SKY-D309": frozenset({"non-credential-secret"}),
     "SKY-D201": frozenset({CONSTANT_ARGUMENT_REASON}),
     "SKY-D202": frozenset({CONSTANT_ARGUMENT_REASON}),
     "SKY-D203": frozenset({"constant-shell-command", CONSTANT_ARGUMENT_REASON}),

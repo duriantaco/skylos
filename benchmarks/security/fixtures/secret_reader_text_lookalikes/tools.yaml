@@ -1,0 +1,2 @@
+search:
+  acme_api_key: "${oc.env:ACME_SEARCH_API_KEY,Zphw3Gj77wNt8eYdh-Kzm6YMzFfU9VWoKvfzoA}"

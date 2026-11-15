@@ -1,0 +1,1 @@
+{"name": "fx", "private": true, "main": "src/index.ts", "scripts": {"test": "karma start --single-run", "e2e": "wdio run ./wdio.conf.ts"}, "devDependencies": {"karma": "6.0.0", "@wdio/cli": "8.0.0"}}

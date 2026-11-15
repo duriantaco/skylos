@@ -29,6 +29,16 @@ the tool is in use, so an ordinary module with a similar name stays judged:
   ``.eslintrc.cjs``, ``.mocharc.js``) or ``.config/<tool>rc.<ext>``. The
   cosmiconfig/lilconfig search that these tools use walks up from the file
   being processed, so no ``package.json`` needs to sit beside them.
+* **``<tool>.conf.<ext>`` runners** (an enclosing package depends on the tool
+  or a package script runs it): ``karma start`` loads ``karma.conf.{js,ts}``,
+  the WebdriverIO CLI loads ``wdio.conf.{js,ts}`` and reads its exported
+  ``config``, Nightwatch loads ``nightwatch.conf.{js,ts}``; each from the
+  package root.
+* **Storybook** (an enclosing package depends on ``storybook`` /
+  ``@storybook/*`` or a package script runs it): the files Storybook looks up
+  by name in a ``.storybook`` directory: ``main``, ``preview``, ``manager``,
+  and the legacy ``config``, ``addons``, ``presets``, ``middleware`` and
+  ``webpack.config``. Any other file there needs an importer.
 """
 
 from __future__ import annotations
@@ -67,6 +77,57 @@ _TURBO_GENERATOR_SUFFIXES = tuple(
     f"turbo/generators/config.{ext}" for ext in _CONFIG_EXTENSIONS
 )
 _MAX_TEMPLATE_BYTES = 512 * 1024
+_CONF_TOOL_RE = re.compile(
+    r"^(karma|wdio|nightwatch)\.conf\.(?:" + "|".join(_CONFIG_EXTENSIONS) + r")$"
+)
+_CONF_TOOL_EVIDENCE = {
+    "karma": (("karma",), ("karma-",), ("karma",)),
+    "wdio": (("webdriverio",), ("@wdio/",), ("wdio",)),
+    "nightwatch": (("nightwatch",), (), ("nightwatch",)),
+}
+CONF_TOOL_NAMED_EXPORTS = frozenset({"config"})
+_STORYBOOK_CONFIG_RE = re.compile(
+    r"^(?:main|preview|manager|config|addons|presets|middleware|webpack\.config)"
+    r"\.(?:" + "|".join((*_CONFIG_EXTENSIONS, "jsx", "tsx")) + r")$"
+)
+_STORYBOOK_BINARIES = ("storybook", "start-storybook", "build-storybook", "sb")
+
+_NODE_BUILTIN_MODULES = frozenset(
+    {
+        "assert",
+        "async_hooks",
+        "buffer",
+        "child_process",
+        "cluster",
+        "crypto",
+        "dgram",
+        "diagnostics_channel",
+        "dns",
+        "domain",
+        "events",
+        "fs",
+        "http",
+        "http2",
+        "https",
+        "net",
+        "os",
+        "path",
+        "perf_hooks",
+        "process",
+        "readline",
+        "repl",
+        "stream",
+        "string_decoder",
+        "tls",
+        "tty",
+        "url",
+        "util",
+        "v8",
+        "vm",
+        "worker_threads",
+        "zlib",
+    }
+)
 
 EXPO_ROUTER_EXPORTS = frozenset(
     {"default", "unstable_settings", "ErrorBoundary", "generateStaticParams", "loader"}
@@ -121,6 +182,50 @@ def _depends_on(data: dict | None, package: str, fields=_DEPENDENCY_FIELDS) -> b
 
 def _is_within(path: str, directory: str) -> bool:
     return path.startswith(directory.rstrip(os.sep) + os.sep)
+
+
+def _specifier_package(specifier: str) -> str | None:
+    if not specifier or specifier.startswith((".", "/", "#")):
+        return None
+    parts = specifier.split("/")
+    if parts[0].startswith("@"):
+        if len(parts) < 2 or not parts[1]:
+            return None
+        return parts[0] + "/" + parts[1]
+    return parts[0]
+
+
+def is_declared_dependency(specifier: str, importer: str | os.PathLike[str]) -> bool:
+    """``specifier`` names a Node builtin or a package an enclosing
+    ``package.json`` declares, so its code lives outside the project."""
+    if specifier.startswith("node:"):
+        return True
+    package = _specifier_package(specifier)
+    if package is None:
+        return False
+    if package in _NODE_BUILTIN_MODULES:
+        return True
+    return any(
+        _depends_on(_package_data(package_root), package)
+        for package_root in _enclosing_package_roots(_normalized(importer))
+    )
+
+
+def depends_on_any(path: str | os.PathLike[str], packages=(), prefixes=()) -> bool:
+    """An enclosing ``package.json`` declares one of ``packages`` or a
+    dependency whose name starts with one of ``prefixes``."""
+    for package_root in _enclosing_package_roots(_normalized(path)):
+        data = _package_data(package_root)
+        if not isinstance(data, dict):
+            continue
+        for field in _DEPENDENCY_FIELDS:
+            declared = data.get(field)
+            if not isinstance(declared, dict):
+                continue
+            for name in declared:
+                if name in packages or name.startswith(tuple(prefixes)):
+                    return True
+    return False
 
 
 # --------------------------------------------------------------------- Expo
@@ -298,6 +403,49 @@ def is_package_tool_config(path: str | os.PathLike[str]) -> bool:
     return _package_data(os.path.dirname(absolute)) is not None
 
 
+def _package_script_runs(path: str, binaries) -> bool:
+    for package_root in _enclosing_package_roots(path):
+        data = _package_data(package_root)
+        if not isinstance(data, dict):
+            continue
+        scripts = data.get("scripts")
+        if not isinstance(scripts, dict):
+            continue
+        for command in scripts.values():
+            if not isinstance(command, str):
+                continue
+            if any(
+                os.path.basename(token) in binaries for token in _script_tokens(command)
+            ):
+                return True
+    return False
+
+
+def is_conf_tool_config(path: str | os.PathLike[str]) -> bool:
+    """``karma.conf``, ``wdio.conf`` or ``nightwatch.conf`` in a package root
+    of a project that uses the tool."""
+    absolute = _normalized(path)
+    match = _CONF_TOOL_RE.match(os.path.basename(absolute))
+    if match is None or _package_data(os.path.dirname(absolute)) is None:
+        return False
+    packages, prefixes, binaries = _CONF_TOOL_EVIDENCE[match.group(1)]
+    return depends_on_any(
+        absolute, packages=packages, prefixes=prefixes
+    ) or _package_script_runs(absolute, binaries)
+
+
+def is_storybook_config_file(path: str | os.PathLike[str]) -> bool:
+    """A file Storybook loads by name from a ``.storybook`` directory."""
+    absolute = _normalized(path)
+    if os.path.basename(os.path.dirname(absolute)) != ".storybook":
+        return False
+    if not _STORYBOOK_CONFIG_RE.match(os.path.basename(absolute)):
+        return False
+    return depends_on_any(
+        absolute, packages=("storybook",), prefixes=("@storybook/",)
+    ) or _package_script_runs(absolute, _STORYBOOK_BINARIES)
+
+
 def is_rc_tool_config(path: str | os.PathLike[str]) -> bool:
     """``.<tool>rc.<ext>`` or ``.config/<tool>rc.<ext>``, found by name."""
     normalized = os.fspath(path).replace(os.sep, "/")
@@ -316,6 +464,10 @@ def convention_reason(path: str | os.PathLike[str]) -> str | None:
         return "tool-config"
     if is_rc_tool_config(path):
         return "rc-config"
+    if is_conf_tool_config(path):
+        return "conf-config"
+    if is_storybook_config_file(path):
+        return "storybook-config"
     if is_expo_router_file(path):
         return "expo-router-route"
     if is_react_email_template(path):
@@ -329,4 +481,6 @@ def is_dev_convention_file(path: str | os.PathLike[str]) -> bool:
         is_jest_manual_mock(path)
         or is_package_tool_config(path)
         or is_rc_tool_config(path)
+        or is_conf_tool_config(path)
+        or is_storybook_config_file(path)
     )

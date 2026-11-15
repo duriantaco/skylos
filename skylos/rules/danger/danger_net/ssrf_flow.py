@@ -84,6 +84,17 @@ _ORM_ONLY_SESSION_METHODS = frozenset(
 )
 _MAX_ORM_ALIAS_DEPTH = 3
 
+_MAPPING_CONSTRUCTORS = frozenset(
+    {
+        "collections.defaultdict",
+        "collections.OrderedDict",
+        "collections.Counter",
+        "collections.ChainMap",
+        "weakref.WeakValueDictionary",
+        "weakref.WeakKeyDictionary",
+    }
+)
+
 NON_HTTP_RECEIVER_NAMES = frozenset(
     {
         "dict",
@@ -894,6 +905,7 @@ class _SSRFFlowChecker(TaintVisitor):
         self._fixed_host_helpers: dict[int, bool] = {}
         self._fixed_host_locals: dict[tuple[int, str], bool] = {}
         self._orm_unit_of_work_memo: dict[tuple[int, str], bool] = {}
+        self._mapping_receiver_memo: dict[tuple[int, str], bool] = {}
 
     def _push(self):
         super()._push()
@@ -1558,6 +1570,9 @@ class _SSRFFlowChecker(TaintVisitor):
         if self._receiver_is_orm_session(node):
             return False
 
+        if self._receiver_is_mapping(node):
+            return False
+
         if name.lower() in NON_HTTP_RECEIVER_NAMES:
             return False
 
@@ -1569,6 +1584,144 @@ class _SSRFFlowChecker(TaintVisitor):
             return True
 
         return False
+
+    def _is_mapping_value(self, value: ast.AST | None) -> bool:
+        if isinstance(value, (ast.Dict, ast.DictComp)):
+            return True
+        if not isinstance(value, ast.Call):
+            return False
+        name = _qualified_name_from_call(value)
+        dynamic, rebound = self._module_rebinding
+        if not name or dynamic or any(part in rebound for part in name.split(".")):
+            return False
+        if name == "dict":
+            return self._module_scope.bindings["dict"] == 0 and not self._name_is_local(
+                "dict", value
+            )
+        resolved = self.untrusted_sources.resolved_import(
+            self._enclosing_function(value), name
+        )
+        return resolved in _MAPPING_CONSTRUCTORS
+
+    def _stores_are_mappings(self, stores) -> bool:
+        for store in stores:
+            parent = self.parents.get(id(store))
+            if not isinstance(parent, (ast.Assign, ast.AnnAssign)):
+                return False
+            if not self._is_mapping_value(parent.value):
+                return False
+        return bool(stores)
+
+    def _receiver_is_mapping(self, node: ast.Call) -> bool:
+        """Every binding of the call's receiver builds a ``dict``-like object,
+        so ``get``/``pop``/... on it is a key lookup and never a request."""
+        if not isinstance(node.func, ast.Attribute):
+            return False
+        receiver = node.func.value
+        if isinstance(receiver, ast.Attribute):
+            if not (
+                isinstance(receiver.value, ast.Name)
+                and receiver.value.id in {"self", "cls"}
+            ):
+                return False
+            key = (id(self._enclosing_class(node)), receiver.attr)
+        elif isinstance(receiver, ast.Name):
+            key = (id(self._enclosing_function(node)), receiver.id)
+        else:
+            return False
+        known = self._mapping_receiver_memo.get(key)
+        if known is None:
+            known = self._mapping_receiver_memo[key] = self._binds_only_mappings(node)
+        return known
+
+    def _binds_only_mappings(self, node: ast.Call) -> bool:
+        receiver = node.func.value
+        if isinstance(receiver, ast.Attribute):
+            if not self._attribute_reads_assigned_value(node, receiver.attr):
+                return False
+            stores_by_attr, setattr_names, unknowable = self._client_attribute_index
+            if unknowable or receiver.attr in setattr_names:
+                return False
+            if any(
+                hook in stores_by_attr or hook in setattr_names
+                for hook in {"__getattribute__", "__getattr__", "__setattr__"}
+            ):
+                return False
+            stores = [store for store, _owner in stores_by_attr.get(receiver.attr, ())]
+            for klass in ast.walk(self.tree) if self.tree is not None else ():
+                if isinstance(klass, ast.ClassDef):
+                    for statement in klass.body:
+                        for name in _bound_names_of_statement(statement):
+                            if name.id == receiver.attr:
+                                stores.append(name)
+            return self._stores_are_mappings(stores)
+        if not isinstance(receiver, ast.Name):
+            return False
+        func = self._enclosing_function(node)
+        if func is not None:
+            if _parameter(func, receiver.id) is not None:
+                return False
+            values = _local_binding_values(func, receiver.id)
+            if values:
+                return all(self._is_mapping_value(value) for value in values)
+            if receiver.id in self._names_bound_under(func):
+                return False
+        if not self._module_global_is_stable(receiver.id):
+            return False
+        return self._is_mapping_value(self._module_scope.values.get(receiver.id))
+
+    def _attribute_reads_assigned_value(self, node, attribute):
+        """An assignment proves an attribute's value only for a plain object.
+
+        A descriptor or attribute hook can return an HTTP client despite a
+        preceding ``self.client = {}``. Unknown bases/metaclasses can provide
+        those hooks too. Include local subclasses, whose overrides also run
+        when they inherit the method containing this call.
+        """
+        owner = self._enclosing_class(node)
+        if owner is None:
+            return False
+        classes = [
+            item for item in ast.walk(self.tree) if isinstance(item, ast.ClassDef)
+        ]
+        relevant = {owner.name}
+        changed = True
+        while changed:
+            changed = False
+            for klass in classes:
+                if klass.name in relevant:
+                    continue
+                if any(
+                    isinstance(base, ast.Name) and base.id in relevant
+                    for base in klass.bases
+                ):
+                    relevant.add(klass.name)
+                    changed = True
+        hooks = {attribute, "__getattribute__", "__getattr__", "__setattr__"}
+        for klass in classes:
+            if klass.name not in relevant:
+                continue
+            if klass.keywords or klass.decorator_list:
+                return False
+            if any(
+                not isinstance(base, ast.Name)
+                or base.id not in relevant | {"object"}
+                for base in klass.bases
+            ):
+                return False
+            if any(
+                isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and statement.name in hooks
+                for statement in klass.body
+            ):
+                return False
+            if any(
+                name.id in hooks - {attribute}
+                for statement in klass.body
+                for name in _bound_names_of_statement(statement)
+            ):
+                return False
+        return True
 
     def _receiver_is_orm_session(self, node: ast.Call) -> bool:
         """The call's receiver is proven to be an ORM (SQLAlchemy/SQLModel)

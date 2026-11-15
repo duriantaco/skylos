@@ -144,8 +144,21 @@ def test_dangling_fixture_symlink_cannot_create_target(tmp_path, fixture_io, ove
     assert not target.exists()
 
 
-def test_fixture_helper_source_has_no_path_security_findings():
-    path = Path(fixture_paths.__file__)
+@pytest.mark.parametrize(
+    "module",
+    [
+        "fixture_paths.py",
+        "test_config_exclude_folders.py",
+        "test_csharp_overload_and_markup_refs.py",
+        "test_github_actions_secrets_inherit_line.py",
+        "test_pr1237_liveness_proof_boundaries.py",
+        "test_security_source_precision.py",
+        "test_self_scan_fixture_gate.py",
+        "test_self_scan_runtime.py",
+    ],
+)
+def test_fixture_writer_sources_have_no_path_security_findings(module):
+    path = Path(fixture_paths.__file__).parent / module
     findings = []
     scan(ast.parse(path.read_text(encoding="utf-8")), str(path), findings)
     assert findings == []

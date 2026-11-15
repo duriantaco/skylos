@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from functools import lru_cache
 from pathlib import Path
 
 from ._security_bindings import UNKNOWN, State, Value, joined, unwrap, use_bindings
+from .core import RUST_LANG, _get_parser, _is_test_path
 
 _TAINT_NAME_RE = re.compile(
-    r"(arg|cmd|command|dir|file|filename|input|name|path|payload|request|url|uri)", re.I
+    r"((?<![a-z])arg|cmd|command|dir|file|filename|input|name|path|payload|request"
+    r"|url|uri)",
+    re.I,
 )
 _FILE_PATH_ARGS = {
     "read": (0,),
@@ -28,6 +32,42 @@ _PATH_CONSTRUCTORS = {
     f"{path}::{method}" for path in _PATH_TYPES for method in ("new", "from")
 }
 _SOURCES = {f"std::env::{name}" for name in ("args", "args_os", "var", "var_os")}
+_ENV_LOOKUPS = {"std::env::var", "std::env::var_os"}
+_CARGO_BUILD_VARIABLES = {
+    "OUT_DIR",
+    "CARGO_MANIFEST_DIR",
+    "CARGO_MANIFEST_PATH",
+    "TARGET",
+    "HOST",
+    "PROFILE",
+    "OPT_LEVEL",
+    "DEBUG",
+    "NUM_JOBS",
+}
+_CARGO_BUILD_PREFIXES = ("CARGO_PKG_", "CARGO_CFG_", "CARGO_FEATURE_")
+_TEST_CFG = ("(", "test", ")")
+_TEST_ATTRIBUTES = {"test", "bench"}
+_INERT_ATTRIBUTES = {
+    "allow",
+    "cfg",
+    "cfg_attr",
+    "cold",
+    "deny",
+    "deprecated",
+    "doc",
+    "expect",
+    "inline",
+    "must_use",
+    "track_caller",
+    "warn",
+}
+_REQUEST_EXTRACTORS = {
+    f"{module}::{name}"
+    for module in ("axum::extract", "axum", "actix_web::web")
+    for name in ("Path", "Query", "Json", "Form")
+}
+_CALLER_ROUNDS = 4
+_CHILD_MODULE_FILES = 256
 _SHELLS = {"sh", "bash", "zsh", "cmd", "cmd.exe", "powershell", "pwsh"}
 _ITEMS = {
     "function_item",
@@ -66,13 +106,93 @@ _PATH_READ_ONLY = {
 }
 
 
+@lru_cache(maxsize=4096)
+def _is_build_script(file_path):
+    path = Path(file_path)
+    return path.name == "build.rs" and (path.parent / "Cargo.toml").is_file()
+
+
+@lru_cache(maxsize=4096)
+def _declared_test_only(file_path):
+    """The parent module declares this file as ``#[cfg(test)] mod name;``."""
+    path = Path(file_path)
+    name = path.stem
+    owners = [path.parent / "mod.rs", path.parent / "lib.rs", path.parent / "main.rs"]
+    if name == "mod":
+        name = path.parent.name
+        folder = path.parent.parent
+        owners = [folder / "mod.rs", folder / "lib.rs", folder / "main.rs"]
+        owners.append(folder.parent / f"{folder.name}.rs")
+    else:
+        owners.append(path.parent.parent / f"{path.parent.name}.rs")
+    if RUST_LANG is None:
+        return False
+    declarations = []
+    for owner in owners:
+        try:
+            if owner != path and owner.is_file():
+                source = owner.read_bytes()
+                root = _get_parser(RUST_LANG).parse(source).root_node
+                if root.has_error:
+                    return False
+                declarations.extend(_test_module_declarations(root, source, name))
+        except OSError:
+            return False
+    # A library and binary can both load the same source file. It is test-only
+    # only when every observed declaration agrees; one production owner wins.
+    return bool(declarations) and all(declarations)
+
+
+def _test_module_declarations(root, source, name):
+    def tokens(node):
+        if node.type in {"line_comment", "block_comment"}:
+            return ()
+        if not node.children or node.type in {"string_literal", "raw_string_literal"}:
+            return (source[node.start_byte : node.end_byte].decode("utf-8", "replace"),)
+        return tuple(token for child in node.children for token in tokens(child))
+
+    declarations = []
+    test_only = path_override = False
+    for child in root.named_children:
+        if child.type in {"line_comment", "block_comment"}:
+            continue
+        if child.type == "attribute_item":
+            attribute_tokens = tokens(child)
+            test_only |= attribute_tokens == ("#", "[", "cfg", "(", "test", ")", "]")
+            # A path attribute can load this file under a different module
+            # name. Do not use default-name ownership as proof in that case.
+            path_override |= attribute_tokens[:3] == ("#", "[", "path")
+            continue
+        if child.type == "mod_item":
+            declared_name = child.child_by_field_name("name")
+            if declared_name is not None and child.child_by_field_name("body") is None:
+                actual = source[
+                    declared_name.start_byte : declared_name.end_byte
+                ].decode("utf-8", "replace")
+                if path_override:
+                    declarations.append(False)
+                elif actual == name:
+                    declarations.append(test_only)
+        test_only = path_override = False
+    return declarations
+
+
 class _SecurityFlow:
-    def __init__(self, root, file_path, source):
+    def __init__(self, root, file_path, source, refuted=frozenset()):
         self.root = root
         self.file = str(Path(file_path))
         self.source = source
         self.findings = []
         self.return_values = []
+        self.refuted = refuted
+        self.call_arguments = {}
+        self.library_calls = set()
+        self.build_script = _is_build_script(file_path)
+        self.harness_file = (
+            self.build_script
+            or _is_test_path(file_path)
+            or _declared_test_only(file_path)
+        )
 
     def text(self, node):
         if node is None:
@@ -205,6 +325,72 @@ class _SecurityFlow:
                 if body is not None:
                     self.module(body, context)
 
+    def attributes(self, node):
+        found = []
+        sibling = node.prev_named_sibling
+        while sibling is not None and sibling.type in {
+            "attribute_item",
+            "line_comment",
+            "block_comment",
+        }:
+            if sibling.type == "attribute_item":
+                attribute = next(
+                    (
+                        part
+                        for part in sibling.named_children
+                        if part.type == "attribute"
+                    ),
+                    None,
+                )
+                parts = []
+                if attribute is not None:
+                    parts = [
+                        part
+                        for part in attribute.named_children
+                        if part.type not in {"line_comment", "block_comment"}
+                    ]
+                if parts:
+                    key = ()
+                    if len(parts) == 2:
+                        key = self.cfg_key(parts[1])
+                    found.append((self.text(parts[0]), key))
+            sibling = sibling.prev_named_sibling
+        return found
+
+    def harness_item(self, node):
+        for name, key in self.attributes(node):
+            if name == "cfg" and key == _TEST_CFG:
+                return True
+            if name.rsplit("::", 1)[-1] in _TEST_ATTRIBUTES:
+                return True
+        return False
+
+    def inner_harness(self, node):
+        for child in node.named_children:
+            if child.type != "inner_attribute_item":
+                continue
+            key = self.cfg_key(child)
+            if key[-5:-4] == ("cfg",) and key[-4:-1] == _TEST_CFG:
+                return True
+        return False
+
+    def named_like_input(self, node):
+        params = self.field(node, "parameters")
+        for param in params.named_children if params is not None else ():
+            pattern = self.field(param, "pattern")
+            if (
+                pattern is not None
+                and pattern.type == "identifier"
+                and _TAINT_NAME_RE.search(self.text(pattern))
+            ):
+                return True
+        return False
+
+    def harness_scope(self, node, state):
+        if self.harness_file or _TEST_CFG in state.conditions:
+            return True
+        return self.harness_item(node)
+
     def function(self, node, inherited):
         state = inherited.copy()
         state.frames.append({})
@@ -213,17 +399,12 @@ class _SecurityFlow:
             name = self.field(param, "name")
             if name is not None:
                 state.bind(self.text(name), UNKNOWN)
+        harness = self.harness_scope(node, state)
+        if harness:
+            state.conditions |= {_TEST_CFG}
         params = self.field(node, "parameters")
         for param in params.named_children if params is not None else ():
             pattern = self.field(param, "pattern")
-            if pattern is None or pattern.type != "identifier":
-                continue
-            name = self.text(pattern)
-            sources = (
-                frozenset({f"parameter:{name}"})
-                if _TAINT_NAME_RE.search(name)
-                else frozenset()
-            )
             type_node = self.field(param, "type")
             while type_node is not None and type_node.type in {
                 "reference_type",
@@ -231,6 +412,23 @@ class _SecurityFlow:
             }:
                 type_node = self.field(type_node, "type")
             api = state.resolve(self.text(type_node))
+            if api in _REQUEST_EXTRACTORS:
+                self.bind_pattern(
+                    pattern,
+                    Value(sources=frozenset({f"request extractor:{api}"})),
+                    state,
+                )
+                continue
+            if pattern is None or pattern.type != "identifier":
+                continue
+            name = self.text(pattern)
+            sources = frozenset()
+            if (
+                _TAINT_NAME_RE.search(name)
+                and not harness
+                and (node.start_byte, name) not in self.refuted
+            ):
+                sources = frozenset({f"parameter:{name}"})
             kind = "path" if api in _PATH_TYPES else None
             state.bind(name, Value(sources=sources, kind=kind))
         self.return_values.append([])
@@ -566,6 +764,7 @@ class _SecurityFlow:
             receiver_node = self.field(callee, "value")
             receiver = self.expression(receiver_node, state)
             args = [self.expression(arg, state) for arg in arg_nodes]
+            self.record_call(node, args)
             method = self.text(self.field(callee, "field"))
             return self.method(node, receiver_node, receiver, method, args, state)
         callable_value = self.expression(callee, state)
@@ -574,6 +773,12 @@ class _SecurityFlow:
         if callable_value.return_sources:
             combined = joined([combined, Value(sources=callable_value.return_sources)])
         api = state.resolve(self.text(callee))
+        if api is None:
+            self.record_call(node, args)
+        else:
+            self.library_calls.add((node.start_byte, node.end_byte))
+        if api in _ENV_LOOKUPS and self.cargo_build_variable(args):
+            return Value(kind="result_string")
         if api in _SOURCES:
             return Value(sources=frozenset({api}), kind="result_string")
         if api == "std::process::Command::new":
@@ -638,6 +843,219 @@ class _SecurityFlow:
             canonical=False,
             contained=False,
         )
+
+    def cargo_build_variable(self, args):
+        if not self.build_script or len(args) != 1 or args[0].literal is None:
+            return False
+        name = args[0].literal
+        return name in _CARGO_BUILD_VARIABLES or name.startswith(_CARGO_BUILD_PREFIXES)
+
+    def record_call(self, node, args):
+        key = (node.start_byte, node.end_byte)
+        prior = self.call_arguments.get(key)
+        if prior is not None and len(prior) == len(args):
+            args = [joined(pair) for pair in zip(prior, args)]
+        self.call_arguments[key] = list(args)
+
+    def private_functions(self, node, exposed, harness, found):
+        if self.inner_harness(node):
+            harness = True
+        for child in node.named_children:
+            hidden = harness
+            previous = child.prev_named_sibling
+            if (
+                not hidden
+                and previous is not None
+                and previous.type == "attribute_item"
+            ):
+                hidden = self.harness_item(child)
+            if child.type == "function_item":
+                private = (
+                    not exposed
+                    and self.field(child, "body") is not None
+                    and not any(
+                        part.type == "visibility_modifier" for part in child.children
+                    )
+                    and all(
+                        name.rsplit("::", 1)[-1] in _INERT_ATTRIBUTES
+                        for name, _key in self.attributes(child)
+                    )
+                )
+                if not hidden:
+                    name = self.text(self.field(child, "name"))
+                    found.setdefault(name, []).append((child, private))
+                self.private_functions(child, False, hidden, found)
+            elif child.type == "trait_item":
+                self.private_functions(child, True, hidden, found)
+            elif child.type == "impl_item":
+                trait = self.field(child, "trait") is not None
+                self.private_functions(child, trait, hidden, found)
+            elif child.type == "declaration_list":
+                self.private_functions(child, exposed, hidden, found)
+            else:
+                self.private_functions(child, False, hidden, found)
+
+    def mentions(self, node, harness, names, found):
+        if self.inner_harness(node):
+            harness = True
+        for child in node.children:
+            hidden = harness
+            previous = child.prev_named_sibling
+            if (
+                not hidden
+                and child.is_named
+                and previous is not None
+                and previous.type == "attribute_item"
+            ):
+                hidden = self.harness_item(child)
+            if child.type in {"identifier", "field_identifier"}:
+                name = self.text(child)
+                if name in names and not hidden:
+                    found.setdefault(name, []).append(child)
+            elif child.children:
+                self.mentions(child, hidden, names, found)
+
+    def call_site(self, node):
+        target, parent = node, node.parent
+        method_style = False
+        if parent is not None and parent.type in {
+            "scoped_identifier",
+            "field_expression",
+        }:
+            last = self.field(parent, "name") or self.field(parent, "field")
+            if last is None or last.start_byte != node.start_byte:
+                return None
+            method_style = parent.type == "field_expression"
+            target, parent = parent, parent.parent
+        if parent is not None and parent.type == "generic_function":
+            function = self.field(parent, "function")
+            if function is None or function.start_byte != target.start_byte:
+                return None
+            target, parent = parent, parent.parent
+        if parent is None or parent.type != "call_expression":
+            return None
+        function = self.field(parent, "function")
+        if (
+            function is None
+            or function.start_byte != target.start_byte
+            or function.end_byte != target.end_byte
+        ):
+            return None
+        return parent, method_style
+
+    def child_module_files(self, node, nested, found):
+        for child in node.named_children:
+            if child.type == "mod_item":
+                body = self.field(child, "body")
+                if body is not None:
+                    self.child_module_files(body, True, found)
+                    continue
+                if self.harness_item(child):
+                    continue
+                name = self.text(self.field(child, "name"))
+                attributes = [text for text, _key in self.attributes(child)]
+                if nested or "path" in attributes:
+                    found.append(None)
+                    continue
+                path = Path(self.file)
+                folder = path.parent
+                if path.name not in {"mod.rs", "lib.rs", "main.rs"}:
+                    folder = folder / path.stem
+                found.append(folder / f"{name}.rs")
+                found.append(folder / name)
+            elif child.type in {"declaration_list", "block", "function_item"}:
+                self.child_module_files(child, nested, found)
+
+    def names_used_by_child_modules(self, names):
+        """A private item is visible to its module's descendants, which live
+        in other files; a name one of them mentions has callers not seen here."""
+        targets = []
+        self.child_module_files(self.root, False, targets)
+        if any(target is None for target in targets):
+            return set(names)
+        used = set()
+        budget = _CHILD_MODULE_FILES
+        for target in targets:
+            files = []
+            if target.is_file():
+                files = [target]
+            elif target.is_dir():
+                files = sorted(target.rglob("*.rs"))
+            for file in files:
+                budget -= 1
+                if budget < 0:
+                    return set(names)
+                try:
+                    text = file.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    return set(names)
+                words = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text))
+                used |= names & words
+        return used
+
+    def refuted_parameters(self):
+        definitions = {}
+        self.private_functions(self.root, False, self.harness_file, definitions)
+        names = {
+            name
+            for name, items in definitions.items()
+            if all(private for _node, private in items)
+            and any(self.named_like_input(node) for node, _private in items)
+        }
+        if not names:
+            return frozenset()
+        names -= self.names_used_by_child_modules(names)
+        if not names:
+            return frozenset()
+        found = {}
+        self.mentions(self.root, self.harness_file, names, found)
+        refuted = set()
+        for name in names:
+            own = {
+                self.field(node, "name").start_byte
+                for node, _private in definitions[name]
+            }
+            sites = []
+            complete = True
+            for mention in found.get(name, ()):
+                if mention.start_byte in own:
+                    continue
+                site = self.call_site(mention)
+                if site is None:
+                    complete = False
+                    break
+                call, method_style = site
+                if (call.start_byte, call.end_byte) in self.library_calls:
+                    continue
+                recorded = self.call_arguments.get((call.start_byte, call.end_byte))
+                if recorded is None:
+                    complete = False
+                    break
+                sites.append((recorded, method_style))
+            if not complete or not sites:
+                continue
+            for node, _private in definitions[name]:
+                params = self.field(node, "parameters")
+                declared = list(params.named_children) if params is not None else []
+                receiver = any(part.type == "self_parameter" for part in declared)
+                positional = [part for part in declared if part.type == "parameter"]
+                if len(positional) + int(receiver) != len(declared):
+                    continue
+                aligned = []
+                for recorded, method_style in sites:
+                    values = recorded
+                    if receiver and not method_style:
+                        values = recorded[1:]
+                    aligned.append(values)
+                if any(len(values) != len(positional) for values in aligned):
+                    continue
+                for index, param in enumerate(positional):
+                    pattern = self.field(param, "pattern")
+                    if pattern is None or pattern.type != "identifier":
+                        continue
+                    if all(not values[index].sources for values in aligned):
+                        refuted.add((node.start_byte, self.text(pattern)))
+        return frozenset(refuted)
 
     def method(self, node, receiver_node, receiver, name, args, state):
         combined = joined([receiver, *args])
@@ -761,6 +1179,14 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
         return []
     flow = _SecurityFlow(root_node, file_path, source)
     flow.module(root_node)
+    refuted = frozenset()
+    for _round in range(_CALLER_ROUNDS):
+        proven = flow.refuted_parameters()
+        if proven <= refuted:
+            break
+        refuted = refuted | proven
+        flow = _SecurityFlow(root_node, file_path, source, refuted)
+        flow.module(root_node)
     return _dedupe_findings(flow.findings)
 
 

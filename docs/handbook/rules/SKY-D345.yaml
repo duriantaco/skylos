@@ -77,6 +77,11 @@ how_skylos_decides:
     or `parquet` whose `data_files` contain no `http://`, `https://` or
     `hf://` address.
   - >-
+    Skips `from_pretrained` with `local_files_only=True` or a proven local
+    path. A `Path` annotation or a relative `Path("owner/model")` or
+    `os.path.join("owner", "model")` does not prove that the load is local;
+    those values can still name a Hub repository.
+  - >-
     Reports HIGH when `revision=` is missing, `None`, or a string that is
     not 40 hexadecimal characters. `main`, `master`, `latest`, tags such as
     `v1.2`, `refs/heads/…` and `refs/pr/…` all count as movable.
@@ -118,8 +123,9 @@ fix:
 false_alarms_and_suppression:
   misfires:
     - >-
-      `from_pretrained("./models/sentiment")` loads a local folder and
-      downloads nothing, but has no `revision` and is reported.
+      An existing local folder supplied through an unproven variable or a
+      relative `Path` can be reported: the scanner does not assume that the
+      folder exists. Use an explicit local path or `local_files_only=True`.
     - >-
       A tag in a repository your own team controls, such as
       `revision="v1.2"`, is reported, because tags on the Hub can be moved.
@@ -130,11 +136,11 @@ false_alarms_and_suppression:
   suppress:
     - check: inline
       text: >-
-        Mark the call line of a load from a local folder or an internal
-        repository, and say why.
+        Mark the call line of an internal repository load when the team
+        intentionally accepts its movable revision, and say why.
       language: python
       code: |
-        AutoTokenizer.from_pretrained("./models/nlp")  # skylos: ignore[SKY-D345] local dir
+        AutoTokenizer.from_pretrained("acme/internal-nlp")  # skylos: ignore[SKY-D345] reviewed internal release
     - check: baseline
       text: >-
         `skylos baseline .`, then `--baseline`, accepts existing loads by

@@ -1,0 +1,1 @@
+{"name": "fx", "private": true, "main": "src/index.tsx", "dependencies": {"react": "17.0.2"}}

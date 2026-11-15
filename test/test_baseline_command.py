@@ -84,6 +84,7 @@ def test_default_baseline_keeps_existing_scan_options_without_sca(
         enable_secrets=True,
         enable_ai_defects=True,
         exclude_folders=sorted(DEFAULT_EXCLUDE_FOLDERS),
+        config_exclude_folders=sorted(DEFAULT_EXCLUDE_FOLDERS - {".vscode"}),
     )
     save.assert_called_once_with(
         str(project.resolve()), {"unused_functions": [{"name": "legacy"}]}

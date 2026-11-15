@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 2,
+  "workspaces": {
+    "": {
+      "name": "probe",
+      "dependencies": {
+        "left-pad": "^1.3.0",
+      },
+    },
+  },
+  "packages": {
+    "left-pad": ["left-pad@1.3.0", "", {}, "ER2FSSaRP3PMcaDF4-GmHGtg99zWUwXrGz8FNF"],
+    "sigtool": ["@acme/sigtool@github:AcmeWidgets/sigtool-node#1c30d7d", {}, "jVJNswKmnXTDMYoJm-943sL7YJnUeCyAbJYXjC"],
+  }
+}

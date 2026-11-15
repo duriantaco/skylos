@@ -83,6 +83,10 @@ def normalize(text: str) -> str:
     return text
 
 
+def remove_zero_width(text: str) -> str:
+    return text.translate(_ZERO_WIDTH_TRANSLATION)
+
+
 def strip_zero_width(
     text: str, *, max_hits: int | None = MAX_ZERO_WIDTH_HITS
 ) -> tuple[str, list[tuple[str, int]]]:
@@ -146,18 +150,25 @@ def decode_base64_blobs(
     return results
 
 
-def detect_homoglyphs(text: str) -> list[tuple[str, str, int]]:
+def detect_homoglyphs(
+    text: str, *, native_scripts: bool = True
+) -> list[tuple[str, str, int]]:
     """Lookalike letters that disguise a word, judged per run of letters.
 
-    A word that mixes Latin letters with a non-Latin lookalike (Cyrillic
-    U+0430 in place of Latin 'a') is a disguise. So is a word made only of
-    lookalikes in a line of otherwise Latin words. A word written wholly in
-    another script, as in translated documentation, is ordinary text.
+    A word that mixes Latin letters with non-Latin lookalikes and reads as a
+    Latin word (Cyrillic U+0430 in place of Latin 'a') is a disguise. So is
+    a word made only of lookalikes in a line of otherwise Latin words. A
+    word written wholly in another script, as in translated documentation,
+    is ordinary text. So is a word of that script with a stray Latin letter
+    (it has letters with no Latin twin, so it cannot be read as Latin), and,
+    with ``native_scripts``, an all-lookalike word in a text that is itself
+    written in that script.
     """
     if not _CONFUSABLE_RE.search(text):
         return []
 
     results: list[tuple[str, str, int]] = []
+    native: dict[str, bool] = {}
 
     for line_no, line in enumerate(text.splitlines(), 1):
         words = [match.group() for match in _LETTER_RUN_RE.finditer(line)]
@@ -168,8 +179,10 @@ def detect_homoglyphs(text: str) -> list[tuple[str, str, int]]:
             has_confusable = bool(_CONFUSABLE_RE.search(word))
             if not has_confusable:
                 continue
-            mixed = bool(re.search(r"[a-zA-Z]", word))
+            mixed = bool(re.search(r"[a-zA-Z]", word)) and _reads_as_latin(word)
             disguised = latin_only_line and _is_whole_confusable(word)
+            if disguised and native_scripts and _is_native_script(text, word, native):
+                disguised = False
             if not (mixed or disguised):
                 continue
             for char_match in _CONFUSABLE_RE.finditer(word):
@@ -180,6 +193,11 @@ def detect_homoglyphs(text: str) -> list[tuple[str, str, int]]:
 
 
 _LETTER_RUN_RE = re.compile(r"[^\W\d_]+")
+_NATIVE_SCRIPT_LETTERS = 10
+_SCRIPT_RANGES = {
+    "cyrillic": ((0x0400, 0x052F),),
+    "greek": ((0x0370, 0x03FF), (0x1F00, 0x1FFF)),
+}
 
 
 def _is_latin_word(word: str) -> bool:
@@ -191,3 +209,34 @@ def _is_whole_confusable(word: str) -> bool:
     written in Cyrillic). Natural words such as ``Русский`` contain letters
     with no Latin twin."""
     return len(word) >= 2 and all(char in _CONFUSABLES for char in word)
+
+
+def _reads_as_latin(word: str) -> bool:
+    """Every letter is Latin or a lookalike of a Latin letter."""
+    return all(char in _CONFUSABLES or char.isascii() for char in word)
+
+
+def _script_of(char: str) -> str | None:
+    code = ord(char)
+    for script, ranges in _SCRIPT_RANGES.items():
+        if any(low <= code <= high for low, high in ranges):
+            return script
+    return None
+
+
+def _is_native_script(text: str, word: str, cache: dict[str, bool]) -> bool:
+    """The text holds letters of the word's script that have no Latin twin:
+    it is written in that script, so a short all-lookalike word is one of
+    its words (Ukrainian ``Ні``)."""
+    script = _script_of(word[0])
+    if script is None:
+        return False
+    if script not in cache:
+        count = 0
+        for char in text:
+            if char not in _CONFUSABLES and char.isalpha() and _script_of(char) == script:
+                count += 1
+                if count >= _NATIVE_SCRIPT_LETTERS:
+                    break
+        cache[script] = count >= _NATIVE_SCRIPT_LETTERS
+    return cache[script]
