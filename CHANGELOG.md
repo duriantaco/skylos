@@ -4,6 +4,7 @@
 
 ### Bug Fixes
 
+* **danger:** read archive `startsWith` guards from the syntax tree, so a guard split across lines or a prefix held in a module or outer-function constant no longer reports, while a prefix shadowed by a parameter, loop variable, catch clause, import or reassigned `let` still does, and `startsWith(p) || other` is no longer taken as a guard.
 * **deadcode:** stop reporting attributes declared on Protocol classes as unused variables.
 * **danger:** reach the graph-query check for compact or multi-line Cypher instead of skipping the whole security scan.
 * **deadcode:** only treat a class as a protocol when it inherits `typing.Protocol` or `typing_extensions.Protocol`, so `asyncio.Protocol` subclasses keep their dead members reported.
