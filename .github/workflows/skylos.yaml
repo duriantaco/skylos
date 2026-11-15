@@ -122,24 +122,26 @@ jobs:
           fi
           # The grep budget only bounds dead-code verification. Bound the
           # whole process too, and print stacks during otherwise silent scans.
+          # The stacks come from a Python thread, which holds the GIL while it
+          # reads them. faulthandler's watchdog reads them without the GIL and
+          # crashed the scan with SIGSEGV when it caught a frame mid-update.
+          # faulthandler stays enabled for real crashes.
           # -I keeps the checked-out PR package off Python's import path.
           # A Python diagnostics thread holds the GIL while dumping frames,
           # avoiding the native watchdog's race with live frame teardown.
           SKYLOS=(timeout --signal=INT --kill-after=30s 35m .venv/bin/python -I -c '
-          import faulthandler
-          import threading
-          import time
-
+          import faulthandler, sys, threading, time, traceback
           faulthandler.enable()
-
-          def dump_stacks():
+          main_thread = threading.main_thread().ident
+          def report_progress():
               while True:
                   time.sleep(300)
-                  faulthandler.dump_traceback()
-
-          threading.Thread(
-              target=dump_stacks, name="skylos-scan-diagnostics", daemon=True
-          ).start()
+                  frame = sys._current_frames().get(main_thread)
+                  if frame is not None:
+                      print("Skylos is still scanning; main thread stack:", file=sys.stderr, flush=True)
+                      traceback.print_stack(frame, file=sys.stderr)
+                      sys.stderr.flush()
+          threading.Thread(target=report_progress, daemon=True).start()
           from skylos.entry import main
           main()
           ')

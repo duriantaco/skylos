@@ -126,6 +126,77 @@ def _trim_expr(expr: str) -> str:
     return expr.strip()
 
 
+_STRING_RE = re.compile(r"""'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`""")
+_LINE_COMMENT_RE = re.compile(r"//.*$")
+# A line ending in one of these, or a next line starting with one, keeps the
+# expression going without a semicolon.
+_TRAILING_CONTINUATION = (
+    "=",
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "&",
+    "|",
+    "^",
+    "?",
+    ":",
+    ",",
+    ".",
+    "(",
+    "[",
+    "{",
+    "<",
+    ">",
+    "!",
+    "~",
+)
+_LEADING_CONTINUATION = (
+    ".",
+    "?",
+    ":",
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "&",
+    "|",
+    "^",
+    ",",
+    ")",
+    "]",
+    "}",
+    "=",
+    "<",
+    ">",
+    "in ",
+    "instanceof ",
+    "as ",
+    "satisfies ",
+)
+
+
+def _bracket_depth(text: str) -> int:
+    text = _STRING_RE.sub('""', text)
+    return sum(text.count(c) for c in "([{") - sum(text.count(c) for c in ")]}")
+
+
+def _ends_expression(expr: str, next_line: str) -> bool:
+    """Without a semicolon, the expression ends at a line break when its
+    brackets are closed and neither side of the break continues it."""
+    code = _LINE_COMMENT_RE.sub("", _STRING_RE.sub('""', expr)).rstrip()
+    if not code or _bracket_depth(expr) > 0:
+        return False
+    if code.endswith(_TRAILING_CONTINUATION) and not code.endswith(("++", "--")):
+        return False
+    following = next_line.lstrip()
+    if following.startswith(("++", "--")):
+        return True
+    return not following.startswith(_LEADING_CONTINUATION)
+
+
 def _complete_expr(lines: list[str], line_index: int, expr: str) -> str:
     parts = [_trim_expr(expr)]
     if ";" in expr:
@@ -136,6 +207,8 @@ def _complete_expr(lines: list[str], line_index: int, expr: str) -> str:
         if next_index >= len(lines):
             break
         next_line = lines[next_index]
+        if _ends_expression(" ".join(parts), next_line):
+            break
         parts.append(_trim_expr(next_line))
         if ";" in next_line:
             break
