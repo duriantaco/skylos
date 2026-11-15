@@ -127,6 +127,8 @@ jobs:
           # crashed the scan with SIGSEGV when it caught a frame mid-update.
           # faulthandler stays enabled for real crashes.
           # -I keeps the checked-out PR package off Python's import path.
+          # A Python diagnostics thread holds the GIL while dumping frames,
+          # avoiding the native watchdog's race with live frame teardown.
           SKYLOS=(timeout --signal=INT --kill-after=30s 35m .venv/bin/python -I -c '
           import faulthandler, sys, threading, time, traceback
           faulthandler.enable()
