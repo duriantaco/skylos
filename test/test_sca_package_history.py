@@ -191,7 +191,7 @@ def test_lookups_are_capped(monkeypatch):
 
 def _project(tmp_path, dependencies, extra=""):
     listed = ", ".join(f'"{item}"' for item in dependencies)
-    (tmp_path / "pyproject.toml").write_text(
+    (tmp_path / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] fixed filename; every caller uses a fresh pytest tmp_path
         textwrap.dedent(
             f"""
             [project]
@@ -283,7 +283,9 @@ def test_gates_count_the_finding_only_in_block_mode():
 def _scan_import(monkeypatch, tmp_path, histories, extra=""):
     repo = _project(tmp_path, ["requests"], extra)
     source = tmp_path / "app.py"
-    source.write_text("import brand_new\n", encoding="utf-8")
+    source.write_text(  # skylos: ignore[SKY-D324] fixed filename; every caller uses a fresh pytest tmp_path
+        "import brand_new\n", encoding="utf-8"
+    )
     monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: set())
     monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
     monkeypatch.setattr(dep, "_build_installed_module_mapping", dict)
