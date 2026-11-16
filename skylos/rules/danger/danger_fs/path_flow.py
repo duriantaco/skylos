@@ -3,7 +3,9 @@ import ast
 import os
 import re
 import sys
+from pathlib import Path
 from string import Formatter
+from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
 from skylos.rules.danger.module_namespace import (
     attribute_write_names,
@@ -1105,7 +1107,7 @@ class _PathFlowChecker(TaintVisitor):
         file_path = _module_file(getattr(self, "project_root", None), module_name)
         if file_path is None:
             return None
-        tree = _parsed_module(file_path)
+        tree = _parsed_module(file_path, getattr(self, "project_root", None))
         target = _unique_module_function(tree, function_name) if tree is not None else None
         return (file_path, target) if target is not None else None
 
@@ -2240,7 +2242,7 @@ def _function_arguments(fn):
 
 
 # Project helpers proven to return only contained paths:
-# (path, line, name, tainted params) -> bool. In-progress keys read as False.
+# (root, path, name, tainted params) -> bool. In-progress keys read as False.
 _CONTAINMENT_PROOFS: dict = {}
 _CONTAINMENT_ACTIVE: set = set()
 _CONTAINMENT_MAX_ACTIVE = 4
@@ -2248,6 +2250,7 @@ _PARSED_HELPER_MODULES: dict = {}
 # A long-lived process (editor, MCP server) scans again after edits: the
 # analyzer clears these per run, and parsed files are keyed by their stat.
 _MAX_CACHED_ENTRIES = 4096
+_MAX_HELPER_BYTES = 2_000_000
 
 
 def reset_containment_proofs() -> None:
@@ -2263,17 +2266,41 @@ def _bounded(cache):
     return cache
 
 
-def _parsed_module(path):
-    try:
-        stat = os.stat(path)
-    except OSError:
+def _parsed_module(path, project_root):
+    """Parse only bounded, regular project sources without following symlinks."""
+    if not project_root:
         return None
-    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    try:
+        root = Path(project_root).resolve(strict=True)
+        candidate = Path(os.path.abspath(path))
+        candidate.relative_to(root)
+        # Check before cache hits too: replacing a helper with a symlink must
+        # not reuse a proof from the previous, regular project source.
+        if candidate.resolve(strict=True) != candidate:
+            return None
+        stat = candidate.stat()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    key = (
+        str(root),
+        str(candidate),
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+        stat.st_size,
+        stat.st_ino,
+        stat.st_dev,
+    )
     cached = _PARSED_HELPER_MODULES.get(key)
     if cached is None:
         try:
-            with open(path, encoding="utf-8") as handle:
-                cached = ast.parse(handle.read(), filename=str(path))
+            source = read_project_text_no_symlink(
+                root, candidate, max_bytes=_MAX_HELPER_BYTES
+            )
+            cached = (
+                ast.parse(source, filename=str(candidate))
+                if source is not None
+                else False
+            )
         except (OSError, SyntaxError, ValueError, UnicodeDecodeError):
             cached = False
         _bounded(_PARSED_HELPER_MODULES)[key] = cached
@@ -2390,7 +2417,7 @@ def _resolve_helper_call(call, tree, file_path, project_root):
     helper_file = _module_file(project_root, module_name)
     if helper_file is None:
         return None
-    helper_tree = _parsed_module(helper_file)
+    helper_tree = _parsed_module(helper_file, project_root)
     helper = _unique_module_function(helper_tree, function_name) if helper_tree else None
     return (helper_file, helper) if helper is not None else None
 
@@ -2447,14 +2474,14 @@ def _prove_wrapper(file_path, tree, function, tainted, project_root):
 def _prove_containment(file_path, name, tainted, project_root):
     """Whether ``name`` (module-level in ``file_path``) returns only paths
     that are untainted or contained when exactly ``tainted`` params are."""
-    key = (str(file_path), name, tainted)
+    key = (str(project_root), str(file_path), name, tainted)
     cached = _CONTAINMENT_PROOFS.get(key)
     if cached is not None:
         return cached
     _bounded(_CONTAINMENT_PROOFS)
     # Fewer tainted parameters cannot taint a return more, so a proof with
     # every parameter tainted holds for each subset.
-    tree = _parsed_module(file_path)
+    tree = _parsed_module(file_path, project_root)
     target = _unique_module_function(tree, name) if tree is not None else None
     if target is None:
         _CONTAINMENT_PROOFS[key] = False
