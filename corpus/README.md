@@ -21,9 +21,9 @@ Acceptance rules:
 
 ## Current coverage
 
-The manifest has 79 cases and 302 explicit expectations: 170 absence checks and
-132 presence checks. Presence includes 112 unused-symbol controls, 14 quality
-expectations, three unused-file controls, and three separately recorded policy
+The manifest has 84 cases and 330 explicit expectations: 186 absence checks and
+144 presence checks. Presence includes 120 unused-symbol controls, 17 quality
+expectations, four unused-file controls, and three separately recorded policy
 controls. These are assertions,
 not a whole-repository precision or recall score.
 
@@ -122,3 +122,9 @@ How to add a case:
    with `paired_with`. Show real registration or use; inheritance alone does not
    prove that a class has a consumer.
 4. Add or update a unit test in `test/test_corpus_ci.py` if the runner contract changes.
+
+Five additional source contracts cover npm declaration and script usage, local
+and private-package enum members, Vue/Svelte/Astro import graphs, and PHP Blade
+helper consumers. All retain live and unused controls. Generated routes and
+automatic component providers that cannot be resolved from source are reported
+as incomplete; unsupported bodies do not earn quiet-result credit.

@@ -8,6 +8,41 @@ import pytest
 from skylos.benchmarks import quality
 
 
+@pytest.mark.parametrize("mode", ["present", "absent"])
+@pytest.mark.parametrize("changed", ["rule_id", "file", "line", "name", "split"])
+def test_structured_expectations_match_one_finding_at_the_target(mode, changed):
+    target = {"rule_id": "SKY-Q301", "file": "src/app.ts", "line": 7, "name": "dispatch"}
+    row = {**target, "file": "/temporary/project/src/app.ts"}
+    if changed == "split":
+        findings = [{**row, "name": "unrelated"}, {**row, "rule_id": "SKY-Q302"}]
+    else:
+        row[changed] = 8 if changed == "line" else "unrelated"
+        findings = [row]
+    case = {"id": "target-proof", "expect": {mode: {"quality": [target]}}}
+    failures, _, matched, _, violations = quality._evaluate_expectations(case, {"quality": findings})
+    assert matched == violations == 0
+    assert bool(failures) is (mode == "present")
+    findings.append({**target, "file": "/temporary/project/src/app.ts"})
+    failures, _, matched, _, violations = quality._evaluate_expectations(case, {"quality": findings})
+    assert matched == (mode == "present")
+    assert violations == (mode == "absent")
+    assert bool(failures) is (mode == "absent")
+
+
+@pytest.mark.parametrize("expectation", [
+    {"rule_id": "SKY-Q301"},
+    {"name": "dispatch"},
+    {"rule_id": "SKY-Q301", "file": "../app.ts"},
+    {"rule_id": "SKY-Q301", "line": True},
+    {"rule_id": "SKY-Q301", "line": 0},
+    {"rule_id": "SKY-Q301", "name": ""},
+    {"rule_id": "SKY-Q301", "nmae": "dispatch"},
+])
+def test_structured_expectation_validation_rejects_ambiguous_targets(expectation):
+    with pytest.raises(ValueError):
+        quality._validate_quality_expectation(expectation, "case", "present", "quality")
+
+
 def _report():
     return {
         "analysis_summary": {

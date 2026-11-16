@@ -245,6 +245,21 @@ def test_dead_code_fix_uses_the_language_comment_and_every_rule_has_a_docs_link(
     assert rule_docs_url("SKY-NOPE") == "https://docs.skylos.dev/rules-reference"
 
 
+def test_enum_member_keeps_its_explicit_rule_in_variable_output(tmp_path):
+    finding = {
+        "rule_id": "SKY-U007", "type": "enum_member", "name": "Status.Spare",
+        "file": str(tmp_path / "app.ts"), "line": 4, "severity": "LOW",
+        "message": "Enum member Status.Spare is never read in this module.",
+    }
+    result = add_report_guidance(
+        {"unused_variables": [finding]}, project_root=tmp_path, config={}
+    )
+    row = result["unused_variables"][0]
+    assert row["rule_id"] == "SKY-U007"
+    assert "// skylos: ignore[SKY-U007]" in finding_fix(row, "unused_variables")
+    assert rule_docs_url(row["rule_id"]).endswith("#dead-code-rules-sky-u")
+
+
 def test_json_guidance_adds_fix_docs_and_the_same_top_risks(tmp_path):
     result = add_report_guidance(_result(), project_root=tmp_path, config={})
 

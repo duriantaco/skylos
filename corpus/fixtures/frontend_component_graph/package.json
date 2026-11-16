@@ -1,0 +1,5 @@
+{
+  "name": "component-report",
+  "private": true,
+  "scripts": {"start": "node main.ts"}
+}

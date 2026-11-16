@@ -1,0 +1,75 @@
+id: SKY-Q409
+title: Unlisted npm script binary
+family: quality
+severity: MEDIUM
+languages:
+- package.json
+gate:
+  full: counted
+  note: Reported as quality; counts toward max_quality.
+run_with: '`skylos . --quality`'
+what_it_is: A simple package script invokes a known npm binary whose provider is not declared
+  by that package or an ancestor. Unknown system commands and dynamically expanded scripts
+  do not establish a missing provider.
+why_it_matters: A build can succeed only because the developer has a globally installed tool.
+  A clean environment lacks that undeclared provider and the script stops working.
+flagged_example:
+  language: json
+  expect_file: package.json
+  expect_line: 1
+  files:
+  - filename: package.json
+    code: |
+      {"name":"shop","scripts":{"build":"tsc --noEmit"}}
+  - filename: src/app.ts
+    language: typescript
+    code: |
+      export const version = "1.0.0";
+not_flagged_example:
+  language: json
+  files:
+  - filename: package.json
+    code: |
+      {"name":"shop","scripts":{"build":"tsc --noEmit"},"devDependencies":{"typescript":"^5.0.0"}}
+  - filename: src/app.ts
+    language: typescript
+    code: |
+      export const version = "1.0.0";
+  why: The typescript declaration supplies the known tsc binary; an ancestor tooling declaration
+    can also supply workspace scripts.
+how_skylos_decides:
+- Reads simple command heads in package.json scripts without executing them. Literal command
+  chains and supported package-manager wrappers are inspected.
+- Maps known binaries such as tsc to typescript and reads literal bin metadata from available
+  installed package manifests. A provider declared in the package or an ancestor counts as
+  available.
+- Reports MEDIUM on the script line only when a known provider is missing and the command
+  is not dynamic. Unknown commands, shell expansion, external scripts and unsupported wrappers
+  remain unresolved.
+- Unresolved scripts prevent unused-dependency absence claims and are recorded in analysis_summary.npm_dependency_analysis;
+  they are not treated as proof that installed tools are unused.
+source_refs:
+- path: skylos/rules/quality/npm_dependencies.py
+  symbol: def scan_npm_dependencies(
+- path: skylos/rules/quality/npm_dependencies.py
+  symbol: def _script_commands(
+- path: test/test_npm_dependency_usage.py
+  symbol: def test_known_npm_binary_without_provider_is_unlisted
+fix:
+  explanation: Add the intended binary provider to this package or shared ancestor tooling,
+    or replace the script with a declared tool.
+  language: json
+  filename: package.json
+  code: |
+    {"name":"shop","scripts":{"build":"tsc --noEmit"},"devDependencies":{"typescript":"^5.0.0"}}
+false_alarms_and_suppression:
+  misfires:
+  - An operator may intentionally install the binary globally, but that contract is outside
+    this manifest.
+  - Custom binaries without a known provider are unresolved and are not reported as missing.
+  suppress:
+  - check: config
+    text: Set `[tool.skylos] ignore = ["SKY-Q409"]` to disable this rule project-wide.
+related:
+- SKY-Q408
+- SKY-U005

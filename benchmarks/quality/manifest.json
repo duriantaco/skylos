@@ -5,7 +5,10 @@
       "id": "complexity-hotspot",
       "path": "fixtures/complexity_hotspot",
       "description": "Branch-heavy request handler should be flagged for cyclomatic complexity.",
-      "taxonomy": ["complexity", "control_flow"],
+      "taxonomy": [
+        "complexity",
+        "control_flow"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/fastapi/fastapi",
@@ -17,10 +20,19 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-Q301", "branchy_handler"]
+          "quality": [
+            {
+              "rule_id": "SKY-Q301",
+              "file": "app.py",
+              "line": 1,
+              "name": "branchy_handler"
+            }
+          ]
         },
         "absent": {
-          "quality": ["simple_handler"]
+          "quality": [
+            "simple_handler"
+          ]
         }
       }
     },
@@ -28,7 +40,9 @@
       "id": "long-function",
       "path": "fixtures/long_function",
       "description": "Report builder should be flagged when the local max_lines threshold is exceeded.",
-      "taxonomy": ["maintainability"],
+      "taxonomy": [
+        "maintainability"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/pallets/click",
@@ -40,10 +54,19 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-C304", "render_report"]
+          "quality": [
+            {
+              "rule_id": "SKY-C304",
+              "file": "module.py",
+              "line": 1,
+              "name": "render_report"
+            }
+          ]
         },
         "absent": {
-          "quality": ["tiny_helper"]
+          "quality": [
+            "tiny_helper"
+          ]
         }
       }
     },
@@ -51,7 +74,10 @@
       "id": "argument-overload",
       "path": "fixtures/argument_overload",
       "description": "Service function should be flagged when it takes too many required arguments.",
-      "taxonomy": ["api_design", "maintainability"],
+      "taxonomy": [
+        "api_design",
+        "maintainability"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/django/django",
@@ -63,10 +89,19 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-C303", "build_request"]
+          "quality": [
+            {
+              "rule_id": "SKY-C303",
+              "file": "service.py",
+              "line": 1,
+              "name": "build_request"
+            }
+          ]
         },
         "absent": {
-          "quality": ["helper"]
+          "quality": [
+            "helper"
+          ]
         }
       }
     },
@@ -74,7 +109,9 @@
       "id": "inconsistent-return",
       "path": "fixtures/inconsistent_return",
       "description": "Mixed value and bare returns should be reported as a logic issue.",
-      "taxonomy": ["control_flow"],
+      "taxonomy": [
+        "control_flow"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/pallets/flask",
@@ -86,7 +123,14 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-L006", "resolve_user"]
+          "quality": [
+            {
+              "rule_id": "SKY-L006",
+              "file": "module.py",
+              "line": 1,
+              "name": "resolve_user"
+            }
+          ]
         },
         "absent": {}
       }
@@ -95,7 +139,9 @@
       "id": "empty-error-handler",
       "path": "fixtures/empty_error_handler",
       "description": "Silent exception swallowing should be treated as a quality problem.",
-      "taxonomy": ["exception_handling"],
+      "taxonomy": [
+        "exception_handling"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/psf/requests",
@@ -107,7 +153,14 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-L007"]
+          "quality": [
+            {
+              "rule_id": "SKY-L007",
+              "file": "module.py",
+              "line": 4,
+              "name": "except"
+            }
+          ]
         },
         "absent": {}
       }
@@ -116,7 +169,10 @@
       "id": "type-annotation-gaps",
       "path": "fixtures/type_annotation_gaps",
       "description": "An explicit disallow_untyped_defs policy must flag public functions with untyped parameters and missing return annotations.",
-      "taxonomy": ["typing", "api_design"],
+      "taxonomy": [
+        "typing",
+        "api_design"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/python/cpython",
@@ -128,10 +184,25 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-T101", "SKY-T102", "load_user"]
+          "quality": [
+            {
+              "rule_id": "SKY-T101",
+              "file": "module.py",
+              "line": 4,
+              "name": "load_user"
+            },
+            {
+              "rule_id": "SKY-T102",
+              "file": "module.py",
+              "line": 4,
+              "name": "load_user"
+            }
+          ]
         },
         "absent": {
-          "quality": ["typed_helper"]
+          "quality": [
+            "typed_helper"
+          ]
         }
       }
     },
@@ -139,7 +210,11 @@
       "id": "type-annotation-coverage-only",
       "path": "fixtures/type_annotation_coverage_only",
       "description": "Checking untyped bodies and declaring exports do not require annotations or enable optional coverage advice.",
-      "taxonomy": ["typing", "api_design", "precision_guard"],
+      "taxonomy": [
+        "typing",
+        "api_design",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/python/mypy",
@@ -152,7 +227,10 @@
       "expect": {
         "present": {},
         "absent": {
-          "quality": ["SKY-T101", "SKY-T102"]
+          "quality": [
+            "SKY-T101",
+            "SKY-T102"
+          ]
         }
       }
     },
@@ -160,7 +238,10 @@
       "id": "framework-route-policy",
       "path": "fixtures/framework_route_policy",
       "description": "Mutating framework routes should have an obvious auth or dependency guard.",
-      "taxonomy": ["framework", "security_practice"],
+      "taxonomy": [
+        "framework",
+        "security_practice"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/fastapi/fastapi",
@@ -172,10 +253,20 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-F102", "create_user"]
+          "quality": [
+            {
+              "rule_id": "SKY-F102",
+              "file": "app.py",
+              "line": 11,
+              "name": "create_user"
+            }
+          ]
         },
         "absent": {
-          "quality": ["create_admin", "list_users"]
+          "quality": [
+            "create_admin",
+            "list_users"
+          ]
         }
       }
     },
@@ -183,7 +274,11 @@
       "id": "opaque-identifier",
       "path": "fixtures/opaque_identifier",
       "description": "Long-lived short or vague variables should be reported only when RHS semantics provide a clearly better name.",
-      "taxonomy": ["readability", "maintainability", "precision_guard"],
+      "taxonomy": [
+        "readability",
+        "maintainability",
+        "precision_guard"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/google/styleguide",
@@ -195,10 +290,21 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-Q806", "x", "account_id"]
+          "quality": [
+            {
+              "rule_id": "SKY-Q806",
+              "file": "module.py",
+              "line": 2,
+              "name": "x",
+              "value": "account_id"
+            }
+          ]
         },
         "absent": {
-          "quality": ["coordinate_area", "tmp"]
+          "quality": [
+            "coordinate_area",
+            "tmp"
+          ]
         }
       }
     },
@@ -206,7 +312,10 @@
       "id": "repo-policy-missing-typechecker",
       "path": "fixtures/repo_policy_missing_typechecker",
       "description": "Repository policy checks should report Python projects without mypy or pyright configuration.",
-      "taxonomy": ["repo_policy", "typing"],
+      "taxonomy": [
+        "repo_policy",
+        "typing"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/astral-sh/ruff",
@@ -218,10 +327,21 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-R101", "python-type-check-policy"]
+          "quality": [
+            {
+              "rule_id": "SKY-R101",
+              "file": "pyproject.toml",
+              "line": 1,
+              "name": "python-type-check-policy"
+            }
+          ]
         },
         "absent": {
-          "quality": ["SKY-R102", "SKY-R103", "SKY-R104"]
+          "quality": [
+            "SKY-R102",
+            "SKY-R103",
+            "SKY-R104"
+          ]
         }
       }
     },
@@ -229,7 +349,9 @@
       "id": "clean-module",
       "path": "fixtures/clean_module",
       "description": "A small helper module should remain free of the starter benchmark quality findings.",
-      "taxonomy": ["precision_guard"],
+      "taxonomy": [
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/python/cpython",
@@ -242,7 +364,15 @@
       "expect": {
         "present": {},
         "absent": {
-          "quality": ["SKY-Q301", "SKY-C303", "SKY-C304", "SKY-L006", "SKY-L007", "SKY-UC001", "SKY-Q806"]
+          "quality": [
+            "SKY-Q301",
+            "SKY-C303",
+            "SKY-C304",
+            "SKY-L006",
+            "SKY-L007",
+            "SKY-UC001",
+            "SKY-Q806"
+          ]
         }
       }
     },
@@ -250,8 +380,14 @@
       "id": "typescript-async-loop-duplicate-condition",
       "path": "fixtures/typescript_async_loop_duplicate_condition",
       "description": "TypeScript service code should flag duplicate branch conditions and serialized await inside loops.",
-      "languages": ["typescript"],
-      "taxonomy": ["typescript", "control_flow", "maintainability"],
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "control_flow",
+        "maintainability"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/microsoft/TypeScript",
@@ -263,10 +399,26 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-Q305", "SKY-Q402", "reconcileInvoices"]
+          "quality": [
+            {
+              "rule_id": "SKY-Q305",
+              "file": "service.ts",
+              "line": 20,
+              "name": "reconcileInvoices"
+            },
+            {
+              "rule_id": "SKY-Q402",
+              "file": "service.ts",
+              "line": 25,
+              "name": "reconcileInvoices"
+            }
+          ]
         },
         "absent": {
-          "quality": ["markPaid", "markVoid"]
+          "quality": [
+            "markPaid",
+            "markVoid"
+          ]
         }
       }
     },
@@ -274,8 +426,13 @@
       "id": "typescript-type-safety-unsafe",
       "path": "fixtures/typescript_type_safety_unsafe",
       "description": "TypeScript escape hatches and direct unvalidated JSON assertions should be reported.",
-      "languages": ["typescript"],
-      "taxonomy": ["typescript", "typing"],
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "typing"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/dmmulroy/anti-slop",
@@ -287,7 +444,26 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-T103", "SKY-T104", "SKY-T105"]
+          "quality": [
+            {
+              "rule_id": "SKY-T103",
+              "file": "service.ts",
+              "line": 8,
+              "name": "User"
+            },
+            {
+              "rule_id": "SKY-T104",
+              "file": "service.ts",
+              "line": 10,
+              "name": "@ts-ignore"
+            },
+            {
+              "rule_id": "SKY-T105",
+              "file": "service.ts",
+              "line": 13,
+              "name": "User"
+            }
+          ]
         },
         "absent": {}
       }
@@ -296,8 +472,14 @@
       "id": "typescript-type-safety-clean",
       "path": "fixtures/typescript_type_safety_clean",
       "description": "Runtime validation, a single branded assertion, and a reasoned expect-error should remain clean.",
-      "languages": ["typescript"],
-      "taxonomy": ["typescript", "typing", "precision_guard"],
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "typing",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/microsoft/TypeScript",
@@ -310,7 +492,11 @@
       "expect": {
         "present": {},
         "absent": {
-          "quality": ["SKY-T103", "SKY-T104", "SKY-T105"]
+          "quality": [
+            "SKY-T103",
+            "SKY-T104",
+            "SKY-T105"
+          ]
         }
       }
     },
@@ -318,8 +504,15 @@
       "id": "typescript-quality-signals-unsafe",
       "path": "samples/typescript_quality_signals_unsafe",
       "description": "Concrete async mistakes, unsafe exports, unfinished code, empty catches, and blanket lint suppression should be reported.",
-      "languages": ["typescript"],
-      "taxonomy": ["typescript", "control_flow", "typing", "maintainability"],
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "control_flow",
+        "typing",
+        "maintainability"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/dmmulroy/anti-slop",
@@ -331,7 +524,62 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-L007", "SKY-L026", "SKY-L035", "SKY-Q405", "SKY-Q406", "SKY-Q407", "SKY-T106", "LegacyPayload", "acceptLegacy", "loadLegacy"]
+          "quality": [
+            {
+              "rule_id": "SKY-L035",
+              "file": "app.ts",
+              "line": 1,
+              "name": "eslint-disable"
+            },
+            {
+              "rule_id": "SKY-T106",
+              "file": "app.ts",
+              "line": 4,
+              "name": "LegacyPayload"
+            },
+            {
+              "rule_id": "SKY-T106",
+              "file": "app.ts",
+              "line": 7,
+              "name": "acceptLegacy"
+            },
+            {
+              "rule_id": "SKY-T106",
+              "file": "app.ts",
+              "line": 11,
+              "name": "loadLegacy"
+            },
+            {
+              "rule_id": "SKY-L026",
+              "file": "app.ts",
+              "line": 15,
+              "name": "unfinished"
+            },
+            {
+              "rule_id": "SKY-L007",
+              "file": "app.ts",
+              "line": 21,
+              "name": "catch"
+            },
+            {
+              "rule_id": "SKY-Q405",
+              "file": "app.ts",
+              "line": 24,
+              "name": "Promise"
+            },
+            {
+              "rule_id": "SKY-Q406",
+              "file": "app.ts",
+              "line": 29,
+              "name": "forEach"
+            },
+            {
+              "rule_id": "SKY-Q407",
+              "file": "app.ts",
+              "line": 33,
+              "name": "map"
+            }
+          ]
         },
         "absent": {}
       }
@@ -340,8 +588,15 @@
       "id": "typescript-quality-signals-clean",
       "path": "samples/typescript_quality_signals_clean",
       "description": "Narrow lint suppression, consumed async work, precise exports, implemented code, and handled errors should remain clean.",
-      "languages": ["typescript"],
-      "taxonomy": ["typescript", "control_flow", "typing", "precision_guard"],
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "control_flow",
+        "typing",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/microsoft/TypeScript",
@@ -354,7 +609,15 @@
       "expect": {
         "present": {},
         "absent": {
-          "quality": ["SKY-L007", "SKY-L026", "SKY-L035", "SKY-Q405", "SKY-Q406", "SKY-Q407", "SKY-T106"]
+          "quality": [
+            "SKY-L007",
+            "SKY-L026",
+            "SKY-L035",
+            "SKY-Q405",
+            "SKY-Q406",
+            "SKY-Q407",
+            "SKY-T106"
+          ]
         }
       }
     },
@@ -362,8 +625,13 @@
       "id": "python-mutable-alias-unsafe",
       "path": "fixtures/python_mutable_alias_unsafe",
       "description": "Sequence multiplication that repeats one mutable object should be reported.",
-      "languages": ["python"],
-      "taxonomy": ["maintainability", "control_flow"],
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "maintainability",
+        "control_flow"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/python/cpython",
@@ -375,7 +643,14 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-L034"]
+          "quality": [
+            {
+              "rule_id": "SKY-L034",
+              "file": "app.py",
+              "line": 2,
+              "name": "sequence repetition"
+            }
+          ]
         },
         "absent": {}
       }
@@ -384,8 +659,13 @@
       "id": "python-mutable-alias-clean",
       "path": "fixtures/python_mutable_alias_clean",
       "description": "A comprehension that creates one dictionary per slot should remain clean.",
-      "languages": ["python"],
-      "taxonomy": ["maintainability", "precision_guard"],
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "maintainability",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/python/cpython",
@@ -398,7 +678,9 @@
       "expect": {
         "present": {},
         "absent": {
-          "quality": ["SKY-L034"]
+          "quality": [
+            "SKY-L034"
+          ]
         }
       }
     },
@@ -406,8 +688,15 @@
       "id": "go-service-quality-hotspot",
       "path": "fixtures/go_service_quality_hotspot",
       "description": "Go service function with excessive branching and a wide call surface should be flagged.",
-      "languages": ["go"],
-      "taxonomy": ["go", "complexity", "api_design", "maintainability"],
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "go",
+        "complexity",
+        "api_design",
+        "maintainability"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/golang/go",
@@ -419,10 +708,25 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-Q301", "SKY-C303", "EvaluateOrder"]
+          "quality": [
+            {
+              "rule_id": "SKY-Q301",
+              "file": "service.go",
+              "line": 3,
+              "name": "EvaluateOrder"
+            },
+            {
+              "rule_id": "SKY-C303",
+              "file": "service.go",
+              "line": 3,
+              "name": "EvaluateOrder"
+            }
+          ]
         },
         "absent": {
-          "quality": ["Helper"]
+          "quality": [
+            "Helper"
+          ]
         }
       }
     },
@@ -430,8 +734,15 @@
       "id": "java-service-quality-hotspot",
       "path": "fixtures/java_service_quality_hotspot",
       "description": "Java service method with deep nesting and too many parameters should be flagged.",
-      "languages": ["java"],
-      "taxonomy": ["java", "complexity", "api_design", "maintainability"],
+      "languages": [
+        "java"
+      ],
+      "taxonomy": [
+        "java",
+        "complexity",
+        "api_design",
+        "maintainability"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/google/styleguide",
@@ -443,10 +754,25 @@
       },
       "expect": {
         "present": {
-          "quality": ["SKY-Q302", "SKY-C303", "decide"]
+          "quality": [
+            {
+              "rule_id": "SKY-Q302",
+              "file": "App.java",
+              "line": 2,
+              "name": "decide"
+            },
+            {
+              "rule_id": "SKY-C303",
+              "file": "App.java",
+              "line": 2,
+              "name": "decide"
+            }
+          ]
         },
         "absent": {
-          "quality": ["helper"]
+          "quality": [
+            "helper"
+          ]
         }
       }
     },
@@ -469,7 +795,12 @@
       "expect": {
         "present": {
           "quality": [
-            "SKY-UC002"
+            {
+              "rule_id": "SKY-UC002",
+              "file": "main.rs",
+              "line": 4,
+              "name": "run"
+            }
           ]
         },
         "absent": {
@@ -525,7 +856,12 @@
       "expect": {
         "present": {
           "quality": [
-            "SKY-Q305"
+            {
+              "rule_id": "SKY-Q305",
+              "file": "main.rs",
+              "line": 6,
+              "name": "run"
+            }
           ]
         },
         "absent": {
@@ -581,7 +917,11 @@
       "expect": {
         "present": {
           "quality": [
-            "SKY-UC002"
+            {
+              "rule_id": "SKY-UC002",
+              "file": "Example.cs",
+              "line": 4
+            }
           ]
         },
         "absent": {}
@@ -635,6 +975,190 @@
         "absent": {
           "quality": [
             "SKY-UC002"
+          ]
+        }
+      }
+    },
+    {
+      "id": "go-parameter-boundary-over-limit",
+      "path": "fixtures/go_parameter_boundary_over_limit",
+      "languages": [
+        "go"
+      ],
+      "description": "The parameter limit is exceeded by one.",
+      "taxonomy": [
+        "go",
+        "api_design"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static parameter-count boundary contract with otherwise identical positive/control bodies."
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-C303",
+              "file": "service.go",
+              "line": 3,
+              "name": "Total"
+            }
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "go-parameter-boundary-at-limit",
+      "path": "fixtures/go_parameter_boundary_at_limit",
+      "languages": [
+        "go"
+      ],
+      "description": "A callable exactly at the parameter limit must stay quiet.",
+      "taxonomy": [
+        "go",
+        "api_design",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static parameter-count boundary contract with otherwise identical positive/control bodies."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-C303",
+              "file": "service.go",
+              "line": 3,
+              "name": "Total"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "java-parameter-boundary-over-limit",
+      "path": "fixtures/java_parameter_boundary_over_limit",
+      "languages": [
+        "java"
+      ],
+      "description": "The parameter limit is exceeded by one.",
+      "taxonomy": [
+        "java",
+        "api_design"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static parameter-count boundary contract with otherwise identical positive/control bodies."
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-C303",
+              "file": "App.java",
+              "line": 2,
+              "name": "total"
+            }
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "java-parameter-boundary-at-limit",
+      "path": "fixtures/java_parameter_boundary_at_limit",
+      "languages": [
+        "java"
+      ],
+      "description": "A callable exactly at the parameter limit must stay quiet.",
+      "taxonomy": [
+        "java",
+        "api_design",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static parameter-count boundary contract with otherwise identical positive/control bodies."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-C303",
+              "file": "App.java",
+              "line": 2,
+              "name": "total"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "typescript-local-promise-discarded",
+      "path": "fixtures/typescript_local_promise_discarded",
+      "languages": [
+        "typescript"
+      ],
+      "description": "A known local async call discards a potentially rejected promise.",
+      "taxonomy": [
+        "typescript",
+        "control_flow"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static local-callable and promise-result contract; source is not executed."
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-Q410",
+              "file": "app.ts",
+              "line": 5,
+              "name": "persist"
+            }
+          ]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "typescript-local-promise-handled",
+      "path": "fixtures/typescript_local_promise_handled",
+      "languages": [
+        "typescript"
+      ],
+      "description": "Known local promises are awaited, returned, rejection-handled or explicitly discarded with void.",
+      "taxonomy": [
+        "typescript",
+        "control_flow",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static local-callable and promise-result contract; source is not executed."
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": [
+            "SKY-Q410"
           ]
         }
       }

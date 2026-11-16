@@ -1,2 +1,2 @@
-def process_payment(amount):
+def process_payment(amount) -> str:
     pass

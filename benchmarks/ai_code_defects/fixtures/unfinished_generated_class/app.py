@@ -1,10 +1,10 @@
 class BillingWorkflow:
-    def authorize(self, payment):
+    def authorize(self, payment) -> bool:
         pass
 
-    async def capture(self, payment):
+    async def capture(self, payment) -> str:
         ...
 
 
 def send_receipt(user, receipt):
-    raise NotImplementedError("AI agent left receipt delivery unfinished")
+    raise NotImplementedError("Implementation pending: receipt delivery")

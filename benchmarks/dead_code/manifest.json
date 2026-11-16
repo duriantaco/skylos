@@ -1600,7 +1600,7 @@
     {
       "id": "csharp-private-call-chain",
       "path": "fixtures/csharp_private_call_chain",
-      "description": "Main constructs Pipeline and calls Emit→Normalize; Parse has no call, registration, reflection or exported API in this executable.",
+      "description": "Main constructs Pipeline and calls Emit\u2192Normalize; Parse has no call, registration, reflection or exported API in this executable.",
       "languages": [
         "csharp"
       ],
@@ -1658,7 +1658,7 @@
     {
       "id": "kotlin-private-call-chain",
       "path": "fixtures/kotlin_private_call_chain",
-      "description": "main calls displayRecord→formatRecord; private parseRecord has no caller or exposed entrypoint.",
+      "description": "main calls displayRecord\u2192formatRecord; private parseRecord has no caller or exposed entrypoint.",
       "languages": [
         "kotlin"
       ],
@@ -5905,6 +5905,16 @@
             "kind": "file",
             "file": "src/orphan.js",
             "symbol": "src/orphan.js"
+          },
+          {
+            "kind": "variable",
+            "file": ".storybook/leftover.js",
+            "symbol": "leftover"
+          },
+          {
+            "kind": "variable",
+            "file": "src/orphan.js",
+            "symbol": "orphan"
           }
         ],
         "used": [
@@ -5922,6 +5932,11 @@
             "kind": "file",
             "file": ".storybook/main.js",
             "symbol": ".storybook/main.js"
+          },
+          {
+            "kind": "variable",
+            "file": "src/index.js",
+            "symbol": "value"
           }
         ]
       }
@@ -5956,9 +5971,20 @@
             "kind": "file",
             "file": ".storybook/config.js",
             "symbol": ".storybook/config.js"
+          },
+          {
+            "kind": "variable",
+            "file": ".storybook/config.js",
+            "symbol": "stale"
           }
         ],
-        "used": []
+        "used": [
+          {
+            "kind": "variable",
+            "file": "src/index.js",
+            "symbol": "value"
+          }
+        ]
       }
     },
     {
@@ -5997,6 +6023,11 @@
             "kind": "file",
             "file": "src/settings.conf.ts",
             "symbol": "src/settings.conf.ts"
+          },
+          {
+            "kind": "variable",
+            "file": "src/settings.conf.ts",
+            "symbol": "settings"
           }
         ],
         "used": [
@@ -6106,6 +6137,36 @@
             "kind": "file",
             "file": "lib/orphan.ts",
             "symbol": "lib/orphan.ts"
+          },
+          {
+            "kind": "variable",
+            "file": "lib/excluded.ts",
+            "symbol": "excluded"
+          },
+          {
+            "kind": "variable",
+            "file": "lib/mentioned.ts",
+            "symbol": "mentioned"
+          },
+          {
+            "kind": "variable",
+            "file": "lib/notes.ts",
+            "symbol": "stalePath"
+          },
+          {
+            "kind": "variable",
+            "file": "lib/orphan.ts",
+            "symbol": "orphan"
+          },
+          {
+            "kind": "variable",
+            "file": "lib/prose.ts",
+            "symbol": "prose"
+          },
+          {
+            "kind": "variable",
+            "file": "lib/stale.ts",
+            "symbol": "stale"
           }
         ],
         "used": [
@@ -6443,6 +6504,16 @@
             "kind": "file",
             "file": "src/ignored.ts",
             "symbol": "src/ignored.ts"
+          },
+          {
+            "kind": "variable",
+            "file": "src/described.ts",
+            "symbol": "described"
+          },
+          {
+            "kind": "variable",
+            "file": "src/ignored.ts",
+            "symbol": "ignored"
           }
         ],
         "used": [
@@ -6506,6 +6577,21 @@
             "kind": "file",
             "file": "hooks/useGone.ios.ts",
             "symbol": "hooks/useGone.ios.ts"
+          },
+          {
+            "kind": "function",
+            "file": "hooks/lonely.web.ts",
+            "symbol": "lonely"
+          },
+          {
+            "kind": "function",
+            "file": "hooks/useGone.ios.ts",
+            "symbol": "useGone"
+          },
+          {
+            "kind": "function",
+            "file": "hooks/useGone.ts",
+            "symbol": "useGone"
           }
         ],
         "used": [
@@ -6562,6 +6648,11 @@
             "kind": "file",
             "file": "src/scale.web.ts",
             "symbol": "src/scale.web.ts"
+          },
+          {
+            "kind": "function",
+            "file": "src/scale.web.ts",
+            "symbol": "scale"
           }
         ],
         "used": []
@@ -8268,6 +8359,347 @@
             "kind": "function",
             "file": "app.py",
             "symbol": "_never_registered"
+          },
+          {
+            "kind": "parameter",
+            "file": "routes.py",
+            "symbol": "name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cpp-local-shadow",
+      "path": "fixtures/cpp_local_shadow",
+      "languages": [
+        "cpp"
+      ],
+      "description": "An ordinary local binding cannot keep a same-named file-local function alive; an actual call preserves its target.",
+      "taxonomy": [
+        "cpp",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original paired static source contract."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": false
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "spare"
+          },
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "orphan"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "main.cpp",
+            "symbol": "helper"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-conditional-assets-direct",
+      "path": "fixtures/corpus_conditional_assets_direct",
+      "description": "Direct HTML script references preserve exact paths while ordinary and malformed comments do not load scripts.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "low",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic asset-loading corpus. Conditional-comment loads apply only to matching legacy Internet Explorer modes; no modern-browser execution claim."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "js/c.js",
+            "symbol": "js/c.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/d.js",
+            "symbol": "js/d.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/e.js",
+            "symbol": "js/e.js"
+          },
+          {
+            "kind": "file",
+            "file": "other/b.js",
+            "symbol": "other/b.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "js/a.js",
+            "symbol": "js/a.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/b.js",
+            "symbol": "js/b.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-conditional-assets-plain",
+      "path": "fixtures/corpus_conditional_assets_plain",
+      "description": "Legacy IE conditional HTML script references preserve the exact asset without treating ordinary or malformed comments as loads.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "low",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic asset-loading corpus. Conditional-comment loads apply only to matching legacy Internet Explorer modes; no modern-browser execution claim."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "js/c.js",
+            "symbol": "js/c.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/d.js",
+            "symbol": "js/d.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/e.js",
+            "symbol": "js/e.js"
+          },
+          {
+            "kind": "file",
+            "file": "other/b.js",
+            "symbol": "other/b.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "js/a.js",
+            "symbol": "js/a.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/b.js",
+            "symbol": "js/b.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-conditional-assets-jinja",
+      "path": "fixtures/corpus_conditional_assets_jinja",
+      "description": "Legacy IE conditional HTML script references support the native Jinja safe filter on simple literal paths while comments and wrong paths remain unused.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "low",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic asset-loading corpus. Native Jinja safe preserves these literal ASCII paths; no custom URL filter or renderer is assumed. Conditional-comment loads apply only to matching legacy Internet Explorer modes; no modern-browser execution claim."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "js/c.js",
+            "symbol": "js/c.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/d.js",
+            "symbol": "js/d.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/e.js",
+            "symbol": "js/e.js"
+          },
+          {
+            "kind": "file",
+            "file": "other/b.js",
+            "symbol": "other/b.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "js/a.js",
+            "symbol": "js/a.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/b.js",
+            "symbol": "js/b.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "csharp-owner-call-identity",
+      "path": "fixtures/csharp_owner_call_identity",
+      "description": "Main constructs both namespace-specific Worker classes but only invokes Primary.Run\u2192Primary.Process. The Secondary private method has no caller; its owner is constructed so parent grouping cannot hide it.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "csharp",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Secondary.Worker.Process"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Program.cs",
+            "symbol": "Portfolio.Program"
+          },
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Portfolio.Program.Main"
+          },
+          {
+            "kind": "class",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker.Run"
+          },
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker.Process"
+          },
+          {
+            "kind": "class",
+            "file": "Workers.cs",
+            "symbol": "Secondary.Worker"
+          }
+        ]
+      },
+      "symbol_identity": "qualified",
+      "coverage_notes": "Known current false positive: the static entrypoint Main is live but its owning Portfolio.Program class is reported unused. Ground truth retained; not a detector fix."
+    },
+    {
+      "id": "private-exported-enum-members",
+      "path": "../../corpus/fixtures/private_exported_enum_members",
+      "description": "Imported aliases in a closed private package consume individual enum members.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original paired static source contract."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": false
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "variable",
+            "file": "status.ts",
+            "symbol": "Status.Spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "variable",
+            "file": "status.ts",
+            "symbol": "Status.Ready"
           }
         ]
       }

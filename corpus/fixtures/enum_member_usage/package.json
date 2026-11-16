@@ -1,0 +1,5 @@
+{
+  "name": "enum-member-usage-contract",
+  "private": true,
+  "main": "app.ts"
+}

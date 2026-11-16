@@ -1,0 +1,120 @@
+id: SKY-U007
+title: Unused TypeScript enum member
+family: dead-code
+severity: LOW
+languages:
+- TypeScript
+gate:
+  full: counted
+  note: Reported in unused_variables with its own SKY-U007 ID; counts toward max_dead_code,
+    which is unlimited by default.
+run_with: '`skylos .`'
+what_it_is: A member has no literal read in a module-local enum, or in a closed private package
+  whose direct named imports are fully known. Public and opaque enum surfaces remain live.
+why_it_matters: An obsolete enum member can keep a removed state or workflow looking supported.
+  Removing numeric members can change later implicit values, so the finding requires review.
+flagged_example:
+  language: typescript
+  filename: src/status.ts
+  expect_line: 4
+  code: |
+    export {};
+    enum Status {
+      Ready = "ready",
+      Spare = "spare",
+    }
+    console.log(Status.Ready);
+not_flagged_example:
+  language: typescript
+  filename: src/status.ts
+  code: |
+    export {};
+    enum Status {
+      Ready = "ready",
+      Spare = "spare",
+    }
+    console.log(Object.values(Status));
+  why: Reflection consumes the enum object without proving which members a downstream consumer
+    needs, so all members remain live.
+how_skylos_decides:
+- 'Reads implementation enums in explicit TypeScript modules. Local enums can be narrowed
+  inside their module; an exported enum requires an owning package.json with private: true
+  and a complete source inventory.'
+- For a private exported enum, resolves direct named imports and aliases to their provider
+  before combining literal member reads across files. Namespace imports, re-exports, dynamic
+  loaders, unresolved imports and unparsed component consumers prevent this proof.
+- Resolves literal member reads and constant aliases. Dynamic indexing, reflection, mutation,
+  escapes, declaration merging and effectful initializers decline member narrowing.
+- Retains members referenced by other initializers. If no member is read, leaves the entire
+  enum to the existing unused-owner finding instead of listing every member.
+- Reports LOW at the member declaration. analysis_summary.enum_member_analysis identifies
+  scope local_and_closed_private_enums and records checked enums, abstentions and incomplete
+  source graph reads.
+source_refs:
+- path: skylos/visitors/languages/typescript/unused_enum_members.py
+  symbol: def find_unused_ts_enum_members(
+- path: test/test_typescript_enum_members.py
+  symbol: def test_opaque_escaped_or_mutated_enum_retains_all_members
+- path: skylos/visitors/languages/typescript/unused_enum_members.py
+  symbol: def _closed_source_graph(
+- path: test/test_typescript_enum_members.py
+  symbol: def test_closed_private_named_import_reports_unused_member
+fix:
+  explanation: Remove a genuinely obsolete member after checking that remaining enum values
+    and external contracts stay correct. This string-valued example preserves the retained
+    member value.
+  language: typescript
+  filename: src/status.ts
+  code: |
+    export {};
+    enum Status {
+      Ready = "ready",
+    }
+    console.log(Status.Ready);
+false_alarms_and_suppression:
+  misfires:
+  - Code loaded outside the selected project may impose a contract the module does not expose
+    statically.
+  - An unread numeric member can still influence later automatically assigned values; the
+    rule does not authorize automatic removal.
+  suppress:
+  - check: config
+    text: Set `[tool.skylos] ignore = ["SKY-U007"]` to disable this rule project-wide.
+related:
+- SKY-U003
+- SKY-U004
+- SKY-E003
+more_examples:
+- flagged:
+    language: typescript
+    expect_file: status.ts
+    expect_line: 3
+    files:
+    - &id001
+      filename: package.json
+      language: json
+      code: |
+        {"name":"app","private":true,"type":"module","main":"app.ts"}
+    - &id002
+      filename: status.ts
+      language: typescript
+      code: |
+        export enum Status {
+          Ready = "ready",
+          Spare = "spare"
+        }
+    - filename: app.ts
+      code: |
+        import { Status as Mode } from "./status";
+        console.log(Mode.Ready);
+  not_flagged:
+    language: typescript
+    files:
+    - *id001
+    - *id002
+    - filename: app.ts
+      code: |
+        import { Status as Mode } from "./status";
+        console.log(Object.values(Mode));
+    why: The private source inventory is known, but reflection makes the member demand opaque.
+      The enum is retained rather than narrowed.

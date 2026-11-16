@@ -110,6 +110,7 @@ def namespace_member_reads(
     shadowed_properties: set[int] | None = None,
     local_value_reads: set[int] | None = None,
     include_named_imports: bool = False,
+    include_local_enums: bool = False,
     member_paths: bool = False,
 ) -> dict[str, set[str | tuple[str, ...]] | None]:
     """Map namespace locals to read export names; ``None`` means opaque use.
@@ -141,6 +142,10 @@ def namespace_member_reads(
                         for spec in child.named_children
                         if spec.type == "import_specifier"
                     )
+        elif include_local_enums and node.type == "enum_declaration":
+            name = node.child_by_field_name("name")
+            if name is not None:
+                namespace_nodes.append(name)
         if len(nodes) > _MAX_NODES:
             return {node_text(source, n): None for n in namespace_nodes}
         stack.extend(reversed(node.named_children))
@@ -200,7 +205,14 @@ def namespace_member_reads(
             "abstract_class_declaration",
             "enum_declaration",
         }:
-            bind(outer, node.child_by_field_name("name"))
+            name = node.child_by_field_name("name")
+            bind(
+                outer,
+                name,
+                namespace=node_text(source, name)
+                if include_local_enums and node.type == "enum_declaration"
+                else None,
+            )
         if node.type in _FUNCTIONS:
             scope = _Scope(outer, function=True)
             if node.type in {"function_expression", "generator_function"}:

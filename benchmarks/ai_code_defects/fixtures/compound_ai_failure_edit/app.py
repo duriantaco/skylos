@@ -10,5 +10,5 @@ def sync_profile(request):
     return profile
 
 
-def complete_later(payload):
+def complete_later(payload) -> bytes:
     pass

@@ -134,12 +134,69 @@ def scan_symbols(
     # Counting all ordinary identifier uses (not just calls) protects address-
     # taken callbacks, registration tables, and similar indirect uses. String
     # and comment text cannot create identifier nodes in the C++ grammar.
+    local_names, binding_offsets = _local_bindings(nodes, source_bytes)
     refs = [
         (_text(node, source_bytes), file_path)
         for node in nodes
         if node.type == "identifier" and node.start_byte not in definition_name_offsets
+        and node.start_byte not in binding_offsets
+        and not _has_local_binding(node, source_bytes, local_names)
     ]
     return definitions, refs, []
+
+
+def _local_bindings(nodes, source):
+    """Prove ordinary block locals and parameters; leave complex lookup opaque."""
+    bindings = []
+    offsets = set()
+    for node in nodes:
+        if node.type == "declaration" and node.parent.type == "compound_statement":
+            scope = node.parent
+            declarators = [
+                child.child_by_field_name("declarator") if child.type == "init_declarator" else child
+                for child in node.named_children
+            ]
+        elif node.type == "parameter_declaration":
+            # Only the defined function's own parameters bind throughout its
+            # body. Prototype, callback-signature, catch and requires names
+            # have different scopes; leave those contexts conservative.
+            parameters = node.parent
+            declarator = parameters.parent if parameters is not None else None
+            if (
+                parameters is None or parameters.type != "parameter_list"
+                or declarator is None or declarator.type != "function_declarator"
+            ):
+                continue
+            owner = declarator.parent
+            while owner is not None and owner.type in _DECLARATOR_WRAPPERS:
+                owner = owner.parent
+            if owner is None or owner.type != "function_definition":
+                continue
+            scope = owner.child_by_field_name("body")
+            if scope is None:
+                continue
+            declarators = [node.child_by_field_name("declarator")]
+        else:
+            continue
+        for declarator in declarators:
+            while declarator is not None and declarator.type in _DECLARATOR_WRAPPERS:
+                declarator = declarator.child_by_field_name("declarator")
+            if declarator is None or declarator.type != "identifier":
+                continue
+            offsets.add(declarator.start_byte)
+            bindings.append((_text(declarator, source), declarator.end_byte, scope.start_byte, scope.end_byte))
+    return bindings, offsets
+
+
+def _has_local_binding(node, source, bindings):
+    # Explicit qualification still refers to the outer declaration.
+    if node.parent is not None and node.parent.type == "qualified_identifier":
+        return False
+    name = _text(node, source)
+    return any(
+        name == bound and start <= node.start_byte and low <= node.start_byte < high
+        for bound, start, low, high in bindings
+    )
 
 
 def _walk(node: Node):

@@ -6,7 +6,9 @@
       "language": "python",
       "path": "fixtures/hallucinated_reference",
       "description": "Generated handler calls a plausible helper that was never defined.",
-      "taxonomy": ["hallucinated_reference"],
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -33,7 +35,9 @@
       "language": "python",
       "path": "fixtures/repo_local_phantom_reference",
       "description": "Generated handler calls a plausible method on a real local module, but the method was never implemented.",
-      "taxonomy": ["hallucinated_reference"],
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -61,7 +65,9 @@
       "language": "python",
       "path": "fixtures/multiple_phantom_references",
       "description": "Generated request handler chains several plausible security helpers that do not exist.",
-      "taxonomy": ["hallucinated_reference"],
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -89,7 +95,9 @@
       "language": "python",
       "path": "fixtures/range_scoped_mixed_edit",
       "description": "A generated file contains multiple AI defects, but verify is scoped to only the changed handler range.",
-      "taxonomy": ["hallucinated_reference"],
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -131,7 +139,10 @@
       "language": "python",
       "path": "fixtures/file_scoped_multi_module",
       "description": "A generated package contains defects in multiple modules, but verify is scoped to the edited route file.",
-      "taxonomy": ["hallucinated_reference", "precision_guard"],
+      "taxonomy": [
+        "hallucinated_reference",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -168,7 +179,9 @@
       "language": "python",
       "path": "fixtures/assertion_weakening",
       "description": "Generated test edit weakens a specific status assertion into a broad null check.",
-      "taxonomy": ["assertion_weakening"],
+      "taxonomy": [
+        "assertion_weakening"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -204,7 +217,9 @@
       "language": "python",
       "path": "fixtures/bad_test_expected_broadening",
       "description": "Generated test edit replaces a specific expected value with a broad ANY matcher.",
-      "taxonomy": ["assertion_weakening"],
+      "taxonomy": [
+        "assertion_weakening"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -240,7 +255,10 @@
       "language": "python",
       "path": "fixtures/clean_test_expected_change",
       "description": "A test keeps an exact expected value while the fixture value changes.",
-      "taxonomy": ["assertion_weakening", "precision_guard"],
+      "taxonomy": [
+        "assertion_weakening",
+        "precision_guard"
+      ],
       "importance": "medium",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -270,8 +288,10 @@
       "id": "incomplete-generation",
       "language": "python",
       "path": "fixtures/incomplete_generation",
-      "description": "Generated business function is left as a pass-body stub.",
-      "taxonomy": ["incomplete_generation"],
+      "description": "A generated function promises a string result but contains only pass.",
+      "taxonomy": [
+        "incomplete_generation"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -297,8 +317,10 @@
       "id": "unfinished-generated-class",
       "language": "python",
       "path": "fixtures/unfinished_generated_class",
-      "description": "Generated workflow mixes pass, ellipsis, and NotImplementedError placeholders.",
-      "taxonomy": ["incomplete_generation"],
+      "description": "Generated methods contradict concrete return contracts; a receipt helper explicitly reports its implementation is pending.",
+      "taxonomy": [
+        "incomplete_generation"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -326,7 +348,9 @@
       "language": "python",
       "path": "fixtures/api_signature_hallucination",
       "description": "Generated code calls real installed package APIs that do not exist.",
-      "taxonomy": ["api_signature_hallucination"],
+      "taxonomy": [
+        "api_signature_hallucination"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -356,7 +380,9 @@
       "language": "python",
       "path": "fixtures/api_keyword_hallucination",
       "description": "Generated code passes invented keyword arguments to real installed package APIs.",
-      "taxonomy": ["api_signature_hallucination"],
+      "taxonomy": [
+        "api_signature_hallucination"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -396,7 +422,9 @@
       "language": "javascript",
       "path": "fixtures/dependency_package_hallucination",
       "description": "Generated package manifest adds a package that does not exist.",
-      "taxonomy": ["dependency_hallucination"],
+      "taxonomy": [
+        "dependency_hallucination"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -576,7 +604,9 @@
       "language": "javascript",
       "path": "fixtures/dependency_version_hallucination",
       "description": "Generated package manifest pins a dependency/version that should be verified against the registry.",
-      "taxonomy": ["dependency_hallucination"],
+      "taxonomy": [
+        "dependency_hallucination"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -612,7 +642,9 @@
       "language": "python",
       "path": "fixtures/repo_level_security_regression",
       "description": "Generated repo-level edit introduces string-built SQL and unsafe pickle deserialization.",
-      "taxonomy": ["security_regression"],
+      "taxonomy": [
+        "security_regression"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -652,7 +684,9 @@
       "language": "python",
       "path": "fixtures/slopsquat_dependency",
       "description": "Generated requirements file pins a suspicious existing near-miss of a popular package.",
-      "taxonomy": ["dependency_hallucination"],
+      "taxonomy": [
+        "dependency_hallucination"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -702,7 +736,10 @@
       "language": "python",
       "path": "fixtures/disabled_security_control",
       "description": "Generated integration disables TLS verification while calling an external service.",
-      "taxonomy": ["security_regression", "incomplete_generation"],
+      "taxonomy": [
+        "security_regression",
+        "incomplete_generation"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -739,7 +776,9 @@
       "language": "python",
       "path": "fixtures/missing_auth_route",
       "description": "Generated mutating FastAPI route has no auth, permission, or security dependency guard.",
-      "taxonomy": ["security_regression"],
+      "taxonomy": [
+        "security_regression"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -771,7 +810,10 @@
       "language": "python",
       "path": "fixtures/clean_auth_route",
       "description": "Generated mutating FastAPI route uses an explicit admin dependency guard.",
-      "taxonomy": ["security_regression", "precision_guard"],
+      "taxonomy": [
+        "security_regression",
+        "precision_guard"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -798,7 +840,10 @@
       "language": "python",
       "path": "fixtures/async_swallowed_error",
       "description": "Generated async integration swallows broad exceptions and returns None.",
-      "taxonomy": ["incomplete_generation", "security_regression"],
+      "taxonomy": [
+        "incomplete_generation",
+        "security_regression"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -816,7 +861,7 @@
             "rule_id": "SKY-L030",
             "vibe_category": "swallowed_error",
             "category": "quality",
-            "severity": "MEDIUM",
+            "severity": "HIGH",
             "message_contains": "broad 'Exception'",
             "file_contains": "app.py",
             "start_line": 4
@@ -830,7 +875,10 @@
       "language": "python",
       "path": "fixtures/clean_async_error_handling",
       "description": "Generated async integration re-raises a narrow timeout instead of swallowing errors.",
-      "taxonomy": ["incomplete_generation", "precision_guard"],
+      "taxonomy": [
+        "incomplete_generation",
+        "precision_guard"
+      ],
       "importance": "medium",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -857,7 +905,10 @@
       "language": "python",
       "path": "fixtures/clean_repo_level_security",
       "description": "Clean repo-level security edit uses parameterized SQL and JSON parsing.",
-      "taxonomy": ["security_regression", "precision_guard"],
+      "taxonomy": [
+        "security_regression",
+        "precision_guard"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -889,7 +940,9 @@
       "language": "go",
       "path": "fixtures/go_module_version_hallucination",
       "description": "Generated Go module manifest pins a real module to an invented version.",
-      "taxonomy": ["dependency_hallucination"],
+      "taxonomy": [
+        "dependency_hallucination"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -926,7 +979,9 @@
       "language": "javascript",
       "path": "fixtures/mixed_manifest_hallucinations",
       "description": "A generated manifest mixes multiple missing packages with an invented version in one dependency edit.",
-      "taxonomy": ["dependency_hallucination"],
+      "taxonomy": [
+        "dependency_hallucination"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -985,7 +1040,9 @@
       "language": "javascript",
       "path": "fixtures/nested_manifest_workspace",
       "description": "Generated dependency hallucinations live in a nested workspace manifest instead of the scan root.",
-      "taxonomy": ["dependency_hallucination"],
+      "taxonomy": [
+        "dependency_hallucination"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1035,7 +1092,10 @@
       "language": "python",
       "path": "fixtures/contract_phantom_helper",
       "description": "Generated handler calls a repo-specific helper listed in the AI contract but never defined.",
-      "taxonomy": ["hallucinated_reference", "contract_guardrail"],
+      "taxonomy": [
+        "hallucinated_reference",
+        "contract_guardrail"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1066,7 +1126,9 @@
       "language": "python",
       "path": "fixtures/contract_route_guard_missing",
       "description": "Generated route is inside a contract-scoped API path but lacks a required auth guard decorator.",
-      "taxonomy": ["contract_guardrail"],
+      "taxonomy": [
+        "contract_guardrail"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1099,7 +1161,10 @@
       "language": "python",
       "path": "fixtures/contract_route_guard_clean",
       "description": "Generated route uses the custom guard decorator required by the contract.",
-      "taxonomy": ["contract_guardrail", "precision_guard"],
+      "taxonomy": [
+        "contract_guardrail",
+        "precision_guard"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1127,7 +1192,10 @@
       "language": "javascript",
       "path": "fixtures/contract_dependency_manifest",
       "description": "Contract enables dependency hallucination checks for a manifest with a fake package and impossible version.",
-      "taxonomy": ["dependency_hallucination", "contract_guardrail"],
+      "taxonomy": [
+        "dependency_hallucination",
+        "contract_guardrail"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1179,7 +1247,11 @@
       "language": "javascript",
       "path": "fixtures/contract_dependency_clean",
       "description": "Contract-enabled dependency checks stay quiet for known-good dependency versions.",
-      "taxonomy": ["dependency_hallucination", "contract_guardrail", "precision_guard"],
+      "taxonomy": [
+        "dependency_hallucination",
+        "contract_guardrail",
+        "precision_guard"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1219,7 +1291,10 @@
       "language": "multi",
       "path": "fixtures/clean_dependency_manifest",
       "description": "Generated npm and Go manifests use dependency versions known to exist.",
-      "taxonomy": ["precision_guard", "dependency_hallucination"],
+      "taxonomy": [
+        "precision_guard",
+        "dependency_hallucination"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1363,7 +1438,9 @@
       "language": "typescript",
       "path": "fixtures/typescript_local_api_hallucination",
       "description": "Generated TypeScript invents named, type-only, namespace, and CommonJS exports on local modules.",
-      "taxonomy": ["hallucinated_reference"],
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1414,7 +1491,10 @@
       "language": "typescript",
       "path": "fixtures/clean_typescript_local_api_surface",
       "description": "Generated TypeScript uses real default, named, type-only, namespace, re-exported, and CommonJS local APIs.",
-      "taxonomy": ["hallucinated_reference", "precision_guard"],
+      "taxonomy": [
+        "hallucinated_reference",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1441,7 +1521,9 @@
       "language": "go",
       "path": "fixtures/go_local_api_hallucination",
       "description": "Generated Go code calls an exported symbol that does not exist in a local module package.",
-      "taxonomy": ["hallucinated_reference"],
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1480,7 +1562,10 @@
       "language": "go",
       "path": "fixtures/clean_go_local_api_surface",
       "description": "Generated Go code calls an existing exported symbol in a local module package.",
-      "taxonomy": ["hallucinated_reference", "precision_guard"],
+      "taxonomy": [
+        "hallucinated_reference",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1514,7 +1599,9 @@
       "language": "java",
       "path": "fixtures/java_local_api_hallucination",
       "description": "Generated Java code calls a static member that does not exist on an explicitly imported local type.",
-      "taxonomy": ["hallucinated_reference"],
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1553,7 +1640,10 @@
       "language": "java",
       "path": "fixtures/clean_java_local_api_surface",
       "description": "Generated Java code calls an existing static member on an explicitly imported local type.",
-      "taxonomy": ["hallucinated_reference", "precision_guard"],
+      "taxonomy": [
+        "hallucinated_reference",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1586,8 +1676,10 @@
       "id": "clean-generated-code",
       "language": "python",
       "path": "fixtures/clean_generated_code",
-      "description": "Generated code defines the helper it calls and contains no unfinished body.",
-      "taxonomy": ["precision_guard"],
+      "description": "Defined helpers and intentional optional no-op hooks must remain free of AI-defect findings.",
+      "taxonomy": [
+        "precision_guard"
+      ],
       "importance": "high",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
@@ -1622,6 +1714,444 @@
           {
             "rule_id": "SKY-D225",
             "vibe_category": "dependency_hallucination"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-test-assertion-weakened",
+      "language": "typescript",
+      "path": "fixtures/typescript_test_assertion_weakened",
+      "description": "A precise test assertion is replaced with a broader check.",
+      "taxonomy": [
+        "assertion_weakening"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static diff contract; test code is parsed, never executed."
+      },
+      "scan": {
+        "file": "tests/billing.test.ts",
+        "dependency_hallucinations": false,
+        "git_baseline": {
+          "tests/billing.test.ts": "const result = { status: \"paid\" };\ntest(\"checks billing\", () => {\n  expect(result.status).toBe(\"paid\");\n});\n"
+        }
+      },
+      "expect": {
+        "finding_count": 1,
+        "present": [
+          {
+            "rule_id": "SKY-A101",
+            "vibe_category": "assertion_weakening",
+            "file_contains": "tests/billing.test.ts",
+            "start_line": 3
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "typescript-test-exact-value-changed",
+      "language": "typescript",
+      "path": "fixtures/typescript_test_exact_value_changed",
+      "description": "A precise assertion is retained while test metadata or its exact value changes.",
+      "taxonomy": [
+        "assertion_weakening",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static diff contract; test code is parsed, never executed."
+      },
+      "scan": {
+        "file": "tests/billing.test.ts",
+        "dependency_hallucinations": false,
+        "git_baseline": {
+          "tests/billing.test.ts": "const result = { status: \"paid\" };\ntest(\"checks billing\", () => {\n  expect(result.status).toBe(\"pending\");\n});\n"
+        }
+      },
+      "expect": {
+        "finding_count": 0,
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-A101"
+          }
+        ]
+      }
+    },
+    {
+      "id": "javascript-test-exception-broadened",
+      "language": "javascript",
+      "path": "fixtures/javascript_test_exception_broadened",
+      "description": "A precise test assertion is replaced with a broader check.",
+      "taxonomy": [
+        "assertion_weakening"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static diff contract; test code is parsed, never executed."
+      },
+      "scan": {
+        "file": "tests/billing.test.js",
+        "dependency_hallucinations": false,
+        "git_baseline": {
+          "tests/billing.test.js": "function reject() { throw new TypeError(\"invalid\"); }\ntest(\"checks billing\", () => {\n  expect(reject).toThrow(TypeError);\n});\n"
+        }
+      },
+      "expect": {
+        "finding_count": 1,
+        "present": [
+          {
+            "rule_id": "SKY-A101",
+            "vibe_category": "assertion_weakening",
+            "file_contains": "tests/billing.test.js",
+            "start_line": 3
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "javascript-test-exception-preserved",
+      "language": "javascript",
+      "path": "fixtures/javascript_test_exception_preserved",
+      "description": "A precise assertion is retained while test metadata or its exact value changes.",
+      "taxonomy": [
+        "assertion_weakening",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static diff contract; test code is parsed, never executed."
+      },
+      "scan": {
+        "file": "tests/billing.test.js",
+        "dependency_hallucinations": false,
+        "git_baseline": {
+          "tests/billing.test.js": "function reject() { throw new TypeError(\"invalid\"); }\ntest(\"checks billing\", () => {\n  expect(reject).toThrow(TypeError);\n});\n"
+        }
+      },
+      "expect": {
+        "finding_count": 0,
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-A101"
+          }
+        ]
+      }
+    },
+    {
+      "id": "php-local-api-unsupported",
+      "language": "php",
+      "path": "fixtures/php_local_api_unsupported",
+      "description": "An unresolved local API reference must report unsupported verification, never a clean pass.",
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original unsupported-capability contract. An empty finding list does not establish that the reference is valid."
+      },
+      "scan": {
+        "dependency_hallucinations": false
+      },
+      "expect": {
+        "finding_count": 0,
+        "verification": {
+          "status": "incomplete",
+          "coverage_state": "incomplete",
+          "checks": {
+            "php_workspace_api_surface": "incomplete"
+          }
+        },
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-local-api-unsupported",
+      "language": "rust",
+      "path": "fixtures/rust_local_api_unsupported",
+      "description": "An unresolved local API reference must report unsupported verification, never a clean pass.",
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original unsupported-capability contract. An empty finding list does not establish that the reference is valid."
+      },
+      "scan": {
+        "dependency_hallucinations": false
+      },
+      "expect": {
+        "finding_count": 0,
+        "verification": {
+          "status": "incomplete",
+          "coverage_state": "incomplete",
+          "checks": {
+            "rust_workspace_api_surface": "incomplete"
+          }
+        },
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dart-local-api-unsupported",
+      "language": "dart",
+      "path": "fixtures/dart_local_api_unsupported",
+      "description": "An unresolved local API reference must report unsupported verification, never a clean pass.",
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original unsupported-capability contract. An empty finding list does not establish that the reference is valid."
+      },
+      "scan": {
+        "dependency_hallucinations": false
+      },
+      "expect": {
+        "finding_count": 0,
+        "verification": {
+          "status": "incomplete",
+          "coverage_state": "incomplete",
+          "checks": {
+            "dart_workspace_api_surface": "incomplete"
+          }
+        },
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012"
+          }
+        ]
+      }
+    },
+    {
+      "id": "csharp-local-api-unsupported",
+      "language": "csharp",
+      "path": "fixtures/csharp_local_api_unsupported",
+      "description": "An unresolved local API reference must report unsupported verification, never a clean pass.",
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original unsupported-capability contract. An empty finding list does not establish that the reference is valid."
+      },
+      "scan": {
+        "dependency_hallucinations": false
+      },
+      "expect": {
+        "finding_count": 0,
+        "verification": {
+          "status": "incomplete",
+          "coverage_state": "incomplete",
+          "checks": {
+            "csharp_workspace_api_surface": "incomplete"
+          }
+        },
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cpp-local-api-unsupported",
+      "language": "cpp",
+      "path": "fixtures/cpp_local_api_unsupported",
+      "description": "An unresolved local API reference must report unsupported verification, never a clean pass.",
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original unsupported-capability contract. An empty finding list does not establish that the reference is valid."
+      },
+      "scan": {
+        "dependency_hallucinations": false
+      },
+      "expect": {
+        "finding_count": 0,
+        "verification": {
+          "status": "incomplete",
+          "coverage_state": "incomplete",
+          "checks": {
+            "cpp_workspace_api_surface": "incomplete"
+          }
+        },
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012"
+          }
+        ]
+      }
+    },
+    {
+      "id": "kotlin-local-api-unsupported",
+      "language": "kotlin",
+      "path": "fixtures/kotlin_local_api_unsupported",
+      "description": "An unresolved local API reference must report unsupported verification, never a clean pass.",
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original unsupported-capability contract. An empty finding list does not establish that the reference is valid."
+      },
+      "scan": {
+        "dependency_hallucinations": false
+      },
+      "expect": {
+        "finding_count": 0,
+        "verification": {
+          "status": "incomplete",
+          "coverage_state": "incomplete",
+          "checks": {
+            "kotlin_workspace_api_surface": "incomplete"
+          }
+        },
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012"
+          }
+        ]
+      }
+    },
+    {
+      "id": "shell-local-api-unsupported",
+      "language": "shell",
+      "path": "fixtures/shell_local_api_unsupported",
+      "description": "An unresolved local API reference must report unsupported verification, never a clean pass.",
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original unsupported-capability contract. An empty finding list does not establish that the reference is valid."
+      },
+      "scan": {
+        "dependency_hallucinations": false
+      },
+      "expect": {
+        "finding_count": 0,
+        "verification": {
+          "status": "incomplete",
+          "coverage_state": "incomplete",
+          "checks": {
+            "shell_workspace_api_surface": "incomplete"
+          }
+        },
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ruby-local-api-unsupported",
+      "language": "ruby",
+      "path": "fixtures/ruby_local_api_unsupported",
+      "description": "An unresolved local API reference must report unsupported verification, never a clean pass.",
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original unsupported-capability contract. An empty finding list does not establish that the reference is valid."
+      },
+      "scan": {
+        "dependency_hallucinations": false
+      },
+      "expect": {
+        "finding_count": 0,
+        "verification": {
+          "status": "incomplete",
+          "coverage_state": "incomplete",
+          "checks": {
+            "ruby_workspace_api_surface": "incomplete"
+          }
+        },
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swift-local-api-unsupported",
+      "language": "swift",
+      "path": "fixtures/swift_local_api_unsupported",
+      "description": "An unresolved local API reference must report unsupported verification, never a clean pass.",
+      "taxonomy": [
+        "hallucinated_reference"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original unsupported-capability contract. An empty finding list does not establish that the reference is valid."
+      },
+      "scan": {
+        "dependency_hallucinations": false
+      },
+      "expect": {
+        "finding_count": 0,
+        "verification": {
+          "status": "incomplete",
+          "coverage_state": "incomplete",
+          "checks": {
+            "swift_workspace_api_surface": "incomplete"
+          }
+        },
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012"
           }
         ]
       }

@@ -1,0 +1,81 @@
+id: SKY-Q410
+title: Discarded local async result
+family: quality
+severity: MEDIUM
+languages:
+- TypeScript
+- JavaScript
+gate:
+  full: counted
+  note: Reported as quality; counts toward max_quality.
+run_with: '`skylos . --quality`'
+what_it_is: A stable local async callable is invoked as a statement whose promise is discarded.
+  No caller awaits, returns, stores or handles that result, and the call is not explicitly
+  marked void.
+why_it_matters: A caller can finish before its work completes, and a rejected promise can
+  go unhandled. An explicit void expression records intentional background work but does not
+  itself handle failures.
+flagged_example:
+  language: typescript
+  filename: src/save.ts
+  expect_line: 5
+  code: |
+    async function persist(): Promise<void> {
+      throw new Error("disk failure");
+    }
+    export function save(): void {
+      persist();
+    }
+not_flagged_example:
+  language: typescript
+  filename: src/save.ts
+  code: |
+    async function persist(): Promise<void> {
+      throw new Error("disk failure");
+    }
+    export async function save(): Promise<void> {
+      await persist();
+    }
+  why: Awaiting the promise propagates completion and failure to the caller.
+how_skylos_decides:
+- Runs with quality analysis on parsed JavaScript/TypeScript source. Generated or incomplete
+  source is not used for this proof.
+- Resolves a local async declaration or initialized async function, including hoisted declarations
+  and bounded constant aliases. Parameter shadows, conflicting bindings, reassignment and
+  possible closure writes prevent a finding.
+- Reports MEDIUM only for a direct discarded expression statement, including transparent TypeScript
+  wrappers. Awaited, returned, stored, .catch-handled and explicit void uses stay quiet.
+- Does not infer external SDK return types, async generators, object methods or arbitrary
+  promise chains. Those forms are outside this bounded local-callable check.
+source_refs:
+- path: skylos/visitors/languages/typescript/quality_signals.py
+  symbol: def _floating_local_promise_findings(
+- path: skylos/visitors/languages/typescript/quality_signals.py
+  symbol: def _proven_local_async_callable(
+- path: test/test_typescript_floating_promises.py
+  symbol: def test_handled_or_unproven_results_stay_quiet
+fix:
+  explanation: Await or return the promise, or attach a rejection handler. Use void only when
+    the background operation is intentional.
+  language: typescript
+  filename: src/save.ts
+  code: |
+    async function persist(): Promise<void> {
+      throw new Error("disk failure");
+    }
+    export async function save(): Promise<void> {
+      await persist();
+    }
+false_alarms_and_suppression:
+  misfires:
+  - A deliberate background call without explicit void still reports; the tool cannot infer
+    that intent.
+  - Imported functions, dynamic methods and unproven return types are outside the check, so
+    a quiet result does not verify every promise in a project.
+  suppress:
+  - check: config
+    text: Set `[tool.skylos] ignore = ["SKY-Q410"]` to disable this rule project-wide.
+related:
+- SKY-Q405
+- SKY-Q406
+- SKY-Q407

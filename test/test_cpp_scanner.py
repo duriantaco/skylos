@@ -63,6 +63,45 @@ def test_cpp_address_taken_counts_as_reference(tmp_path: Path) -> None:
     assert ("callback", str(tmp_path / "sample.cpp")) in refs
 
 
+@pytest.mark.parametrize("shadow", ["int spare = 3; return spare;", "int spare; spare = 3; return spare;"])
+def test_cpp_block_local_does_not_keep_same_named_function_alive(tmp_path, shadow):
+    _, refs, *_ = _scan(tmp_path, "static int spare() { return 2; } int main() { " + shadow + " }")
+    assert "spare" not in {name for name, _ in refs}
+
+
+def test_cpp_parameter_does_not_keep_same_named_function_alive(tmp_path):
+    _, refs, *_ = _scan(tmp_path, "static int spare() { return 2; } int use(int spare) { return spare; }")
+    assert "spare" not in {name for name, _ in refs}
+
+
+@pytest.mark.parametrize("consumer", [
+    "int invoke(int (*callback)(int spare)) { return spare(); }",
+    "int main() { int callback(int spare); return spare(); }",
+    "int main() { try { } catch (int spare) { } return spare(); }",
+    "int main() { bool checked = requires(int spare) { spare + 1; }; return spare(); }",
+], ids=["callback-signature", "local-prototype", "catch-scope", "requires-scope"])
+def test_cpp_nested_parameter_context_does_not_hide_a_live_outer_function(tmp_path, consumer):
+    _, refs, *_ = _scan(
+        tmp_path,
+        "static int spare() { return 2; }\n"
+        "static int abandoned() { return 0; }\n" + consumer,
+    )
+    names = {name for name, _ in refs}
+    assert "spare" in names
+    assert "abandoned" not in names
+
+
+@pytest.mark.parametrize("body", [
+    "int value = spare(); int spare = 3; return value + spare;",
+    "{ int spare = 3; } return spare();",
+    "int spare = 3; return ::spare();",
+    "{ int spare = 3; } auto callback = &spare; return callback();",
+])
+def test_cpp_shadow_scope_preserves_outer_calls_and_callbacks(tmp_path, body):
+    _, refs, *_ = _scan(tmp_path, "static int spare() { return 2; } int main() { " + body + " }")
+    assert "spare" in {name for name, _ in refs}
+
+
 def test_cpp_anonymous_namespace_free_function_is_local(tmp_path: Path) -> None:
     defs, refs, *_ = _scan(
         tmp_path,
