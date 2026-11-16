@@ -5008,6 +5008,9 @@ class Skylos:
         global_pattern_tracker._traced_by_basename.clear()
         global_pattern_tracker.pattern_refs.clear()
         global_pattern_tracker.reset_dynamic_refs()
+        from skylos.rules.danger.danger_fs.path_flow import reset_containment_proofs
+
+        reset_containment_proofs()
 
         pyproject_entrypoint_qnames = set()
         pyproject_entrypoint_modules = set()

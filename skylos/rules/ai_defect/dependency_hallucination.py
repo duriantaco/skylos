@@ -30,6 +30,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS, get_non_library_dir_kind
 from skylos.core.file_discovery import discover_source_files
 from skylos.core.python_distributions import (
+    CURATED_IMPORT_PATHS,
     NAMESPACE_ROOTS,
     distribution_import_paths,
     path_is_provided,
@@ -169,6 +170,18 @@ def _load_import_to_dist_mapping() -> dict[str, str]:
     for imp, dist in _SUPPLEMENT.items():
         if imp not in mapping:
             mapping[imp] = dist
+
+    # Curated provider inventories name modules no PyPI project is called
+    # (``pythoncom`` ships in pywin32). Such an import is undeclared, not
+    # hallucinated. Modules more than one distribution provides stay unmapped.
+    curated_providers: dict[str, set[str]] = {}
+    for dist, paths in CURATED_IMPORT_PATHS.items():
+        for path in paths:
+            if "." not in path:
+                curated_providers.setdefault(path, set()).add(dist)
+    for imp, dists in curated_providers.items():
+        if imp not in mapping and len(dists) == 1:
+            mapping[imp] = next(iter(dists))
 
     _IMPORT_TO_DIST_MAPPING = mapping
     return _IMPORT_TO_DIST_MAPPING
