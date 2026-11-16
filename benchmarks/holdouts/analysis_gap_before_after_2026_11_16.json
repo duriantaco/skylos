@@ -1,0 +1,2278 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-16",
+  "purpose": "Matched before/after verification after implementation; corrects the earlier manual report which did not include a complete paired baseline run.",
+  "baseline_commit": "be4a748c7d42f161cf45e96db4ae3be18bc49338",
+  "current_revision": "2229f8fee00eeeafad48277959cb6a952023aeed",
+  "protocol": {
+    "same_python_environment": true,
+    "same_cli_flags": [
+      "--quality",
+      "--confidence",
+      "60",
+      "--format",
+      "json",
+      "--no-upload",
+      "--no-provenance"
+    ],
+    "same_pinned_source_bytes": true,
+    "independent_input_copies_per_arm": true,
+    "neutral_working_directory": true,
+    "scanner_import_paths_verified": true,
+    "target_code_executed": false,
+    "target_dependencies_installed": false
+  },
+  "real_repositories": [
+    {
+      "repository": "antfu/vitesse-lite",
+      "commit": "0b352977755e1f7f6399698e308777760409ca71",
+      "source_hashes_identical": true,
+      "runs": {
+        "before": {
+          "repo": "antfu/vitesse-lite",
+          "target_commit": "0b352977755e1f7f6399698e308777760409ca71",
+          "arm": "before",
+          "source_root": "/private/tmp/skylos-gap-before-after/inputs/before/frontend",
+          "scan_scope": "/private/tmp/skylos-gap-before-after/inputs/before/frontend",
+          "scanner_import": "/private/tmp/skylos-gap-before-after/baseline/skylos/__init__.py",
+          "command": [
+            "/private/tmp/skylos-new001-validation/bin/skylos",
+            "/private/tmp/skylos-gap-before-after/inputs/before/frontend",
+            "--quality",
+            "--confidence",
+            "60",
+            "--format",
+            "json",
+            "--no-upload",
+            "--no-provenance",
+            "-o",
+            "/private/tmp/skylos-gap-before-after/before/frontend.json"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 3.443,
+          "source_hashes": {
+            ".editorconfig": "f000102bd4c1a767896b393391d11934a6c1deba7d610c6d36c6686514d7222a",
+            ".github/FUNDING.yml": "1a11782d667f91c42d88b2e2688def36883e782a5d5728a71ebd41ce894da160",
+            ".github/workflows/test.yml": "ba6c2d1b2ec1edd9dc9127fbeb68439d902350e2cdbdeb45f73b1c15a8fb5f0a",
+            ".gitignore": "92759cc5dc36192c4faa221f06812945674e5ef27ec40df4ac6197ba6f260637",
+            ".vscode/extensions.json": "1f26d1a4ec4cb22cced7e594f2b9cd08867afeafc759eff213e4efdacf8b9e7c",
+            ".vscode/settings.json": "b79b8e22f684eb3f16a01772d9f2c3345593757139c70d13b06de73985279e93",
+            "LICENSE": "42ccc89fea49360da73708efaad553c018a4959baa1d7e51e4ff7b721e31b1a2",
+            "README.md": "58839f25b14cf3a8b535feec7b192f297d20038d3a0e84d7051367d18e505b21",
+            "README.zh-CN.md": "251131b4efe175aceefad40eb550061c6179b31de6ba986e463335a5e33cbf0d",
+            "auto-imports.d.ts": "013824759542dd04d7e8e7f28f46f2e1ebf1f0d3231ed261d970aa36e5208ce5",
+            "components.d.ts": "ba54dc3fcb4381d65fa40f72dd02c40f1a281a82c54b1edc5be61a2ec88abfdd",
+            "eslint.config.js": "be701574eb1b63f5928e46e620cb8ffa572a049512694e7681ebbeb726a5c3d3",
+            "index.html": "4495413c05c32520f7b4e1d75843d679d81aad80ddc80c91e8e64c63bc09ae7d",
+            "netlify.toml": "34a4d92de02101b6690b64f5f4718341892d4a3ce8323a45da1312783fa60d6b",
+            "package.json": "110a3037d6bdc289e77e81003ad75a93fe9562c8b2086326f4f446a0082531cf",
+            "pnpm-lock.yaml": "3eefa8e8ffead6545bb8a992aa4977254498c03ad3d8b0fad1fd7cdc620fa5b3",
+            "pnpm-workspace.yaml": "2121d054e149c223244206b283dfd4972edf41aef54d6d0edce5e02237e08843",
+            "public/favicon.svg": "cc59bceda370f9963010805b9c69a83319249da7c29d72c91f51137ba3835f9c",
+            "shims.d.ts": "24384f19210d7e974e778582de9f5d011e8613655156266caae77174dcd6984e",
+            "src/App.vue": "da20ce4c2afb79b3d051bd626c242d9198bd0dda5fc78dcbeae138613cad5f70",
+            "src/components/README.md": "b6e36e74668509db36b56acf028784e0476cd7cb93e62743f33ceeba8d8f9f0b",
+            "src/components/TheCounter.vue": "fa55bf050a79e2934ecf955d440f2b6f2291b6ffbe5586bfa195230b4f5cf5a1",
+            "src/components/TheFooter.vue": "9e94c544d0f281e2a1fa9607914aa54dccfbe8b0fb530c602d7af261e6f39f6d",
+            "src/components/TheInput.vue": "af516a4103d596bc1d584a33f7769dbbbfbac054a12082c5075282f6d2989123",
+            "src/composables/dark.ts": "93973fb1b6b10ccfa1282675ffb2828e047c1a98f7611e94b2575b3eb34e73ce",
+            "src/composables/index.ts": "1fc48df937de8af4a9ed9fe3d9f8d0a2edc6e254ec8c704b859c6c5a21f8c2c8",
+            "src/main.ts": "0a36774f19099ea26810fa1d1ea3eea516a0451a0a7b19e126cd7e761401fb4a",
+            "src/pages/README.md": "e0c454998f0f9266da435cd39b8e0481fc0b9d5712f446990119c61962cde682",
+            "src/pages/[...all].vue": "cd995beed5551a2299bdad73fa89db50fbdd32f54537cd7160badd65aee4a9de",
+            "src/pages/hi/[name].vue": "8e18298db4cd5e5e80e24fc50a668c0b7879cf91bb5593dd2f58052797f81011",
+            "src/pages/index.vue": "56fd532d30d2d5a2730f21676963c3665e8ad10cf681bd3a48c3f029529a6f33",
+            "src/styles/main.css": "badfa36590b3d9c544404f0292e4e70a7ffdf13b72ab015ba47e0c3fe0da6c3f",
+            "src/typed-router.d.ts": "63b4bdde7ba9b2b315a42f564a78ab99591ef9fa0620337163f01640f1034ed5",
+            "test/__snapshots__/component.test.ts.snap": "1cd772af76c5b42e9c2f868fd4146724cf407a86e5f8b623a81a00667b12742a",
+            "test/basic.test.ts": "cf10fe5c76a2b194606c0594ef43ff7d97af00fbd874415a69baf14a5a8c1a8f",
+            "test/component.test.ts": "852111bd63d776091f6e4bd00d646b8240caaf11c108fab292971af0da83fe3e",
+            "tsconfig.json": "4deba29ee74e981426187dba8a78bca9d452a2f930ef8188e371abbf1be0f44a",
+            "uno.config.ts": "f7fbb197b28bfe2b340274d425d0909e1a890b7fc1fef4d5207922cbbf31fd0c",
+            "vite.config.ts": "a8621a333ac3cb15760c9c77371bccdacd45143a115f77ffc76c935c60da2b9e"
+          },
+          "sources_unchanged": true,
+          "raw_report": "/private/tmp/skylos-gap-before-after/before/frontend.json",
+          "raw_report_sha256": "128c8eb7a5409681a5ba90f3df51927f248741a5e7c3e4ba094a40533318affa",
+          "total_files": 12,
+          "languages": {
+            "TypeScript": 11,
+            "JavaScript": 1
+          },
+          "analysis_error_count": 0,
+          "finding_counts": {
+            "unused_functions": 0,
+            "unused_classes": 0,
+            "unused_imports": 4,
+            "unused_variables": 0,
+            "unused_exports": 0,
+            "unused_files": 0,
+            "quality": 5,
+            "ai_defects": 0,
+            "danger": 0,
+            "secrets": 0
+          }
+        },
+        "after": {
+          "repo": "antfu/vitesse-lite",
+          "target_commit": "0b352977755e1f7f6399698e308777760409ca71",
+          "arm": "after",
+          "source_root": "/private/tmp/skylos-gap-before-after/inputs/after/frontend",
+          "scan_scope": "/private/tmp/skylos-gap-before-after/inputs/after/frontend",
+          "scanner_import": "/Users/oha/skylos/skylos/__init__.py",
+          "command": [
+            "/private/tmp/skylos-new001-validation/bin/skylos",
+            "/private/tmp/skylos-gap-before-after/inputs/after/frontend",
+            "--quality",
+            "--confidence",
+            "60",
+            "--format",
+            "json",
+            "--no-upload",
+            "--no-provenance",
+            "-o",
+            "/private/tmp/skylos-gap-before-after/after/frontend.json"
+          ],
+          "exit_code": 2,
+          "elapsed_seconds": 1.857,
+          "source_hashes": {
+            ".editorconfig": "f000102bd4c1a767896b393391d11934a6c1deba7d610c6d36c6686514d7222a",
+            ".github/FUNDING.yml": "1a11782d667f91c42d88b2e2688def36883e782a5d5728a71ebd41ce894da160",
+            ".github/workflows/test.yml": "ba6c2d1b2ec1edd9dc9127fbeb68439d902350e2cdbdeb45f73b1c15a8fb5f0a",
+            ".gitignore": "92759cc5dc36192c4faa221f06812945674e5ef27ec40df4ac6197ba6f260637",
+            ".vscode/extensions.json": "1f26d1a4ec4cb22cced7e594f2b9cd08867afeafc759eff213e4efdacf8b9e7c",
+            ".vscode/settings.json": "b79b8e22f684eb3f16a01772d9f2c3345593757139c70d13b06de73985279e93",
+            "LICENSE": "42ccc89fea49360da73708efaad553c018a4959baa1d7e51e4ff7b721e31b1a2",
+            "README.md": "58839f25b14cf3a8b535feec7b192f297d20038d3a0e84d7051367d18e505b21",
+            "README.zh-CN.md": "251131b4efe175aceefad40eb550061c6179b31de6ba986e463335a5e33cbf0d",
+            "auto-imports.d.ts": "013824759542dd04d7e8e7f28f46f2e1ebf1f0d3231ed261d970aa36e5208ce5",
+            "components.d.ts": "ba54dc3fcb4381d65fa40f72dd02c40f1a281a82c54b1edc5be61a2ec88abfdd",
+            "eslint.config.js": "be701574eb1b63f5928e46e620cb8ffa572a049512694e7681ebbeb726a5c3d3",
+            "index.html": "4495413c05c32520f7b4e1d75843d679d81aad80ddc80c91e8e64c63bc09ae7d",
+            "netlify.toml": "34a4d92de02101b6690b64f5f4718341892d4a3ce8323a45da1312783fa60d6b",
+            "package.json": "110a3037d6bdc289e77e81003ad75a93fe9562c8b2086326f4f446a0082531cf",
+            "pnpm-lock.yaml": "3eefa8e8ffead6545bb8a992aa4977254498c03ad3d8b0fad1fd7cdc620fa5b3",
+            "pnpm-workspace.yaml": "2121d054e149c223244206b283dfd4972edf41aef54d6d0edce5e02237e08843",
+            "public/favicon.svg": "cc59bceda370f9963010805b9c69a83319249da7c29d72c91f51137ba3835f9c",
+            "shims.d.ts": "24384f19210d7e974e778582de9f5d011e8613655156266caae77174dcd6984e",
+            "src/App.vue": "da20ce4c2afb79b3d051bd626c242d9198bd0dda5fc78dcbeae138613cad5f70",
+            "src/components/README.md": "b6e36e74668509db36b56acf028784e0476cd7cb93e62743f33ceeba8d8f9f0b",
+            "src/components/TheCounter.vue": "fa55bf050a79e2934ecf955d440f2b6f2291b6ffbe5586bfa195230b4f5cf5a1",
+            "src/components/TheFooter.vue": "9e94c544d0f281e2a1fa9607914aa54dccfbe8b0fb530c602d7af261e6f39f6d",
+            "src/components/TheInput.vue": "af516a4103d596bc1d584a33f7769dbbbfbac054a12082c5075282f6d2989123",
+            "src/composables/dark.ts": "93973fb1b6b10ccfa1282675ffb2828e047c1a98f7611e94b2575b3eb34e73ce",
+            "src/composables/index.ts": "1fc48df937de8af4a9ed9fe3d9f8d0a2edc6e254ec8c704b859c6c5a21f8c2c8",
+            "src/main.ts": "0a36774f19099ea26810fa1d1ea3eea516a0451a0a7b19e126cd7e761401fb4a",
+            "src/pages/README.md": "e0c454998f0f9266da435cd39b8e0481fc0b9d5712f446990119c61962cde682",
+            "src/pages/[...all].vue": "cd995beed5551a2299bdad73fa89db50fbdd32f54537cd7160badd65aee4a9de",
+            "src/pages/hi/[name].vue": "8e18298db4cd5e5e80e24fc50a668c0b7879cf91bb5593dd2f58052797f81011",
+            "src/pages/index.vue": "56fd532d30d2d5a2730f21676963c3665e8ad10cf681bd3a48c3f029529a6f33",
+            "src/styles/main.css": "badfa36590b3d9c544404f0292e4e70a7ffdf13b72ab015ba47e0c3fe0da6c3f",
+            "src/typed-router.d.ts": "63b4bdde7ba9b2b315a42f564a78ab99591ef9fa0620337163f01640f1034ed5",
+            "test/__snapshots__/component.test.ts.snap": "1cd772af76c5b42e9c2f868fd4146724cf407a86e5f8b623a81a00667b12742a",
+            "test/basic.test.ts": "cf10fe5c76a2b194606c0594ef43ff7d97af00fbd874415a69baf14a5a8c1a8f",
+            "test/component.test.ts": "852111bd63d776091f6e4bd00d646b8240caaf11c108fab292971af0da83fe3e",
+            "tsconfig.json": "4deba29ee74e981426187dba8a78bca9d452a2f930ef8188e371abbf1be0f44a",
+            "uno.config.ts": "f7fbb197b28bfe2b340274d425d0909e1a890b7fc1fef4d5207922cbbf31fd0c",
+            "vite.config.ts": "a8621a333ac3cb15760c9c77371bccdacd45143a115f77ffc76c935c60da2b9e"
+          },
+          "sources_unchanged": true,
+          "raw_report": "/private/tmp/skylos-gap-before-after/after/frontend.json",
+          "raw_report_sha256": "4ded1f22e2f61439f3e73fac4cc506f0a4d2bbde83e688fc3ab6ecfb373bd5b1",
+          "total_files": 12,
+          "languages": {
+            "TypeScript": 11,
+            "JavaScript": 1
+          },
+          "analysis_error_count": 3,
+          "finding_counts": {
+            "unused_functions": 0,
+            "unused_classes": 0,
+            "unused_imports": 4,
+            "unused_variables": 0,
+            "unused_exports": 0,
+            "unused_files": 0,
+            "quality": 2,
+            "ai_defects": 0,
+            "danger": 0,
+            "secrets": 0
+          }
+        }
+      },
+      "finding_delta": {
+        "repository": "frontend",
+        "before_findings": 9,
+        "after_findings": 6,
+        "removed": [
+          {
+            "identity": [
+              "quality",
+              "SKY-L035",
+              "src/typed-router.d.ts",
+              1,
+              "eslint-disable"
+            ],
+            "finding": {
+              "rule_id": "SKY-L035",
+              "severity": "HIGH",
+              "name": "eslint-disable",
+              "line": 1,
+              "message": "A bare file-wide eslint-disable turns off every ESLint rule; name only the required rule and keep the suppression narrow."
+            }
+          },
+          {
+            "identity": [
+              "quality",
+              "SKY-L035",
+              "components.d.ts",
+              1,
+              "eslint-disable"
+            ],
+            "finding": {
+              "rule_id": "SKY-L035",
+              "severity": "HIGH",
+              "name": "eslint-disable",
+              "line": 1,
+              "message": "A bare file-wide eslint-disable turns off every ESLint rule; name only the required rule and keep the suppression narrow."
+            }
+          },
+          {
+            "identity": [
+              "quality",
+              "SKY-L035",
+              "auto-imports.d.ts",
+              1,
+              "eslint-disable"
+            ],
+            "finding": {
+              "rule_id": "SKY-L035",
+              "severity": "HIGH",
+              "name": "eslint-disable",
+              "line": 1,
+              "message": "A bare file-wide eslint-disable turns off every ESLint rule; name only the required rule and keep the suppression narrow."
+            }
+          }
+        ],
+        "added": [],
+        "unchanged_findings": 6
+      }
+    },
+    {
+      "repository": "unjs/defu",
+      "commit": "82632b66f5914e9946edce300e10633a3d5c0cb7",
+      "source_hashes_identical": true,
+      "runs": {
+        "before": {
+          "repo": "unjs/defu",
+          "target_commit": "82632b66f5914e9946edce300e10633a3d5c0cb7",
+          "arm": "before",
+          "source_root": "/private/tmp/skylos-gap-before-after/inputs/before/javascript",
+          "scan_scope": "/private/tmp/skylos-gap-before-after/inputs/before/javascript",
+          "scanner_import": "/private/tmp/skylos-gap-before-after/baseline/skylos/__init__.py",
+          "command": [
+            "/private/tmp/skylos-new001-validation/bin/skylos",
+            "/private/tmp/skylos-gap-before-after/inputs/before/javascript",
+            "--quality",
+            "--confidence",
+            "60",
+            "--format",
+            "json",
+            "--no-upload",
+            "--no-provenance",
+            "-o",
+            "/private/tmp/skylos-gap-before-after/before/javascript.json"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 1.61,
+          "source_hashes": {
+            ".editorconfig": "b7e66239e90c0d75c06bc7042dbc8192106de56b6d83c444324c68020381f31d",
+            ".github/banner.svg": "9f8a912deeb076730ea23b44dec7db6626e26c9b36fd99cfd81a2441ab97ff6d",
+            ".github/workflows/ci.yml": "b9cf2bf02818b27cae9410eec34447964d4dd6c84cda4fcbb4395b0b889ecc70",
+            ".gitignore": "6965126dc479d8f51bc92696d6d343067f85c5bfe50ac80a78d99d18c783f508",
+            ".oxfmtrc.json": "c69c6c37e10be0970bd4ffb40e82f64c5921a78708082518fe5f80c69914a87d",
+            ".oxlintrc.json": "5098cf80f97099bec85ca30e8b2a65a93c32d900215f3a5f590399da2c427546",
+            "CHANGELOG.md": "a4f8dd905ba654d9373ad61d0369728a6a817d4fe6da86ed69598c65eec0d531",
+            "LICENSE": "46231df5a7733c3f52f11b71f3df61813007745b62b09031acfb45fb42d75082",
+            "README.md": "041d2c774be0a6aeaa46d66c8b3f289ad4ed518efe9cd5c68fb8a438234df942",
+            "lib/defu.cjs": "497cf64b88503ca9b49c383befb398b3fdd5d88ee28d20206d03118eb7ad2aae",
+            "lib/defu.d.cts": "bffa269fbd9cbfe8845ae8e83875356ae624fae3fe707e78a017fca3e4527a8d",
+            "package.json": "e043bcea9f9ab2c50ede779f6118a6aa67d3a9a1aa99c8daea65b7432cafb316",
+            "pnpm-lock.yaml": "1eef046935000595029ee01b325b374012c571845d420efe8f0f6a1d7b2bd01b",
+            "renovate.json": "a4609dc8c41c05feb86e780758cd3fb011fcd21a2de1d54dbfd4755bb87644cb",
+            "src/_utils.ts": "8b52fa19c1f1b29a8c26b5d13e979f8042b8a817e4481f9249785805916e15c4",
+            "src/defu.ts": "3ac1d2adc4b97158839c078e32e03c86f5d01239c82fe290d1401474805d84dd",
+            "src/types.ts": "4dc8c0f4fbf8580f192da5cf757cd402fec12cdb8570da0a9316e13fe89a6ef4",
+            "tea.yaml": "c1cd68e9d8057ef6d0a72f053210fbf17ea77d8fa2e638eaa74b5ebbac645c51",
+            "test/defu.test.ts": "abfe579ac2a0f10280bc11efc3ece9c2012f5fa7dde0259ee604b85a5118b145",
+            "test/fixtures/index.ts": "5c009ae48d6fb89b7bc8109f01dadbbf633fe32b18ad75d7c1de8345ca96a020",
+            "test/fixtures/nested.ts": "d99c787c62cef62f6856e16d03432375a78eb47e053d037e5c5e22b6b02b9ad2",
+            "test/utils.test.ts": "87dc4337bc29da96aac6eb3c08a52383f1d24c5562e260218e435334a8bc7353",
+            "tsconfig.json": "28ad4e54b6d8bbb9134bdf31a4a77553081ed9509e2716d74e5ebbd020f1a8a6"
+          },
+          "sources_unchanged": true,
+          "raw_report": "/private/tmp/skylos-gap-before-after/before/javascript.json",
+          "raw_report_sha256": "e714d59a8ac65f845baf67e6d3851e2c0364944efe874a4245d554ddfa8119d8",
+          "total_files": 9,
+          "languages": {
+            "JavaScript": 1,
+            "TypeScript": 8
+          },
+          "analysis_error_count": 0,
+          "finding_counts": {
+            "unused_functions": 0,
+            "unused_classes": 0,
+            "unused_imports": 0,
+            "unused_variables": 0,
+            "unused_exports": 0,
+            "unused_files": 0,
+            "quality": 8,
+            "ai_defects": 0,
+            "danger": 0,
+            "secrets": 0
+          }
+        },
+        "after": {
+          "repo": "unjs/defu",
+          "target_commit": "82632b66f5914e9946edce300e10633a3d5c0cb7",
+          "arm": "after",
+          "source_root": "/private/tmp/skylos-gap-before-after/inputs/after/javascript",
+          "scan_scope": "/private/tmp/skylos-gap-before-after/inputs/after/javascript",
+          "scanner_import": "/Users/oha/skylos/skylos/__init__.py",
+          "command": [
+            "/private/tmp/skylos-new001-validation/bin/skylos",
+            "/private/tmp/skylos-gap-before-after/inputs/after/javascript",
+            "--quality",
+            "--confidence",
+            "60",
+            "--format",
+            "json",
+            "--no-upload",
+            "--no-provenance",
+            "-o",
+            "/private/tmp/skylos-gap-before-after/after/javascript.json"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 1.474,
+          "source_hashes": {
+            ".editorconfig": "b7e66239e90c0d75c06bc7042dbc8192106de56b6d83c444324c68020381f31d",
+            ".github/banner.svg": "9f8a912deeb076730ea23b44dec7db6626e26c9b36fd99cfd81a2441ab97ff6d",
+            ".github/workflows/ci.yml": "b9cf2bf02818b27cae9410eec34447964d4dd6c84cda4fcbb4395b0b889ecc70",
+            ".gitignore": "6965126dc479d8f51bc92696d6d343067f85c5bfe50ac80a78d99d18c783f508",
+            ".oxfmtrc.json": "c69c6c37e10be0970bd4ffb40e82f64c5921a78708082518fe5f80c69914a87d",
+            ".oxlintrc.json": "5098cf80f97099bec85ca30e8b2a65a93c32d900215f3a5f590399da2c427546",
+            "CHANGELOG.md": "a4f8dd905ba654d9373ad61d0369728a6a817d4fe6da86ed69598c65eec0d531",
+            "LICENSE": "46231df5a7733c3f52f11b71f3df61813007745b62b09031acfb45fb42d75082",
+            "README.md": "041d2c774be0a6aeaa46d66c8b3f289ad4ed518efe9cd5c68fb8a438234df942",
+            "lib/defu.cjs": "497cf64b88503ca9b49c383befb398b3fdd5d88ee28d20206d03118eb7ad2aae",
+            "lib/defu.d.cts": "bffa269fbd9cbfe8845ae8e83875356ae624fae3fe707e78a017fca3e4527a8d",
+            "package.json": "e043bcea9f9ab2c50ede779f6118a6aa67d3a9a1aa99c8daea65b7432cafb316",
+            "pnpm-lock.yaml": "1eef046935000595029ee01b325b374012c571845d420efe8f0f6a1d7b2bd01b",
+            "renovate.json": "a4609dc8c41c05feb86e780758cd3fb011fcd21a2de1d54dbfd4755bb87644cb",
+            "src/_utils.ts": "8b52fa19c1f1b29a8c26b5d13e979f8042b8a817e4481f9249785805916e15c4",
+            "src/defu.ts": "3ac1d2adc4b97158839c078e32e03c86f5d01239c82fe290d1401474805d84dd",
+            "src/types.ts": "4dc8c0f4fbf8580f192da5cf757cd402fec12cdb8570da0a9316e13fe89a6ef4",
+            "tea.yaml": "c1cd68e9d8057ef6d0a72f053210fbf17ea77d8fa2e638eaa74b5ebbac645c51",
+            "test/defu.test.ts": "abfe579ac2a0f10280bc11efc3ece9c2012f5fa7dde0259ee604b85a5118b145",
+            "test/fixtures/index.ts": "5c009ae48d6fb89b7bc8109f01dadbbf633fe32b18ad75d7c1de8345ca96a020",
+            "test/fixtures/nested.ts": "d99c787c62cef62f6856e16d03432375a78eb47e053d037e5c5e22b6b02b9ad2",
+            "test/utils.test.ts": "87dc4337bc29da96aac6eb3c08a52383f1d24c5562e260218e435334a8bc7353",
+            "tsconfig.json": "28ad4e54b6d8bbb9134bdf31a4a77553081ed9509e2716d74e5ebbd020f1a8a6"
+          },
+          "sources_unchanged": true,
+          "raw_report": "/private/tmp/skylos-gap-before-after/after/javascript.json",
+          "raw_report_sha256": "431caffde2fc98d61767de82a451ab1a57dddb47ae5d52908f8824fb756cc24f",
+          "total_files": 9,
+          "languages": {
+            "JavaScript": 1,
+            "TypeScript": 8
+          },
+          "analysis_error_count": 0,
+          "finding_counts": {
+            "unused_functions": 0,
+            "unused_classes": 0,
+            "unused_imports": 0,
+            "unused_variables": 0,
+            "unused_exports": 0,
+            "unused_files": 0,
+            "quality": 8,
+            "ai_defects": 0,
+            "danger": 0,
+            "secrets": 0
+          }
+        }
+      },
+      "finding_delta": {
+        "repository": "javascript",
+        "before_findings": 8,
+        "after_findings": 8,
+        "removed": [],
+        "added": [],
+        "unchanged_findings": 8
+      }
+    },
+    {
+      "repository": "laravel/prompts",
+      "commit": "e84c227ae83ffef9f8fc1059bb2b79f2b0cfc0ca",
+      "source_hashes_identical": true,
+      "runs": {
+        "before": {
+          "repo": "laravel/prompts",
+          "target_commit": "e84c227ae83ffef9f8fc1059bb2b79f2b0cfc0ca",
+          "arm": "before",
+          "source_root": "/private/tmp/skylos-gap-before-after/inputs/before/php",
+          "scan_scope": "/private/tmp/skylos-gap-before-after/inputs/before/php",
+          "scanner_import": "/private/tmp/skylos-gap-before-after/baseline/skylos/__init__.py",
+          "command": [
+            "/private/tmp/skylos-new001-validation/bin/skylos",
+            "/private/tmp/skylos-gap-before-after/inputs/before/php",
+            "--quality",
+            "--confidence",
+            "60",
+            "--format",
+            "json",
+            "--no-upload",
+            "--no-provenance",
+            "-o",
+            "/private/tmp/skylos-gap-before-after/before/php.json"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 1.811,
+          "source_hashes": {
+            "LICENSE.md": "7b4f9149597fbae2ce689bc9317d1869e17f1b3fa5f01c289998c108f8c37cf7",
+            "README.md": "33c968b3d7b2ef4dd06f5763af093381a1725c98bcaba0d3c024a5cd68fa9a99",
+            "composer.json": "d455d98dad33d8314b504e41ed84361ebcc54e1af306e24ed44c2295e8cd58e4",
+            "src/AutoCompletePrompt.php": "36629d4c2eab956cc00cacaa5cb97d7d03011f2f603b807ffa19d9d0316c762b",
+            "src/Callout.php": "d1659c04f1b669e22c136cbc7ecfcb116c3c8a0feaeaf5ae48d29c2756a9ac6a",
+            "src/Clear.php": "3fa150bf07ced1aaa9443f8700a3f3c56bdffba8d09b97315d947a5a79af3c6c",
+            "src/Concerns/Colors.php": "193b0dc47c44cf3dfb9cda59a96c184ca6b04be79599a1573aa5e3cd675b788a",
+            "src/Concerns/Cursor.php": "6bc7328aef2b0e8680e38c0a9c74e514a9f83b5bc90e8eefb5903923804b88f1",
+            "src/Concerns/Erase.php": "b02a50d0c349141b108d44cf01f05f94c9d364c175b9a8cf40002331dab73961",
+            "src/Concerns/Events.php": "facce7c48fdbc5f30b5fc10234d0657872b670fa8ca975c74cdd199bf4de4b75",
+            "src/Concerns/FakesInputOutput.php": "27ae01e115850010b3432d9fffca183c62b596cdc8528ad84f7f352a5d3827ab",
+            "src/Concerns/Fallback.php": "3ae3aaaceaf6de37d89f8135918c11a6763ef1d23e46a3ccee81b78ffa380a4c",
+            "src/Concerns/HasInfo.php": "5c041bdcfae40f6b8d7e12338300e1dffd52f377a01a946337e7c857466213d6",
+            "src/Concerns/HasSpinner.php": "d4905fdbd327a4a40abfefa1e1c300942f8a94482bc09b94aec1c95ca12c75ab",
+            "src/Concerns/Interactivity.php": "ef15cc7a7f60abfc980943721c6c304737222aebd8c828444d9b4d274793d42b",
+            "src/Concerns/RendersAnimations.php": "6f3c985caadbcd52f0926445556e7efbc41132127eb4d843d51e102f0b2bf68d",
+            "src/Concerns/Scrolling.php": "d99e449431b89f0bb884f608ce096ac8fc84557f1792535dd85f4f71e5c2b6ca",
+            "src/Concerns/Termwind.php": "26a2798593075e91792f023b9aa8d7342418cc49c023841d2f691317c87f1131",
+            "src/Concerns/Themes.php": "f13e6d932f8d99202040f6cab49717985233e2f74b86b6197417b88794829c9b",
+            "src/Concerns/Truncation.php": "fc6b61215cc21b7649986fe00b8e34592e93c1016a0cf6d6200581c976561da5",
+            "src/Concerns/TypedValue.php": "896a7a12d5261ecc3ffcc86579b146e44ce6e2d0ce396c091f753d873c502020",
+            "src/ConfirmPrompt.php": "ac1941c4ad2ecbede6ca58fcadac31e999be9b4ca5409d5bdaf3899da0f05f67",
+            "src/DataTablePrompt.php": "cdfa9b6f314e240ff24d87caf36da32d24b1ce37b84f518a3df5b5615aceea66",
+            "src/Elements/BulletedList.php": "effec69aec3b34fb3f16b448f752e52d1d02aee2e9c51182bf9567ed8d885315",
+            "src/Elements/Element.php": "1b0b6d7fa3d600ad6eabbe1f278258f8488fab3ba8c648f2a713ffa97c77d223",
+            "src/Elements/ElementContract.php": "84cdd81eb9d6c83be4db029042fbe0d8126187123984abc76682bdc17536b32f",
+            "src/Elements/Heading.php": "24b0300306452a49e3db5f9c9d92b601f8f54d3cd6c79183e0677b0bf239398d",
+            "src/Elements/KeyValueList.php": "9e0b0e7cba0f7df23e3f9fc2fdcff7ee408052b0fa379beb791916cf8dd408ba",
+            "src/Elements/Link.php": "f440e6c6d4e463faa0247ed1ba849ed231056920dc93f2ef424b3e91e5b04421",
+            "src/Elements/NumberedList.php": "d3cdefe269a4df644f1333b05719576a934a4898e7525765b25f3d06e5ee8035",
+            "src/Exceptions/FormRevertedException.php": "348e3d491e1e0b7a2e51b3d2146626bc4886bec42016df80b5d7308df9f15a1a",
+            "src/Exceptions/NonInteractiveValidationException.php": "4b7468fac0551101f5e80efacce9ebe2879d52cb7e7fc76227a4d2c6fde51a42",
+            "src/FormBuilder.php": "de901ea391855a237b5bd9e7c306ea89ba385ef40780fce5b07aee06ba229eee",
+            "src/FormStep.php": "58535fad2bd770b106564b8c398d69a36f73b75a81951486dfd199319a93be15",
+            "src/Grid.php": "ea307ad6824b72afee41a62061258d608137c1e1b9c2058d49979de0b1e22915",
+            "src/Key.php": "c1062d0211864152bb81362fa91ff9448168223f27d6eaa946bbd5ce92d72069",
+            "src/MultiSearchPrompt.php": "d7a65acb7d14a8b8e2407a31015e109d7f18aec227a1ef9fc5c53c121e642a5d",
+            "src/MultiSelectPrompt.php": "a318616c60d5173ef046f94a19db60754128765bff1e4156e78a600c2b4b53ca",
+            "src/Note.php": "7686fc8cff0e055d64869577de376cf01694ecf14df680707b424382757a3341",
+            "src/NotifyPrompt.php": "981fc806284db77071445ddcddcda8f04c3c3c422b321158f682e5f2bb9fad56",
+            "src/NumberPrompt.php": "e8608361a10abfc29cd105bf0aabc1ecc38add9cb1a262c08c41af846d66206c",
+            "src/Output/BufferedConsoleOutput.php": "aec536a3bd855fa924a056f7c10d456b41f578c7fe8019d6755e8a7e3bfd644a",
+            "src/Output/ConsoleOutput.php": "95a6d7f74e8da23b74dfed906f86c51949aebea95aa8617510ceefdc3851c91f",
+            "src/PasswordPrompt.php": "8c10908eaf2f8aa4d6e11bfdf550d670d81ee2b6a7e9785cf2c13dd78fc6749d",
+            "src/PausePrompt.php": "9083b1eb0ba14d595996e321819f616d5e0a821e2899d6cda985bb1fedca3c1e",
+            "src/Progress.php": "6fcd3fdf7e21955efea0aba8d25db2ef4d2556acf9c67edb6712204f723c6ae7",
+            "src/Prompt.php": "d9f26891bd0c71de3f79d548c0634ef0e9beda9c5a27a879cb64c57d42f1fdd8",
+            "src/SearchPrompt.php": "abfcd7c50600e32a68b2a668c2b08386281f5f5ac0dad3a01930cd6efa96bdcc",
+            "src/SelectPrompt.php": "75be184a9ff4d9182b4becf44dc1ee91ca8c0440f7f3737bd13c23bb8e695849",
+            "src/Spinner.php": "9979d19a743126daadbfc40f50c26605ca1bb3b0d6cc92268c4beb394232f6a0",
+            "src/Stream.php": "75c87faa70bf3008150b02b063c0444f4ddd2a50f832684ecfe53bd8d0848871",
+            "src/SuggestPrompt.php": "dfc987ba904409c4ba890588d12d8c2da204bc66cf7771a7a4aa962a792899e5",
+            "src/Support/Logger.php": "f02d2b019cd59d1d2ad77f3503920164e6be8f95bb200a23dbc8e57192f0aaef",
+            "src/Support/Result.php": "3800c4aefa733875f19b92abf50302311b1be6408363d67b1d4b95a3f2658560",
+            "src/Support/Utils.php": "ec4b177447255d437d8d9db09783b2b51bc2ac48e253a4417606b792145f9207",
+            "src/Table.php": "896e6b4d217fcafd95c24d543977bca8a795a70a8a66b3fd3269e5fc8179941c",
+            "src/Task.php": "aa57ca8ec30827de78875f2d178762f02e3b426e2794922c509676a5710585f6",
+            "src/Terminal.php": "67fa28a18732fea764217f7f78554b2578cba02fdf3604b1d56f31cb88a3b18a",
+            "src/TextPrompt.php": "eb1864d16dcf09cd6869b69e38631eee0efd24f16c39368373597b224f78a39f",
+            "src/TextareaPrompt.php": "6c05976a3cf96a27122a904696d0e828afef67824b64bec0742d474b56400457",
+            "src/Themes/Contracts/Scrolling.php": "44cf496807c91f82bbc8b80d28a36b92482161dad3ab86e28ca624a2ba6fb7cb",
+            "src/Themes/Default/AutoCompletePromptRenderer.php": "1542d645e63b96b643c123cd612ba82bcdb0aa469bf9fd85b8eebec1756436e2",
+            "src/Themes/Default/CalloutRenderer.php": "25d39bbd712e7a10088186e67d1a3b33f507497545b8da59478411f115f10266",
+            "src/Themes/Default/ClearRenderer.php": "87b5e2fb1755a0f69c3791494a5921c13a62aa355e344ce724e503a92862b156",
+            "src/Themes/Default/Concerns/DrawsBoxes.php": "de6ef0f70948f7db0f28fecd15a9d04c43bc16ac168e3080b08fd15e32be3fcc",
+            "src/Themes/Default/Concerns/DrawsScrollbars.php": "f174061850d86684fb42e73b4e69d36337dd2a37c393703bfcd928d7b929eabd",
+            "src/Themes/Default/Concerns/InteractsWithStrings.php": "dfe0bad77820c3c6fba18d32f6872e001e59c88fbe273d8a5eec3d5aa28b88fd",
+            "src/Themes/Default/ConfirmPromptRenderer.php": "baa8cdd730f9f398f2b77337b526362fb0368485eb315178e6a03a18387cfcf4",
+            "src/Themes/Default/DataTableRenderer.php": "c6d292f258913fd4ef74683c5b0b2148e805deea401edd358bf768ec92ad1e03",
+            "src/Themes/Default/GridRenderer.php": "f634a15ccc0572105b7d35bb4fcc56753ac1e8e2794eb9883fa7d10b82ce6a2c",
+            "src/Themes/Default/MultiSearchPromptRenderer.php": "ea8a84919fd3b3efce8eca66521bc1d34238ac344047408c0e4557a9d84aaab6",
+            "src/Themes/Default/MultiSelectPromptRenderer.php": "9710f9093c6f19b6c5bdb7f606696123ddb8e0fde0736d34056b413766ee80ab",
+            "src/Themes/Default/NoteRenderer.php": "ea55d76804574d50ee32a2313f67b06daf7d12e3437aaf1649b0296cdeb677f8",
+            "src/Themes/Default/NumberPromptRenderer.php": "d2e1f052ce53a01d7049a467e3779f38f430ecd8b806f34c0162fdceaaef6b39",
+            "src/Themes/Default/PasswordPromptRenderer.php": "f087022d1904c840f58f3769a8ecd139b0306cd413a7109d0e14295469021415",
+            "src/Themes/Default/PausePromptRenderer.php": "afc0616db956421c9d3c0dc629f9645db8d511739da1a7c1e37845b7649a10a9",
+            "src/Themes/Default/ProgressRenderer.php": "fb02a27b4054185c6805382b2ec40877ca797cdecfeda99e5addc3742da048d9",
+            "src/Themes/Default/Renderer.php": "7aa4b9c2cbbd7b694f327f7b5d0d0c35e5e30ba8a4ce4f91526b59e379d1a199",
+            "src/Themes/Default/SearchPromptRenderer.php": "db5c9532ff723435ba3852477ab5e2b09bf24591e5d7bf0409b2faeb34cc02da",
+            "src/Themes/Default/SelectPromptRenderer.php": "81201c837d642a3eb0f0477f17fddb34b2685005b1368de58fd831deb141bed4",
+            "src/Themes/Default/SpinnerRenderer.php": "69a79f24fe2d0715abb43debfc00a5815b387e94b3a4f82725f49d60cd82d978",
+            "src/Themes/Default/StreamRenderer.php": "42dc389e8003caef84099b7650a2656994aa30cd580fc27b09d6dd2df315cb92",
+            "src/Themes/Default/SuggestPromptRenderer.php": "e1a65035ba968e25aa28a2ff596cd68b0380ec0515e7aeeac3a20c77f7089081",
+            "src/Themes/Default/TableRenderer.php": "609fd8fe3334a837ae740620485334b8b21cd666690d2ba9ac56f37d54717424",
+            "src/Themes/Default/TaskRenderer.php": "a5ac427e68a521c63f29dff2d015bc6a245daad2c3c8ab38accab970937935ab",
+            "src/Themes/Default/TextPromptRenderer.php": "ec64bdf363e04b622521770868e5da5c0fa0c8a612fdf5be89c28fe1b6c85dba",
+            "src/Themes/Default/TextareaPromptRenderer.php": "ed6746b06a43802f2700a6b9304a635e473a5630f4907e43af71b5e7b51e56e2",
+            "src/Themes/Default/TitleRenderer.php": "42f0b4e0e7019a896d3d522bb49e86cc3821933263e0b581b17bd1d170a5dc49",
+            "src/Title.php": "e985559c8b808189a85c39122e0e01e9c91b515193b9f890fd3616c7d921275f",
+            "src/helpers.php": "7ccc2f3fa7d8d3f8504785839a762028768775a492612a1c88a2f2a72e422e08"
+          },
+          "sources_unchanged": true,
+          "raw_report": "/private/tmp/skylos-gap-before-after/before/php.json",
+          "raw_report_sha256": "516bd2f16ff33f485707f3cb7869f1984fcea0b73f3101b6d385ca9869af2d9f",
+          "total_files": 87,
+          "languages": {
+            "PHP": 87
+          },
+          "analysis_error_count": 0,
+          "finding_counts": {
+            "unused_functions": 0,
+            "unused_classes": 2,
+            "unused_imports": 0,
+            "unused_variables": 2,
+            "unused_exports": 0,
+            "unused_files": 0,
+            "quality": 2,
+            "ai_defects": 0,
+            "danger": 0,
+            "secrets": 0
+          }
+        },
+        "after": {
+          "repo": "laravel/prompts",
+          "target_commit": "e84c227ae83ffef9f8fc1059bb2b79f2b0cfc0ca",
+          "arm": "after",
+          "source_root": "/private/tmp/skylos-gap-before-after/inputs/after/php",
+          "scan_scope": "/private/tmp/skylos-gap-before-after/inputs/after/php",
+          "scanner_import": "/Users/oha/skylos/skylos/__init__.py",
+          "command": [
+            "/private/tmp/skylos-new001-validation/bin/skylos",
+            "/private/tmp/skylos-gap-before-after/inputs/after/php",
+            "--quality",
+            "--confidence",
+            "60",
+            "--format",
+            "json",
+            "--no-upload",
+            "--no-provenance",
+            "-o",
+            "/private/tmp/skylos-gap-before-after/after/php.json"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 1.33,
+          "source_hashes": {
+            "LICENSE.md": "7b4f9149597fbae2ce689bc9317d1869e17f1b3fa5f01c289998c108f8c37cf7",
+            "README.md": "33c968b3d7b2ef4dd06f5763af093381a1725c98bcaba0d3c024a5cd68fa9a99",
+            "composer.json": "d455d98dad33d8314b504e41ed84361ebcc54e1af306e24ed44c2295e8cd58e4",
+            "src/AutoCompletePrompt.php": "36629d4c2eab956cc00cacaa5cb97d7d03011f2f603b807ffa19d9d0316c762b",
+            "src/Callout.php": "d1659c04f1b669e22c136cbc7ecfcb116c3c8a0feaeaf5ae48d29c2756a9ac6a",
+            "src/Clear.php": "3fa150bf07ced1aaa9443f8700a3f3c56bdffba8d09b97315d947a5a79af3c6c",
+            "src/Concerns/Colors.php": "193b0dc47c44cf3dfb9cda59a96c184ca6b04be79599a1573aa5e3cd675b788a",
+            "src/Concerns/Cursor.php": "6bc7328aef2b0e8680e38c0a9c74e514a9f83b5bc90e8eefb5903923804b88f1",
+            "src/Concerns/Erase.php": "b02a50d0c349141b108d44cf01f05f94c9d364c175b9a8cf40002331dab73961",
+            "src/Concerns/Events.php": "facce7c48fdbc5f30b5fc10234d0657872b670fa8ca975c74cdd199bf4de4b75",
+            "src/Concerns/FakesInputOutput.php": "27ae01e115850010b3432d9fffca183c62b596cdc8528ad84f7f352a5d3827ab",
+            "src/Concerns/Fallback.php": "3ae3aaaceaf6de37d89f8135918c11a6763ef1d23e46a3ccee81b78ffa380a4c",
+            "src/Concerns/HasInfo.php": "5c041bdcfae40f6b8d7e12338300e1dffd52f377a01a946337e7c857466213d6",
+            "src/Concerns/HasSpinner.php": "d4905fdbd327a4a40abfefa1e1c300942f8a94482bc09b94aec1c95ca12c75ab",
+            "src/Concerns/Interactivity.php": "ef15cc7a7f60abfc980943721c6c304737222aebd8c828444d9b4d274793d42b",
+            "src/Concerns/RendersAnimations.php": "6f3c985caadbcd52f0926445556e7efbc41132127eb4d843d51e102f0b2bf68d",
+            "src/Concerns/Scrolling.php": "d99e449431b89f0bb884f608ce096ac8fc84557f1792535dd85f4f71e5c2b6ca",
+            "src/Concerns/Termwind.php": "26a2798593075e91792f023b9aa8d7342418cc49c023841d2f691317c87f1131",
+            "src/Concerns/Themes.php": "f13e6d932f8d99202040f6cab49717985233e2f74b86b6197417b88794829c9b",
+            "src/Concerns/Truncation.php": "fc6b61215cc21b7649986fe00b8e34592e93c1016a0cf6d6200581c976561da5",
+            "src/Concerns/TypedValue.php": "896a7a12d5261ecc3ffcc86579b146e44ce6e2d0ce396c091f753d873c502020",
+            "src/ConfirmPrompt.php": "ac1941c4ad2ecbede6ca58fcadac31e999be9b4ca5409d5bdaf3899da0f05f67",
+            "src/DataTablePrompt.php": "cdfa9b6f314e240ff24d87caf36da32d24b1ce37b84f518a3df5b5615aceea66",
+            "src/Elements/BulletedList.php": "effec69aec3b34fb3f16b448f752e52d1d02aee2e9c51182bf9567ed8d885315",
+            "src/Elements/Element.php": "1b0b6d7fa3d600ad6eabbe1f278258f8488fab3ba8c648f2a713ffa97c77d223",
+            "src/Elements/ElementContract.php": "84cdd81eb9d6c83be4db029042fbe0d8126187123984abc76682bdc17536b32f",
+            "src/Elements/Heading.php": "24b0300306452a49e3db5f9c9d92b601f8f54d3cd6c79183e0677b0bf239398d",
+            "src/Elements/KeyValueList.php": "9e0b0e7cba0f7df23e3f9fc2fdcff7ee408052b0fa379beb791916cf8dd408ba",
+            "src/Elements/Link.php": "f440e6c6d4e463faa0247ed1ba849ed231056920dc93f2ef424b3e91e5b04421",
+            "src/Elements/NumberedList.php": "d3cdefe269a4df644f1333b05719576a934a4898e7525765b25f3d06e5ee8035",
+            "src/Exceptions/FormRevertedException.php": "348e3d491e1e0b7a2e51b3d2146626bc4886bec42016df80b5d7308df9f15a1a",
+            "src/Exceptions/NonInteractiveValidationException.php": "4b7468fac0551101f5e80efacce9ebe2879d52cb7e7fc76227a4d2c6fde51a42",
+            "src/FormBuilder.php": "de901ea391855a237b5bd9e7c306ea89ba385ef40780fce5b07aee06ba229eee",
+            "src/FormStep.php": "58535fad2bd770b106564b8c398d69a36f73b75a81951486dfd199319a93be15",
+            "src/Grid.php": "ea307ad6824b72afee41a62061258d608137c1e1b9c2058d49979de0b1e22915",
+            "src/Key.php": "c1062d0211864152bb81362fa91ff9448168223f27d6eaa946bbd5ce92d72069",
+            "src/MultiSearchPrompt.php": "d7a65acb7d14a8b8e2407a31015e109d7f18aec227a1ef9fc5c53c121e642a5d",
+            "src/MultiSelectPrompt.php": "a318616c60d5173ef046f94a19db60754128765bff1e4156e78a600c2b4b53ca",
+            "src/Note.php": "7686fc8cff0e055d64869577de376cf01694ecf14df680707b424382757a3341",
+            "src/NotifyPrompt.php": "981fc806284db77071445ddcddcda8f04c3c3c422b321158f682e5f2bb9fad56",
+            "src/NumberPrompt.php": "e8608361a10abfc29cd105bf0aabc1ecc38add9cb1a262c08c41af846d66206c",
+            "src/Output/BufferedConsoleOutput.php": "aec536a3bd855fa924a056f7c10d456b41f578c7fe8019d6755e8a7e3bfd644a",
+            "src/Output/ConsoleOutput.php": "95a6d7f74e8da23b74dfed906f86c51949aebea95aa8617510ceefdc3851c91f",
+            "src/PasswordPrompt.php": "8c10908eaf2f8aa4d6e11bfdf550d670d81ee2b6a7e9785cf2c13dd78fc6749d",
+            "src/PausePrompt.php": "9083b1eb0ba14d595996e321819f616d5e0a821e2899d6cda985bb1fedca3c1e",
+            "src/Progress.php": "6fcd3fdf7e21955efea0aba8d25db2ef4d2556acf9c67edb6712204f723c6ae7",
+            "src/Prompt.php": "d9f26891bd0c71de3f79d548c0634ef0e9beda9c5a27a879cb64c57d42f1fdd8",
+            "src/SearchPrompt.php": "abfcd7c50600e32a68b2a668c2b08386281f5f5ac0dad3a01930cd6efa96bdcc",
+            "src/SelectPrompt.php": "75be184a9ff4d9182b4becf44dc1ee91ca8c0440f7f3737bd13c23bb8e695849",
+            "src/Spinner.php": "9979d19a743126daadbfc40f50c26605ca1bb3b0d6cc92268c4beb394232f6a0",
+            "src/Stream.php": "75c87faa70bf3008150b02b063c0444f4ddd2a50f832684ecfe53bd8d0848871",
+            "src/SuggestPrompt.php": "dfc987ba904409c4ba890588d12d8c2da204bc66cf7771a7a4aa962a792899e5",
+            "src/Support/Logger.php": "f02d2b019cd59d1d2ad77f3503920164e6be8f95bb200a23dbc8e57192f0aaef",
+            "src/Support/Result.php": "3800c4aefa733875f19b92abf50302311b1be6408363d67b1d4b95a3f2658560",
+            "src/Support/Utils.php": "ec4b177447255d437d8d9db09783b2b51bc2ac48e253a4417606b792145f9207",
+            "src/Table.php": "896e6b4d217fcafd95c24d543977bca8a795a70a8a66b3fd3269e5fc8179941c",
+            "src/Task.php": "aa57ca8ec30827de78875f2d178762f02e3b426e2794922c509676a5710585f6",
+            "src/Terminal.php": "67fa28a18732fea764217f7f78554b2578cba02fdf3604b1d56f31cb88a3b18a",
+            "src/TextPrompt.php": "eb1864d16dcf09cd6869b69e38631eee0efd24f16c39368373597b224f78a39f",
+            "src/TextareaPrompt.php": "6c05976a3cf96a27122a904696d0e828afef67824b64bec0742d474b56400457",
+            "src/Themes/Contracts/Scrolling.php": "44cf496807c91f82bbc8b80d28a36b92482161dad3ab86e28ca624a2ba6fb7cb",
+            "src/Themes/Default/AutoCompletePromptRenderer.php": "1542d645e63b96b643c123cd612ba82bcdb0aa469bf9fd85b8eebec1756436e2",
+            "src/Themes/Default/CalloutRenderer.php": "25d39bbd712e7a10088186e67d1a3b33f507497545b8da59478411f115f10266",
+            "src/Themes/Default/ClearRenderer.php": "87b5e2fb1755a0f69c3791494a5921c13a62aa355e344ce724e503a92862b156",
+            "src/Themes/Default/Concerns/DrawsBoxes.php": "de6ef0f70948f7db0f28fecd15a9d04c43bc16ac168e3080b08fd15e32be3fcc",
+            "src/Themes/Default/Concerns/DrawsScrollbars.php": "f174061850d86684fb42e73b4e69d36337dd2a37c393703bfcd928d7b929eabd",
+            "src/Themes/Default/Concerns/InteractsWithStrings.php": "dfe0bad77820c3c6fba18d32f6872e001e59c88fbe273d8a5eec3d5aa28b88fd",
+            "src/Themes/Default/ConfirmPromptRenderer.php": "baa8cdd730f9f398f2b77337b526362fb0368485eb315178e6a03a18387cfcf4",
+            "src/Themes/Default/DataTableRenderer.php": "c6d292f258913fd4ef74683c5b0b2148e805deea401edd358bf768ec92ad1e03",
+            "src/Themes/Default/GridRenderer.php": "f634a15ccc0572105b7d35bb4fcc56753ac1e8e2794eb9883fa7d10b82ce6a2c",
+            "src/Themes/Default/MultiSearchPromptRenderer.php": "ea8a84919fd3b3efce8eca66521bc1d34238ac344047408c0e4557a9d84aaab6",
+            "src/Themes/Default/MultiSelectPromptRenderer.php": "9710f9093c6f19b6c5bdb7f606696123ddb8e0fde0736d34056b413766ee80ab",
+            "src/Themes/Default/NoteRenderer.php": "ea55d76804574d50ee32a2313f67b06daf7d12e3437aaf1649b0296cdeb677f8",
+            "src/Themes/Default/NumberPromptRenderer.php": "d2e1f052ce53a01d7049a467e3779f38f430ecd8b806f34c0162fdceaaef6b39",
+            "src/Themes/Default/PasswordPromptRenderer.php": "f087022d1904c840f58f3769a8ecd139b0306cd413a7109d0e14295469021415",
+            "src/Themes/Default/PausePromptRenderer.php": "afc0616db956421c9d3c0dc629f9645db8d511739da1a7c1e37845b7649a10a9",
+            "src/Themes/Default/ProgressRenderer.php": "fb02a27b4054185c6805382b2ec40877ca797cdecfeda99e5addc3742da048d9",
+            "src/Themes/Default/Renderer.php": "7aa4b9c2cbbd7b694f327f7b5d0d0c35e5e30ba8a4ce4f91526b59e379d1a199",
+            "src/Themes/Default/SearchPromptRenderer.php": "db5c9532ff723435ba3852477ab5e2b09bf24591e5d7bf0409b2faeb34cc02da",
+            "src/Themes/Default/SelectPromptRenderer.php": "81201c837d642a3eb0f0477f17fddb34b2685005b1368de58fd831deb141bed4",
+            "src/Themes/Default/SpinnerRenderer.php": "69a79f24fe2d0715abb43debfc00a5815b387e94b3a4f82725f49d60cd82d978",
+            "src/Themes/Default/StreamRenderer.php": "42dc389e8003caef84099b7650a2656994aa30cd580fc27b09d6dd2df315cb92",
+            "src/Themes/Default/SuggestPromptRenderer.php": "e1a65035ba968e25aa28a2ff596cd68b0380ec0515e7aeeac3a20c77f7089081",
+            "src/Themes/Default/TableRenderer.php": "609fd8fe3334a837ae740620485334b8b21cd666690d2ba9ac56f37d54717424",
+            "src/Themes/Default/TaskRenderer.php": "a5ac427e68a521c63f29dff2d015bc6a245daad2c3c8ab38accab970937935ab",
+            "src/Themes/Default/TextPromptRenderer.php": "ec64bdf363e04b622521770868e5da5c0fa0c8a612fdf5be89c28fe1b6c85dba",
+            "src/Themes/Default/TextareaPromptRenderer.php": "ed6746b06a43802f2700a6b9304a635e473a5630f4907e43af71b5e7b51e56e2",
+            "src/Themes/Default/TitleRenderer.php": "42f0b4e0e7019a896d3d522bb49e86cc3821933263e0b581b17bd1d170a5dc49",
+            "src/Title.php": "e985559c8b808189a85c39122e0e01e9c91b515193b9f890fd3616c7d921275f",
+            "src/helpers.php": "7ccc2f3fa7d8d3f8504785839a762028768775a492612a1c88a2f2a72e422e08"
+          },
+          "sources_unchanged": true,
+          "raw_report": "/private/tmp/skylos-gap-before-after/after/php.json",
+          "raw_report_sha256": "5cfdfee9b57f416bcfb46f8506b558c2f7875d6005602307982c0558932d507b",
+          "total_files": 87,
+          "languages": {
+            "PHP": 87
+          },
+          "analysis_error_count": 0,
+          "finding_counts": {
+            "unused_functions": 0,
+            "unused_classes": 2,
+            "unused_imports": 0,
+            "unused_variables": 2,
+            "unused_exports": 0,
+            "unused_files": 0,
+            "quality": 2,
+            "ai_defects": 0,
+            "danger": 0,
+            "secrets": 0
+          }
+        }
+      },
+      "finding_delta": {
+        "repository": "php",
+        "before_findings": 6,
+        "after_findings": 6,
+        "removed": [],
+        "added": [],
+        "unchanged_findings": 6
+      }
+    },
+    {
+      "repository": "fmtlib/fmt",
+      "commit": "57f1b5930dc2906875534a15c209e1c39eda59ad",
+      "source_hashes_identical": true,
+      "runs": {
+        "before": {
+          "repo": "fmtlib/fmt",
+          "target_commit": "57f1b5930dc2906875534a15c209e1c39eda59ad",
+          "arm": "before",
+          "source_root": "/private/tmp/skylos-gap-before-after/inputs/before/cpp",
+          "scan_scope": "/private/tmp/skylos-gap-before-after/inputs/before/cpp/src",
+          "scanner_import": "/private/tmp/skylos-gap-before-after/baseline/skylos/__init__.py",
+          "command": [
+            "/private/tmp/skylos-new001-validation/bin/skylos",
+            "/private/tmp/skylos-gap-before-after/inputs/before/cpp/src",
+            "--quality",
+            "--confidence",
+            "60",
+            "--format",
+            "json",
+            "--no-upload",
+            "--no-provenance",
+            "-o",
+            "/private/tmp/skylos-gap-before-after/before/cpp.json"
+          ],
+          "exit_code": 2,
+          "elapsed_seconds": 0.949,
+          "source_hashes": {
+            ".clang-format": "f1516681d53cbc0e816b1e9365eea382df20271bad9e9dfdb01cb44701f4025a",
+            ".clang-tidy": "95ba583cebd694c8838b779afa642bd0293f55aa9fea8865fd668fc63173b76a",
+            ".cmake-format": "0692c23d72151858319ca2ea1056e2be74ce499fbc3936058eb8ebb986b9e51c",
+            ".github/CODEOWNERS": "524103c7d5ec954ed79aadbcc5a58d0edab3203346d5fad1ae66967dff15227f",
+            ".github/FUNDING.yml": "e00d9a72e963b39a6cfae5fbc8d2fed25e2d1ac2a2a3a9e9895a84daa3b70b3f",
+            ".github/SECURITY.md": "d0a63d810fe796f2f6db5338bdc388ba637ffd987fb6087b741ce7ed14ef8a8f",
+            ".github/dependabot.yml": "496e2016d5fca9249992ab8a3ffa9457e4f07e73e8cc698988bdf97e68ba4e14",
+            ".github/issue_template.md": "4d08044b5a6819592c7ff5cfaaae6c9f0259fb3de6d779a27dfe12523bfe7c58",
+            ".github/pull_request_template.md": "4547e593fddf1cd9df97eb380f41a27176afac43cacd3cf793274e0fb8c4d6f6",
+            ".github/workflows/codeql.yml": "370edbfd7119d3a392a07ef0dedde9ebb81cb54bff595fa1ccd9ac08f55d9752",
+            ".github/workflows/doc.yml": "1ec8a39044dc26ea1cd6f1b59afa4f899682f2fac7dce63623b1a87f3f12a248",
+            ".github/workflows/fuzz.yml": "1962b83eb4991b26ed08d3951f65e4a23c84a0f68b8e7064014c2cd51a3a90b8",
+            ".github/workflows/lint.yml": "6a69a285977a80f19924fe30731f7d2a80720cfe07771d2655808b14d9934e79",
+            ".github/workflows/linux.yml": "3fbe481cebc21abff755708aecf1d9e976444c9d187338b097bd978a0fdb324a",
+            ".github/workflows/macos.yml": "9c63b44e5c882910b653577e706ca200df2ba9945fb2f04f3dab52e3a6575abb",
+            ".github/workflows/release.yml": "0363ffef9b3ead8e862d3b30b009b36dd0e5e083ccc32f846f260a77cf64b5c3",
+            ".github/workflows/supply-chain.yml": "913f6967b78e7f8a52bb15e1e771820dd7e27da616e9f618a725b26bb7310bf7",
+            ".github/workflows/windows.yml": "7f4f537c17f32f09a51cfa75b07b55ecc5770b6f24ccf9ab11fe33594ecba16a",
+            ".gitignore": "732ed8b80ca7db546e3b2b6af78906a146075807f0a0207648783ed4a2770c60",
+            "CMakeLists.txt": "a1f5722e907d6bae9cb583dccc61d62463a301e4d67c41b625549318db80d04b",
+            "CONTRIBUTING.md": "be39c4f99e35a65dc2212867fc13a58478c0591e2e1e523cc07a9e77a0c681f3",
+            "ChangeLog.md": "bc90f5122937af3d87e563dd2af1774b8b3468a418203b9f236cc36dfbd094a2",
+            "LICENSE": "a65fcc5a1095fc33cc37e4fff69366e49d7e92f613558a2b95ed1b70e33758b4",
+            "README.md": "d560c28c4649a888af9b725231f828f9475978c146efcc2b0aa1049bc4cf12a8",
+            "doc/ChangeLog-old.md": "779707b9ed897e64896d9bcd6b43ccee83786667f653cf571ff5d6c694ad2619",
+            "doc/LICENSE-exception": "07580f2a3b35709ce703d523f447b242f6dfec7582a8c0df102c7fa2849375f8",
+            "doc/api.md": "f7b481bb894a6382b2cff661153cb07b5a4959a6ac459aa26b2a3fc88a286e8a",
+            "doc/fmt.css": "091af7c8e4f1db0f1bfefecac599cfcbe8c1abe2cfdeec90edcea99156c8432e",
+            "doc/fmt.js": "8a70279ed02d04ebeabfdd88945dcd59a6da04fd4cb69115312ec04ff4bdaa3b",
+            "doc/get-started.md": "139432f8c25448a06b11bdabbb66de285bead622329bdf8bb912cc9f9c6bb58f",
+            "doc/index.md": "9def1ca3fca208d57126e67815fe9ec823037cf448cce46986cebd9256762601",
+            "doc/perf.svg": "dd280260ade5ad3a8a1eb2dbd44da387f04571faf57d89e65d3224531abf467e",
+            "doc/syntax.md": "3169bdb201120a769e6a29ab224bc42315ac82e6d08fe8a17b87d71cef6c930d",
+            "include/fmt/args.h": "b105f72e62d7eb403c12c4c0ba22a94d42344b20206664814bf9568c6785fc83",
+            "include/fmt/base.h": "2f5945de9d42002ded554467ae6411927b25dae678f8588113e820cb4370004a",
+            "include/fmt/chrono.h": "cb85bca850b2ffbab1de4f0c67f12d0155b4cbe6a6b762859fa48d0aa5954b8b",
+            "include/fmt/color.h": "80db3364b9f5b8247f4012d05d1353be1d0aed7c1b5bd65bdcd2817d50b64e7c",
+            "include/fmt/compile.h": "d3a3dd1dca68c542b0a93e244dcd259b8b6e61473b229fc3cbc4df29d29b176a",
+            "include/fmt/core.h": "57e42542be67d247464d00276115fea8dbe1bac012160e6433536efe0d8055ef",
+            "include/fmt/enum.h": "56cc7e8b2bcc6b6d83b1001248e2c1fb1fc52caa3047d0aed798b4b65804445e",
+            "include/fmt/fmt-c.h": "b728da3548cf59c782f971137f1b96e1be684245a8f95e66ea896ecc06ef30b7",
+            "include/fmt/format-inl.h": "a99a48e1e421cf584e51540a9deb51e9b5dee54b3f4182de1b59494fdc8a0869",
+            "include/fmt/format.h": "61fa16cb44c40649612b425254d928bfcf6542ffc6293a2bb01240c94c119b64",
+            "include/fmt/os.h": "bad806559d6b719d1a05a9b008bc84fc2f7757156aa523495aec5a44ed6481ea",
+            "include/fmt/ostream.h": "a2837127005d93ce435165786f592d589d92fd7bb9d6904d20cd956955d9864a",
+            "include/fmt/printf.h": "05513d009627fffa7fc6ff6ad175bb6b368a4133507f4be18a3779433eb634c2",
+            "include/fmt/ranges.h": "407a1ef2603e1a0602de35e40c12052c7a59c434d61832646250c3ada9fef7cc",
+            "include/fmt/std.h": "481d96fa29362d1d553a5f21e5c664072590a657c3e800b80526c0537d7321c3",
+            "include/fmt/xchar.h": "1320d09781450ea7bf94291427fc461b482f99e95476c3003e862ad1dd230ce3",
+            "src/fmt-c.cc": "83d52c1215ec2b379aaaf51cd4a1b3a84b436522adeb1e7713cfd87558641c52",
+            "src/fmt.cc": "cfd30492a209b0d068a4f73f45e907e15421392ffdd2a4863bd75097007fd822",
+            "src/format.cc": "5ccc4d8a363bd5c570782bc3dd92020664b1aa89de2d48b3b87d040c8c7bcc02",
+            "src/os.cc": "b9fb9d8fd8393266b165d443fb960e98e4a7c3b106775c33b2811565fb085be4",
+            "support/Android.mk": "3bed3cd78eda81bab8836b2ba69da50e88a1781760fb4219a35236bb34b58e6f",
+            "support/AndroidManifest.xml": "3e6d67f952c6ed04e4e554e912c5a995729d7f5ca9105fcfb0e149149e855868",
+            "support/C++.sublime-syntax": "dc918929ddf6994bd0da45bfd619ecfdbd5e77482005dfb2049e1278541e06ac",
+            "support/README": "99df194e16daa0f113f65261da812d08d4c69c2c08335744870c3d20880b3908",
+            "support/Vagrantfile": "9295f399d8704020eeed7bd7a5e1b7be082ecf46f635aee8ce70bdbd8367e029",
+            "support/build.gradle": "3c937f9c9f4b0af88703b70da8cfc60a2e453362eb2750aed94223636a2f70d8",
+            "support/check-commits": "34bb8e36e10641bdebef010f4f87dae2b5c5f30038dcb091b3c3a4492bd4978f",
+            "support/cmake/FindSetEnv.cmake": "37c93a898161f0fa6a460fa3957ea174e83d99abe4a4dd8a90a40bf97d8f0b35",
+            "support/cmake/JoinPaths.cmake": "49c2a5c6fa96e3f0caeb9bdfdd46cea29cd94b8faa835d6256d6d64d41ce798a",
+            "support/cmake/fmt-c.pc.in": "0b2a6abe686c7fc27142e81a41ed10110f37de3a9436b6fcd78a07abaaa05aaf",
+            "support/cmake/fmt-config.cmake.in": "a7e7ed7e1d21b05b7ba76d8ed6b2d286ef7771fe03dd1d946ece665a35c413fd",
+            "support/cmake/fmt.pc.in": "734b9afb583495c8297b6f4736f2dc780d5075ece0f5fd2aa40e872524437051",
+            "support/cmake-format-requirements.txt": "2bfd16ba1a269c1d2ec41bfb07b2cce8fd13ac3cc46c0f3bbd1e056569327360",
+            "support/doc-requirements.in": "26a30bcfb4892b4ef6793f57976203890db4a2c36bebb1f687154af0d0953ac3",
+            "support/doc-requirements.txt": "c839975688ce9a834bf5115762b0a2fedd48cd930c4b1c0130c6607aee4294e7",
+            "support/docopt.py": "ee8a677f71fa3ab35fb456c141d8853a366fe91d5fe73c2f84e7b4d3014f6980",
+            "support/gradle/wrapper/gradle-wrapper.properties": "9e51b9b60202c0b04fada62757a8ae7b2b4591a0cd68801a7a7efbfdacb65486",
+            "support/gradle.properties": "8e4edcd4648f3668cac3dbaba46911da3187a65add1cdbae911e75cec99e21e3",
+            "support/import-zmij.py": "a9646764cd8eee377217dc872bf31930c03c588f464639d433aeef2f96188b95",
+            "support/llvm-snapshot.gpg.key": "8b2a587ffd672c4687e7581dad4b2f6c1bb2ad6b480cd9771ba2ff48e0b8c75d",
+            "support/mkdocs": "ae6281dec34d8e9145922569226bde579340d1a6d88663f518f3bb0c76f72591",
+            "support/mkdocs.yml": "5470c3e3953c64ba1c7d7a381a5cb04643dbf7009c339e9b8ba9a94061b4e8f7",
+            "support/printable.py": "c60d5af1143573bfb0995b36c3de7b56b2d8f8a910fbd7fea58b64bccf95f669",
+            "support/python/mkdocstrings_handlers/cxx/__init__.py": "16277cfc9b8b3a97a6759668276a58f40f2b75062bca60dbc1c7a1235c0bddf1",
+            "support/python/mkdocstrings_handlers/cxx/templates/README": "791eb3f2079575cab5a1b6d39594f977f5e616e0f16339f53b64362fbb182e14",
+            "support/release.py": "188a8b8659d71441632d5011726495d7ace476a69d6bb22e3a466e52b331a0e1",
+            "test/CMakeLists.txt": "4a144fb1e30c106c4c595d71b69dc493d1dc2360f1bc3f55139b05c1964f072d",
+            "test/add-subdirectory-test/CMakeLists.txt": "4f7d1a0a19d9e152fb70300cc1b66ba11ecafad4c4f68aa0c5d27e175ed96862",
+            "test/add-subdirectory-test/main.cc": "a1dffad8659518d3afc6ec6a76f0ceeff7a978b73e8ac56229298bdd61723f4e",
+            "test/args-test.cc": "488129bd9c4083f3e1a641e57dca68a67266778818cd7a1e0d9f2d5d9bf5f245",
+            "test/assert-test.cc": "49305211b5d48d4e0fe20a4cf4b8f6a9c833e9e0172b0ba6be365cf8045c1b46",
+            "test/c-test.c": "1da68512e63d1e1cb7ac48d8bcc34862ebf6e51cb9d9f29ac798210cc4ea21eb",
+            "test/chrono-test.cc": "bc6699acf1a827572e65c65a7d1e26841649f1079725c355cede620db7bdc63c",
+            "test/color-test.cc": "978d8c89099f7a98abc40c4f24516b111ef50630c9163ea6e54c41eec0c2df78",
+            "test/compile-error-test/CMakeLists.txt": "df704a35fb89bbc6419f974d5505ab33d3c33a5bbe4f42c7ab599a9d2737723b",
+            "test/compile-test.cc": "23a14f20fc09c2b1841b0a202195b545d18c5b61db5fcf369babaec9744425c3",
+            "test/core-test.cc": "b2c7af75673cad9e064aa8f051df7231ae6317a3351d30c5c07a3726745978f0",
+            "test/cuda-test/CMakeLists.txt": "ab9624b5a25e3a3bf2f5d3f432531dab204490dff26bc7a9a35597bb291a1aa6",
+            "test/cuda-test/cpp14.cc": "eead20f766c7b92118e4270712ab4cd67cd1a1f6e806120eb3b07c9dfe55a54b",
+            "test/cuda-test/cuda-cpp14.cu": "03ca2f1f6da2b7d9b5a72172d8fc266f38bbcdd63b7ab902ceba9bb14a052756",
+            "test/detect-stdfs.cc": "628f373d5bec4f2bd76cdc685445840abea25a4e39880da40f23afeca8678114",
+            "test/enforce-checks-test.cc": "3b102c0cfbd1264f42b5254249a34b4a7f5b9977a0afc8bd770a7cd4662ff1c7",
+            "test/enum-test.cc": "fca77d1240302e5c6e93059366a16b848f20d68785dc09e276ab61238b4f9d67",
+            "test/find-package-test/CMakeLists.txt": "8ba32aa78684d9f173b0b2f404cbb2261c64e108e628d2fc63fe0e25c6b8d103",
+            "test/find-package-test/main.cc": "9d18781837ea0373de73f68a6b569033526d4e601e1da0553da42f2d00603383",
+            "test/format-impl-test.cc": "69f14fa3c837787098ddfe16392d70f6d2cf7e1dfc5caf015ae7fdbd2d325530",
+            "test/format-test.cc": "8fbbbfd4958f6bfd54d110d7fd3579f42fae0b931ed1acfd200301005eab5393",
+            "test/fuzzing/.gitignore": "ee7c3240dcf16788b92c9f7642171be381a8d63184dd45c14024c867de728f99",
+            "test/fuzzing/CMakeLists.txt": "1a1ac1c11bc7f1d5945b4bf376a683b38d6bdb643237b7ae1a0d44db2a3b0418",
+            "test/fuzzing/README.md": "6fbe23b8a3b185e842167eb39a50b28320634f728743a6747be1f7c28b32139d",
+            "test/fuzzing/build.sh": "cdc1e779610dc134c78a1184182bd3d997a14cf2c00b9d7abbef86ff19ffef31",
+            "test/fuzzing/chrono-duration.cc": "b397e86bd326eac60a5d39c98c4b3482fb4309253867ac975aa42d752fb20373",
+            "test/fuzzing/chrono-timepoint.cc": "2238b277d8c4248927e7a3278b93246dc1a707171bca31d5de1e38e81db692ca",
+            "test/fuzzing/float.cc": "6bcf73b39b26b59ea2542f64b38104fda54c644c0e918035cb0c990e82672dd8",
+            "test/fuzzing/fuzzer-common.h": "febe7f954b1e3b33e31a36bf2b4a301660cff0c8c06bb68f9bea3dcc102bcdb3",
+            "test/fuzzing/main.cc": "8328d417518b8dd2203e51c1b0346e9cefc2327a97b124db589937835ec0f1b4",
+            "test/fuzzing/named-arg.cc": "7752e1dfd95ccbe29fa3c63492a7697b54c2be63f57ca189e7a0d89989986c5f",
+            "test/fuzzing/one-arg.cc": "5e4a8d3dbdeaab85d8731ed66cc35db694a2382806119d57a691246390eb3dc8",
+            "test/fuzzing/two-args.cc": "745d0eabf68dda4ed271623dc8ad4dcae265b90e20686215643228e081488ed5",
+            "test/gtest/.clang-format": "abadb738c47dea7e085bb1e16516c55751b715d662447dfaea05c94016bcc85d",
+            "test/gtest/CMakeLists.txt": "92a9babd7cd0a3aac2c5bec64d052488c4ab7e7e2166827ef4794c2ef6a94151",
+            "test/gtest/gmock/gmock.h": "fe5c9ce9bca0725bcd6f6ceaa24b179b0ed322fc9c87efc4b67d862e56a17b32",
+            "test/gtest/gmock-gtest-all.cc": "880ddcab57683f54c8b4263ba591f4fb20ce402ce80ac1a1907756287c39ff85",
+            "test/gtest/gtest/gtest-spi.h": "bc7de52471740743412a62784af636375d05bf913302c74fc50483f20eff45f4",
+            "test/gtest/gtest/gtest.h": "a61461e558fa54e29fd5a7764d386b8861093ebd47665f347d3b54cdb9419038",
+            "test/gtest-extra-test.cc": "0f143adc523f4c77652af2c50124fa391939e11e9f1402b8c850f50a26661865",
+            "test/gtest-extra.cc": "a88f5287ce7416f9756b977c9f78e55265d41887f103836e4b435c7f7dbc9758",
+            "test/gtest-extra.h": "51edc47b635bddc1cfc767dcaaa92fa7261fa26e24dc67bb8db3e000bee1635c",
+            "test/header-only-test.cc": "e6e170175b47a2d6f2432a34af136867ec9f8c1c5e24c9d420d2181776cb3326",
+            "test/installed-module-test/CMakeLists.txt": "dd9905968a758e8e7d3af77c4c863a6f7997ca26821d7633b1269430e96fc5a2",
+            "test/installed-module-test/main.cc": "a9429b6e70777c469ed5c2aef6be14e8e772f3b83967dd56b6c2bbb1f1ef54a1",
+            "test/mock-allocator.h": "d2bb12f4f7af883fcb7e760e358b5ce2794469113044bc842b15e0c139577264",
+            "test/module-test.cc": "594c1a8689babada88e6c380bc6040a941723a04d4fbc10a7938ff407599c15d",
+            "test/no-builtin-types-test.cc": "5066b6e9e2078e2b6d815e6bf529c7f5a422233cad35925a9fd796b926219c0a",
+            "test/noexception-test.cc": "6e20ab6fff11078c0053d1910cd1fef80050b9ca6c6e5e2d7245c056e857b3cf",
+            "test/os-test.cc": "1e78a3e715944af1b1f0e2a006f9d805462dad24e74792bb99e20dea58c7b0c7",
+            "test/ostream-test.cc": "53dd7b5d98aabbca348524e2d26715d4882057caaac7f2b6efdb705845715ad4",
+            "test/perf-sanity.cc": "afed1501a3a03e8868eb2e07712609ce7823ec1368e4e9c9e21ab9c1d285b3e1",
+            "test/posix-mock-test.cc": "45998ae3761c1fa72c816914aeb2ef85b62162f1e3eba7512d65e22f425e2219",
+            "test/posix-mock.h": "972723adec114a9fe21ea1d2e7d5744f7d73948be66db07cead83c33ee0ae375",
+            "test/printf-test.cc": "1000465dcc5b31a0f2c0b258bb262ef16b1c277de60ce3b1cb7364fa0a8c3b92",
+            "test/ranges-odr-test.cc": "f6cc10d2042dd00ae3a770e6c33ce41008b7662060c84f3e5bde636d50e0c83d",
+            "test/ranges-test.cc": "8c34234178c3a51f33bf7f9fd4382b77d3852a29701aa2404e94ddbd67031f40",
+            "test/scan-test.cc": "43a993e21c9c5dbd49630f887b50c07f157e4c3fed2256b4289278d3ff47a3ca",
+            "test/scan.h": "f67c306f5397625198c91fc53430498813dfb8d10065cb08d94827adbaaa5f86",
+            "test/static-export-test/CMakeLists.txt": "f0c081d49590846413b3965283c91c882c85679ec9f90c02f302dbf9f2529caa",
+            "test/static-export-test/library.cc": "c29971cd8eeb091a28906d62c86fe494b10827ac570c2216b26e5fe953d9a592",
+            "test/static-export-test/main.cc": "7d67e1f228ea02492c02e4ab517f1bf19b1b03a675eea559f8c1b0955ea088c8",
+            "test/std-test.cc": "8ff71a40b8eaeb00c11dd393c00cf4ba6546895ed23999d6a966598ecb358b51",
+            "test/test-assert.h": "d3c3dc2081800251089c996036cb165805b11c3cd6ec1b012572f4ced672bd1b",
+            "test/test-main.cc": "d8d151d9df27282e5ea1dbf6c4fb5af5c88b2fdb279a44a83e1a279033113889",
+            "test/unicode-test.cc": "dc13630e56b283dd0988190e7b5caceb01c754c8d45119e6cd83a3154656795e",
+            "test/util.cc": "ecd7eb40c5a1846b2c77224d37ee06efac95c7358963a637a7227138572433f7",
+            "test/util.h": "1643ce91de3b0733e45beff3c09579c691f8c9f4e28b3762fde4025d4afeb9e4",
+            "test/xchar-test.cc": "7dea02566ab8d43cd78b534f6329ccef0665d8f2745d9ae8207b8f447d248758"
+          },
+          "sources_unchanged": true,
+          "raw_report": "/private/tmp/skylos-gap-before-after/before/cpp.json",
+          "raw_report_sha256": "b039d5bea11deae197551fe0a2e69dcce0920f52ef7b5b0afda4636841269fd3",
+          "total_files": 4,
+          "languages": {
+            "C++": 4
+          },
+          "analysis_error_count": 4,
+          "finding_counts": {
+            "unused_functions": 0,
+            "unused_classes": 0,
+            "unused_imports": 0,
+            "unused_variables": 0,
+            "unused_exports": 0,
+            "unused_files": 0,
+            "quality": 2,
+            "ai_defects": 0,
+            "danger": 0,
+            "secrets": 0
+          }
+        },
+        "after": {
+          "repo": "fmtlib/fmt",
+          "target_commit": "57f1b5930dc2906875534a15c209e1c39eda59ad",
+          "arm": "after",
+          "source_root": "/private/tmp/skylos-gap-before-after/inputs/after/cpp",
+          "scan_scope": "/private/tmp/skylos-gap-before-after/inputs/after/cpp/src",
+          "scanner_import": "/Users/oha/skylos/skylos/__init__.py",
+          "command": [
+            "/private/tmp/skylos-new001-validation/bin/skylos",
+            "/private/tmp/skylos-gap-before-after/inputs/after/cpp/src",
+            "--quality",
+            "--confidence",
+            "60",
+            "--format",
+            "json",
+            "--no-upload",
+            "--no-provenance",
+            "-o",
+            "/private/tmp/skylos-gap-before-after/after/cpp.json"
+          ],
+          "exit_code": 2,
+          "elapsed_seconds": 0.664,
+          "source_hashes": {
+            ".clang-format": "f1516681d53cbc0e816b1e9365eea382df20271bad9e9dfdb01cb44701f4025a",
+            ".clang-tidy": "95ba583cebd694c8838b779afa642bd0293f55aa9fea8865fd668fc63173b76a",
+            ".cmake-format": "0692c23d72151858319ca2ea1056e2be74ce499fbc3936058eb8ebb986b9e51c",
+            ".github/CODEOWNERS": "524103c7d5ec954ed79aadbcc5a58d0edab3203346d5fad1ae66967dff15227f",
+            ".github/FUNDING.yml": "e00d9a72e963b39a6cfae5fbc8d2fed25e2d1ac2a2a3a9e9895a84daa3b70b3f",
+            ".github/SECURITY.md": "d0a63d810fe796f2f6db5338bdc388ba637ffd987fb6087b741ce7ed14ef8a8f",
+            ".github/dependabot.yml": "496e2016d5fca9249992ab8a3ffa9457e4f07e73e8cc698988bdf97e68ba4e14",
+            ".github/issue_template.md": "4d08044b5a6819592c7ff5cfaaae6c9f0259fb3de6d779a27dfe12523bfe7c58",
+            ".github/pull_request_template.md": "4547e593fddf1cd9df97eb380f41a27176afac43cacd3cf793274e0fb8c4d6f6",
+            ".github/workflows/codeql.yml": "370edbfd7119d3a392a07ef0dedde9ebb81cb54bff595fa1ccd9ac08f55d9752",
+            ".github/workflows/doc.yml": "1ec8a39044dc26ea1cd6f1b59afa4f899682f2fac7dce63623b1a87f3f12a248",
+            ".github/workflows/fuzz.yml": "1962b83eb4991b26ed08d3951f65e4a23c84a0f68b8e7064014c2cd51a3a90b8",
+            ".github/workflows/lint.yml": "6a69a285977a80f19924fe30731f7d2a80720cfe07771d2655808b14d9934e79",
+            ".github/workflows/linux.yml": "3fbe481cebc21abff755708aecf1d9e976444c9d187338b097bd978a0fdb324a",
+            ".github/workflows/macos.yml": "9c63b44e5c882910b653577e706ca200df2ba9945fb2f04f3dab52e3a6575abb",
+            ".github/workflows/release.yml": "0363ffef9b3ead8e862d3b30b009b36dd0e5e083ccc32f846f260a77cf64b5c3",
+            ".github/workflows/supply-chain.yml": "913f6967b78e7f8a52bb15e1e771820dd7e27da616e9f618a725b26bb7310bf7",
+            ".github/workflows/windows.yml": "7f4f537c17f32f09a51cfa75b07b55ecc5770b6f24ccf9ab11fe33594ecba16a",
+            ".gitignore": "732ed8b80ca7db546e3b2b6af78906a146075807f0a0207648783ed4a2770c60",
+            "CMakeLists.txt": "a1f5722e907d6bae9cb583dccc61d62463a301e4d67c41b625549318db80d04b",
+            "CONTRIBUTING.md": "be39c4f99e35a65dc2212867fc13a58478c0591e2e1e523cc07a9e77a0c681f3",
+            "ChangeLog.md": "bc90f5122937af3d87e563dd2af1774b8b3468a418203b9f236cc36dfbd094a2",
+            "LICENSE": "a65fcc5a1095fc33cc37e4fff69366e49d7e92f613558a2b95ed1b70e33758b4",
+            "README.md": "d560c28c4649a888af9b725231f828f9475978c146efcc2b0aa1049bc4cf12a8",
+            "doc/ChangeLog-old.md": "779707b9ed897e64896d9bcd6b43ccee83786667f653cf571ff5d6c694ad2619",
+            "doc/LICENSE-exception": "07580f2a3b35709ce703d523f447b242f6dfec7582a8c0df102c7fa2849375f8",
+            "doc/api.md": "f7b481bb894a6382b2cff661153cb07b5a4959a6ac459aa26b2a3fc88a286e8a",
+            "doc/fmt.css": "091af7c8e4f1db0f1bfefecac599cfcbe8c1abe2cfdeec90edcea99156c8432e",
+            "doc/fmt.js": "8a70279ed02d04ebeabfdd88945dcd59a6da04fd4cb69115312ec04ff4bdaa3b",
+            "doc/get-started.md": "139432f8c25448a06b11bdabbb66de285bead622329bdf8bb912cc9f9c6bb58f",
+            "doc/index.md": "9def1ca3fca208d57126e67815fe9ec823037cf448cce46986cebd9256762601",
+            "doc/perf.svg": "dd280260ade5ad3a8a1eb2dbd44da387f04571faf57d89e65d3224531abf467e",
+            "doc/syntax.md": "3169bdb201120a769e6a29ab224bc42315ac82e6d08fe8a17b87d71cef6c930d",
+            "include/fmt/args.h": "b105f72e62d7eb403c12c4c0ba22a94d42344b20206664814bf9568c6785fc83",
+            "include/fmt/base.h": "2f5945de9d42002ded554467ae6411927b25dae678f8588113e820cb4370004a",
+            "include/fmt/chrono.h": "cb85bca850b2ffbab1de4f0c67f12d0155b4cbe6a6b762859fa48d0aa5954b8b",
+            "include/fmt/color.h": "80db3364b9f5b8247f4012d05d1353be1d0aed7c1b5bd65bdcd2817d50b64e7c",
+            "include/fmt/compile.h": "d3a3dd1dca68c542b0a93e244dcd259b8b6e61473b229fc3cbc4df29d29b176a",
+            "include/fmt/core.h": "57e42542be67d247464d00276115fea8dbe1bac012160e6433536efe0d8055ef",
+            "include/fmt/enum.h": "56cc7e8b2bcc6b6d83b1001248e2c1fb1fc52caa3047d0aed798b4b65804445e",
+            "include/fmt/fmt-c.h": "b728da3548cf59c782f971137f1b96e1be684245a8f95e66ea896ecc06ef30b7",
+            "include/fmt/format-inl.h": "a99a48e1e421cf584e51540a9deb51e9b5dee54b3f4182de1b59494fdc8a0869",
+            "include/fmt/format.h": "61fa16cb44c40649612b425254d928bfcf6542ffc6293a2bb01240c94c119b64",
+            "include/fmt/os.h": "bad806559d6b719d1a05a9b008bc84fc2f7757156aa523495aec5a44ed6481ea",
+            "include/fmt/ostream.h": "a2837127005d93ce435165786f592d589d92fd7bb9d6904d20cd956955d9864a",
+            "include/fmt/printf.h": "05513d009627fffa7fc6ff6ad175bb6b368a4133507f4be18a3779433eb634c2",
+            "include/fmt/ranges.h": "407a1ef2603e1a0602de35e40c12052c7a59c434d61832646250c3ada9fef7cc",
+            "include/fmt/std.h": "481d96fa29362d1d553a5f21e5c664072590a657c3e800b80526c0537d7321c3",
+            "include/fmt/xchar.h": "1320d09781450ea7bf94291427fc461b482f99e95476c3003e862ad1dd230ce3",
+            "src/fmt-c.cc": "83d52c1215ec2b379aaaf51cd4a1b3a84b436522adeb1e7713cfd87558641c52",
+            "src/fmt.cc": "cfd30492a209b0d068a4f73f45e907e15421392ffdd2a4863bd75097007fd822",
+            "src/format.cc": "5ccc4d8a363bd5c570782bc3dd92020664b1aa89de2d48b3b87d040c8c7bcc02",
+            "src/os.cc": "b9fb9d8fd8393266b165d443fb960e98e4a7c3b106775c33b2811565fb085be4",
+            "support/Android.mk": "3bed3cd78eda81bab8836b2ba69da50e88a1781760fb4219a35236bb34b58e6f",
+            "support/AndroidManifest.xml": "3e6d67f952c6ed04e4e554e912c5a995729d7f5ca9105fcfb0e149149e855868",
+            "support/C++.sublime-syntax": "dc918929ddf6994bd0da45bfd619ecfdbd5e77482005dfb2049e1278541e06ac",
+            "support/README": "99df194e16daa0f113f65261da812d08d4c69c2c08335744870c3d20880b3908",
+            "support/Vagrantfile": "9295f399d8704020eeed7bd7a5e1b7be082ecf46f635aee8ce70bdbd8367e029",
+            "support/build.gradle": "3c937f9c9f4b0af88703b70da8cfc60a2e453362eb2750aed94223636a2f70d8",
+            "support/check-commits": "34bb8e36e10641bdebef010f4f87dae2b5c5f30038dcb091b3c3a4492bd4978f",
+            "support/cmake/FindSetEnv.cmake": "37c93a898161f0fa6a460fa3957ea174e83d99abe4a4dd8a90a40bf97d8f0b35",
+            "support/cmake/JoinPaths.cmake": "49c2a5c6fa96e3f0caeb9bdfdd46cea29cd94b8faa835d6256d6d64d41ce798a",
+            "support/cmake/fmt-c.pc.in": "0b2a6abe686c7fc27142e81a41ed10110f37de3a9436b6fcd78a07abaaa05aaf",
+            "support/cmake/fmt-config.cmake.in": "a7e7ed7e1d21b05b7ba76d8ed6b2d286ef7771fe03dd1d946ece665a35c413fd",
+            "support/cmake/fmt.pc.in": "734b9afb583495c8297b6f4736f2dc780d5075ece0f5fd2aa40e872524437051",
+            "support/cmake-format-requirements.txt": "2bfd16ba1a269c1d2ec41bfb07b2cce8fd13ac3cc46c0f3bbd1e056569327360",
+            "support/doc-requirements.in": "26a30bcfb4892b4ef6793f57976203890db4a2c36bebb1f687154af0d0953ac3",
+            "support/doc-requirements.txt": "c839975688ce9a834bf5115762b0a2fedd48cd930c4b1c0130c6607aee4294e7",
+            "support/docopt.py": "ee8a677f71fa3ab35fb456c141d8853a366fe91d5fe73c2f84e7b4d3014f6980",
+            "support/gradle/wrapper/gradle-wrapper.properties": "9e51b9b60202c0b04fada62757a8ae7b2b4591a0cd68801a7a7efbfdacb65486",
+            "support/gradle.properties": "8e4edcd4648f3668cac3dbaba46911da3187a65add1cdbae911e75cec99e21e3",
+            "support/import-zmij.py": "a9646764cd8eee377217dc872bf31930c03c588f464639d433aeef2f96188b95",
+            "support/llvm-snapshot.gpg.key": "8b2a587ffd672c4687e7581dad4b2f6c1bb2ad6b480cd9771ba2ff48e0b8c75d",
+            "support/mkdocs": "ae6281dec34d8e9145922569226bde579340d1a6d88663f518f3bb0c76f72591",
+            "support/mkdocs.yml": "5470c3e3953c64ba1c7d7a381a5cb04643dbf7009c339e9b8ba9a94061b4e8f7",
+            "support/printable.py": "c60d5af1143573bfb0995b36c3de7b56b2d8f8a910fbd7fea58b64bccf95f669",
+            "support/python/mkdocstrings_handlers/cxx/__init__.py": "16277cfc9b8b3a97a6759668276a58f40f2b75062bca60dbc1c7a1235c0bddf1",
+            "support/python/mkdocstrings_handlers/cxx/templates/README": "791eb3f2079575cab5a1b6d39594f977f5e616e0f16339f53b64362fbb182e14",
+            "support/release.py": "188a8b8659d71441632d5011726495d7ace476a69d6bb22e3a466e52b331a0e1",
+            "test/CMakeLists.txt": "4a144fb1e30c106c4c595d71b69dc493d1dc2360f1bc3f55139b05c1964f072d",
+            "test/add-subdirectory-test/CMakeLists.txt": "4f7d1a0a19d9e152fb70300cc1b66ba11ecafad4c4f68aa0c5d27e175ed96862",
+            "test/add-subdirectory-test/main.cc": "a1dffad8659518d3afc6ec6a76f0ceeff7a978b73e8ac56229298bdd61723f4e",
+            "test/args-test.cc": "488129bd9c4083f3e1a641e57dca68a67266778818cd7a1e0d9f2d5d9bf5f245",
+            "test/assert-test.cc": "49305211b5d48d4e0fe20a4cf4b8f6a9c833e9e0172b0ba6be365cf8045c1b46",
+            "test/c-test.c": "1da68512e63d1e1cb7ac48d8bcc34862ebf6e51cb9d9f29ac798210cc4ea21eb",
+            "test/chrono-test.cc": "bc6699acf1a827572e65c65a7d1e26841649f1079725c355cede620db7bdc63c",
+            "test/color-test.cc": "978d8c89099f7a98abc40c4f24516b111ef50630c9163ea6e54c41eec0c2df78",
+            "test/compile-error-test/CMakeLists.txt": "df704a35fb89bbc6419f974d5505ab33d3c33a5bbe4f42c7ab599a9d2737723b",
+            "test/compile-test.cc": "23a14f20fc09c2b1841b0a202195b545d18c5b61db5fcf369babaec9744425c3",
+            "test/core-test.cc": "b2c7af75673cad9e064aa8f051df7231ae6317a3351d30c5c07a3726745978f0",
+            "test/cuda-test/CMakeLists.txt": "ab9624b5a25e3a3bf2f5d3f432531dab204490dff26bc7a9a35597bb291a1aa6",
+            "test/cuda-test/cpp14.cc": "eead20f766c7b92118e4270712ab4cd67cd1a1f6e806120eb3b07c9dfe55a54b",
+            "test/cuda-test/cuda-cpp14.cu": "03ca2f1f6da2b7d9b5a72172d8fc266f38bbcdd63b7ab902ceba9bb14a052756",
+            "test/detect-stdfs.cc": "628f373d5bec4f2bd76cdc685445840abea25a4e39880da40f23afeca8678114",
+            "test/enforce-checks-test.cc": "3b102c0cfbd1264f42b5254249a34b4a7f5b9977a0afc8bd770a7cd4662ff1c7",
+            "test/enum-test.cc": "fca77d1240302e5c6e93059366a16b848f20d68785dc09e276ab61238b4f9d67",
+            "test/find-package-test/CMakeLists.txt": "8ba32aa78684d9f173b0b2f404cbb2261c64e108e628d2fc63fe0e25c6b8d103",
+            "test/find-package-test/main.cc": "9d18781837ea0373de73f68a6b569033526d4e601e1da0553da42f2d00603383",
+            "test/format-impl-test.cc": "69f14fa3c837787098ddfe16392d70f6d2cf7e1dfc5caf015ae7fdbd2d325530",
+            "test/format-test.cc": "8fbbbfd4958f6bfd54d110d7fd3579f42fae0b931ed1acfd200301005eab5393",
+            "test/fuzzing/.gitignore": "ee7c3240dcf16788b92c9f7642171be381a8d63184dd45c14024c867de728f99",
+            "test/fuzzing/CMakeLists.txt": "1a1ac1c11bc7f1d5945b4bf376a683b38d6bdb643237b7ae1a0d44db2a3b0418",
+            "test/fuzzing/README.md": "6fbe23b8a3b185e842167eb39a50b28320634f728743a6747be1f7c28b32139d",
+            "test/fuzzing/build.sh": "cdc1e779610dc134c78a1184182bd3d997a14cf2c00b9d7abbef86ff19ffef31",
+            "test/fuzzing/chrono-duration.cc": "b397e86bd326eac60a5d39c98c4b3482fb4309253867ac975aa42d752fb20373",
+            "test/fuzzing/chrono-timepoint.cc": "2238b277d8c4248927e7a3278b93246dc1a707171bca31d5de1e38e81db692ca",
+            "test/fuzzing/float.cc": "6bcf73b39b26b59ea2542f64b38104fda54c644c0e918035cb0c990e82672dd8",
+            "test/fuzzing/fuzzer-common.h": "febe7f954b1e3b33e31a36bf2b4a301660cff0c8c06bb68f9bea3dcc102bcdb3",
+            "test/fuzzing/main.cc": "8328d417518b8dd2203e51c1b0346e9cefc2327a97b124db589937835ec0f1b4",
+            "test/fuzzing/named-arg.cc": "7752e1dfd95ccbe29fa3c63492a7697b54c2be63f57ca189e7a0d89989986c5f",
+            "test/fuzzing/one-arg.cc": "5e4a8d3dbdeaab85d8731ed66cc35db694a2382806119d57a691246390eb3dc8",
+            "test/fuzzing/two-args.cc": "745d0eabf68dda4ed271623dc8ad4dcae265b90e20686215643228e081488ed5",
+            "test/gtest/.clang-format": "abadb738c47dea7e085bb1e16516c55751b715d662447dfaea05c94016bcc85d",
+            "test/gtest/CMakeLists.txt": "92a9babd7cd0a3aac2c5bec64d052488c4ab7e7e2166827ef4794c2ef6a94151",
+            "test/gtest/gmock/gmock.h": "fe5c9ce9bca0725bcd6f6ceaa24b179b0ed322fc9c87efc4b67d862e56a17b32",
+            "test/gtest/gmock-gtest-all.cc": "880ddcab57683f54c8b4263ba591f4fb20ce402ce80ac1a1907756287c39ff85",
+            "test/gtest/gtest/gtest-spi.h": "bc7de52471740743412a62784af636375d05bf913302c74fc50483f20eff45f4",
+            "test/gtest/gtest/gtest.h": "a61461e558fa54e29fd5a7764d386b8861093ebd47665f347d3b54cdb9419038",
+            "test/gtest-extra-test.cc": "0f143adc523f4c77652af2c50124fa391939e11e9f1402b8c850f50a26661865",
+            "test/gtest-extra.cc": "a88f5287ce7416f9756b977c9f78e55265d41887f103836e4b435c7f7dbc9758",
+            "test/gtest-extra.h": "51edc47b635bddc1cfc767dcaaa92fa7261fa26e24dc67bb8db3e000bee1635c",
+            "test/header-only-test.cc": "e6e170175b47a2d6f2432a34af136867ec9f8c1c5e24c9d420d2181776cb3326",
+            "test/installed-module-test/CMakeLists.txt": "dd9905968a758e8e7d3af77c4c863a6f7997ca26821d7633b1269430e96fc5a2",
+            "test/installed-module-test/main.cc": "a9429b6e70777c469ed5c2aef6be14e8e772f3b83967dd56b6c2bbb1f1ef54a1",
+            "test/mock-allocator.h": "d2bb12f4f7af883fcb7e760e358b5ce2794469113044bc842b15e0c139577264",
+            "test/module-test.cc": "594c1a8689babada88e6c380bc6040a941723a04d4fbc10a7938ff407599c15d",
+            "test/no-builtin-types-test.cc": "5066b6e9e2078e2b6d815e6bf529c7f5a422233cad35925a9fd796b926219c0a",
+            "test/noexception-test.cc": "6e20ab6fff11078c0053d1910cd1fef80050b9ca6c6e5e2d7245c056e857b3cf",
+            "test/os-test.cc": "1e78a3e715944af1b1f0e2a006f9d805462dad24e74792bb99e20dea58c7b0c7",
+            "test/ostream-test.cc": "53dd7b5d98aabbca348524e2d26715d4882057caaac7f2b6efdb705845715ad4",
+            "test/perf-sanity.cc": "afed1501a3a03e8868eb2e07712609ce7823ec1368e4e9c9e21ab9c1d285b3e1",
+            "test/posix-mock-test.cc": "45998ae3761c1fa72c816914aeb2ef85b62162f1e3eba7512d65e22f425e2219",
+            "test/posix-mock.h": "972723adec114a9fe21ea1d2e7d5744f7d73948be66db07cead83c33ee0ae375",
+            "test/printf-test.cc": "1000465dcc5b31a0f2c0b258bb262ef16b1c277de60ce3b1cb7364fa0a8c3b92",
+            "test/ranges-odr-test.cc": "f6cc10d2042dd00ae3a770e6c33ce41008b7662060c84f3e5bde636d50e0c83d",
+            "test/ranges-test.cc": "8c34234178c3a51f33bf7f9fd4382b77d3852a29701aa2404e94ddbd67031f40",
+            "test/scan-test.cc": "43a993e21c9c5dbd49630f887b50c07f157e4c3fed2256b4289278d3ff47a3ca",
+            "test/scan.h": "f67c306f5397625198c91fc53430498813dfb8d10065cb08d94827adbaaa5f86",
+            "test/static-export-test/CMakeLists.txt": "f0c081d49590846413b3965283c91c882c85679ec9f90c02f302dbf9f2529caa",
+            "test/static-export-test/library.cc": "c29971cd8eeb091a28906d62c86fe494b10827ac570c2216b26e5fe953d9a592",
+            "test/static-export-test/main.cc": "7d67e1f228ea02492c02e4ab517f1bf19b1b03a675eea559f8c1b0955ea088c8",
+            "test/std-test.cc": "8ff71a40b8eaeb00c11dd393c00cf4ba6546895ed23999d6a966598ecb358b51",
+            "test/test-assert.h": "d3c3dc2081800251089c996036cb165805b11c3cd6ec1b012572f4ced672bd1b",
+            "test/test-main.cc": "d8d151d9df27282e5ea1dbf6c4fb5af5c88b2fdb279a44a83e1a279033113889",
+            "test/unicode-test.cc": "dc13630e56b283dd0988190e7b5caceb01c754c8d45119e6cd83a3154656795e",
+            "test/util.cc": "ecd7eb40c5a1846b2c77224d37ee06efac95c7358963a637a7227138572433f7",
+            "test/util.h": "1643ce91de3b0733e45beff3c09579c691f8c9f4e28b3762fde4025d4afeb9e4",
+            "test/xchar-test.cc": "7dea02566ab8d43cd78b534f6329ccef0665d8f2745d9ae8207b8f447d248758"
+          },
+          "sources_unchanged": true,
+          "raw_report": "/private/tmp/skylos-gap-before-after/after/cpp.json",
+          "raw_report_sha256": "63cb4f93ec978042b980516a90058ff5ab39fe94d58873468fdfa2d41c2a9f30",
+          "total_files": 4,
+          "languages": {
+            "C++": 4
+          },
+          "analysis_error_count": 4,
+          "finding_counts": {
+            "unused_functions": 0,
+            "unused_classes": 0,
+            "unused_imports": 0,
+            "unused_variables": 0,
+            "unused_exports": 0,
+            "unused_files": 0,
+            "quality": 2,
+            "ai_defects": 0,
+            "danger": 0,
+            "secrets": 0
+          }
+        }
+      },
+      "finding_delta": {
+        "repository": "cpp",
+        "before_findings": 2,
+        "after_findings": 2,
+        "removed": [],
+        "added": [],
+        "unchanged_findings": 2
+      }
+    }
+  ],
+  "frontend_review": {
+    "version": 1,
+    "repository": "antfu/vitesse-lite",
+    "target_commit": "0b352977755e1f7f6399698e308777760409ca71",
+    "baseline_scanner_commit": "be4a748c7d42f161cf45e96db4ae3be18bc49338",
+    "before_report": "/private/tmp/skylos-gap-before-after/before/frontend.json",
+    "after_report": "/private/tmp/skylos-gap-before-after/after/frontend.json",
+    "source_hashes_identical_between_arms": true,
+    "matched_source_file_count": 39,
+    "source_review_fixed_before_output_inspection": "/private/tmp/skylos-gap-frontend-fixed-labels.json",
+    "arms": {
+      "before": {
+        "exit_code": 0,
+        "analysis_errors": 0,
+        "analysed_files": 12,
+        "reviewed_local_dead_code_labels": {
+          "TP": 4,
+          "TN": 2,
+          "FP": 0,
+          "FN": 0,
+          "fixed_labels": 6,
+          "negative_controls": 2,
+          "false_positive_rate": 0.0
+        },
+        "generated_declaration_unused_imports": 4,
+        "generated_declaration_lint_warnings": 3,
+        "repository_policy_advice": 2,
+        "uno_css_alert": false,
+        "unknown_provider_diagnostics": []
+      },
+      "after": {
+        "exit_code": 2,
+        "analysis_errors": 3,
+        "analysed_files": 12,
+        "reviewed_local_dead_code_labels": {
+          "TP": 4,
+          "TN": 2,
+          "FP": 0,
+          "FN": 0,
+          "fixed_labels": 6,
+          "negative_controls": 2,
+          "false_positive_rate": 0.0
+        },
+        "generated_declaration_unused_imports": 4,
+        "generated_declaration_lint_warnings": 0,
+        "repository_policy_advice": 2,
+        "uno_css_alert": false,
+        "unknown_provider_diagnostics": [
+          {
+            "file": "src/main.ts",
+            "kind": "component_import_graph_incomplete",
+            "message": "Component import graph incomplete: unresolved_generated_route_provider"
+          },
+          {
+            "file": "vite.config.ts",
+            "kind": "component_import_graph_incomplete",
+            "message": "Component import graph incomplete: unresolved_auto_import_provider"
+          },
+          {
+            "file": "vite.config.ts",
+            "kind": "component_import_graph_incomplete",
+            "message": "Component import graph incomplete: unresolved_auto_component_provider"
+          }
+        ]
+      }
+    },
+    "removed_alerts": [
+      {
+        "category": "quality",
+        "file": "auto-imports.d.ts",
+        "rule_id": "SKY-L035",
+        "symbol": "eslint-disable",
+        "line": 1,
+        "classification": "true blanket-disable predicate, generated-output non-actionable policy noise; not a strict semantic false positive"
+      },
+      {
+        "category": "quality",
+        "file": "components.d.ts",
+        "rule_id": "SKY-L035",
+        "symbol": "eslint-disable",
+        "line": 1,
+        "classification": "true blanket-disable predicate, generated-output non-actionable policy noise; not a strict semantic false positive"
+      },
+      {
+        "category": "quality",
+        "file": "src/typed-router.d.ts",
+        "rule_id": "SKY-L035",
+        "symbol": "eslint-disable",
+        "line": 1,
+        "classification": "true blanket-disable predicate, generated-output non-actionable policy noise; not a strict semantic false positive"
+      }
+    ],
+    "added_alerts": [],
+    "unchanged_alert_count": 6,
+    "interpretation": [
+      "On the six source-reviewed local dead-code labels, both arms have four valid literal unused-import detections and two preserved known-used variable bindings. Reviewed local FPR is unchanged at 0/2.",
+      "The only finding delta is removal of three generator-owned declaration lint warnings. Their source predicate was true; this is a scope/actionability correction, not evidence of three fewer semantic false positives.",
+      "Generated-output warning count is seven before and four after; four literal unused-import warnings in generated output remain. There is no application dead-code true-positive sample here.",
+      "Current scanning explicitly reports three unknown generated-provider boundaries and exits 2. Baseline exit 0 without such receipts does not prove complete frontend coverage.",
+      "The transient uno.css alert is absent in both matched arms. It was introduced and fixed within the patch and contributes no baseline-improvement claim."
+    ],
+    "whole_frontend_accuracy": {
+      "status": "unscored",
+      "false_positive_rate": null,
+      "reason": "No exhaustive source-labelled application corpus; component bodies and generated routing/automatic import/provider semantics are incomplete. Local reviewed counts must not be presented as repository-wide accuracy."
+    },
+    "no_target_execution": true
+  },
+  "javascript_php_review": {
+    "schema_version": 1,
+    "reviewed_at": "2026-11-16T08:33:28.497508+00:00",
+    "baseline_commit": "be4a748c7d42f161cf45e96db4ae3be18bc49338",
+    "label_scope": "Fixed known-used controls from earlier source review, preserved before matched reruns; not an unseen or exhaustive accuracy set.",
+    "target_code_execution": false,
+    "repositories": [
+      {
+        "repo": "unjs/defu",
+        "pin": "82632b66f5914e9946edce300e10633a3d5c0cb7",
+        "scope": ".",
+        "report_paths": {
+          "before": "/private/tmp/skylos-gap-before-after/before/javascript.json",
+          "after": "/private/tmp/skylos-gap-before-after/after/javascript.json"
+        },
+        "report_sha256": {
+          "before": "e714d59a8ac65f845baf67e6d3851e2c0364944efe874a4245d554ddfa8119d8",
+          "after": "431caffde2fc98d61767de82a451ab1a57dddb47ae5d52908f8824fb756cc24f"
+        },
+        "counts": {
+          "before": {
+            "source_files": 9,
+            "analysis_errors": 0,
+            "categories": {
+              "unused_functions": 0,
+              "unused_classes": 0,
+              "unused_variables": 0,
+              "unused_imports": 0,
+              "unused_parameters": 0,
+              "unused_exports": 0,
+              "unused_files": 0,
+              "quality": 8
+            },
+            "source_hashes_match_frozen_inputs": true,
+            "excluded_folders": [
+              "*.egg-info",
+              ".coverage",
+              ".git",
+              ".hg",
+              ".idea",
+              ".mypy_cache",
+              ".next",
+              ".nuxt",
+              ".pytest_cache",
+              ".svn",
+              ".tox",
+              ".turbo",
+              ".venv",
+              ".vscode",
+              "__pycache__",
+              "build",
+              "dist",
+              "htmlcov",
+              "node_modules",
+              "vendor",
+              "venv"
+            ]
+          },
+          "after": {
+            "source_files": 9,
+            "analysis_errors": 0,
+            "categories": {
+              "unused_functions": 0,
+              "unused_classes": 0,
+              "unused_variables": 0,
+              "unused_imports": 0,
+              "unused_parameters": 0,
+              "unused_exports": 0,
+              "unused_files": 0,
+              "quality": 8
+            },
+            "source_hashes_match_frozen_inputs": true,
+            "excluded_folders": [
+              "*.egg-info",
+              ".coverage",
+              ".git",
+              ".hg",
+              ".idea",
+              ".mypy_cache",
+              ".next",
+              ".nuxt",
+              ".pytest_cache",
+              ".svn",
+              ".tox",
+              ".turbo",
+              ".venv",
+              ".vscode",
+              "__pycache__",
+              "build",
+              "dist",
+              "htmlcov",
+              "node_modules",
+              "vendor",
+              "venv"
+            ]
+          }
+        },
+        "identity_delta": {
+          "added": [],
+          "removed": [],
+          "unchanged_count": 8
+        },
+        "known_used_symbol_controls": [
+          {
+            "file": "src/_utils.ts",
+            "symbol": "isPlainObject",
+            "qualified_name": "isPlainObject",
+            "line": 3,
+            "evidence": [
+              {
+                "file": "src/defu.ts",
+                "line": 1
+              },
+              {
+                "file": "src/defu.ts",
+                "line": 6
+              }
+            ],
+            "outcomes": {
+              "before": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              },
+              "after": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              }
+            }
+          },
+          {
+            "file": "src/defu.ts",
+            "symbol": "createDefu",
+            "qualified_name": "createDefu",
+            "line": 45,
+            "evidence": [
+              {
+                "file": "src/defu.ts",
+                "line": 52
+              },
+              {
+                "file": "test/defu.test.ts",
+                "line": 188
+              }
+            ],
+            "outcomes": {
+              "before": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              },
+              "after": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              }
+            }
+          },
+          {
+            "file": "src/defu.ts",
+            "symbol": "defu",
+            "qualified_name": "defu",
+            "line": 52,
+            "evidence": [
+              {
+                "file": "test/defu.test.ts",
+                "line": 11
+              }
+            ],
+            "outcomes": {
+              "before": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              },
+              "after": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              }
+            }
+          },
+          {
+            "file": "src/defu.ts",
+            "symbol": "defuFn",
+            "qualified_name": "defuFn",
+            "line": 56,
+            "evidence": [
+              {
+                "file": "test/defu.test.ts",
+                "line": 201
+              }
+            ],
+            "outcomes": {
+              "before": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              },
+              "after": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              }
+            }
+          },
+          {
+            "file": "src/defu.ts",
+            "symbol": "defuArrayFn",
+            "qualified_name": "defuArrayFn",
+            "line": 64,
+            "evidence": [
+              {
+                "file": "test/defu.test.ts",
+                "line": 223
+              }
+            ],
+            "outcomes": {
+              "before": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              },
+              "after": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              }
+            }
+          }
+        ],
+        "dependency_controls_not_matched": {
+          "count": 7,
+          "controls": [
+            {
+              "package": "vitest",
+              "evidence": [
+                {
+                  "file": "test/defu.test.ts",
+                  "line": 2
+                },
+                {
+                  "file": "package.json",
+                  "line": 28
+                }
+              ]
+            },
+            {
+              "package": "expect-type",
+              "evidence": [
+                {
+                  "file": "test/defu.test.ts",
+                  "line": 1
+                }
+              ]
+            },
+            {
+              "package": "unbuild",
+              "evidence": [
+                {
+                  "file": "package.json",
+                  "line": 27
+                }
+              ]
+            },
+            {
+              "package": "oxlint",
+              "evidence": [
+                {
+                  "file": "package.json",
+                  "line": 29
+                }
+              ]
+            },
+            {
+              "package": "oxfmt",
+              "evidence": [
+                {
+                  "file": "package.json",
+                  "line": 29
+                }
+              ]
+            },
+            {
+              "package": "changelogen",
+              "evidence": [
+                {
+                  "file": "package.json",
+                  "line": 32
+                }
+              ]
+            },
+            {
+              "package": "@vitest/coverage-v8",
+              "evidence": [
+                {
+                  "file": ".github/workflows/ci.yml",
+                  "line": 25
+                }
+              ],
+              "note": "Vitest coverage option loads provider implicitly; do not declare unused from absent import."
+            }
+          ],
+          "baseline": "unsupported_rule_family",
+          "after_coverage": {
+            "status": "incomplete",
+            "complete": false,
+            "reasons": [
+              {
+                "package_manifest": "/private/tmp/skylos-gap-before-after/inputs/after/javascript/package.json",
+                "kind": "unmodelled_command_file",
+                "file": "/private/tmp/skylos-gap-before-after/inputs/after/javascript/.github/workflows/ci.yml"
+              },
+              {
+                "package_manifest": "/private/tmp/skylos-gap-before-after/inputs/after/javascript/package.json",
+                "kind": "unknown_binary_provider",
+                "binary": "tsgo"
+              }
+            ],
+            "packages": [
+              "/private/tmp/skylos-gap-before-after/inputs/after/javascript/package.json"
+            ],
+            "abstained_dependencies": [
+              {
+                "package_manifest": "/private/tmp/skylos-gap-before-after/inputs/after/javascript/package.json",
+                "name": "@typescript/native-preview"
+              },
+              {
+                "package_manifest": "/private/tmp/skylos-gap-before-after/inputs/after/javascript/package.json",
+                "name": "@vitest/coverage-v8"
+              },
+              {
+                "package_manifest": "/private/tmp/skylos-gap-before-after/inputs/after/javascript/package.json",
+                "name": "eslint-config-unjs"
+              },
+              {
+                "package_manifest": "/private/tmp/skylos-gap-before-after/inputs/after/javascript/package.json",
+                "name": "typescript"
+              }
+            ],
+            "abstained_count": 4
+          },
+          "accuracy_credit": null
+        },
+        "reviewed_policy_false_advisory": {
+          "rule_id": "SKY-R105",
+          "before": "false_policy_advisory",
+          "after": "false_policy_advisory",
+          "change": "unchanged",
+          "source_evidence": [
+            {
+              "file": "package.json",
+              "line": 34,
+              "fact": "test:types invokes tsgo --noEmit"
+            },
+            {
+              "file": "package.json",
+              "line": 38,
+              "fact": "@typescript/native-preview is declared"
+            },
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 24,
+              "fact": "CI invokes pnpm test:types"
+            }
+          ],
+          "official_provider_documentation": "https://github.com/microsoft/typescript-go/blob/main/_packages/native-preview/README.md",
+          "metric_scope": "Separate policy-advisory review; not a dead-code FP or a new before/after improvement."
+        },
+        "recall": {
+          "before": null,
+          "after": null,
+          "reason": "No frozen source-proven unused positive denominator."
+        }
+      },
+      {
+        "repo": "laravel/prompts",
+        "pin": "e84c227ae83ffef9f8fc1059bb2b79f2b0cfc0ca",
+        "scope": ".",
+        "report_paths": {
+          "before": "/private/tmp/skylos-gap-before-after/before/php.json",
+          "after": "/private/tmp/skylos-gap-before-after/after/php.json"
+        },
+        "report_sha256": {
+          "before": "516bd2f16ff33f485707f3cb7869f1984fcea0b73f3101b6d385ca9869af2d9f",
+          "after": "5cfdfee9b57f416bcfb46f8506b558c2f7875d6005602307982c0558932d507b"
+        },
+        "counts": {
+          "before": {
+            "source_files": 87,
+            "analysis_errors": 0,
+            "categories": {
+              "unused_functions": 0,
+              "unused_classes": 2,
+              "unused_variables": 2,
+              "unused_imports": 0,
+              "unused_parameters": 0,
+              "unused_exports": 0,
+              "unused_files": 0,
+              "quality": 2
+            },
+            "source_hashes_match_frozen_inputs": true,
+            "excluded_folders": [
+              "*.egg-info",
+              ".coverage",
+              ".git",
+              ".hg",
+              ".idea",
+              ".mypy_cache",
+              ".next",
+              ".nuxt",
+              ".pytest_cache",
+              ".svn",
+              ".tox",
+              ".turbo",
+              ".venv",
+              ".vscode",
+              "__pycache__",
+              "build",
+              "dist",
+              "htmlcov",
+              "node_modules",
+              "vendor",
+              "venv"
+            ]
+          },
+          "after": {
+            "source_files": 87,
+            "analysis_errors": 0,
+            "categories": {
+              "unused_functions": 0,
+              "unused_classes": 2,
+              "unused_variables": 2,
+              "unused_imports": 0,
+              "unused_parameters": 0,
+              "unused_exports": 0,
+              "unused_files": 0,
+              "quality": 2
+            },
+            "source_hashes_match_frozen_inputs": true,
+            "excluded_folders": [
+              "*.egg-info",
+              ".coverage",
+              ".git",
+              ".hg",
+              ".idea",
+              ".mypy_cache",
+              ".next",
+              ".nuxt",
+              ".pytest_cache",
+              ".svn",
+              ".tox",
+              ".turbo",
+              ".venv",
+              ".vscode",
+              "__pycache__",
+              "build",
+              "dist",
+              "htmlcov",
+              "node_modules",
+              "vendor",
+              "venv"
+            ]
+          }
+        },
+        "identity_delta": {
+          "added": [],
+          "removed": [],
+          "unchanged_count": 6
+        },
+        "known_used_symbol_controls": [
+          {
+            "file": "src/Prompt.php",
+            "symbol": "Prompt",
+            "qualified_name": "Laravel.Prompts.Prompt",
+            "evidence": "TextPrompt extends Prompt; source roots instantiate TextPrompt in helpers.php.",
+            "outcomes": {
+              "before": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              },
+              "after": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              }
+            }
+          },
+          {
+            "file": "src/TextPrompt.php",
+            "symbol": "TextPrompt",
+            "qualified_name": "Laravel.Prompts.TextPrompt",
+            "evidence": "src/helpers.php constructs TextPrompt in text().",
+            "outcomes": {
+              "before": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              },
+              "after": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              }
+            }
+          },
+          {
+            "file": "src/Elements/Heading.php",
+            "symbol": "Heading",
+            "qualified_name": "Laravel.Prompts.Elements.Heading",
+            "evidence": "CalloutRenderer imports and tests Heading; this is a concrete runtime consumer.",
+            "outcomes": {
+              "before": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              },
+              "after": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              }
+            }
+          },
+          {
+            "file": "src/Elements/ElementContract.php",
+            "symbol": "ElementContract",
+            "qualified_name": "Laravel.Prompts.Elements.ElementContract",
+            "evidence": "Callout/renderer signatures and element implementations reference the interface.",
+            "outcomes": {
+              "before": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              },
+              "after": {
+                "definition_extracted": true,
+                "classification": "alive",
+                "reported_unused": false,
+                "eligible": true,
+                "label": "TN"
+              }
+            }
+          }
+        ],
+        "unknown_public_api_findings": [
+          {
+            "file": "src/Concerns/Termwind.php",
+            "name": "Termwind",
+            "classification": "unknown_external_api",
+            "reason": "No local trait consumer found; Composer PSR-4 exposes library namespaces to callers.",
+            "before": "reported_unknown",
+            "after": "reported_unknown"
+          },
+          {
+            "file": "src/Elements/Element.php",
+            "name": "Element",
+            "classification": "unknown_external_api",
+            "reason": "No local factory-class consumer found; public methods form externally consumable library API.",
+            "before": "reported_unknown",
+            "after": "reported_unknown"
+          },
+          {
+            "file": "src/Key.php",
+            "name": "SHIFT_UP",
+            "classification": "unknown_external_api",
+            "reason": "No local use found; public constant may have downstream consumers.",
+            "before": "reported_unknown",
+            "after": "reported_unknown"
+          },
+          {
+            "file": "src/Key.php",
+            "name": "SHIFT_DOWN",
+            "classification": "unknown_external_api",
+            "reason": "No local use found; public constant may have downstream consumers.",
+            "before": "reported_unknown",
+            "after": "reported_unknown"
+          }
+        ],
+        "recall": {
+          "before": null,
+          "after": null,
+          "reason": "No frozen source-proven unused positive denominator."
+        }
+      }
+    ],
+    "metrics": {
+      "common_known_used_symbol_controls": 9,
+      "before": {
+        "FP": 0,
+        "TN": 9,
+        "labelled_control_FPR": 0.0
+      },
+      "after": {
+        "FP": 0,
+        "TN": 9,
+        "labelled_control_FPR": 0.0
+      },
+      "observed_change": {
+        "FP": 0,
+        "TN": 0
+      },
+      "overall_repository_FPR": null,
+      "dead_code_recall": null,
+      "precision": null,
+      "matched_new_npm_rule_accuracy": null
+    },
+    "limitations": [
+      "The selected known-used symbol controls support only a labelled-control false-positive rate, not population or whole-repository FPR.",
+      "No source-proven unused positive is frozen in these two natural repositories; dead-code recall and precision are unavailable.",
+      "PHP public-library API findings remain unknown and earn neither FP nor TP credit.",
+      "Npm usage/binary/enum checks absent from baseline cannot produce a matched accuracy improvement when new output is quiet."
+    ]
+  },
+  "fixed_real_source_controls": {
+    "source_manifest": "/Users/oha/skylos/benchmarks/holdouts/analysis_gap_manual_2026_11_16.json",
+    "source_manifest_sha256": "9bc1550964620ca92ccbbd3db351f59d95f0c9d47f0f06c6f8bd009d3d24c198",
+    "label_selection": "Source-selected development controls; some selected after an initial scan and frozen before final rerun; not independent population accuracy.",
+    "paired_symbol_controls": [
+      {
+        "repository": "unjs/defu",
+        "commit": "82632b66f5914e9946edce300e10633a3d5c0cb7",
+        "kind": "symbol",
+        "file": "src/_utils.ts",
+        "symbol": "isPlainObject",
+        "expected": "used",
+        "source_evidence": [
+          {
+            "file": "src/defu.ts",
+            "line": 1
+          },
+          {
+            "file": "src/defu.ts",
+            "line": 6
+          }
+        ],
+        "eligibility": "requires positive parse/extraction in both arms; no ignore/suppression/abstention credit"
+      },
+      {
+        "repository": "unjs/defu",
+        "commit": "82632b66f5914e9946edce300e10633a3d5c0cb7",
+        "kind": "symbol",
+        "file": "src/defu.ts",
+        "symbol": "createDefu",
+        "expected": "used",
+        "source_evidence": [
+          {
+            "file": "src/defu.ts",
+            "line": 52
+          },
+          {
+            "file": "test/defu.test.ts",
+            "line": 188
+          }
+        ],
+        "eligibility": "requires positive parse/extraction in both arms; no ignore/suppression/abstention credit"
+      },
+      {
+        "repository": "unjs/defu",
+        "commit": "82632b66f5914e9946edce300e10633a3d5c0cb7",
+        "kind": "symbol",
+        "file": "src/defu.ts",
+        "symbol": "defu",
+        "expected": "used",
+        "source_evidence": [
+          {
+            "file": "test/defu.test.ts",
+            "line": 11
+          }
+        ],
+        "eligibility": "requires positive parse/extraction in both arms; no ignore/suppression/abstention credit"
+      },
+      {
+        "repository": "unjs/defu",
+        "commit": "82632b66f5914e9946edce300e10633a3d5c0cb7",
+        "kind": "symbol",
+        "file": "src/defu.ts",
+        "symbol": "defuFn",
+        "expected": "used",
+        "source_evidence": [
+          {
+            "file": "test/defu.test.ts",
+            "line": 201
+          }
+        ],
+        "eligibility": "requires positive parse/extraction in both arms; no ignore/suppression/abstention credit"
+      },
+      {
+        "repository": "unjs/defu",
+        "commit": "82632b66f5914e9946edce300e10633a3d5c0cb7",
+        "kind": "symbol",
+        "file": "src/defu.ts",
+        "symbol": "defuArrayFn",
+        "expected": "used",
+        "source_evidence": [
+          {
+            "file": "test/defu.test.ts",
+            "line": 223
+          }
+        ],
+        "eligibility": "requires positive parse/extraction in both arms; no ignore/suppression/abstention credit"
+      },
+      {
+        "repository": "laravel/prompts",
+        "commit": "e84c227ae83ffef9f8fc1059bb2b79f2b0cfc0ca",
+        "kind": "symbol",
+        "file": "src/Prompt.php",
+        "symbol": "Prompt",
+        "expected": "used",
+        "source_evidence": "TextPrompt extends Prompt; source roots instantiate TextPrompt in helpers.php.",
+        "eligibility": "requires positive parse/extraction in both arms; no ignore/suppression/abstention credit"
+      },
+      {
+        "repository": "laravel/prompts",
+        "commit": "e84c227ae83ffef9f8fc1059bb2b79f2b0cfc0ca",
+        "kind": "symbol",
+        "file": "src/TextPrompt.php",
+        "symbol": "TextPrompt",
+        "expected": "used",
+        "source_evidence": "src/helpers.php constructs TextPrompt in text().",
+        "eligibility": "requires positive parse/extraction in both arms; no ignore/suppression/abstention credit"
+      },
+      {
+        "repository": "laravel/prompts",
+        "commit": "e84c227ae83ffef9f8fc1059bb2b79f2b0cfc0ca",
+        "kind": "symbol",
+        "file": "src/Elements/Heading.php",
+        "symbol": "Heading",
+        "expected": "used",
+        "source_evidence": "CalloutRenderer imports and tests Heading; this is a concrete runtime consumer.",
+        "eligibility": "requires positive parse/extraction in both arms; no ignore/suppression/abstention credit"
+      },
+      {
+        "repository": "laravel/prompts",
+        "commit": "e84c227ae83ffef9f8fc1059bb2b79f2b0cfc0ca",
+        "kind": "symbol",
+        "file": "src/Elements/ElementContract.php",
+        "symbol": "ElementContract",
+        "expected": "used",
+        "source_evidence": "Callout/renderer signatures and element implementations reference the interface.",
+        "eligibility": "requires positive parse/extraction in both arms; no ignore/suppression/abstention credit"
+      }
+    ],
+    "paired_control_count": 9,
+    "excluded_outcomes": [
+      {
+        "repository": "antfu/vitesse-lite",
+        "kind": "symbol",
+        "file": "src/main.ts",
+        "symbol": "App",
+        "reason": "overall generated-provider graph incomplete; preserve observed warnings but no global TN/clean credit"
+      },
+      {
+        "repository": "antfu/vitesse-lite",
+        "kind": "symbol",
+        "file": "src/composables/dark.ts",
+        "symbol": "toggleDark",
+        "reason": "overall generated-provider graph incomplete; preserve observed warnings but no global TN/clean credit"
+      },
+      {
+        "repository": "antfu/vitesse-lite",
+        "kind": "symbol",
+        "file": "src/composables/dark.ts",
+        "symbol": "isDark",
+        "reason": "overall generated-provider graph incomplete; preserve observed warnings but no global TN/clean credit"
+      },
+      {
+        "repository": "antfu/vitesse-lite",
+        "kind": "component_file",
+        "file": "src/components/TheCounter.vue",
+        "symbol": null,
+        "reason": "overall generated-provider graph incomplete; preserve observed warnings but no global TN/clean credit"
+      },
+      {
+        "repository": "antfu/vitesse-lite",
+        "kind": "component_file",
+        "file": "src/components/TheInput.vue",
+        "symbol": null,
+        "reason": "overall generated-provider graph incomplete; preserve observed warnings but no global TN/clean credit"
+      },
+      {
+        "repository": "unjs/defu",
+        "kind": "dependency",
+        "package": "vitest",
+        "reason": "npm usage capability absent in baseline; current receipt incomplete/partly abstained, so not paired safe credit"
+      },
+      {
+        "repository": "unjs/defu",
+        "kind": "dependency",
+        "package": "expect-type",
+        "reason": "npm usage capability absent in baseline; current receipt incomplete/partly abstained, so not paired safe credit"
+      },
+      {
+        "repository": "unjs/defu",
+        "kind": "dependency",
+        "package": "unbuild",
+        "reason": "npm usage capability absent in baseline; current receipt incomplete/partly abstained, so not paired safe credit"
+      },
+      {
+        "repository": "unjs/defu",
+        "kind": "dependency",
+        "package": "oxlint",
+        "reason": "npm usage capability absent in baseline; current receipt incomplete/partly abstained, so not paired safe credit"
+      },
+      {
+        "repository": "unjs/defu",
+        "kind": "dependency",
+        "package": "oxfmt",
+        "reason": "npm usage capability absent in baseline; current receipt incomplete/partly abstained, so not paired safe credit"
+      },
+      {
+        "repository": "unjs/defu",
+        "kind": "dependency",
+        "package": "changelogen",
+        "reason": "npm usage capability absent in baseline; current receipt incomplete/partly abstained, so not paired safe credit"
+      },
+      {
+        "repository": "unjs/defu",
+        "kind": "dependency",
+        "package": "@vitest/coverage-v8",
+        "reason": "npm usage capability absent in baseline; current receipt incomplete/partly abstained, so not paired safe credit"
+      },
+      {
+        "repository": "fmtlib/fmt",
+        "kind": "repository_scope",
+        "reason": "all four selected C++ files have parse failures; no live control labels; unscored"
+      }
+    ],
+    "rate": "Only compute FP/(FP+TN) for the identical verified live controls in both arms. An unsupported, suppressed, abstained or incomplete result cannot establish TN.",
+    "paired_validation": [
+      {
+        "arm": "before",
+        "control_count": 9,
+        "wrong_unused_warnings": 0,
+        "controls": [
+          {
+            "repository": "unjs/defu",
+            "file": "src/_utils.ts",
+            "symbol": "isPlainObject",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "unjs/defu",
+            "file": "src/defu.ts",
+            "symbol": "createDefu",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "unjs/defu",
+            "file": "src/defu.ts",
+            "symbol": "defu",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "unjs/defu",
+            "file": "src/defu.ts",
+            "symbol": "defuFn",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "unjs/defu",
+            "file": "src/defu.ts",
+            "symbol": "defuArrayFn",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "laravel/prompts",
+            "file": "src/Prompt.php",
+            "symbol": "Prompt",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "laravel/prompts",
+            "file": "src/TextPrompt.php",
+            "symbol": "TextPrompt",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "laravel/prompts",
+            "file": "src/Elements/Heading.php",
+            "symbol": "Heading",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "laravel/prompts",
+            "file": "src/Elements/ElementContract.php",
+            "symbol": "ElementContract",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          }
+        ]
+      },
+      {
+        "arm": "after",
+        "control_count": 9,
+        "wrong_unused_warnings": 0,
+        "controls": [
+          {
+            "repository": "unjs/defu",
+            "file": "src/_utils.ts",
+            "symbol": "isPlainObject",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "unjs/defu",
+            "file": "src/defu.ts",
+            "symbol": "createDefu",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "unjs/defu",
+            "file": "src/defu.ts",
+            "symbol": "defu",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "unjs/defu",
+            "file": "src/defu.ts",
+            "symbol": "defuFn",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "unjs/defu",
+            "file": "src/defu.ts",
+            "symbol": "defuArrayFn",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "laravel/prompts",
+            "file": "src/Prompt.php",
+            "symbol": "Prompt",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "laravel/prompts",
+            "file": "src/TextPrompt.php",
+            "symbol": "TextPrompt",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "laravel/prompts",
+            "file": "src/Elements/Heading.php",
+            "symbol": "Heading",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          },
+          {
+            "repository": "laravel/prompts",
+            "file": "src/Elements/ElementContract.php",
+            "symbol": "ElementContract",
+            "wrong_unused_warnings": 0,
+            "suppressed_or_abstained": false
+          }
+        ]
+      }
+    ],
+    "extraction_note": "PHP four classes and two TS functions appear as native definitions in both reports. The three TS exported variables are omitted by JSON definitions formatting; directly parsing the unchanged src/defu.ts with each arm native TypeScriptCore independently extracts defu@52, defuFn@56, defuArrayFn@64 and no parse errors."
+  },
+  "regression_comparison": {
+    "scope": "Same 151 development regression cases and fixed current labels, not an independent production benchmark. The before/after comparison changes analyzer code only.",
+    "manifest_sha256": "633dcfdd48c39da4d77d05f9a21af13114cb8082a42e6ad657c610142da24a52",
+    "before": {
+      "case_count": 151,
+      "failure_count": 4,
+      "scored_case_count": 151,
+      "unscored_case_count": 0,
+      "counts": {
+        "true_positives": 295,
+        "false_positives": 2,
+        "false_negatives": 2,
+        "true_negatives": 470
+      }
+    },
+    "after": {
+      "case_count": 151,
+      "failure_count": 0,
+      "scored_case_count": 151,
+      "unscored_case_count": 0,
+      "counts": {
+        "true_positives": 297,
+        "false_positives": 0,
+        "false_negatives": 0,
+        "true_negatives": 472
+      }
+    },
+    "raw_reports": {
+      "before": "/private/tmp/skylos-gap-before-after/baseline-deadcode-current-labels.json",
+      "after": "/private/tmp/skylos-gap-before-after/current-deadcode-current-labels.json"
+    }
+  },
+  "conclusions": {
+    "regression_false_positives": {
+      "before": 2,
+      "after": 0
+    },
+    "regression_false_negatives": {
+      "before": 2,
+      "after": 0
+    },
+    "complete_real_repo_known_live_controls": {
+      "denominator": 9,
+      "before_wrong_unused": 0,
+      "after_wrong_unused": 0,
+      "observed_control_fpr_before": 0,
+      "observed_control_fpr_after": 0,
+      "scope": "Five defu symbols and four laravel/prompts class/interface controls; not a population estimate."
+    },
+    "frontend_generated_output_noise": {
+      "before": 7,
+      "after": 4,
+      "removed": 3,
+      "classification": "Generated declaration lint advice removed; the literal lint-disable predicate was true, so this is actionability/noise reduction, not three proven semantic false positives."
+    },
+    "whole_repository_false_positive_rate": null,
+    "whole_repository_false_positive_rate_reason": "Open-set labels, unknown public APIs, unreviewed policy alerts, unsupported baseline npm checks and incomplete frontend/C++ coverage prevent a defensible overall denominator.",
+    "unchanged_confirmed_policy_false_advisory": "defu SKY-R105 does not recognize its declared tsgo --noEmit type-check command.",
+    "interim_css_warning": "The temporary uno.css warning was introduced and fixed during development. It is absent in both paired arms and is not a baseline improvement."
+  },
+  "detector_implementation_commit": "2229f8fee00eeeafad48277959cb6a952023aeed"
+}
