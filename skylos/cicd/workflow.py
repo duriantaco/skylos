@@ -219,6 +219,7 @@ def _header_comment(
     done_job: bool,
     upload_job: bool,
     push_branches: Sequence[str],
+    push_diff: bool = False,
     risk_review_job: bool = False,
     merge_queue: bool = False,
     pr_upload_jobs: bool = False,
@@ -270,6 +271,13 @@ def _header_comment(
             "# App is installed on this repository. Without Cloud: skylos cicd init --no-upload",
             "# Optional AI review of that scan: set the repository variable SKYLOS_AI_REVIEW",
             "# to true and add an OPENAI_API_KEY, ANTHROPIC_API_KEY or TYPESAFE_API_KEY secret.",
+        ]
+    elif push_diff:
+        lines += [
+            "#",
+            f"# Pushes to {' or '.join(push_branches)}: the gate checks only what the push",
+            "# changed, so findings already in the repository don't fail the branch.",
+            "# A push with no earlier commit to compare reports without failing.",
         ]
     if pr_upload_jobs:
         lines += [
@@ -887,12 +895,31 @@ def generate_workflow(
             '          elif [ "${{ github.event_name }}" = "merge_group" ]; then',
             '            pr_base_ref="${MERGE_GROUP_BASE_SHA:?the merge_group event has no base_sha}"',
         ]
+    # Without an upload job the gate also runs on default-branch pushes. Gate
+    # those on what the push changed, not on every finding already in the
+    # repository: otherwise a legacy repository goes red on main as soon as
+    # the setup pull request merges. The policy still comes from the commit
+    # before the push. A push with no usable "before" commit (the branch's
+    # first push, or history GitHub no longer has) reports without failing.
+    push_diff = "push" in triggers and not upload_job
+    if push_diff:
+        base_select += [
+            '          elif [ "${{ github.event_name }}" = "push" ]; then',
+            '            if [ -n "${PUSH_BEFORE_SHA:-}" ] && [ -n "${PUSH_BEFORE_SHA//0/}" ] \\',
+            '              && git cat-file -e "${PUSH_BEFORE_SHA}^{commit}" 2>/dev/null; then',
+            '              pr_base_ref="$PUSH_BEFORE_SHA"',
+            "            fi",
+        ]
     base_select.append("          fi")
+    step_env = []
+    if merge_queue:
+        step_env.append(
+            "          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}"
+        )
+    if push_diff:
+        step_env.append("          PUSH_BEFORE_SHA: ${{ github.event.before }}")
     merge_group_step_env = (
-        "\n        env:\n"
-        "          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}"
-        if merge_queue
-        else ""
+        "\n        env:\n" + "\n".join(step_env) if step_env else ""
     )
     analysis_run = "\n".join(
         [
@@ -981,7 +1008,19 @@ def generate_workflow(
             '          if [ -n "$pr_base_ref" ]; then',
             f'            skylos cicd gate {scan_target} --input skylos-results.json --diff-base "$pr_base_ref" --summary{gate_advisory_flag}',
             "          else",
-            f"            skylos cicd gate --input skylos-results.json --summary{gate_advisory_flag}",
+            *(
+                [
+                    '            if [ "${{ github.event_name }}" = "push" ]; then',
+                    "              skylos cicd gate --input skylos-results.json --summary --advisory",
+                    "            else",
+                    f"              skylos cicd gate --input skylos-results.json --summary{gate_advisory_flag}",
+                    "            fi",
+                ]
+                if push_diff and not advisory_gate
+                else [
+                    f"            skylos cicd gate --input skylos-results.json --summary{gate_advisory_flag}"
+                ]
+            ),
             "          fi",
         ]
     )
@@ -991,6 +1030,7 @@ def generate_workflow(
         done_job=done_job,
         upload_job=upload_job,
         push_branches=push_branches,
+        push_diff=push_diff,
         risk_review_job=risk_review_job,
         merge_queue=merge_queue,
         pr_upload_jobs=pr_upload_jobs,

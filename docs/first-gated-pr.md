@@ -85,6 +85,12 @@ Pull requests to main
                           starts with PRs opened or updated after this file is merged
 ```
 
+Without the upload jobs, "Skylos Quality Gate" also runs on pushes to the
+default branch. There it checks only what the push changed, compared with the
+commit before the push, so findings already in the repository don't turn the
+branch red after you merge the setup pull request. A push with no earlier
+commit to compare (the branch's first push) reports without failing.
+
 The install steps add `skylos[dart]`, which builds the Dart parser with a C
 compiler, only when the repository has Dart files.
 

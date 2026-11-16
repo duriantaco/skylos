@@ -113,9 +113,15 @@ def render_top_risks(console, result, *, root_path=None, config=None, rows=None)
     return top
 
 
-def next_fix_line(result, *, root_path=None, config=None) -> str | None:
+def next_fix_line(
+    result, *, root_path=None, config=None, local_gate=True
+) -> str | None:
     """``fix SKY-D212 Command injection at path:line first`` for a CRITICAL or
-    HIGH top risk, else None."""
+    HIGH top risk, else None.
+
+    ``local_gate=False`` drops "(it blocks the gate)": a scan that uploads is
+    judged by the Skylos Cloud policy, not the local gate limits, and saying
+    it blocks right before Cloud reports a pass contradicts the verdict."""
     from skylos.reporting.top_risks import top_risks
 
     top = top_risks(result, project_root=root_path, config=config, limit=1)
@@ -123,6 +129,6 @@ def next_fix_line(result, *, root_path=None, config=None) -> str | None:
         return None
     row = top[0]
     text = f"fix {row.rule_id} {row.title} at {row.location} first"
-    if row.blocking:
+    if row.blocking and local_gate:
         text += " (it blocks the gate)"
     return text
