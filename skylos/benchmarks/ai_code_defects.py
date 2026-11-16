@@ -15,6 +15,7 @@ from skylos.core.safe_cache_io import (
     read_project_text_no_symlink,
     write_text_no_symlink,
 )
+from skylos.core.verification_registry import expected_ai_verification_checks
 from skylos.rules.ai_defect.dependency_truth import (
     LEGACY_STATUS_EXISTS,
     DependencyTruthState,
@@ -50,6 +51,7 @@ IMPORTANCE_WEIGHTS = {
 }
 BENCHMARK_LANGUAGES = {
     "csharp",
+    "cpp",
     "dart",
     "go",
     "java",
@@ -58,8 +60,10 @@ BENCHMARK_LANGUAGES = {
     "multi",
     "php",
     "python",
+    "ruby",
     "rust",
     "shell",
+    "swift",
     "typescript",
 }
 DEPENDENCY_STATUS_VALUES = {
@@ -153,6 +157,8 @@ def run_manifest(
             comparison_func=comparison_func,
         )
         summary_cases.append(case_summary)
+        if not case_summary["scored"]:
+            continue
         weight = IMPORTANCE_WEIGHTS[case.get("importance", "high")]
         total_weight += weight
         if not case_summary["failures"]:
@@ -173,6 +179,9 @@ def run_manifest(
         "case_count": len(summary_cases),
         "pass_count": len(summary_cases) - failure_count,
         "failure_count": failure_count,
+        "scored_case_count": sum(case["scored"] for case in summary_cases),
+        "unscored_case_count": sum(not case["scored"] for case in summary_cases),
+        "score_available": total_weight > 0,
         "total_elapsed_seconds": elapsed,
         "scores": _scores(
             total_weight=total_weight,
@@ -204,6 +213,11 @@ def format_summary(summary: dict[str, Any]) -> str:
             f"{summary.get('failure_count', 0)} failed"
         ),
         f"AI-code defect benchmark recall: {float(scores.get('recall', 0.0)):.2f}",
+        (
+            "AI-code defect accuracy coverage: "
+            f"{summary.get('scored_case_count', 0)} scored, "
+            f"{summary.get('unscored_case_count', 0)} unscored"
+        ),
         (
             "AI-code defect benchmark absence guard: "
             f"{float(scores.get('absence_guard', 0.0)):.2f}"
@@ -541,6 +555,7 @@ def _validate_scan(case: dict[str, Any], case_id: str) -> None:
     _validate_optional_scan_string(scan, case_id, "contract_path")
     _validate_optional_scan_bool(scan, case_id, "dependency_hallucinations")
     _validate_optional_scan_bool(scan, case_id, "security_findings")
+    _validate_optional_scan_bool(scan, case_id, "behavior_comparison")
     if "danger" in scan:
         raise ValueError(
             f"AI-code-defect benchmark case {case_id} uses legacy scan.danger; "
@@ -704,6 +719,15 @@ def _run_case(
         scan = {}
 
     run_case_path, temp_case = _prepared_case_path(case_path, scan)
+    if scan.get("file") and run_case_path.is_dir():
+        targets = [run_case_path / scan["file"]]
+    elif run_case_path.is_dir():
+        targets = [path for path in run_case_path.rglob("*") if path.is_file()]
+    else:
+        targets = [run_case_path]
+    required_checks = {
+        check.check_id for check in expected_ai_verification_checks(targets)
+    }
     started = time.perf_counter()
     try:
         result = verify_func(
@@ -717,6 +741,9 @@ def _run_case(
             ),
             include_security_findings=_include_security_findings_scan(scan),
             contract_path=_contract_path_scan(scan),
+            # This suite measures static AI-defect checks. Behavior comparison
+            # is a separate capability and must be explicitly requested.
+            behavior_comparison=bool(scan.get("behavior_comparison", False)),
         )
         challenge_metadata = _challenge_metadata_for_case(
             result,
@@ -735,7 +762,12 @@ def _run_case(
             temp_case.cleanup()
 
     findings = _findings(result)
-    failures, counts = _evaluate_case(case, result)
+    failures, counts = _evaluate_case(case, result, required_checks=required_checks)
+    scored = (
+        _coverage_state(result) == "complete"
+        and result.get("status") in {"pass", "fail"}
+        and not any(failure.failure_type == "verification" for failure in failures)
+    )
     case_summary = {
         "id": case["id"],
         "path": case["path"],
@@ -746,6 +778,7 @@ def _run_case(
         "finding_count": len(findings),
         "status": result.get("status"),
         "coverage_state": _coverage_state(result),
+        "scored": scored,
         "failures": [failure.to_dict() for failure in failures],
         "present_total": counts["present_total"],
         "present_matched": counts["present_matched"],
@@ -946,6 +979,8 @@ def _dependency_status_key(entry: dict[str, Any]) -> str:
 def _evaluate_case(
     case: dict[str, Any],
     result: dict[str, Any],
+    *,
+    required_checks: set[str] | None = None,
 ) -> tuple[list[AICodeDefectBenchmarkFailure], dict[str, int]]:
     findings = _findings(result)
     failures: list[AICodeDefectBenchmarkFailure] = []
@@ -958,7 +993,7 @@ def _evaluate_case(
 
     expect = case["expect"]
     _evaluate_finding_count(case, findings, failures)
-    _evaluate_verification_contract(case, result, failures)
+    _evaluate_verification_contract(case, result, failures, required_checks)
 
     for expectation in expect["present"]:
         counts["present_total"] += 1
@@ -994,10 +1029,22 @@ def _evaluate_verification_contract(
     case: dict[str, Any],
     result: dict[str, Any],
     failures: list[AICodeDefectBenchmarkFailure],
+    required_checks: set[str] | None = None,
 ) -> None:
-    verification = case["expect"].get("verification")
-    if not isinstance(verification, dict):
-        return
+    verification = dict(case["expect"].get("verification") or {})
+    clean = not case["expect"].get("present")
+    if clean:
+        verification.setdefault("status", "pass")
+        verification.setdefault("coverage_state", "complete")
+        if (
+            verification["status"] != "incomplete"
+            and verification["coverage_state"] != "incomplete"
+        ):
+            checks = dict(verification.get("checks") or {})
+            for check_id in required_checks or ():
+                checks.setdefault(check_id, "pass")
+            if checks:
+                verification["checks"] = checks
     expected_status = verification.get("status")
     if expected_status is not None and result.get("status") != expected_status:
         failures.append(
@@ -1467,6 +1514,10 @@ def _scores(
     absent_total: int,
     absent_violations: int,
 ) -> dict[str, float]:
+    if not total_weight:
+        return dict.fromkeys(
+            ("overall_score", "weighted_pass_rate", "recall", "absence_guard"), 0.0
+        )
     weighted_pass_rate = _ratio(passed_weight, total_weight)
     recall = _ratio(float(present_matched), float(present_total))
     absence_guard = 1.0

@@ -34,6 +34,10 @@ _RULES = (
         "SKY-U006", "Unused parameter", "dead_code", finding_type="review"
     ),
     RuleCatalogEntry(
+        "SKY-U007", "Unused TypeScript enum member", "dead_code", "LOW",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-UC001", "Unreachable Python code", "dead_code", finding_type="defect"
     ),
     RuleCatalogEntry(
@@ -312,6 +316,18 @@ _RULES = (
         "Discarded async Array.map result",
         "quality",
         "HIGH",
+        finding_type="defect",
+    ),
+    RuleCatalogEntry(
+        "SKY-Q408", "Undeclared npm dependency", "quality", "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-Q409", "Unlisted npm script binary", "quality", "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-Q410", "Discarded local async result", "quality", "MEDIUM",
         finding_type="defect",
     ),
     RuleCatalogEntry("SKY-Q501", "God class", "quality", finding_type="advice"),

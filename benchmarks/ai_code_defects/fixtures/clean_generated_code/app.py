@@ -14,3 +14,12 @@ def handler(request):
     token = validate_token(request.headers["Authorization"])
     payment = process_payment(request.amount)
     return {"token": token, "payment": payment}
+
+
+def on_startup():
+    pass
+
+
+class EventHooks:
+    async def on_close(self):
+        ...

@@ -855,6 +855,15 @@ RULE_FIXES: dict[str, dict[str, str]] = {
         "default": "Use for...of with await (or Promise.all) instead of an async forEach callback."
     },
     "SKY-Q407": {"default": "Await the mapped promises with Promise.all."},
+    "SKY-Q408": {
+        "default": "Declare the imported npm package in the package.json that owns this source, or remove the import."
+    },
+    "SKY-Q409": {
+        "default": "Declare the package that supplies this script binary, or replace the script command."
+    },
+    "SKY-Q410": {
+        "default": "Await or return the local async result, handle rejection with .catch(...), or use void for intentional fire-and-forget work."
+    },
     "SKY-Q501": {"default": "Split the class by responsibility into smaller classes."},
     "SKY-Q502": {"default": "Split the file into modules by responsibility."},
     "SKY-Q701": {
@@ -953,7 +962,7 @@ RULE_FIXES: dict[str, dict[str, str]] = {
 }
 
 _DEAD_CODE_RULES = frozenset(
-    {"SKY-U001", "SKY-U002", "SKY-U003", "SKY-U004", "SKY-U005", "SKY-U006"}
+    {"SKY-U001", "SKY-U002", "SKY-U003", "SKY-U004", "SKY-U005", "SKY-U006", "SKY-U007"}
 )
 _CATEGORY_RULES = {
     "unused_functions": "SKY-U001",

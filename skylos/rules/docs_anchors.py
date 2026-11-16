@@ -284,6 +284,9 @@ RULE_DOCS_ANCHORS = {
     "SKY-Q405": "sky-q405--async-promise-executor",
     "SKY-Q406": "sky-q406--async-arrayforeach-callback",
     "SKY-Q407": "sky-q407--discarded-async-arraymap-result",
+    "SKY-Q408": "quality-rules-sky-q",
+    "SKY-Q409": "quality-rules-sky-q",
+    "SKY-Q410": "quality-rules-sky-q",
     "SKY-Q501": "sky-q501--god-class",
     "SKY-Q502": "sky-q502--class-too-large",
     "SKY-Q701": "sky-q701--coupling-between-objects-cbo",
@@ -326,6 +329,7 @@ RULE_DOCS_ANCHORS = {
     "SKY-U004": "dead-code-rules-sky-u",
     "SKY-U005": "sky-u005--unused-dependency",
     "SKY-U006": "sky-u006--unused-parameter",
+    "SKY-U007": "dead-code-rules-sky-u",
     "SKY-UC001": "sky-uc001--unreachable-code",
     "SKY-UC002": "sky-uc002--unreachable-statement",
 }

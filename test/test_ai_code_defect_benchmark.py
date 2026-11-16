@@ -73,6 +73,23 @@ EXPECTED_CASE_IDS = {
 }
 
 
+EXPECTED_CASE_IDS.update({
+    "cpp-local-api-unsupported",
+    "csharp-local-api-unsupported",
+    "dart-local-api-unsupported",
+    "javascript-test-exception-broadened",
+    "javascript-test-exception-preserved",
+    "kotlin-local-api-unsupported",
+    "php-local-api-unsupported",
+    "ruby-local-api-unsupported",
+    "rust-local-api-unsupported",
+    "shell-local-api-unsupported",
+    "swift-local-api-unsupported",
+    "typescript-test-assertion-weakened",
+    "typescript-test-exact-value-changed",
+})
+
+
 EXPECTED_CASE_PATH_NAMES = [
     "hallucinated_reference",
     "repo_local_phantom_reference",
@@ -118,6 +135,22 @@ EXPECTED_CASE_PATH_NAMES = [
     "clean_java_local_api_surface",
     "clean_generated_code",
 ]
+
+EXPECTED_CASE_PATH_NAMES.extend([
+    "typescript_test_assertion_weakened",
+    "typescript_test_exact_value_changed",
+    "javascript_test_exception_broadened",
+    "javascript_test_exception_preserved",
+    "php_local_api_unsupported",
+    "rust_local_api_unsupported",
+    "dart_local_api_unsupported",
+    "csharp_local_api_unsupported",
+    "cpp_local_api_unsupported",
+    "kotlin_local_api_unsupported",
+    "shell_local_api_unsupported",
+    "ruby_local_api_unsupported",
+    "swift_local_api_unsupported",
+])
 
 
 @pytest.mark.parametrize(
@@ -454,6 +487,9 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
         scan_kwargs = {}
 
     case_name = Path(case_path).name
+    if case_name in {"typescript_test_assertion_weakened", "javascript_test_exception_broadened"}:
+        suffix = "ts" if case_name.startswith("typescript") else "js"
+        return [_finding("SKY-A101", "assertion_weakening", file_path=f"tests/billing.test.{suffix}", start_line=3)]
     if case_name == "hallucinated_reference":
         return [
             _finding("SKY-L012", "hallucinated_reference"),
@@ -717,7 +753,7 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 "swallowed_error",
                 message="Async handler catches broad 'Exception' and swallows it.",
                 start_line=4,
-                severity="MEDIUM",
+                severity="HIGH",
                 ai_likelihood="medium",
             ),
         ]
@@ -921,7 +957,24 @@ def _fake_result_for_case(case_path, scan_kwargs=None):
     }
     contract = contracts.get(Path(case_path).name)
     if contract is None:
-        return {"findings": findings}
+        case_name = Path(case_path).name
+        if case_name.endswith("_local_api_unsupported"):
+            language = case_name.split("_")[0]
+            return {
+                "status": "incomplete", "findings": [],
+                "coverage": {"state": "incomplete", "checks": [
+                    {"id": f"{language}_workspace_api_surface", "outcome": "incomplete"}
+                ]},
+            }
+        return {
+            "status": "fail" if findings else "pass", "findings": findings,
+            "coverage": {"state": "complete", "checks": [
+                {"id": key, "outcome": "pass"} for key in (
+                    "python_local_api_reference", "typescript_local_api_surface",
+                    "go_workspace_api_surface", "java_workspace_api_surface",
+                )
+            ]},
+        }
     status, check_id, outcome = contract
     return {
         "status": status,
@@ -997,16 +1050,16 @@ def test_ai_code_defect_runner_scores_expectations(monkeypatch):
         seen.append((Path(case_path).name, kwargs))
         return _fake_result_for_case(case_path, kwargs)
 
-    ticks = iter(range(100))
+    ticks = iter(range(1000))
     monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(ticks))
 
     summary = run_manifest(MANIFEST_PATH, verify_func=fake_verify)
 
-    assert summary["case_count"] == 43
-    assert summary["pass_count"] == 43
+    assert summary["case_count"] == len(EXPECTED_CASE_IDS)
+    assert summary["pass_count"] == len(EXPECTED_CASE_IDS)
     assert summary["failure_count"] == 0
     assert summary["scores"]["overall_score"] == pytest.approx(100.0)
-    assert summary["metadata"]["languages"]["labelled_cases"] == 43
+    assert summary["metadata"]["languages"]["labelled_cases"] == len(EXPECTED_CASE_IDS)
     assert summary["metadata"]["languages"]["coverage_rate"] == 1.0
 
     dependency_hallucination_case_names = {
@@ -1060,7 +1113,7 @@ def test_ai_code_defect_runner_empty_selection_runs_all_cases(monkeypatch):
 
     summary = run_manifest(MANIFEST_PATH, selected_cases=None, verify_func=fake_verify)
 
-    assert summary["case_count"] == 43
+    assert summary["case_count"] == len(EXPECTED_CASE_IDS)
     assert seen == EXPECTED_CASE_PATH_NAMES
 
 
@@ -1109,7 +1162,7 @@ def test_ai_code_defect_runner_isolates_dependency_hallucination_cases_without_s
         prepared_paths.append(prepared_path)
         cache_path = prepared_path / ".skylos" / "cache" / "dependency_versions.json"
         assert not cache_path.exists()
-        return {"findings": []}
+        return _fake_result_for_case(case_path, _kwargs)
 
     summary = run_manifest(
         MANIFEST_PATH,

@@ -697,7 +697,7 @@ class TestPackageApiConsumption:
         assert (str(engine_file), "defaultHelper") in marked
         assert demote_unconsumed_ts_exports(definitions, consumed_exports) == []
 
-    def test_javascript_entrypoint_is_not_promoted_by_typescript_api_logic(
+    def test_javascript_entrypoint_exports_follow_package_api_contract(
         self, tmp_path
     ):
         entry_file = tmp_path / "src" / "index.js"
@@ -721,13 +721,9 @@ class TestPackageApiConsumption:
             project_root=str(tmp_path),
         )
 
-        assert marked == set()
-        assert [
-            definition.simple_name
-            for definition in demote_unconsumed_ts_exports(
-                definitions, consumed_exports
-            )
-        ] == ["orphanHandler"]
+        assert marked == {(str(entry_file), "orphanHandler")}
+        assert consumed_exports == {str(entry_file): {"orphanHandler"}}
+        assert demote_unconsumed_ts_exports(definitions, consumed_exports) == []
 
     def test_public_class_consumes_qualified_methods(self, tmp_path):
         entry_file = tmp_path / "src" / "index.ts"

@@ -5,7 +5,7 @@ severity: MEDIUM
 severity_note: >-
   The catalog gives no severity for this rule; the detector always reports
   MEDIUM.
-languages: [Python (requirements files, pyproject.toml, setup.cfg, setup.py)]
+languages: [Python, npm package.json]
 gate:
   full: counted
   note: >-
@@ -14,8 +14,8 @@ gate:
 run_with: "`skylos . --quality` (or `-a`)"
 
 what_it_is: >-
-  A package the project declares as a run-time dependency that no Python
-  file imports and no command or configuration file uses. Every install
+  A declared Python runtime dependency or npm implementation/tooling dependency
+  has no observed source, command or supported configuration use. Every install
   still downloads it.
 
 why_it_matters: >-
@@ -94,6 +94,17 @@ not_flagged_example:
 
 how_skylos_decides:
   - >-
+    For npm, also reads dependencies and devDependencies from each owning
+    package.json with --quality. Literal imports, package scripts and
+    supported tool configurations supply usage; peer contracts and @types/
+    packages are retained. Shared ancestor tooling can provide workspace
+    commands, while source imports require their own package declaration.
+  - >-
+    The npm check never runs package code or scripts. Dynamic loaders,
+    unknown commands, unread source, unparsed components and incomplete
+    source selection prevent absence claims. Its separate receipt is
+    analysis_summary.npm_dependency_analysis.
+  - >-
     Runs with `--quality` on a directory scan that contains Python files
     (not when you scan single files). It reads run-time declarations next
     to the code, walking up at most five folders to the project root:
@@ -125,6 +136,8 @@ how_skylos_decides:
     package's line in the manifest.
 
 source_refs:
+  - path: skylos/rules/quality/npm_dependencies.py
+    symbol: "def scan_npm_dependencies("
   - path: skylos/rules/quality/unused_deps.py
     symbol: "def scan_unused_dependencies(repo_root, py_files"
   - path: skylos/rules/quality/unused_deps.py

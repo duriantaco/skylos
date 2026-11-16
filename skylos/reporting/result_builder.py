@@ -168,6 +168,7 @@ def build_analysis_result(
     _attach_empty_files(result, empty_files)
     _enrich_danger(result, enable_danger)
     _bucket_unused_definitions(result, unused)
+    result["unused_variables"].extend(getattr(analyzer, "_enum_member_findings", ()))
     _attach_unused_ts_exports(result, unused_ts_exports, project_cfg)
     hidden_parameters = _hidden_parameter_count(analyzer, thr, evidence, project_cfg)
     if hidden_parameters:

@@ -18,6 +18,14 @@ agent review and AI-code defects. They are regression gates, not independent
 benchmarks: we wrote the cases, so we don't quote their scores as accuracy.
 Case counts change as the suites grow; the manifests are the current source.
 
+The current quality suite has 33 cases, including Go/Java parameter boundaries
+and paired local async-result checks. Its structured targets require the rule,
+file and line or name on the same finding. The AI-code suite has 56 contracts:
+47 are scored source cases, while nine test explicitly unsupported verification
+and remain incomplete and unscored. Clean cases require complete coverage and
+the applicable verification checks; an empty result cannot establish safety.
+These counts describe regression coverage, not independent deployment accuracy.
+
 | Suite | Cases | How to run |
 |:---|:---|:---|
 | Dead code | `benchmarks/dead_code/manifest.json` | `python scripts/dead_code_benchmark.py` |

@@ -4086,13 +4086,23 @@ class Dead:
         assert "Dead.a" not in unreachable
         assert "Dead.b" not in unreachable
 
-    def test_analyze_js_package_route_attachment_export_is_live(self, tmp_path):
+    @pytest.mark.parametrize(
+        "package_api", [True, False], ids=["package-api", "ordinary-module"]
+    )
+    def test_analyze_js_package_route_attachment_export_is_live(
+        self, tmp_path, package_api
+    ):
         src_dir = tmp_path / "src"
         src_dir.mkdir()
+        entry = "src/app.js" if package_api else "src/bootstrap.js"
         (tmp_path / "package.json").write_text(
-            '{"name":"app","type":"module","main":"src/app.js"}',
+            json.dumps({"name": "app", "type": "module", "main": entry}),
             encoding="utf-8",
         )
+        if not package_api:
+            (src_dir / "bootstrap.js").write_text(
+                "import './app.js';\n", encoding="utf-8"
+            )
         (src_dir / "app.js").write_text(
             """
 const routes = new Map();
@@ -4116,6 +4126,10 @@ export function attachRoutes(server) {
 export function orphanHandler(req, res) {
   res.end("orphan");
 }
+
+function unexposedHandler() {
+  return "unreferenced";
+}
 """,
             encoding="utf-8",
         )
@@ -4127,18 +4141,29 @@ export function orphanHandler(req, res) {
         unused_files = {Path(item["file"]).name for item in result["unused_files"]}
 
         assert "attachRoutes" not in unreachable
-        assert "orphanHandler" in unreachable
+        # A manifest entry's export is a package interface. A side-effect
+        # import loads the ordinary module without reading its named exports.
+        assert ("orphanHandler" in unreachable) is not package_api
+        assert "unexposedHandler" in unreachable
         assert "app.js" not in unused_files
 
+    @pytest.mark.parametrize(
+        "package_api", [True, False], ids=["package-api", "ordinary-module"]
+    )
     def test_analyze_js_route_attachment_uses_route_shape_not_name_tokens(
-        self, tmp_path
+        self, tmp_path, package_api
     ):
         src_dir = tmp_path / "src"
         src_dir.mkdir()
+        entry = "src/app.js" if package_api else "src/bootstrap.js"
         (tmp_path / "package.json").write_text(
-            '{"name":"app","type":"module","main":"src/app.js"}',
+            json.dumps({"name": "app", "type": "module", "main": entry}),
             encoding="utf-8",
         )
+        if not package_api:
+            (src_dir / "bootstrap.js").write_text(
+                "import './app.js';\n", encoding="utf-8"
+            )
         (src_dir / "app.js").write_text(
             """
 export function healthHandler(req, res) {
@@ -4161,6 +4186,10 @@ export function applyConfig(config) {
 function defaultHandler() {
   return "light";
 }
+
+function unexposedHandler() {
+  return "unreferenced";
+}
 """,
             encoding="utf-8",
         )
@@ -4172,7 +4201,8 @@ function defaultHandler() {
 
         assert "configure" not in unreachable
         assert "attachRoutes" not in unreachable
-        assert "applyConfig" in unreachable
+        assert ("applyConfig" in unreachable) is not package_api
+        assert "unexposedHandler" in unreachable
 
     def test_analyze_java_public_static_helper_not_auto_exported(self, tmp_path):
         (tmp_path / "App.java").write_text(

@@ -47,6 +47,19 @@ def test_catalog_exposes_unused_typescript_file_rule():
     assert rules_by_id["SKY-E002"]["category"] == "dead_code"
 
 
+@pytest.mark.parametrize("rule_id,category,severity,purpose", [
+    ("SKY-U007", "dead_code", "LOW", "review"),
+    ("SKY-Q408", "quality", "MEDIUM", "review"),
+    ("SKY-Q409", "quality", "MEDIUM", "review"),
+    ("SKY-Q410", "quality", "MEDIUM", "defect"),
+])
+def test_bounded_js_ts_rules_keep_their_public_identity(rule_id, category, severity, purpose):
+    entries = {entry["id"]: entry for entry in get_rule_catalog()}
+    assert entries[rule_id]["category"] == category
+    assert entries[rule_id]["severity"] == severity
+    assert entries[rule_id]["finding_type"] == purpose
+
+
 def test_run_rules_command_returns_validate_failure():
     console = Mock()
 

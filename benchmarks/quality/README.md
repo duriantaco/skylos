@@ -22,17 +22,25 @@ malformed findings and disabled quality analysis fail as `UNSCORED` and earn no
 presence, absence or latency credit. Aggregate scores include only scored cases;
 unscored counts and failures remain visible. With no valid cases the score is
 zero and marked unavailable. A canonical `SKY-*` expectation matches `rule_id`,
-not an unrelated symbol or value containing that text.
+not an unrelated symbol or value containing that text. Structured expectations
+combine `rule_id`, a project-relative `file`, and `line` and/or `name` on the
+same finding. A rule on one function and a different finding on the intended
+function cannot jointly satisfy a target. Existing broad rule-only absence
+guards remain available.
 
 The runner supports Python, TypeScript/JavaScript, Go, Java, Rust and C# quality
 cases. Unsupported quality languages cannot earn clean-case credit merely
 because their ordinary source parser returned no quality findings.
 
-The default corpus has 27 cases. Seven Rust/C# controls pair direct unreachable
+The default corpus has 33 cases. Go and Java include parameter-count cases
+exactly at the limit and one over it. Seven Rust/C# controls pair direct unreachable
 statements with conditional exits, duplicated Rust branch bodies with differing
 literals, and C# conditional compilation with ordinary block termination. These
 are rule-specific source contracts. Other repository-policy advice stays in the
 native output; it is not silently removed or labelled a source defect.
+The JS/TS async-result pair checks a discarded promise from a known local async
+function against awaited, returned, rejection-handled and explicit `void`
+uses. Imported SDK return types and ambiguous bindings are outside that proof.
 
 Why this exists:
 

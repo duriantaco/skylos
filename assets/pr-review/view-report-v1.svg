@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="40" viewBox="0 0 192 40" role="img" aria-labelledby="title description" shape-rendering="crispEdges">
+  <title id="title">View report</title>
+  <desc id="description">A compact old-school RPG button with a bronze bevel, golden pixel lettering, and a tiny pixel watchdog.</desc>
+  <defs>
+    <!-- Five by seven bitmap glyphs, rendered at an exact two-pixel scale. -->
+    <path id="v" d="M0 0h1v4H0zM4 0h1v4H4zM1 4h1v2H1zM3 4h1v2H3zM2 6h1v1H2z"/>
+    <path id="i" d="M0 0h5v1H0zM2 1h1v5H2zM0 6h5v1H0z"/>
+    <path id="e" d="M0 0h5v1H0zM0 1h1v5H0zM1 3h3v1H1zM0 6h5v1H0z"/>
+    <path id="w" d="M0 0h1v6H0zM4 0h1v6H4zM2 3h1v3H2zM1 6h1v1H1zM3 6h1v1H3z"/>
+    <path id="r" d="M0 0h4v1H0zM0 1h1v6H0zM4 1h1v2H4zM1 3h3v1H1zM2 4h1v1H2zM3 5h1v1H3zM4 6h1v1H4z"/>
+    <path id="p" d="M0 0h4v1H0zM0 1h1v6H0zM4 1h1v2H4zM1 3h3v1H1z"/>
+    <path id="o" d="M1 0h3v1H1zM0 1h1v5H0zM4 1h1v5H4zM1 6h3v1H1z"/>
+    <path id="t" d="M0 0h5v1H0zM2 1h1v6H2z"/>
+    <g id="label">
+      <use href="#v" x="0"/>
+      <use href="#i" x="6"/>
+      <use href="#e" x="12"/>
+      <use href="#w" x="18"/>
+      <use href="#r" x="30"/>
+      <use href="#e" x="36"/>
+      <use href="#p" x="42"/>
+      <use href="#o" x="48"/>
+      <use href="#r" x="54"/>
+      <use href="#t" x="60"/>
+    </g>
+  </defs>
+  <!-- Stepped corners and an inset bronze bevel: no rounded web-card chrome. -->
+  <path fill="#241C13" d="M4 0h184v2h2v2h2v32h-2v2h-2v2H4v-2H2v-2H0V4h2V2h2z"/>
+  <path fill="#9D7D48" d="M4 2h184v2h2v32h-2v2H4v-2H2V4h2z"/>
+  <path fill="#D0AF6B" d="M6 3h180v2H6zM3 6h2v28H3z"/>
+  <path fill="#654A2A" d="M187 6h2v28h-2zM6 35h180v2H6z"/>
+  <path fill="#302719" d="M7 6h178v2h2v24h-2v2H7v-2H5V8h2z"/>
+  <path fill="#55432C" d="M8 8h176v24H8z"/>
+  <path fill="#604D33" d="M8 8h176v10H8z"/>
+  <path fill="#4B3A27" d="M8 29h176v3H8z"/>
+  <!-- Small, legible watchdog face on a two-pixel grid. -->
+  <g transform="translate(11 8) scale(2)">
+    <path fill="#211B14" d="M3 0h7v1h2v2h1v7h-2v1H2v-1H0V3h1V1h2z"/>
+    <path fill="#B5844A" d="M3 1h7v1h1v7h-1v1H3V9H2V2h1z"/>
+    <path fill="#F6DFAC" d="M4 2h5v1h1v5H9v2H4V8H3V3h1z"/>
+    <path fill="#65452B" d="M1 3h2v6H1zM10 3h2v6h-2z"/>
+    <path fill="#211B14" d="M4 4h1v1H4zM8 4h1v1H8zM5 6h3v1H7v1H6V7H5z"/>
+    <path fill="#FCEDCA" d="M4 6h1v2H4zM8 6h1v2H8z"/>
+    <path fill="#C76A44" d="M3 10h7v1H3z"/>
+    <path fill="#EFCE6A" d="M6 11h1v1H6z"/>
+  </g>
+  <use href="#label" transform="translate(49 14) scale(2)" fill="#2B2015"/>
+  <use href="#label" transform="translate(48 12) scale(2)" fill="#FFE584"/>
+</svg>

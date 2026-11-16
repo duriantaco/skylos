@@ -1760,6 +1760,9 @@ provided. See [cleanup test-quality checks](docs/cleanup.md#python-test-quality-
 | Q405 | HIGH | Async Promise executor | TS/JS | `new Promise(async ...)` ignores the executor's async result |
 | Q406 | HIGH | Async callback passed to built-in `Array.forEach` | TS/JS | callback promises are not awaited |
 | Q407 | HIGH | Discarded result from built-in `Array.map(async ...)` | TS/JS | mapped promises are not consumed |
+| Q408 | MEDIUM | Undeclared npm dependency | TS/JS and supported literal tool configs | A package is used but absent from the owning package.json; source imports must be declared by their own workspace |
+| Q409 | MEDIUM | Unlisted npm script binary | package.json | A simple package script invokes a known npm binary without its provider declared locally or in an ancestor package; unknown or expanded commands remain unresolved |
+| Q410 | MEDIUM | Discarded local async result | TS/JS | A stable local async callable returns a promise discarded as an expression statement; awaited, returned, stored, rejection-handled and explicit void uses are retained |
 | Q501 | MEDIUM | God class | Python | excessive methods or attributes |
 | Q502 | MEDIUM-HIGH | God file | Python | excessive file size / definitions |
 | Q701 | MEDIUM | High coupling | Python | resolved dependency edges; sharing an abstract base does not create sibling dependencies |
@@ -2488,8 +2491,9 @@ from `format(String)`.
 | U002 | INFO | Unused import | Upload/API normalized dead-code category |
 | U003 | INFO | Unused variable | Upload/API normalized dead-code category |
 | U004 | INFO | Unused class | Upload/API normalized dead-code category |
-| U005 | MEDIUM | Declared dependency appears unused. Run-time declarations only: requirements files, `[project].dependencies`, and `install_requires` in `setup.cfg`/`setup.py` (extras, `setup_requires` and `tests_require` are not reported). Compiled lock entries (pip-compile/uv, `--hash`, `# via`) are never reported; their `.in` inputs are checked instead. Imports, Django settings strings, `import_module` strings, Procfile/Dockerfile/compose/Makefile commands, entry points and mypy plugins count as uses; type-stub and database-driver packages are skipped | Python dependencies |
+| U005 | MEDIUM | Declared dependency appears unused. Run-time declarations only: requirements files, `[project].dependencies`, and `install_requires` in `setup.cfg`/`setup.py` (extras, `setup_requires` and `tests_require` are not reported). Compiled lock entries (pip-compile/uv, `--hash`, `# via`) are never reported; their `.in` inputs are checked instead. Imports, Django settings strings, `import_module` strings, Procfile/Dockerfile/compose/Makefile commands, entry points and mypy plugins count as uses; type-stub and database-driver packages are skipped; npm dependencies/devDependencies also count source imports, scripts and supported tool-config uses; unresolved consumers prevent absence claims | Python and npm dependencies |
 | U006 | INFO | Unused parameter | Debt normalized dead-code category |
+| U007 | LOW | Unused TypeScript enum member | An unread member of a used module-local enum or a closed private package enum with resolved direct named imports; public, escaping, reflective, mutated and opaque enum surfaces are retained |
 | DC001 | MEDIUM | Unused function | LLM report dead-code ID |
 | DC002 | LOW | Unused import | LLM report dead-code ID |
 | DC003 | MEDIUM | Unused class | LLM report dead-code ID |
@@ -2535,6 +2539,29 @@ One `analysis_summary.unused_dependency_analysis` receipt records coverage,
 reasons and abstentions. Candidates absent from a resolved usage inventory
 retain `value = "unused"`. Dependency vulnerability inventory and scanning
 remain independent of this usage decision.
+
+For npm, SKY-U005 also checks dependencies and devDependencies in each owning
+package.json. Literal source imports, package scripts, type references and
+supported plugin configuration count as uses. Peer contracts and implicit
+`@types/` packages are retained. Shared ancestor tooling can supply script
+binaries, but a source import still needs its own workspace declaration
+(SKY-Q408). A known script binary without an available declared provider is
+SKY-Q409. Dynamic loaders, unknown commands, unparsed components and incomplete
+source selection prevent absence claims; the receipt is
+`analysis_summary.npm_dependency_analysis`. Package code and scripts are never
+executed by these checks.
+
+SKY-U007 reports unread members of a used module-local TypeScript enum, and
+exported enums only when their owning package is explicitly `private: true`
+and a complete source graph resolves direct named imports and literal member
+reads. Public packages, ambient/classic-script enums, namespace imports,
+re-exports, unresolved or dynamic module loads, unparsed component consumers,
+reflection, mutation, escapes and effectful initializers prevent narrowing. An
+entirely unused enum stays with the existing owner finding. Findings carry
+their explicit rule ID and `type: "enum_member"` in `unused_variables`;
+`analysis_summary.enum_member_analysis` records the bounded
+`local_and_closed_private_enums` scope and abstentions. Review numeric
+member values before removing a declaration: implicit values can change.
 
 ### Framework entrypoints
 

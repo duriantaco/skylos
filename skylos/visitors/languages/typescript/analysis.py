@@ -2326,7 +2326,7 @@ def mark_package_api_ts_exports_consumed(
     workspace_inventory=None,
     exclude_folders=None,
 ) -> set[tuple[str, str]]:
-    """Keep definitions exposed by package entry points from being demoted.
+    """Keep JS/TS definitions exposed by package entry points from demotion.
 
     The import graph only propagates wildcard exports after another module
     imports a concrete name.  Package entry points are consumed externally,
@@ -2351,7 +2351,7 @@ def mark_package_api_ts_exports_consumed(
     ts_files = {
         os.path.realpath(str(file_path))
         for file_path in files
-        if str(file_path).endswith(_TYPESCRIPT_SOURCE_EXTENSIONS)
+        if str(file_path).endswith(_TS_JS_EXTENSIONS)
         and not _is_excluded_path(str(file_path), exclude_folders, exclude_root)
     }
     if not ts_files:
@@ -2424,7 +2424,7 @@ def mark_package_api_ts_exports_consumed(
         if not defn.is_exported or defn.type == "import":
             continue
         filename = os.path.realpath(str(defn.filename))
-        if not filename.endswith(_TYPESCRIPT_SOURCE_EXTENSIONS):
+        if not filename.endswith(_TS_JS_EXTENSIONS):
             continue
         if defn.type == "method":
             class_name, separator, _method_name = defn.name.rpartition(".")

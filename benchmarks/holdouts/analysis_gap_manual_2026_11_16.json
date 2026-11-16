@@ -1,0 +1,1269 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-16",
+  "detector_base_commit": "be4a748c",
+  "scope": "Manual source review and static analysis after implementing project analysis gaps. This is an open-set review, not a whole-repository accuracy benchmark.",
+  "target_code_execution": false,
+  "repositories": [
+    {
+      "repository": "antfu/vitesse-lite",
+      "commit": "0b352977755e1f7f6399698e308777760409ca71",
+      "source_root": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite",
+      "source_review_before_scan": true,
+      "command": [
+        "skylos",
+        "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite",
+        "--quality",
+        "--format",
+        "json",
+        "--no-upload",
+        "--no-provenance",
+        "-o",
+        "/private/tmp/skylos-gap-manual-frontend-raw.json"
+      ],
+      "source_hashes": {
+        "before": {
+          "src/main.ts": "0a36774f19099ea26810fa1d1ea3eea516a0451a0a7b19e126cd7e761401fb4a",
+          "src/App.vue": "da20ce4c2afb79b3d051bd626c242d9198bd0dda5fc78dcbeae138613cad5f70",
+          "src/composables/dark.ts": "93973fb1b6b10ccfa1282675ffb2828e047c1a98f7611e94b2575b3eb34e73ce",
+          "src/composables/index.ts": "1fc48df937de8af4a9ed9fe3d9f8d0a2edc6e254ec8c704b859c6c5a21f8c2c8",
+          "src/components/TheFooter.vue": "9e94c544d0f281e2a1fa9607914aa54dccfbe8b0fb530c602d7af261e6f39f6d",
+          "src/pages/index.vue": "56fd532d30d2d5a2730f21676963c3665e8ad10cf681bd3a48c3f029529a6f33",
+          "vite.config.ts": "a8621a333ac3cb15760c9c77371bccdacd45143a115f77ffc76c935c60da2b9e",
+          "package.json": "110a3037d6bdc289e77e81003ad75a93fe9562c8b2086326f4f446a0082531cf",
+          "auto-imports.d.ts": "013824759542dd04d7e8e7f28f46f2e1ebf1f0d3231ed261d970aa36e5208ce5",
+          "components.d.ts": "ba54dc3fcb4381d65fa40f72dd02c40f1a281a82c54b1edc5be61a2ec88abfdd"
+        },
+        "after": {
+          "src/main.ts": "0a36774f19099ea26810fa1d1ea3eea516a0451a0a7b19e126cd7e761401fb4a",
+          "src/App.vue": "da20ce4c2afb79b3d051bd626c242d9198bd0dda5fc78dcbeae138613cad5f70",
+          "src/composables/dark.ts": "93973fb1b6b10ccfa1282675ffb2828e047c1a98f7611e94b2575b3eb34e73ce",
+          "src/composables/index.ts": "1fc48df937de8af4a9ed9fe3d9f8d0a2edc6e254ec8c704b859c6c5a21f8c2c8",
+          "src/components/TheFooter.vue": "9e94c544d0f281e2a1fa9607914aa54dccfbe8b0fb530c602d7af261e6f39f6d",
+          "src/pages/index.vue": "56fd532d30d2d5a2730f21676963c3665e8ad10cf681bd3a48c3f029529a6f33",
+          "vite.config.ts": "a8621a333ac3cb15760c9c77371bccdacd45143a115f77ffc76c935c60da2b9e",
+          "package.json": "110a3037d6bdc289e77e81003ad75a93fe9562c8b2086326f4f446a0082531cf",
+          "auto-imports.d.ts": "013824759542dd04d7e8e7f28f46f2e1ebf1f0d3231ed261d970aa36e5208ce5",
+          "components.d.ts": "ba54dc3fcb4381d65fa40f72dd02c40f1a281a82c54b1edc5be61a2ec88abfdd"
+        },
+        "unchanged": true
+      },
+      "executed_target_code": false,
+      "installed_target_dependencies": false,
+      "known_used": [
+        {
+          "file": "src/main.ts",
+          "symbol": "App",
+          "evidence": [
+            "imports ./App.vue at line 4",
+            "createApp(App) at line 9"
+          ],
+          "observation": "No false unused declaration/file finding."
+        },
+        {
+          "file": "src/composables/dark.ts",
+          "symbol": "toggleDark",
+          "evidence": [
+            "src/components/TheFooter.vue:3 calls toggleDark()",
+            "auto-imports.d.ts maps toggleDark to ./src/composables/dark",
+            "vite.config.ts AutoImport.dirs includes ./src/composables and vueTemplate=true"
+          ],
+          "observation": "No unused-variable or unused-file finding; generated type import is existing preservation evidence."
+        },
+        {
+          "file": "src/composables/dark.ts",
+          "symbol": "isDark",
+          "evidence": [
+            "toggleDark = useToggle(isDark) at line 2",
+            "auto-imports.d.ts maps isDark to ./src/composables/dark"
+          ],
+          "observation": "No unused-variable or unused-file finding."
+        },
+        {
+          "file": "src/components/TheCounter.vue",
+          "evidence": [
+            "test/component.test.ts imports it at line 3 and passes it to mount in both tests"
+          ],
+          "observation": "Component graph extraction only; source body is not a full declaration/security/quality scan."
+        },
+        {
+          "file": "src/components/TheInput.vue",
+          "evidence": [
+            "src/pages/index.vue renders <TheInput>",
+            "components.d.ts maps TheInput to its .vue file",
+            "vite.config.ts Components() and VueRouter() register implicit providers"
+          ],
+          "observation": "Implicit routing/component discovery remains a scope limit; absence of findings is not a clean bill."
+        }
+      ],
+      "true_positives": [
+        {
+          "kind": "unused_import",
+          "file": "src/typed-router.d.ts",
+          "symbols": [
+            "ParamValueOneOrMore",
+            "ParamValueZeroOrMore",
+            "ParamValueZeroOrOne",
+            "_ExtractParamParserType"
+          ],
+          "reason": "Each binding occurs only in its import and is not re-exported or read in the declaration file.",
+          "scope": "Generated declaration output, not application dead-code recall or removal evidence."
+        }
+      ],
+      "unknown": [
+        {
+          "file": "src/composables/index.ts",
+          "reason": "No literal runtime importer, but auto-import discovery scans this directory; no compiler/plugin execution was performed to establish whether this barrel can be removed."
+        }
+      ],
+      "coverage_limits": [
+        "No independent application-code dead candidate was proven; do not convert zero unused function/file warnings into whole-program recall.",
+        "No Vue compiler, Vite plugin, package script, test or project type checker was executed.",
+        "Component graph records explicitly remain incomplete for generated route, auto-import and auto-component providers; parsed static script edges do not imply full template/body analysis.",
+        "The npm usage receipt is incomplete and abstains on eight dependencies, including indirect config/build dependencies; these are unknown rather than safe."
+      ],
+      "receipts": {
+        "component_import_graph": {
+          "status": "incomplete",
+          "complete": false,
+          "scope": "component_import_graph",
+          "component_count": 4,
+          "script_blocks": 2,
+          "import_edges": 0,
+          "languages": {
+            "vue": 4
+          },
+          "issues": [
+            {
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/src/main.ts",
+              "reason": "unresolved_generated_route_provider",
+              "source": "vue-router/auto-routes"
+            },
+            {
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/vite.config.ts",
+              "reason": "unresolved_auto_import_provider",
+              "source": "unplugin-auto-import/vite"
+            },
+            {
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/vite.config.ts",
+              "reason": "unresolved_auto_component_provider",
+              "source": "unplugin-vue-components/vite"
+            }
+          ]
+        },
+        "npm_dependency_analysis": {
+          "status": "incomplete",
+          "complete": false,
+          "reasons": [
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "kind": "unmodelled_command_file",
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/.github/workflows/test.yml"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "kind": "typescript_reference_provider",
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/vite.config.ts"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "kind": "unanalysed_source",
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/src/App.vue"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "kind": "unanalysed_source",
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/src/components/TheCounter.vue"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "kind": "unanalysed_source",
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/src/components/TheFooter.vue"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "kind": "unanalysed_source",
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/src/components/TheInput.vue"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "kind": "unanalysed_source",
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/src/pages/[...all].vue"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "kind": "unanalysed_source",
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/src/pages/index.vue"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "kind": "unanalysed_source",
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/src/pages/hi/[name].vue"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "kind": "unanalysed_source",
+              "file": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/src/styles/main.css"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "kind": "unmodelled_tool_config"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "kind": "unresolved_script",
+              "script": "postinstall"
+            }
+          ],
+          "packages": [
+            "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json"
+          ],
+          "abstained_dependencies": [
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "name": "@iconify-json/carbon"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "name": "@unocss/eslint-plugin"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "name": "@vue-macros/volar"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "name": "eslint-plugin-format"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "name": "jsdom"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "name": "lint-staged"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "name": "simple-git-hooks"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/antfu--vitesse-lite/package.json",
+              "name": "typescript"
+            }
+          ],
+          "abstained_count": 8
+        },
+        "generated_files": {
+          "skipped_count": 0,
+          "by_reason": {},
+          "files": {},
+          "include_with": "--include-generated",
+          "findings_not_reported": 0
+        }
+      },
+      "raw_report": "/private/tmp/skylos-gap-manual-frontend-raw.json",
+      "initial_false_positives": [
+        {
+          "rule_id": "SKY-Q408",
+          "file": "src/main.ts",
+          "line": 7,
+          "symbol": "uno.css",
+          "reason": "Virtual CSS module provided by the declared unocss package and UnoCSS() plugin in vite.config.ts; not an undeclared npm package."
+        }
+      ],
+      "initial_review_noise": [
+        {
+          "rule_id": "SKY-L035",
+          "files": [
+            "auto-imports.d.ts",
+            "components.d.ts",
+            "src/typed-router.d.ts"
+          ],
+          "reason": "Broad lint-disable directives really exist, but every file declares that it is generated. These are generated-output policy warnings, not authored AI-slop examples."
+        }
+      ],
+      "false_positives": [],
+      "review_noise": [],
+      "after_fix": {
+        "raw_report": "/private/tmp/skylos-gap-manual-frontend-final.json",
+        "uno_virtual_module_fp_removed": true,
+        "generated_declaration_lint_noise_removed": true,
+        "generated_declaration_import_findings_remain": 4,
+        "application_unused_function_or_file_findings": 0,
+        "analysis_error_count": 3,
+        "scan_exit_code": 2,
+        "status": "incomplete_generated_provider_coverage"
+      }
+    },
+    {
+      "schema_version": 1,
+      "repo": "unjs/defu",
+      "pin": {
+        "repo": "unjs/defu",
+        "commit": "82632b66f5914e9946edce300e10633a3d5c0cb7",
+        "path": "/private/tmp/skylos-gap-manual-repos/unjs--defu",
+        "archive_sha256": "ea467ddcb4246134ca4503e1d8fb276835275091a5256e01615ee8cef0929298"
+      },
+      "labelled_before_scan_at": "2026-11-16T08:00:45.389859+00:00",
+      "source_hashes_before": {
+        ".editorconfig": "b7e66239e90c0d75c06bc7042dbc8192106de56b6d83c444324c68020381f31d",
+        ".github/banner.svg": "9f8a912deeb076730ea23b44dec7db6626e26c9b36fd99cfd81a2441ab97ff6d",
+        ".github/workflows/ci.yml": "b9cf2bf02818b27cae9410eec34447964d4dd6c84cda4fcbb4395b0b889ecc70",
+        ".gitignore": "6965126dc479d8f51bc92696d6d343067f85c5bfe50ac80a78d99d18c783f508",
+        ".oxfmtrc.json": "c69c6c37e10be0970bd4ffb40e82f64c5921a78708082518fe5f80c69914a87d",
+        ".oxlintrc.json": "5098cf80f97099bec85ca30e8b2a65a93c32d900215f3a5f590399da2c427546",
+        "CHANGELOG.md": "a4f8dd905ba654d9373ad61d0369728a6a817d4fe6da86ed69598c65eec0d531",
+        "LICENSE": "46231df5a7733c3f52f11b71f3df61813007745b62b09031acfb45fb42d75082",
+        "README.md": "041d2c774be0a6aeaa46d66c8b3f289ad4ed518efe9cd5c68fb8a438234df942",
+        "lib/defu.cjs": "497cf64b88503ca9b49c383befb398b3fdd5d88ee28d20206d03118eb7ad2aae",
+        "lib/defu.d.cts": "bffa269fbd9cbfe8845ae8e83875356ae624fae3fe707e78a017fca3e4527a8d",
+        "package.json": "e043bcea9f9ab2c50ede779f6118a6aa67d3a9a1aa99c8daea65b7432cafb316",
+        "pnpm-lock.yaml": "1eef046935000595029ee01b325b374012c571845d420efe8f0f6a1d7b2bd01b",
+        "renovate.json": "a4609dc8c41c05feb86e780758cd3fb011fcd21a2de1d54dbfd4755bb87644cb",
+        "src/_utils.ts": "8b52fa19c1f1b29a8c26b5d13e979f8042b8a817e4481f9249785805916e15c4",
+        "src/defu.ts": "3ac1d2adc4b97158839c078e32e03c86f5d01239c82fe290d1401474805d84dd",
+        "src/types.ts": "4dc8c0f4fbf8580f192da5cf757cd402fec12cdb8570da0a9316e13fe89a6ef4",
+        "tea.yaml": "c1cd68e9d8057ef6d0a72f053210fbf17ea77d8fa2e638eaa74b5ebbac645c51",
+        "test/defu.test.ts": "abfe579ac2a0f10280bc11efc3ece9c2012f5fa7dde0259ee604b85a5118b145",
+        "test/fixtures/index.ts": "5c009ae48d6fb89b7bc8109f01dadbbf633fe32b18ad75d7c1de8345ca96a020",
+        "test/fixtures/nested.ts": "d99c787c62cef62f6856e16d03432375a78eb47e053d037e5c5e22b6b02b9ad2",
+        "test/utils.test.ts": "87dc4337bc29da96aac6eb3c08a52383f1d24c5562e260218e435334a8bc7353",
+        "tsconfig.json": "28ad4e54b6d8bbb9134bdf31a4a77553081ed9509e2716d74e5ebbd020f1a8a6"
+      },
+      "target_code_execution": false,
+      "label_scope": "open source-selected facts",
+      "used_dependency_controls": [
+        {
+          "package": "vitest",
+          "evidence": [
+            {
+              "file": "test/defu.test.ts",
+              "line": 2
+            },
+            {
+              "file": "package.json",
+              "line": 28
+            }
+          ]
+        },
+        {
+          "package": "expect-type",
+          "evidence": [
+            {
+              "file": "test/defu.test.ts",
+              "line": 1
+            }
+          ]
+        },
+        {
+          "package": "unbuild",
+          "evidence": [
+            {
+              "file": "package.json",
+              "line": 27
+            }
+          ]
+        },
+        {
+          "package": "oxlint",
+          "evidence": [
+            {
+              "file": "package.json",
+              "line": 29
+            }
+          ]
+        },
+        {
+          "package": "oxfmt",
+          "evidence": [
+            {
+              "file": "package.json",
+              "line": 29
+            }
+          ]
+        },
+        {
+          "package": "changelogen",
+          "evidence": [
+            {
+              "file": "package.json",
+              "line": 32
+            }
+          ]
+        },
+        {
+          "package": "@vitest/coverage-v8",
+          "evidence": [
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 25
+            }
+          ],
+          "note": "Vitest coverage option loads provider implicitly; do not declare unused from absent import."
+        }
+      ],
+      "used_symbol_controls": [
+        {
+          "file": "src/_utils.ts",
+          "symbol": "isPlainObject",
+          "line": 3,
+          "evidence": [
+            {
+              "file": "src/defu.ts",
+              "line": 1
+            },
+            {
+              "file": "src/defu.ts",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "file": "src/defu.ts",
+          "symbol": "createDefu",
+          "line": 45,
+          "evidence": [
+            {
+              "file": "src/defu.ts",
+              "line": 52
+            },
+            {
+              "file": "test/defu.test.ts",
+              "line": 188
+            }
+          ]
+        },
+        {
+          "file": "src/defu.ts",
+          "symbol": "defu",
+          "line": 52,
+          "evidence": [
+            {
+              "file": "test/defu.test.ts",
+              "line": 11
+            }
+          ]
+        },
+        {
+          "file": "src/defu.ts",
+          "symbol": "defuFn",
+          "line": 56,
+          "evidence": [
+            {
+              "file": "test/defu.test.ts",
+              "line": 201
+            }
+          ]
+        },
+        {
+          "file": "src/defu.ts",
+          "symbol": "defuArrayFn",
+          "line": 64,
+          "evidence": [
+            {
+              "file": "test/defu.test.ts",
+              "line": 223
+            }
+          ]
+        }
+      ],
+      "unused_candidates": [
+        {
+          "package": "eslint-config-unjs",
+          "manifest": "package.json",
+          "line": 41,
+          "label": "unknown",
+          "reason": "No ESLint source/config/command consumer found; this is a candidate, not an independently established removal contract or recalled positive."
+        }
+      ],
+      "expected_limitations": [
+        "CI-only dependency consumers must prevent U005 absence claims.",
+        "tsgo binary provider package cannot be proved by name equality without installed bin metadata.",
+        "No controlled enum member positive exists in this snapshot."
+      ],
+      "scanned_at": "2026-11-16T08:13:01.038340+00:00",
+      "command": [
+        "/private/tmp/skylos-new001-validation/bin/skylos",
+        "/private/tmp/skylos-gap-manual-repos/unjs--defu",
+        "--quality",
+        "--format",
+        "json",
+        "-o",
+        "/private/tmp/skylos-gap-manual-javascript-report.json"
+      ],
+      "exit_code": 0,
+      "raw_report": "/private/tmp/skylos-gap-manual-javascript-report.json",
+      "raw_report_sha256": "a91e0f0967c8339abddf85f481a9666b9c810053164731152c409dff694604c7",
+      "scanner_source_hashes": {
+        "skylos/rules/quality/npm_dependencies.py": "487c5c0004a9a2d0b42bc6ce706e0dec9e906240c3b37ffb76428f0293162b4f",
+        "skylos/visitors/languages/typescript/unused_enum_members.py": "7e4aa3709b38a1eed6171d452b9187bf6df00762ffdf3c56e8a3bda544794864",
+        "skylos/visitors/languages/typescript/namespace_references.py": "b32e742130044a68a95db834ab8b1951b08636c5ffc60876692ee1de12074b03"
+      },
+      "scanner_snapshot_note": "Uncommitted integration worktree; exact source hashes recorded. This is manual post-implementation evidence, not an unseen accuracy benchmark.",
+      "source_hashes_after": {
+        ".editorconfig": "b7e66239e90c0d75c06bc7042dbc8192106de56b6d83c444324c68020381f31d",
+        ".github/banner.svg": "9f8a912deeb076730ea23b44dec7db6626e26c9b36fd99cfd81a2441ab97ff6d",
+        ".github/workflows/ci.yml": "b9cf2bf02818b27cae9410eec34447964d4dd6c84cda4fcbb4395b0b889ecc70",
+        ".gitignore": "6965126dc479d8f51bc92696d6d343067f85c5bfe50ac80a78d99d18c783f508",
+        ".oxfmtrc.json": "c69c6c37e10be0970bd4ffb40e82f64c5921a78708082518fe5f80c69914a87d",
+        ".oxlintrc.json": "5098cf80f97099bec85ca30e8b2a65a93c32d900215f3a5f590399da2c427546",
+        "CHANGELOG.md": "a4f8dd905ba654d9373ad61d0369728a6a817d4fe6da86ed69598c65eec0d531",
+        "LICENSE": "46231df5a7733c3f52f11b71f3df61813007745b62b09031acfb45fb42d75082",
+        "README.md": "041d2c774be0a6aeaa46d66c8b3f289ad4ed518efe9cd5c68fb8a438234df942",
+        "lib/defu.cjs": "497cf64b88503ca9b49c383befb398b3fdd5d88ee28d20206d03118eb7ad2aae",
+        "lib/defu.d.cts": "bffa269fbd9cbfe8845ae8e83875356ae624fae3fe707e78a017fca3e4527a8d",
+        "package.json": "e043bcea9f9ab2c50ede779f6118a6aa67d3a9a1aa99c8daea65b7432cafb316",
+        "pnpm-lock.yaml": "1eef046935000595029ee01b325b374012c571845d420efe8f0f6a1d7b2bd01b",
+        "renovate.json": "a4609dc8c41c05feb86e780758cd3fb011fcd21a2de1d54dbfd4755bb87644cb",
+        "src/_utils.ts": "8b52fa19c1f1b29a8c26b5d13e979f8042b8a817e4481f9249785805916e15c4",
+        "src/defu.ts": "3ac1d2adc4b97158839c078e32e03c86f5d01239c82fe290d1401474805d84dd",
+        "src/types.ts": "4dc8c0f4fbf8580f192da5cf757cd402fec12cdb8570da0a9316e13fe89a6ef4",
+        "tea.yaml": "c1cd68e9d8057ef6d0a72f053210fbf17ea77d8fa2e638eaa74b5ebbac645c51",
+        "test/defu.test.ts": "abfe579ac2a0f10280bc11efc3ece9c2012f5fa7dde0259ee604b85a5118b145",
+        "test/fixtures/index.ts": "5c009ae48d6fb89b7bc8109f01dadbbf633fe32b18ad75d7c1de8345ca96a020",
+        "test/fixtures/nested.ts": "d99c787c62cef62f6856e16d03432375a78eb47e053d037e5c5e22b6b02b9ad2",
+        "test/utils.test.ts": "87dc4337bc29da96aac6eb3c08a52383f1d24c5562e260218e435334a8bc7353",
+        "tsconfig.json": "28ad4e54b6d8bbb9134bdf31a4a77553081ed9509e2716d74e5ebbd020f1a8a6"
+      },
+      "source_unchanged": true,
+      "analysis_completeness": {
+        "analysis_error_count": 0,
+        "analysis_errors": [],
+        "languages": {
+          "JavaScript": 1,
+          "TypeScript": 8
+        },
+        "total_files": 9
+      },
+      "npm_coverage": {
+        "status": "incomplete",
+        "complete": false,
+        "reasons": [
+          {
+            "package_manifest": "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json",
+            "kind": "unmodelled_command_file",
+            "file": "/private/tmp/skylos-gap-manual-repos/unjs--defu/.github/workflows/ci.yml"
+          },
+          {
+            "package_manifest": "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json",
+            "kind": "unknown_binary_provider",
+            "binary": "tsgo"
+          }
+        ],
+        "packages": [
+          "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json"
+        ],
+        "abstained_dependencies": [
+          {
+            "package_manifest": "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json",
+            "name": "@typescript/native-preview"
+          },
+          {
+            "package_manifest": "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json",
+            "name": "@vitest/coverage-v8"
+          },
+          {
+            "package_manifest": "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json",
+            "name": "eslint-config-unjs"
+          },
+          {
+            "package_manifest": "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json",
+            "name": "typescript"
+          }
+        ],
+        "abstained_count": 4
+      },
+      "enum_coverage": {
+        "scope": "local_and_closed_private_enums",
+        "status": "complete",
+        "complete": true,
+        "analysed_files": 7,
+        "checked_enums": 0,
+        "grouped_enums": 0,
+        "abstained_enums": [],
+        "reasons": [],
+        "abstained_count": 0
+      },
+      "reviewed_outcomes": [
+        {
+          "category": "npm_dependency",
+          "package": "vitest",
+          "expected": "used",
+          "reported_unused": false,
+          "outcome": "preserved",
+          "source_evidence": [
+            {
+              "file": "test/defu.test.ts",
+              "line": 2
+            },
+            {
+              "file": "package.json",
+              "line": 28
+            }
+          ]
+        },
+        {
+          "category": "npm_dependency",
+          "package": "expect-type",
+          "expected": "used",
+          "reported_unused": false,
+          "outcome": "preserved",
+          "source_evidence": [
+            {
+              "file": "test/defu.test.ts",
+              "line": 1
+            }
+          ]
+        },
+        {
+          "category": "npm_dependency",
+          "package": "unbuild",
+          "expected": "used",
+          "reported_unused": false,
+          "outcome": "preserved",
+          "source_evidence": [
+            {
+              "file": "package.json",
+              "line": 27
+            }
+          ]
+        },
+        {
+          "category": "npm_dependency",
+          "package": "oxlint",
+          "expected": "used",
+          "reported_unused": false,
+          "outcome": "preserved",
+          "source_evidence": [
+            {
+              "file": "package.json",
+              "line": 29
+            }
+          ]
+        },
+        {
+          "category": "npm_dependency",
+          "package": "oxfmt",
+          "expected": "used",
+          "reported_unused": false,
+          "outcome": "preserved",
+          "source_evidence": [
+            {
+              "file": "package.json",
+              "line": 29
+            }
+          ]
+        },
+        {
+          "category": "npm_dependency",
+          "package": "changelogen",
+          "expected": "used",
+          "reported_unused": false,
+          "outcome": "preserved",
+          "source_evidence": [
+            {
+              "file": "package.json",
+              "line": 32
+            }
+          ]
+        },
+        {
+          "category": "npm_dependency",
+          "package": "@vitest/coverage-v8",
+          "expected": "used",
+          "reported_unused": false,
+          "outcome": "preserved",
+          "source_evidence": [
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 25
+            }
+          ]
+        },
+        {
+          "category": "dead_code",
+          "file": "src/_utils.ts",
+          "symbol": "isPlainObject",
+          "line": 3,
+          "expected": "used",
+          "definition_extracted": true,
+          "references": [
+            0
+          ],
+          "reported_unused": false,
+          "outcome": "preserved",
+          "source_evidence": [
+            {
+              "file": "src/defu.ts",
+              "line": 1
+            },
+            {
+              "file": "src/defu.ts",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "category": "dead_code",
+          "file": "src/defu.ts",
+          "symbol": "createDefu",
+          "line": 45,
+          "expected": "used",
+          "definition_extracted": true,
+          "references": [
+            0
+          ],
+          "reported_unused": false,
+          "outcome": "preserved",
+          "source_evidence": [
+            {
+              "file": "src/defu.ts",
+              "line": 52
+            },
+            {
+              "file": "test/defu.test.ts",
+              "line": 188
+            }
+          ]
+        },
+        {
+          "category": "dead_code",
+          "file": "src/defu.ts",
+          "symbol": "defu",
+          "line": 52,
+          "expected": "used",
+          "definition_extracted": true,
+          "references": [
+            0
+          ],
+          "reported_unused": false,
+          "outcome": "preserved",
+          "source_evidence": [
+            {
+              "file": "test/defu.test.ts",
+              "line": 11
+            }
+          ]
+        },
+        {
+          "category": "dead_code",
+          "file": "src/defu.ts",
+          "symbol": "defuFn",
+          "line": 56,
+          "expected": "used",
+          "definition_extracted": true,
+          "references": [
+            0
+          ],
+          "reported_unused": false,
+          "outcome": "preserved",
+          "source_evidence": [
+            {
+              "file": "test/defu.test.ts",
+              "line": 201
+            }
+          ]
+        },
+        {
+          "category": "dead_code",
+          "file": "src/defu.ts",
+          "symbol": "defuArrayFn",
+          "line": 64,
+          "expected": "used",
+          "definition_extracted": true,
+          "references": [
+            0
+          ],
+          "reported_unused": false,
+          "outcome": "preserved",
+          "source_evidence": [
+            {
+              "file": "test/defu.test.ts",
+              "line": 223
+            }
+          ]
+        }
+      ],
+      "npm_findings": [],
+      "unused_candidate_outcome": "eslint-config-unjs remains explicitly abstained because whole-package absence proof is incomplete. No positive recall credit or claim of safe removal.",
+      "implementation_followup": "Resolved pnpm script/binary shorthand after manual review; no target source or labels changed.",
+      "final_rerun": {
+        "analysis_error_count": 0,
+        "source_count": 9,
+        "npm_findings": [],
+        "npm_dependency_analysis": {
+          "status": "incomplete",
+          "complete": false,
+          "reasons": [
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json",
+              "kind": "unmodelled_command_file",
+              "file": "/private/tmp/skylos-gap-manual-repos/unjs--defu/.github/workflows/ci.yml"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json",
+              "kind": "unknown_binary_provider",
+              "binary": "tsgo"
+            }
+          ],
+          "packages": [
+            "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json"
+          ],
+          "abstained_dependencies": [
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json",
+              "name": "@typescript/native-preview"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json",
+              "name": "@vitest/coverage-v8"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json",
+              "name": "eslint-config-unjs"
+            },
+            {
+              "package_manifest": "/private/tmp/skylos-gap-manual-repos/unjs--defu/package.json",
+              "name": "typescript"
+            }
+          ],
+          "abstained_count": 4
+        }
+      }
+    },
+    {
+      "repo": "laravel/prompts",
+      "commit": "e84c227ae83ffef9f8fc1059bb2b79f2b0cfc0ca",
+      "archive_sha256": "33b95c92a555dd728e5babae4f84c6fdb9b2d48d93f101c0549b806e5e6ac29d",
+      "scope": ".",
+      "target_code_execution": false,
+      "label_scope": "Post-scan source review; known-used controls frozen before final rerun, not independent accuracy labels.",
+      "source_hashes_before_final_rerun": {
+        "src/AutoCompletePrompt.php": "36629d4c2eab956cc00cacaa5cb97d7d03011f2f603b807ffa19d9d0316c762b",
+        "src/Callout.php": "d1659c04f1b669e22c136cbc7ecfcb116c3c8a0feaeaf5ae48d29c2756a9ac6a",
+        "src/Clear.php": "3fa150bf07ced1aaa9443f8700a3f3c56bdffba8d09b97315d947a5a79af3c6c",
+        "src/Concerns/Colors.php": "193b0dc47c44cf3dfb9cda59a96c184ca6b04be79599a1573aa5e3cd675b788a",
+        "src/Concerns/Cursor.php": "6bc7328aef2b0e8680e38c0a9c74e514a9f83b5bc90e8eefb5903923804b88f1",
+        "src/Concerns/Erase.php": "b02a50d0c349141b108d44cf01f05f94c9d364c175b9a8cf40002331dab73961",
+        "src/Concerns/Events.php": "facce7c48fdbc5f30b5fc10234d0657872b670fa8ca975c74cdd199bf4de4b75",
+        "src/Concerns/FakesInputOutput.php": "27ae01e115850010b3432d9fffca183c62b596cdc8528ad84f7f352a5d3827ab",
+        "src/Concerns/Fallback.php": "3ae3aaaceaf6de37d89f8135918c11a6763ef1d23e46a3ccee81b78ffa380a4c",
+        "src/Concerns/HasInfo.php": "5c041bdcfae40f6b8d7e12338300e1dffd52f377a01a946337e7c857466213d6",
+        "src/Concerns/HasSpinner.php": "d4905fdbd327a4a40abfefa1e1c300942f8a94482bc09b94aec1c95ca12c75ab",
+        "src/Concerns/Interactivity.php": "ef15cc7a7f60abfc980943721c6c304737222aebd8c828444d9b4d274793d42b",
+        "src/Concerns/RendersAnimations.php": "6f3c985caadbcd52f0926445556e7efbc41132127eb4d843d51e102f0b2bf68d",
+        "src/Concerns/Scrolling.php": "d99e449431b89f0bb884f608ce096ac8fc84557f1792535dd85f4f71e5c2b6ca",
+        "src/Concerns/Termwind.php": "26a2798593075e91792f023b9aa8d7342418cc49c023841d2f691317c87f1131",
+        "src/Concerns/Themes.php": "f13e6d932f8d99202040f6cab49717985233e2f74b86b6197417b88794829c9b",
+        "src/Concerns/Truncation.php": "fc6b61215cc21b7649986fe00b8e34592e93c1016a0cf6d6200581c976561da5",
+        "src/Concerns/TypedValue.php": "896a7a12d5261ecc3ffcc86579b146e44ce6e2d0ce396c091f753d873c502020",
+        "src/ConfirmPrompt.php": "ac1941c4ad2ecbede6ca58fcadac31e999be9b4ca5409d5bdaf3899da0f05f67",
+        "src/DataTablePrompt.php": "cdfa9b6f314e240ff24d87caf36da32d24b1ce37b84f518a3df5b5615aceea66",
+        "src/Elements/BulletedList.php": "effec69aec3b34fb3f16b448f752e52d1d02aee2e9c51182bf9567ed8d885315",
+        "src/Elements/Element.php": "1b0b6d7fa3d600ad6eabbe1f278258f8488fab3ba8c648f2a713ffa97c77d223",
+        "src/Elements/ElementContract.php": "84cdd81eb9d6c83be4db029042fbe0d8126187123984abc76682bdc17536b32f",
+        "src/Elements/Heading.php": "24b0300306452a49e3db5f9c9d92b601f8f54d3cd6c79183e0677b0bf239398d",
+        "src/Elements/KeyValueList.php": "9e0b0e7cba0f7df23e3f9fc2fdcff7ee408052b0fa379beb791916cf8dd408ba",
+        "src/Elements/Link.php": "f440e6c6d4e463faa0247ed1ba849ed231056920dc93f2ef424b3e91e5b04421",
+        "src/Elements/NumberedList.php": "d3cdefe269a4df644f1333b05719576a934a4898e7525765b25f3d06e5ee8035",
+        "src/Exceptions/FormRevertedException.php": "348e3d491e1e0b7a2e51b3d2146626bc4886bec42016df80b5d7308df9f15a1a",
+        "src/Exceptions/NonInteractiveValidationException.php": "4b7468fac0551101f5e80efacce9ebe2879d52cb7e7fc76227a4d2c6fde51a42",
+        "src/FormBuilder.php": "de901ea391855a237b5bd9e7c306ea89ba385ef40780fce5b07aee06ba229eee",
+        "src/FormStep.php": "58535fad2bd770b106564b8c398d69a36f73b75a81951486dfd199319a93be15",
+        "src/Grid.php": "ea307ad6824b72afee41a62061258d608137c1e1b9c2058d49979de0b1e22915",
+        "src/Key.php": "c1062d0211864152bb81362fa91ff9448168223f27d6eaa946bbd5ce92d72069",
+        "src/MultiSearchPrompt.php": "d7a65acb7d14a8b8e2407a31015e109d7f18aec227a1ef9fc5c53c121e642a5d",
+        "src/MultiSelectPrompt.php": "a318616c60d5173ef046f94a19db60754128765bff1e4156e78a600c2b4b53ca",
+        "src/Note.php": "7686fc8cff0e055d64869577de376cf01694ecf14df680707b424382757a3341",
+        "src/NotifyPrompt.php": "981fc806284db77071445ddcddcda8f04c3c3c422b321158f682e5f2bb9fad56",
+        "src/NumberPrompt.php": "e8608361a10abfc29cd105bf0aabc1ecc38add9cb1a262c08c41af846d66206c",
+        "src/Output/BufferedConsoleOutput.php": "aec536a3bd855fa924a056f7c10d456b41f578c7fe8019d6755e8a7e3bfd644a",
+        "src/Output/ConsoleOutput.php": "95a6d7f74e8da23b74dfed906f86c51949aebea95aa8617510ceefdc3851c91f",
+        "src/PasswordPrompt.php": "8c10908eaf2f8aa4d6e11bfdf550d670d81ee2b6a7e9785cf2c13dd78fc6749d",
+        "src/PausePrompt.php": "9083b1eb0ba14d595996e321819f616d5e0a821e2899d6cda985bb1fedca3c1e",
+        "src/Progress.php": "6fcd3fdf7e21955efea0aba8d25db2ef4d2556acf9c67edb6712204f723c6ae7",
+        "src/Prompt.php": "d9f26891bd0c71de3f79d548c0634ef0e9beda9c5a27a879cb64c57d42f1fdd8",
+        "src/SearchPrompt.php": "abfcd7c50600e32a68b2a668c2b08386281f5f5ac0dad3a01930cd6efa96bdcc",
+        "src/SelectPrompt.php": "75be184a9ff4d9182b4becf44dc1ee91ca8c0440f7f3737bd13c23bb8e695849",
+        "src/Spinner.php": "9979d19a743126daadbfc40f50c26605ca1bb3b0d6cc92268c4beb394232f6a0",
+        "src/Stream.php": "75c87faa70bf3008150b02b063c0444f4ddd2a50f832684ecfe53bd8d0848871",
+        "src/SuggestPrompt.php": "dfc987ba904409c4ba890588d12d8c2da204bc66cf7771a7a4aa962a792899e5",
+        "src/Support/Logger.php": "f02d2b019cd59d1d2ad77f3503920164e6be8f95bb200a23dbc8e57192f0aaef",
+        "src/Support/Result.php": "3800c4aefa733875f19b92abf50302311b1be6408363d67b1d4b95a3f2658560",
+        "src/Support/Utils.php": "ec4b177447255d437d8d9db09783b2b51bc2ac48e253a4417606b792145f9207",
+        "src/Table.php": "896e6b4d217fcafd95c24d543977bca8a795a70a8a66b3fd3269e5fc8179941c",
+        "src/Task.php": "aa57ca8ec30827de78875f2d178762f02e3b426e2794922c509676a5710585f6",
+        "src/Terminal.php": "67fa28a18732fea764217f7f78554b2578cba02fdf3604b1d56f31cb88a3b18a",
+        "src/TextPrompt.php": "eb1864d16dcf09cd6869b69e38631eee0efd24f16c39368373597b224f78a39f",
+        "src/TextareaPrompt.php": "6c05976a3cf96a27122a904696d0e828afef67824b64bec0742d474b56400457",
+        "src/Themes/Contracts/Scrolling.php": "44cf496807c91f82bbc8b80d28a36b92482161dad3ab86e28ca624a2ba6fb7cb",
+        "src/Themes/Default/AutoCompletePromptRenderer.php": "1542d645e63b96b643c123cd612ba82bcdb0aa469bf9fd85b8eebec1756436e2",
+        "src/Themes/Default/CalloutRenderer.php": "25d39bbd712e7a10088186e67d1a3b33f507497545b8da59478411f115f10266",
+        "src/Themes/Default/ClearRenderer.php": "87b5e2fb1755a0f69c3791494a5921c13a62aa355e344ce724e503a92862b156",
+        "src/Themes/Default/Concerns/DrawsBoxes.php": "de6ef0f70948f7db0f28fecd15a9d04c43bc16ac168e3080b08fd15e32be3fcc",
+        "src/Themes/Default/Concerns/DrawsScrollbars.php": "f174061850d86684fb42e73b4e69d36337dd2a37c393703bfcd928d7b929eabd",
+        "src/Themes/Default/Concerns/InteractsWithStrings.php": "dfe0bad77820c3c6fba18d32f6872e001e59c88fbe273d8a5eec3d5aa28b88fd",
+        "src/Themes/Default/ConfirmPromptRenderer.php": "baa8cdd730f9f398f2b77337b526362fb0368485eb315178e6a03a18387cfcf4",
+        "src/Themes/Default/DataTableRenderer.php": "c6d292f258913fd4ef74683c5b0b2148e805deea401edd358bf768ec92ad1e03",
+        "src/Themes/Default/GridRenderer.php": "f634a15ccc0572105b7d35bb4fcc56753ac1e8e2794eb9883fa7d10b82ce6a2c",
+        "src/Themes/Default/MultiSearchPromptRenderer.php": "ea8a84919fd3b3efce8eca66521bc1d34238ac344047408c0e4557a9d84aaab6",
+        "src/Themes/Default/MultiSelectPromptRenderer.php": "9710f9093c6f19b6c5bdb7f606696123ddb8e0fde0736d34056b413766ee80ab",
+        "src/Themes/Default/NoteRenderer.php": "ea55d76804574d50ee32a2313f67b06daf7d12e3437aaf1649b0296cdeb677f8",
+        "src/Themes/Default/NumberPromptRenderer.php": "d2e1f052ce53a01d7049a467e3779f38f430ecd8b806f34c0162fdceaaef6b39",
+        "src/Themes/Default/PasswordPromptRenderer.php": "f087022d1904c840f58f3769a8ecd139b0306cd413a7109d0e14295469021415",
+        "src/Themes/Default/PausePromptRenderer.php": "afc0616db956421c9d3c0dc629f9645db8d511739da1a7c1e37845b7649a10a9",
+        "src/Themes/Default/ProgressRenderer.php": "fb02a27b4054185c6805382b2ec40877ca797cdecfeda99e5addc3742da048d9",
+        "src/Themes/Default/Renderer.php": "7aa4b9c2cbbd7b694f327f7b5d0d0c35e5e30ba8a4ce4f91526b59e379d1a199",
+        "src/Themes/Default/SearchPromptRenderer.php": "db5c9532ff723435ba3852477ab5e2b09bf24591e5d7bf0409b2faeb34cc02da",
+        "src/Themes/Default/SelectPromptRenderer.php": "81201c837d642a3eb0f0477f17fddb34b2685005b1368de58fd831deb141bed4",
+        "src/Themes/Default/SpinnerRenderer.php": "69a79f24fe2d0715abb43debfc00a5815b387e94b3a4f82725f49d60cd82d978",
+        "src/Themes/Default/StreamRenderer.php": "42dc389e8003caef84099b7650a2656994aa30cd580fc27b09d6dd2df315cb92",
+        "src/Themes/Default/SuggestPromptRenderer.php": "e1a65035ba968e25aa28a2ff596cd68b0380ec0515e7aeeac3a20c77f7089081",
+        "src/Themes/Default/TableRenderer.php": "609fd8fe3334a837ae740620485334b8b21cd666690d2ba9ac56f37d54717424",
+        "src/Themes/Default/TaskRenderer.php": "a5ac427e68a521c63f29dff2d015bc6a245daad2c3c8ab38accab970937935ab",
+        "src/Themes/Default/TextPromptRenderer.php": "ec64bdf363e04b622521770868e5da5c0fa0c8a612fdf5be89c28fe1b6c85dba",
+        "src/Themes/Default/TextareaPromptRenderer.php": "ed6746b06a43802f2700a6b9304a635e473a5630f4907e43af71b5e7b51e56e2",
+        "src/Themes/Default/TitleRenderer.php": "42f0b4e0e7019a896d3d522bb49e86cc3821933263e0b581b17bd1d170a5dc49",
+        "src/Title.php": "e985559c8b808189a85c39122e0e01e9c91b515193b9f890fd3616c7d921275f",
+        "src/helpers.php": "7ccc2f3fa7d8d3f8504785839a762028768775a492612a1c88a2f2a72e422e08"
+      },
+      "known_used_controls": [
+        {
+          "file": "src/Prompt.php",
+          "name": "Prompt",
+          "evidence": "TextPrompt extends Prompt; source roots instantiate TextPrompt in helpers.php.",
+          "preserved": true
+        },
+        {
+          "file": "src/TextPrompt.php",
+          "name": "TextPrompt",
+          "evidence": "src/helpers.php constructs TextPrompt in text().",
+          "preserved": true
+        },
+        {
+          "file": "src/Elements/Heading.php",
+          "name": "Heading",
+          "evidence": "CalloutRenderer imports and tests Heading; this is a concrete runtime consumer.",
+          "preserved": true
+        },
+        {
+          "file": "src/Elements/ElementContract.php",
+          "name": "ElementContract",
+          "evidence": "Callout/renderer signatures and element implementations reference the interface.",
+          "preserved": true
+        }
+      ],
+      "reviewed_unreferenced_findings": [
+        {
+          "file": "src/Concerns/Termwind.php",
+          "name": "Termwind",
+          "classification": "unknown_external_api",
+          "reason": "No local trait consumer found; Composer PSR-4 exposes library namespaces to callers."
+        },
+        {
+          "file": "src/Elements/Element.php",
+          "name": "Element",
+          "classification": "unknown_external_api",
+          "reason": "No local factory-class consumer found; public methods form externally consumable library API."
+        },
+        {
+          "file": "src/Key.php",
+          "name": "SHIFT_UP",
+          "classification": "unknown_external_api",
+          "reason": "No local use found; public constant may have downstream consumers."
+        },
+        {
+          "file": "src/Key.php",
+          "name": "SHIFT_DOWN",
+          "classification": "unknown_external_api",
+          "reason": "No local use found; public constant may have downstream consumers."
+        }
+      ],
+      "source_hashes_after_final_rerun": {
+        "src/AutoCompletePrompt.php": "36629d4c2eab956cc00cacaa5cb97d7d03011f2f603b807ffa19d9d0316c762b",
+        "src/Callout.php": "d1659c04f1b669e22c136cbc7ecfcb116c3c8a0feaeaf5ae48d29c2756a9ac6a",
+        "src/Clear.php": "3fa150bf07ced1aaa9443f8700a3f3c56bdffba8d09b97315d947a5a79af3c6c",
+        "src/Concerns/Colors.php": "193b0dc47c44cf3dfb9cda59a96c184ca6b04be79599a1573aa5e3cd675b788a",
+        "src/Concerns/Cursor.php": "6bc7328aef2b0e8680e38c0a9c74e514a9f83b5bc90e8eefb5903923804b88f1",
+        "src/Concerns/Erase.php": "b02a50d0c349141b108d44cf01f05f94c9d364c175b9a8cf40002331dab73961",
+        "src/Concerns/Events.php": "facce7c48fdbc5f30b5fc10234d0657872b670fa8ca975c74cdd199bf4de4b75",
+        "src/Concerns/FakesInputOutput.php": "27ae01e115850010b3432d9fffca183c62b596cdc8528ad84f7f352a5d3827ab",
+        "src/Concerns/Fallback.php": "3ae3aaaceaf6de37d89f8135918c11a6763ef1d23e46a3ccee81b78ffa380a4c",
+        "src/Concerns/HasInfo.php": "5c041bdcfae40f6b8d7e12338300e1dffd52f377a01a946337e7c857466213d6",
+        "src/Concerns/HasSpinner.php": "d4905fdbd327a4a40abfefa1e1c300942f8a94482bc09b94aec1c95ca12c75ab",
+        "src/Concerns/Interactivity.php": "ef15cc7a7f60abfc980943721c6c304737222aebd8c828444d9b4d274793d42b",
+        "src/Concerns/RendersAnimations.php": "6f3c985caadbcd52f0926445556e7efbc41132127eb4d843d51e102f0b2bf68d",
+        "src/Concerns/Scrolling.php": "d99e449431b89f0bb884f608ce096ac8fc84557f1792535dd85f4f71e5c2b6ca",
+        "src/Concerns/Termwind.php": "26a2798593075e91792f023b9aa8d7342418cc49c023841d2f691317c87f1131",
+        "src/Concerns/Themes.php": "f13e6d932f8d99202040f6cab49717985233e2f74b86b6197417b88794829c9b",
+        "src/Concerns/Truncation.php": "fc6b61215cc21b7649986fe00b8e34592e93c1016a0cf6d6200581c976561da5",
+        "src/Concerns/TypedValue.php": "896a7a12d5261ecc3ffcc86579b146e44ce6e2d0ce396c091f753d873c502020",
+        "src/ConfirmPrompt.php": "ac1941c4ad2ecbede6ca58fcadac31e999be9b4ca5409d5bdaf3899da0f05f67",
+        "src/DataTablePrompt.php": "cdfa9b6f314e240ff24d87caf36da32d24b1ce37b84f518a3df5b5615aceea66",
+        "src/Elements/BulletedList.php": "effec69aec3b34fb3f16b448f752e52d1d02aee2e9c51182bf9567ed8d885315",
+        "src/Elements/Element.php": "1b0b6d7fa3d600ad6eabbe1f278258f8488fab3ba8c648f2a713ffa97c77d223",
+        "src/Elements/ElementContract.php": "84cdd81eb9d6c83be4db029042fbe0d8126187123984abc76682bdc17536b32f",
+        "src/Elements/Heading.php": "24b0300306452a49e3db5f9c9d92b601f8f54d3cd6c79183e0677b0bf239398d",
+        "src/Elements/KeyValueList.php": "9e0b0e7cba0f7df23e3f9fc2fdcff7ee408052b0fa379beb791916cf8dd408ba",
+        "src/Elements/Link.php": "f440e6c6d4e463faa0247ed1ba849ed231056920dc93f2ef424b3e91e5b04421",
+        "src/Elements/NumberedList.php": "d3cdefe269a4df644f1333b05719576a934a4898e7525765b25f3d06e5ee8035",
+        "src/Exceptions/FormRevertedException.php": "348e3d491e1e0b7a2e51b3d2146626bc4886bec42016df80b5d7308df9f15a1a",
+        "src/Exceptions/NonInteractiveValidationException.php": "4b7468fac0551101f5e80efacce9ebe2879d52cb7e7fc76227a4d2c6fde51a42",
+        "src/FormBuilder.php": "de901ea391855a237b5bd9e7c306ea89ba385ef40780fce5b07aee06ba229eee",
+        "src/FormStep.php": "58535fad2bd770b106564b8c398d69a36f73b75a81951486dfd199319a93be15",
+        "src/Grid.php": "ea307ad6824b72afee41a62061258d608137c1e1b9c2058d49979de0b1e22915",
+        "src/Key.php": "c1062d0211864152bb81362fa91ff9448168223f27d6eaa946bbd5ce92d72069",
+        "src/MultiSearchPrompt.php": "d7a65acb7d14a8b8e2407a31015e109d7f18aec227a1ef9fc5c53c121e642a5d",
+        "src/MultiSelectPrompt.php": "a318616c60d5173ef046f94a19db60754128765bff1e4156e78a600c2b4b53ca",
+        "src/Note.php": "7686fc8cff0e055d64869577de376cf01694ecf14df680707b424382757a3341",
+        "src/NotifyPrompt.php": "981fc806284db77071445ddcddcda8f04c3c3c422b321158f682e5f2bb9fad56",
+        "src/NumberPrompt.php": "e8608361a10abfc29cd105bf0aabc1ecc38add9cb1a262c08c41af846d66206c",
+        "src/Output/BufferedConsoleOutput.php": "aec536a3bd855fa924a056f7c10d456b41f578c7fe8019d6755e8a7e3bfd644a",
+        "src/Output/ConsoleOutput.php": "95a6d7f74e8da23b74dfed906f86c51949aebea95aa8617510ceefdc3851c91f",
+        "src/PasswordPrompt.php": "8c10908eaf2f8aa4d6e11bfdf550d670d81ee2b6a7e9785cf2c13dd78fc6749d",
+        "src/PausePrompt.php": "9083b1eb0ba14d595996e321819f616d5e0a821e2899d6cda985bb1fedca3c1e",
+        "src/Progress.php": "6fcd3fdf7e21955efea0aba8d25db2ef4d2556acf9c67edb6712204f723c6ae7",
+        "src/Prompt.php": "d9f26891bd0c71de3f79d548c0634ef0e9beda9c5a27a879cb64c57d42f1fdd8",
+        "src/SearchPrompt.php": "abfcd7c50600e32a68b2a668c2b08386281f5f5ac0dad3a01930cd6efa96bdcc",
+        "src/SelectPrompt.php": "75be184a9ff4d9182b4becf44dc1ee91ca8c0440f7f3737bd13c23bb8e695849",
+        "src/Spinner.php": "9979d19a743126daadbfc40f50c26605ca1bb3b0d6cc92268c4beb394232f6a0",
+        "src/Stream.php": "75c87faa70bf3008150b02b063c0444f4ddd2a50f832684ecfe53bd8d0848871",
+        "src/SuggestPrompt.php": "dfc987ba904409c4ba890588d12d8c2da204bc66cf7771a7a4aa962a792899e5",
+        "src/Support/Logger.php": "f02d2b019cd59d1d2ad77f3503920164e6be8f95bb200a23dbc8e57192f0aaef",
+        "src/Support/Result.php": "3800c4aefa733875f19b92abf50302311b1be6408363d67b1d4b95a3f2658560",
+        "src/Support/Utils.php": "ec4b177447255d437d8d9db09783b2b51bc2ac48e253a4417606b792145f9207",
+        "src/Table.php": "896e6b4d217fcafd95c24d543977bca8a795a70a8a66b3fd3269e5fc8179941c",
+        "src/Task.php": "aa57ca8ec30827de78875f2d178762f02e3b426e2794922c509676a5710585f6",
+        "src/Terminal.php": "67fa28a18732fea764217f7f78554b2578cba02fdf3604b1d56f31cb88a3b18a",
+        "src/TextPrompt.php": "eb1864d16dcf09cd6869b69e38631eee0efd24f16c39368373597b224f78a39f",
+        "src/TextareaPrompt.php": "6c05976a3cf96a27122a904696d0e828afef67824b64bec0742d474b56400457",
+        "src/Themes/Contracts/Scrolling.php": "44cf496807c91f82bbc8b80d28a36b92482161dad3ab86e28ca624a2ba6fb7cb",
+        "src/Themes/Default/AutoCompletePromptRenderer.php": "1542d645e63b96b643c123cd612ba82bcdb0aa469bf9fd85b8eebec1756436e2",
+        "src/Themes/Default/CalloutRenderer.php": "25d39bbd712e7a10088186e67d1a3b33f507497545b8da59478411f115f10266",
+        "src/Themes/Default/ClearRenderer.php": "87b5e2fb1755a0f69c3791494a5921c13a62aa355e344ce724e503a92862b156",
+        "src/Themes/Default/Concerns/DrawsBoxes.php": "de6ef0f70948f7db0f28fecd15a9d04c43bc16ac168e3080b08fd15e32be3fcc",
+        "src/Themes/Default/Concerns/DrawsScrollbars.php": "f174061850d86684fb42e73b4e69d36337dd2a37c393703bfcd928d7b929eabd",
+        "src/Themes/Default/Concerns/InteractsWithStrings.php": "dfe0bad77820c3c6fba18d32f6872e001e59c88fbe273d8a5eec3d5aa28b88fd",
+        "src/Themes/Default/ConfirmPromptRenderer.php": "baa8cdd730f9f398f2b77337b526362fb0368485eb315178e6a03a18387cfcf4",
+        "src/Themes/Default/DataTableRenderer.php": "c6d292f258913fd4ef74683c5b0b2148e805deea401edd358bf768ec92ad1e03",
+        "src/Themes/Default/GridRenderer.php": "f634a15ccc0572105b7d35bb4fcc56753ac1e8e2794eb9883fa7d10b82ce6a2c",
+        "src/Themes/Default/MultiSearchPromptRenderer.php": "ea8a84919fd3b3efce8eca66521bc1d34238ac344047408c0e4557a9d84aaab6",
+        "src/Themes/Default/MultiSelectPromptRenderer.php": "9710f9093c6f19b6c5bdb7f606696123ddb8e0fde0736d34056b413766ee80ab",
+        "src/Themes/Default/NoteRenderer.php": "ea55d76804574d50ee32a2313f67b06daf7d12e3437aaf1649b0296cdeb677f8",
+        "src/Themes/Default/NumberPromptRenderer.php": "d2e1f052ce53a01d7049a467e3779f38f430ecd8b806f34c0162fdceaaef6b39",
+        "src/Themes/Default/PasswordPromptRenderer.php": "f087022d1904c840f58f3769a8ecd139b0306cd413a7109d0e14295469021415",
+        "src/Themes/Default/PausePromptRenderer.php": "afc0616db956421c9d3c0dc629f9645db8d511739da1a7c1e37845b7649a10a9",
+        "src/Themes/Default/ProgressRenderer.php": "fb02a27b4054185c6805382b2ec40877ca797cdecfeda99e5addc3742da048d9",
+        "src/Themes/Default/Renderer.php": "7aa4b9c2cbbd7b694f327f7b5d0d0c35e5e30ba8a4ce4f91526b59e379d1a199",
+        "src/Themes/Default/SearchPromptRenderer.php": "db5c9532ff723435ba3852477ab5e2b09bf24591e5d7bf0409b2faeb34cc02da",
+        "src/Themes/Default/SelectPromptRenderer.php": "81201c837d642a3eb0f0477f17fddb34b2685005b1368de58fd831deb141bed4",
+        "src/Themes/Default/SpinnerRenderer.php": "69a79f24fe2d0715abb43debfc00a5815b387e94b3a4f82725f49d60cd82d978",
+        "src/Themes/Default/StreamRenderer.php": "42dc389e8003caef84099b7650a2656994aa30cd580fc27b09d6dd2df315cb92",
+        "src/Themes/Default/SuggestPromptRenderer.php": "e1a65035ba968e25aa28a2ff596cd68b0380ec0515e7aeeac3a20c77f7089081",
+        "src/Themes/Default/TableRenderer.php": "609fd8fe3334a837ae740620485334b8b21cd666690d2ba9ac56f37d54717424",
+        "src/Themes/Default/TaskRenderer.php": "a5ac427e68a521c63f29dff2d015bc6a245daad2c3c8ab38accab970937935ab",
+        "src/Themes/Default/TextPromptRenderer.php": "ec64bdf363e04b622521770868e5da5c0fa0c8a612fdf5be89c28fe1b6c85dba",
+        "src/Themes/Default/TextareaPromptRenderer.php": "ed6746b06a43802f2700a6b9304a635e473a5630f4907e43af71b5e7b51e56e2",
+        "src/Themes/Default/TitleRenderer.php": "42f0b4e0e7019a896d3d522bb49e86cc3821933263e0b581b17bd1d170a5dc49",
+        "src/Title.php": "e985559c8b808189a85c39122e0e01e9c91b515193b9f890fd3616c7d921275f",
+        "src/helpers.php": "7ccc2f3fa7d8d3f8504785839a762028768775a492612a1c88a2f2a72e422e08"
+      },
+      "sources_unchanged": true,
+      "analysis": {
+        "total_files": 87,
+        "languages": {
+          "PHP": 87
+        },
+        "analysis_error_count": 0
+      },
+      "analysis_errors": [],
+      "finding_counts": {
+        "unused_functions": 0,
+        "unused_classes": 2,
+        "unused_variables": 2,
+        "quality": 2
+      },
+      "status": "complete"
+    },
+    {
+      "repo": "fmtlib/fmt",
+      "commit": "57f1b5930dc2906875534a15c209e1c39eda59ad",
+      "archive_sha256": "48801d7ce6c02e05665cfc0f067f34d8a58dd4755850d205524959a3b9627019",
+      "scope": "src",
+      "target_code_execution": false,
+      "label_scope": "Post-scan source review; known-used controls frozen before final rerun, not independent accuracy labels.",
+      "source_hashes_before_final_rerun": {
+        "src/fmt-c.cc": "83d52c1215ec2b379aaaf51cd4a1b3a84b436522adeb1e7713cfd87558641c52",
+        "src/fmt.cc": "cfd30492a209b0d068a4f73f45e907e15421392ffdd2a4863bd75097007fd822",
+        "src/format.cc": "5ccc4d8a363bd5c570782bc3dd92020664b1aa89de2d48b3b87d040c8c7bcc02",
+        "src/os.cc": "b9fb9d8fd8393266b165d443fb960e98e4a7c3b106775c33b2811565fb085be4"
+      },
+      "source_hashes_after_final_rerun": {
+        "src/fmt-c.cc": "83d52c1215ec2b379aaaf51cd4a1b3a84b436522adeb1e7713cfd87558641c52",
+        "src/fmt.cc": "cfd30492a209b0d068a4f73f45e907e15421392ffdd2a4863bd75097007fd822",
+        "src/format.cc": "5ccc4d8a363bd5c570782bc3dd92020664b1aa89de2d48b3b87d040c8c7bcc02",
+        "src/os.cc": "b9fb9d8fd8393266b165d443fb960e98e4a7c3b106775c33b2811565fb085be4"
+      },
+      "sources_unchanged": true,
+      "analysis": {
+        "total_files": 4,
+        "languages": {
+          "C++": 4
+        },
+        "analysis_error_count": 4
+      },
+      "analysis_errors": [
+        {
+          "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+          "severity": "HIGH",
+          "kind": "cpp_parse_error",
+          "error_type": "CppScanError",
+          "message": "C++ parse error; dead-code analysis skipped",
+          "file": "/private/tmp/skylos-gap-manual-repos/fmtlib--fmt/src/fmt-c.cc",
+          "line": 46,
+          "column": 5,
+          "python_version": "3.13.18"
+        },
+        {
+          "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+          "severity": "HIGH",
+          "kind": "cpp_parse_error",
+          "error_type": "CppScanError",
+          "message": "C++ parse error; dead-code analysis skipped",
+          "file": "/private/tmp/skylos-gap-manual-repos/fmtlib--fmt/src/fmt.cc",
+          "line": 70,
+          "column": 52,
+          "python_version": "3.13.18"
+        },
+        {
+          "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+          "severity": "HIGH",
+          "kind": "cpp_parse_error",
+          "error_type": "CppScanError",
+          "message": "C++ parse error; dead-code analysis skipped",
+          "file": "/private/tmp/skylos-gap-manual-repos/fmtlib--fmt/src/format.cc",
+          "line": 31,
+          "column": 18,
+          "python_version": "3.13.18"
+        },
+        {
+          "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+          "severity": "HIGH",
+          "kind": "cpp_parse_error",
+          "error_type": "CppScanError",
+          "message": "C++ parse error; dead-code analysis skipped",
+          "file": "/private/tmp/skylos-gap-manual-repos/fmtlib--fmt/src/os.cc",
+          "line": 136,
+          "column": 15,
+          "python_version": "3.13.18"
+        }
+      ],
+      "finding_counts": {
+        "unused_functions": 0,
+        "unused_classes": 0,
+        "unused_variables": 0,
+        "quality": 0
+      },
+      "status": "incomplete",
+      "review": "All four selected source files contain macro-dependent declarations that the source-only parser cannot resolve. Exit2 and no accuracy credit; no conclusion about unused code."
+    }
+  ],
+  "detector_source_hashes": {
+    "skylos/analyzer.py": "b09af95c1275232f06b3377ac0327ce7f5c3cefdcc578991b6e64403befb4749",
+    "skylos/benchmarks/ai_code_defects.py": "c0fa089ca0a9a44d517239327cc9a5271d00a60eb493555ecb107152d39d5698",
+    "skylos/benchmarks/quality.py": "a63cfb54713f855cf482cab9dc6b917934a4b49a10ddf99d0131c7f9b3908823",
+    "skylos/deadcode/component_imports.py": "4a41af1c01c81539ddcb63862ae629017d6118c5c9383c9454ca60af588a3080",
+    "skylos/deadcode/component_providers.py": "703689a51555ee0f32b0dbb027a2248d6973bfb27100ef8a5d79a44029f05f1b",
+    "skylos/reporting/result_builder.py": "6536f65222748ffe4482649c92a9654090ce821ce54804a7bf2ebeb2819d17c9",
+    "skylos/rules/catalog.py": "1f78ba79c226f94b0c15cf5ce28d67397ea2e3ff114d807fc20ef0e762ee1ede",
+    "skylos/rules/docs_anchors.py": "88a2e37842499f5f33b7ad4684e7a7e8b556551662f7d12fe697dae44b15437d",
+    "skylos/rules/guidance.py": "65c26ffec42c401109728273559fd9f8a0515221d78d889d263f42d0b2b9eeb2",
+    "skylos/rules/quality/npm_dependencies.py": "487c5c0004a9a2d0b42bc6ce706e0dec9e906240c3b37ffb76428f0293162b4f",
+    "skylos/visitors/languages/cpp/core.py": "a3c83fb121d29419de10b351e8e5a7b0b68e73cb3768c534d8adf0ba883b10d1",
+    "skylos/visitors/languages/typescript/analysis.py": "cb668944b6ce9cac59f4c5660a0034bb998d1383af3c0e981ce6af6b14807abc",
+    "skylos/visitors/languages/typescript/generated_declarations.py": "43f8bbb2ffad95526b6adde0c349457f816a1c718c7a1823b1d3dd4db9b7656a",
+    "skylos/visitors/languages/typescript/namespace_references.py": "b32e742130044a68a95db834ab8b1951b08636c5ffc60876692ee1de12074b03",
+    "skylos/visitors/languages/typescript/quality_signals.py": "7cae8e11ab77fcd3f8af97d85e40d0104702a2df8f3b4b22771158f59ded81f5",
+    "skylos/visitors/languages/typescript/unused_enum_members.py": "660d774f8c90cce2b4440a4a0ac563bf2eafa3c1847df5ba9883dbc5e524d0da"
+  },
+  "validation": {
+    "dead_code": {
+      "case_count": 151,
+      "failure_count": 0,
+      "pass_count": 151,
+      "scored_case_count": 151,
+      "unscored_case_count": 0,
+      "analysis_status": "complete",
+      "counts": {
+        "true_positives": 297,
+        "false_positives": 0,
+        "false_negatives": 0,
+        "true_negatives": 472
+      }
+    },
+    "corpus": {
+      "case_count": 84,
+      "failure_count": 0,
+      "pass_count": 84,
+      "scored_case_count": 84,
+      "unscored_case_count": 0,
+      "analysis_status": "complete"
+    },
+    "quality": {
+      "case_count": 33,
+      "failure_count": 0,
+      "pass_count": 33,
+      "scored_case_count": 33,
+      "unscored_case_count": 0,
+      "analysis_status": "complete"
+    },
+    "ai_code_defects": {
+      "case_count": 56,
+      "failure_count": 0,
+      "pass_count": 56,
+      "scored_case_count": 47,
+      "unscored_case_count": 9
+    },
+    "focused_detector_tests": {
+      "passed": 482,
+      "log": "/private/tmp/skylos-gap-final-detector-tests.log"
+    },
+    "broader_integration_tests": {
+      "passed": 172,
+      "skipped": 1,
+      "log": "/private/tmp/skylos-gap-broader-tests.log"
+    },
+    "output_and_schema_tests": {
+      "passed": 126,
+      "skipped": 1,
+      "log": "/private/tmp/skylos-gap-output-final-tests.log"
+    },
+    "export_api_tests": {
+      "passed": 84
+    },
+    "broader_frontend_tests": {
+      "passed": 302,
+      "skipped": 4
+    },
+    "security": {
+      "case_count": 277,
+      "failure_count": 0,
+      "scored_case_count": 277,
+      "unscored_case_count": 0,
+      "analysis_status": "complete",
+      "counts": {
+        "true_positives": 150,
+        "false_positives": 0,
+        "false_negatives": 0,
+        "true_negatives": 140
+      }
+    }
+  },
+  "matched_before_after_followup": {
+    "report": "analysis_gap_before_after_2026_11_16.json",
+    "baseline": "be4a748c7d42f161cf45e96db4ae3be18bc49338",
+    "whole_repository_false_positive_rate_proven": false
+  },
+  "detector_implementation_commit": "2229f8fee00eeeafad48277959cb6a952023aeed"
+}

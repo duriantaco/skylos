@@ -7,6 +7,7 @@ risk review JSON. Every section degrades on its own when its input is absent.
 
 from __future__ import annotations
 
+import html
 import os
 import re
 from dataclasses import dataclass
@@ -42,6 +43,14 @@ _RISK_CLEARED = {"eligible", "human_approved"}
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _RUN_ID_RE = re.compile(r"^\d{1,20}$")
 _SERVER_RE = re.compile(r"^https://[A-Za-z0-9.-]+(?::\d{1,5})?$")
+_REPORT_URL_RE = re.compile(
+    r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/"
+    r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]{1,20}"
+)
+REPORT_BUTTON_URL = (
+    "https://raw.githubusercontent.com/duriantaco/skylos/main/"
+    "assets/pr-review/view-report-v1.svg"
+)
 _DUNDER_RE = re.compile(r"＿＿(\w+)＿＿")
 
 
@@ -97,6 +106,17 @@ def verdict_line(inputs: SummaryInputs) -> str:
     return " · ".join(parts)
 
 
+def report_button(run_url: str | None) -> str | None:
+    """A compact linked image for a GitHub or GHES Actions report."""
+    if not isinstance(run_url, str) or not _REPORT_URL_RE.fullmatch(run_url):
+        return None
+    return (
+        f'<a href="{html.escape(run_url, quote=True)}">'
+        f'<img src="{REPORT_BUTTON_URL}" '
+        'alt="View Skylos report" width="192" height="40"></a>'
+    )
+
+
 def brief_lines(inputs: SummaryInputs) -> list[str]:
     lines: list[str] = []
     sections = (
@@ -116,8 +136,9 @@ def brief_lines(inputs: SummaryInputs) -> list[str]:
         if section:
             lines.extend(section)
             lines.append("")
-    if inputs.run_url:
-        lines.extend([f"[Full receipt and change map]({inputs.run_url})", ""])
+    button = report_button(inputs.run_url)
+    if button:
+        lines.extend([button, ""])
     if lines:
         lines.pop()
     return lines

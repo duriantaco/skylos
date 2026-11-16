@@ -1,0 +1,20 @@
+{
+  "name": "dependency-usage-contract",
+  "private": true,
+  "main": "app.ts",
+  "dependencies": {
+    "used-lib": "1.0.0",
+    "unused-lib": "1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "5.0.0",
+    "eslint-plugin-react": "1.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "bundle": "vite build"
+  },
+  "eslintConfig": {
+    "plugins": ["react"]
+  }
+}

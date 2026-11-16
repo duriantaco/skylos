@@ -195,7 +195,15 @@ def scan_quality_signals(
             candidate, async_binding_index, source
         )
     ]
-    if async_candidates and not bool(getattr(root_node, "has_error", False)):
+    floating_index = _floating_async_binding_index(nodes, async_binding_scopes, source)
+    floating_candidates = [
+        node for node in nodes
+        if _is_discarded_local_call_candidate(node)
+        and _has_possible_local_async_callee(node, floating_index, source)
+    ]
+    if (async_candidates or floating_candidates) and not bool(
+        getattr(root_node, "has_error", False)
+    ):
         flow = build_security_flow(
             root_node,
             source,
@@ -215,6 +223,11 @@ def scan_quality_signals(
                     source,
                     file_path,
                     flow,
+                )
+            )
+            findings.extend(
+                _floating_local_promise_findings(
+                    floating_candidates, source, file_path, flow
                 )
             )
 
@@ -381,6 +394,169 @@ def _is_async_function(node) -> bool:
         and not any(child.type == "*" for child in node.children)
         and any(child.type == "async" for child in node.children)
     )
+
+
+def _is_discarded_local_call_candidate(node) -> bool:
+    """A direct discarded result, excluding await, void and handled/stored uses."""
+    if node.type != "call_expression":
+        return False
+    current = node
+    for _ in range(64):
+        parent = current.parent
+        if parent is None:
+            return False
+        if parent.type in _VALUE_WRAPPERS:
+            current = parent
+            continue
+        return parent.type == "expression_statement"
+    return False
+
+
+def _floating_async_binding_index(nodes, scopes, source):
+    possible = {name: list(intervals) for name, intervals in scopes.items()}
+    aliases = []
+    for node in nodes:
+        if node.type != "variable_declarator":
+            continue
+        name = node.child_by_field_name("name")
+        value = _local_callable_value(node.child_by_field_name("value"))
+        if (
+            name is None or name.type != "identifier"
+            or value is None or value.type != "identifier"
+        ):
+            continue
+        scope = node.parent
+        for _ in range(64):
+            if scope is None or scope.type in _FUNCTION_NODES or scope.type == "program":
+                break
+            scope = scope.parent
+        else:
+            continue
+        if scope is None:
+            continue
+        body = scope.child_by_field_name("body") if scope.type != "program" else scope
+        if body is not None:
+            aliases.append((
+                _node_text(source, name), _node_text(source, value), value,
+                (body.start_byte, body.end_byte),
+            ))
+    # Cheap bounded prefilter only. SecurityFlow proves exact binding identity,
+    # declaration order and stability before any finding can be emitted.
+    for _ in range(12):
+        index = _index_async_binding_scopes(possible)
+        additions = []
+        for name, original, value, interval in aliases:
+            if interval not in possible.get(name, ()) and _possible_async_name(
+                original, value, index
+            ):
+                additions.append((name, interval))
+        if not additions:
+            return index
+        for name, interval in additions:
+            possible.setdefault(name, []).append(interval)
+    return _index_async_binding_scopes(possible)
+
+
+def _possible_async_name(name, node, index):
+    intervals = index.get(name)
+    if intervals is None:
+        return False
+    starts, ends = intervals
+    position = bisect_right(starts, node.start_byte) - 1
+    return position >= 0 and ends[position] >= node.end_byte
+
+
+def _has_possible_local_async_callee(call, index, source):
+    function = _local_callable_value(call.child_by_field_name("function"))
+    return bool(
+        function is not None and (
+            _is_async_function(function)
+            or (
+                function.type == "identifier"
+                and _possible_async_name(_node_text(source, function), call, index)
+            )
+        )
+    )
+
+
+def _proven_local_async_callable(
+    expression,
+    flow: SecurityFlow,
+    source: bytes,
+    before_byte: int,
+    scope_id: int,
+    *,
+    depth: int = 0,
+    seen=frozenset(),
+) -> bool:
+    if depth > 12:
+        return False
+    current = _local_callable_value(expression)
+    if current is None:
+        return False
+    if _is_async_function(current):
+        return True
+    if current.type != "identifier":
+        return False
+    binding = flow.resolve_unique_binding_with_hoisted_functions(
+        _node_text(source, current), before_byte, scope_id
+    )
+    if (
+        binding is None
+        or binding.value_node is None
+        or binding.symbol in seen
+        or not flow.is_binding_value_stable(binding, before_byte, scope_id)
+    ):
+        return False
+    value = _local_callable_value(binding.value_node)
+    if value is None:
+        return False
+    if _is_async_function(value):
+        return True
+    # A lexical alias captures the value at initialization. Later reassignment
+    # of its original name does not change that captured callable.
+    if not _is_const_binding(binding) or value.type != "identifier":
+        return False
+    return _proven_local_async_callable(
+        value, flow, source, value.end_byte, flow.scope_for_node(value).id,
+        depth=depth + 1,
+        seen=seen | {binding.symbol},
+    )
+
+
+def _local_callable_value(node):
+    # Unlike the security-flow value helper, await is not transparent here:
+    # awaiting a custom thenable function can yield a different callable.
+    for _ in range(64):
+        if node is None or node.type not in _VALUE_WRAPPERS:
+            return node
+        node = _wrapped_value(node)
+    return None
+
+
+def _floating_local_promise_findings(candidates, source, file_path, flow):
+    findings = []
+    for call in candidates:
+        function = call.child_by_field_name("function")
+        if function is None or not _proven_local_async_callable(
+            function, flow, source, call.start_byte, flow.scope_for_node(call).id
+        ):
+            continue
+        findings.append(
+            _finding(
+                rule_id="SKY-Q410",
+                severity="MEDIUM",
+                file_path=file_path,
+                node=call,
+                name=_node_text(source, function),
+                message=(
+                    "A local async call returns a promise that is discarded; "
+                    "await or return it, handle rejection with .catch(...), "
+                    "or use void to mark intentional fire-and-forget work."
+                ),
+            )
+        )
+    return findings
 
 
 def _async_misuse_findings(
@@ -971,6 +1147,10 @@ def _documents_intentional_ignore(comment: str) -> bool:
 def _blanket_eslint_findings(
     root_node, comments: list, source: bytes, file_path: str
 ) -> list[dict]:
+    from .generated_declarations import is_generated_declaration_output
+
+    if is_generated_declaration_output(root_node, source, file_path):
+        return []
     leading_ids: set[int] = set()
     for child in root_node.named_children:
         if child.type == "comment":

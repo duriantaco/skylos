@@ -128,7 +128,7 @@ class QualityBenchmarkFailure:
     failure_type: str
     category: str
     mode: str
-    expected: str
+    expected: str | dict[str, Any]
     found: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -243,10 +243,7 @@ def validate_manifest(
                     )
                 total_expectations += len(symbols)
                 for symbol in symbols:
-                    if not isinstance(symbol, str) or not symbol.strip():
-                        raise ValueError(
-                            f"quality benchmark case {case_id} {mode_name}.{category} has an invalid symbol"
-                        )
+                    _validate_quality_expectation(symbol, case_id, mode_name, category)
 
         if total_expectations == 0:
             raise ValueError(
@@ -282,6 +279,61 @@ def _finding_tokens(finding: dict[str, Any]) -> set[str]:
         if isinstance(value, str) and value:
             tokens.add(value)
     return tokens
+
+
+def _validate_quality_expectation(expectation, case_id, mode, category):
+    label = f"quality benchmark case {case_id} {mode}.{category}"
+    if isinstance(expectation, str) and expectation.strip():
+        return
+    if not isinstance(expectation, dict) or set(expectation) - {
+        "rule_id", "file", "line", "name", "value",
+    }:
+        raise ValueError(f"{label} has an invalid expectation")
+    rule_id = expectation.get("rule_id")
+    if not isinstance(rule_id, str) or not rule_id.startswith("SKY-"):
+        raise ValueError(f"{label} structured expectations need a canonical rule_id")
+    if not any(key in expectation for key in ("file", "line", "name")):
+        raise ValueError(f"{label} structured expectations need a target")
+    for key in ("file", "name", "value"):
+        if key in expectation and (
+            not isinstance(expectation[key], str) or not expectation[key].strip()
+        ):
+            raise ValueError(f"{label} {key} must be a non-empty string")
+    if "file" in expectation:
+        path = Path(expectation["file"])
+        if path.is_absolute() or ".." in path.parts or "\\" in expectation["file"]:
+            raise ValueError(f"{label} file must be a relative POSIX path")
+    if "line" in expectation and (
+        type(expectation["line"]) is not int or expectation["line"] <= 0
+    ):
+        raise ValueError(f"{label} line must be a positive integer")
+
+
+def _matches_quality_expectation(expectation, finding):
+    if isinstance(expectation, str):
+        return (
+            finding.get("rule_id") == expectation
+            if expectation.startswith("SKY-")
+            else expectation in _finding_tokens(finding)
+        )
+    if finding.get("rule_id") != expectation["rule_id"]:
+        return False
+    if "name" in expectation and expectation["name"] not in {
+        finding.get("name"), finding.get("simple_name"), finding.get("full_name"),
+    }:
+        return False
+    if "line" in expectation and finding.get("line") != expectation["line"]:
+        return False
+    if "value" in expectation and finding.get("value") != expectation["value"]:
+        return False
+    if "file" in expectation:
+        actual = str(
+            finding.get("file") or finding.get("file_path") or ""
+        ).replace("\\", "/")
+        wanted = expectation["file"]
+        if actual != wanted and not actual.endswith("/" + wanted):
+            return False
+    return True
 
 
 def _scan_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -320,7 +372,7 @@ def _scan_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str,
     return json.loads(raw)
 
 
-def _count_expectations(expectations: dict[str, list[str]]) -> int:
+def _count_expectations(expectations: dict[str, list]) -> int:
     return sum(len(symbols) for symbols in expectations.values())
 
 
@@ -347,11 +399,7 @@ def _evaluate_expectations(
                     {
                         token
                         for finding, tokens in zip(findings, finding_tokens)
-                        if (
-                            finding.get("rule_id") == symbol
-                            if symbol.startswith("SKY-")
-                            else symbol in tokens
-                        )
+                        if _matches_quality_expectation(symbol, finding)
                         for token in tokens
                     }
                 )

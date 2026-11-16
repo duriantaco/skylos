@@ -6487,6 +6487,7 @@ class Skylos:
                         logger.error("AI defect diff scan failed", exc_info=True)
 
         unused_dependency_analysis = None
+        npm_dependency_analysis = None
         if enable_quality:
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: dependency quality scan"))
@@ -6549,6 +6550,39 @@ class Skylos:
                 )
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
+
+            try:
+                from skylos.rules.quality.npm_dependencies import scan_npm_dependencies
+
+                npm_dependency_analysis = {}
+                npm_findings = scan_npm_dependencies(
+                    project_root,
+                    files,
+                    workspace_inventory=workspace_inventory,
+                    coverage=npm_dependency_analysis,
+                    complete_scope=changed_files is None and not _file_scoped_scan,
+                )
+                for finding in npm_findings:
+                    if finding["rule_id"] in project_ignore:
+                        continue
+                    filename = str(finding["file"])
+                    if _finding_is_inline_ignored(
+                        finding,
+                        per_file_ignore_lines.get(filename),
+                        per_file_ignore_rules.get(filename),
+                    ):
+                        all_suppressed.append(
+                            {**finding, "category": "quality", "reason": "inline ignore comment"}
+                        )
+                    else:
+                        all_quality.append(finding)
+            except Exception as error:
+                npm_dependency_analysis = {
+                    "status": "incomplete", "complete": False,
+                    "reasons": [{"kind": "npm_dependency_analysis_failed", "error_type": type(error).__name__}],
+                }
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error("npm dependency usage scan failed", exc_info=True)
 
             try:
                 policy_findings = analyze_repo_policy(
@@ -6679,6 +6713,34 @@ class Skylos:
                     )
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("JS API hallucination scan failed", exc_info=True)
+
+        component_import_coverage = {}
+        try:
+            from skylos.deadcode.component_imports import expand_component_imports
+
+            component_imports, component_import_coverage = expand_component_imports(
+                Path(root), files, ts_raw_imports,
+                resolver=monorepo_resolver, exclude_folders=exclude_folders,
+            )
+            for importer, entries in component_imports.items():
+                ts_raw_imports.setdefault(importer, []).extend(entries)
+        except Exception as error:
+            component_import_coverage = {
+                "scope": "component_import_graph", "status": "incomplete", "complete": False,
+                "issues": [{"reason": "component_import_scan_failed", "error_type": type(error).__name__}],
+            }
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error("Component import graph scan failed", exc_info=True)
+
+        if component_import_coverage.get("complete") is False:
+            for issue in component_import_coverage.get("issues", []):
+                analysis_errors.append({
+                    "kind": "component_import_graph_incomplete",
+                    "error_type": "ComponentImportError",
+                    "file": issue.get("file", str(project_root)),
+                    "line": issue.get("line", 1),
+                    "message": "Component import graph incomplete: " + issue.get("reason", "unknown"),
+                })
 
         jest_mappings, file_replacements = [], []
         try:
@@ -7063,6 +7125,71 @@ class Skylos:
 
             relativize_receiver_paths(all_dangers, project_root)
             relativize_receiver_paths(all_suppressed, project_root)
+        self._enum_member_findings = []
+        enum_member_coverage = {
+            "status": "not_run", "complete": False,
+            "scope": "local_and_closed_private_enums",
+            "reasons": [{"kind": "rule_ignored"}],
+        }
+        if "SKY-U007" not in project_ignore:
+            from skylos.config import is_whitelisted
+            from skylos.visitors.languages.typescript.unused_enum_members import (
+                find_unused_ts_enum_members,
+            )
+
+            enum_member_coverage = {}
+            enum_findings = find_unused_ts_enum_members(
+                files, project_root=project_root, analysis_errors=analysis_errors,
+                resolver=monorepo_resolver, workspace_inventory=workspace_inventory,
+                coverage=enum_member_coverage,
+            )
+            enum_changed_paths = (
+                {
+                    _canonical_analysis_path(changed_file, project_root)
+                    for changed_file in requested_changed_files
+                }
+                if requested_changed_files is not None
+                else None
+            )
+            enum_member_coverage.update(
+                report_scope="changed_files" if enum_changed_paths is not None else "selected_sources",
+                outside_changed_files_count=0, suppressed_count=0,
+                below_threshold_count=0, reported_count=0,
+            )
+            for finding in enum_findings:
+                filename = str(finding["file"])
+                if (
+                    enum_changed_paths is not None
+                    and _canonical_analysis_path(filename, project_root) not in enum_changed_paths
+                ):
+                    enum_member_coverage["outside_changed_files_count"] += 1
+                    continue
+                whitelisted, whitelist_reason, lowered_confidence = is_whitelisted(
+                    finding.get("full_name") or finding["name"], filename, project_cfg
+                )
+                if whitelisted:
+                    all_suppressed.append(
+                        {**finding, "category": "unused_variables", "reason": whitelist_reason,
+                         "suppression_code": "SKY-U007"}
+                    )
+                    enum_member_coverage["suppressed_count"] += 1
+                    continue
+                if lowered_confidence:
+                    finding["confidence"] = min(finding.get("confidence", 0), lowered_confidence)
+                if finding.get("confidence", 0) < thr:
+                    enum_member_coverage["below_threshold_count"] += 1
+                    continue
+                if _finding_is_inline_ignored(
+                    finding, per_file_ignore_lines.get(filename),
+                    per_file_ignore_rules.get(filename),
+                ):
+                    all_suppressed.append(
+                        {**finding, "category": "unused_variables", "reason": "inline ignore comment"}
+                    )
+                    enum_member_coverage["suppressed_count"] += 1
+                else:
+                    self._enum_member_findings.append(finding)
+                    enum_member_coverage["reported_count"] += 1
         result = self._build_result(
             files,
             thr,
@@ -7097,7 +7224,11 @@ class Skylos:
             include_review_proofs=include_review_proofs,
             review_config=project_cfg,
         )
+        result["analysis_summary"]["enum_member_analysis"] = enum_member_coverage
         result["analysis_summary"].update(npm_import_usage_summary)
+        result["analysis_summary"]["component_import_graph"] = component_import_coverage
+        if npm_dependency_analysis is not None:
+            result["analysis_summary"]["npm_dependency_analysis"] = npm_dependency_analysis
         if enable_secrets:
             result["analysis_summary"]["secrets_files_scanned"] = len(
                 secret_checked_files

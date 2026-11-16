@@ -9,8 +9,10 @@ synthetic fixture scores below.
 
 The benchmark framework lives in the Skylos repo because it must version with analyzer output and CI. Larger realistic targets, such as `/Users/oha/skylos-demo`, stay external and are referenced by config.
 
-The default manifest contains **128 cases and 619 symbol labels**: 216 unused and
-403 used. The first 65 cases and their 351 labels retain their expectations.
+The default manifest contains **151 cases and 769 symbol labels**: 297 unused and
+472 used. All earlier labels retain their expected outcomes. Source-reviewed label
+completions are recorded in `source_label_review_2026_11_16.json`; those are
+corrections to regression coverage and do not establish independent accuracy.
 Twenty-two cases (92 labels: 47 unused, 45 used) are paired TS/JS liveness
 contracts for reads and loads that no import statement spells out:
 

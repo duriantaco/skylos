@@ -1,0 +1,266 @@
+{
+  "version": 1,
+  "audit_date": "2026-11-16",
+  "scope": "Source review of nineteen previously unlabelled findings in eight existing default dead-code fixtures.",
+  "method": "The report identified review targets. Each decision below was established by reading the complete fixture source and loading metadata before rescoring; scanner presence or absence did not decide the expected label.",
+  "limits": "These are development corpus label repairs and two package-interface regression controls, not new independent accuracy evidence or automatic-removal authorization. Every old expectation and fixture source is preserved.",
+  "cases": [
+    {
+      "id": "javascript-storybook-config-files",
+      "fixture_path": "fixtures/tsjs_storybook",
+      "original_expectations_sha256": "f35bd6d745d5d3a0f9acafc44e2b6f945ca967069bf740b716935fdc3939db6d",
+      "source_sha256": {
+        "fixtures/tsjs_storybook/.storybook/addons.js": "ff951a8d2a3f48705b96fcb522ae9826833520f93471cfd3c7aaf366f6b4630b",
+        "fixtures/tsjs_storybook/.storybook/config.js": "aafd4875cb182f958bb9d0c8e2ca7ed410ff49bcd930e398cb39dd2cc305f852",
+        "fixtures/tsjs_storybook/.storybook/leftover.js": "9e0f7cf1123fc89a259241f7ce1047e0392a2167705ef73e037003fcf84dfafa",
+        "fixtures/tsjs_storybook/.storybook/main.js": "c907a0fc048a26abdb4c5de34304c13027af918ca7d32b2b8eab6b9fecdaf63f",
+        "fixtures/tsjs_storybook/package.json": "43457fc2c3e5df248d50149eb7a3863bf113ea27593c1aaea54f37996af605ec",
+        "fixtures/tsjs_storybook/src/index.js": "5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29",
+        "fixtures/tsjs_storybook/src/orphan.js": "ace918d9d5433dca8b129e60652db4676d5c7c48d4def302d1f18d2a06b30478"
+      },
+      "decisions": [
+        {
+          "kind": "variable",
+          "file": ".storybook/leftover.js",
+          "symbol": "leftover",
+          "decision": "unused",
+          "source_rationale": "Only declaration is in a non-convention config filename. .storybook/main.js selects src/**/*.stories.js; no source imports leftover.js. The existing file-level unused label already encodes this absence of a load."
+        },
+        {
+          "kind": "variable",
+          "file": "src/orphan.js",
+          "symbol": "orphan",
+          "decision": "unused",
+          "source_rationale": "The complete fixture has no import, stories glob match, custom manifest path or package API entry for src/orphan.js; the existing unused-file label is preserved."
+        },
+        {
+          "kind": "variable",
+          "file": "src/index.js",
+          "symbol": "value",
+          "decision": "used",
+          "source_rationale": "package.json main explicitly names src/index.js. Its named export is the package entry interface even though no local consumer imports it. Match the same retained API behavior as the TypeScript main-entry controls."
+        }
+      ]
+    },
+    {
+      "id": "javascript-storybook-config-without-storybook",
+      "fixture_path": "fixtures/tsjs_storybook_nodep",
+      "original_expectations_sha256": "cee8cb4914bab33267b47dfd65bacd6bd05977330b81a6d4b4d1d39291985b20",
+      "source_sha256": {
+        "fixtures/tsjs_storybook_nodep/.storybook/config.js": "48a9a147c7e6c849f7ccee970aeeb18cf186da057041ace58068de45253cc76e",
+        "fixtures/tsjs_storybook_nodep/package.json": "31b07fe0c633a54260b7bee94c90943831018d90b55306e70972b1f33daa5a3f",
+        "fixtures/tsjs_storybook_nodep/src/index.js": "5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29"
+      },
+      "decisions": [
+        {
+          "kind": "variable",
+          "file": ".storybook/config.js",
+          "symbol": "stale",
+          "decision": "unused",
+          "source_rationale": "The package has neither Storybook dependency nor script; the config file has no importer and no package API exposure, matching its existing unused-file label."
+        },
+        {
+          "kind": "variable",
+          "file": "src/index.js",
+          "symbol": "value",
+          "decision": "used",
+          "source_rationale": "The explicit package.json main contract exposes this export. An absence of local imports is not proof that a package entry API is unused."
+        }
+      ]
+    },
+    {
+      "id": "typescript-runner-conf-files",
+      "fixture_path": "fixtures/tsjs_conf_files",
+      "original_expectations_sha256": "af5db3afd9bfa20055834cb17ae310e2837a2f14d99cd4eb12472c7b45cdd717",
+      "source_sha256": {
+        "fixtures/tsjs_conf_files/karma.conf.ts": "d85f5fa382b28fffe23bf4b01ea97b1d8b2edad14086d74f6235c28830b64866",
+        "fixtures/tsjs_conf_files/package.json": "ef36d173f2e1d5de03befdec604d315bb95b0a4a1b5aded381214dad8b3a716e",
+        "fixtures/tsjs_conf_files/src/index.ts": "5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29",
+        "fixtures/tsjs_conf_files/src/settings.conf.ts": "b4d89ada98032a5d58608042a10d6357d9474e1523e76529c0e41f45509d3fe6",
+        "fixtures/tsjs_conf_files/wdio.conf.ts": "2b9d794be41de3b44cc89774d910f6aa058a7128bcb012af04671f50209402f4"
+      },
+      "decisions": [
+        {
+          "kind": "variable",
+          "file": "src/settings.conf.ts",
+          "symbol": "settings",
+          "decision": "unused",
+          "source_rationale": "Only karma.conf.ts and wdio.conf.ts are runner-owned configuration roots. No script, config or source names src/settings.conf.ts; its exported constant has no consumer, matching the existing file label."
+        }
+      ]
+    },
+    {
+      "id": "typescript-tool-config-path-strings",
+      "fixture_path": "fixtures/tsjs_tool_config_paths",
+      "original_expectations_sha256": "08facfeb8dfa76cd95a92137c1275b981a9b64735238df63d4ebc5ba041f888e",
+      "source_sha256": {
+        "fixtures/tsjs_tool_config_paths/forge.config.ts": "0b57ac089591bbda7cb44bb291b03b30f81aa709a37867ad77778507b8dfed57",
+        "fixtures/tsjs_tool_config_paths/lib/api.ts": "387de1890483acbea7f723acae7f55531a89208892e70b787fe6b0f3f6cf3df0",
+        "fixtures/tsjs_tool_config_paths/lib/app.ts": "ba0dae5485afa4ee54ba6f42ab34521631419319f7e673e34f7a5905b96b8397",
+        "fixtures/tsjs_tool_config_paths/lib/excluded.ts": "58ba4af74135cdd6dd01cd05373b07484573bfc29473e26af2949f973d3cdde4",
+        "fixtures/tsjs_tool_config_paths/lib/mentioned.ts": "4e83f28549c59ad8dfb6140182593ccc66ffc6bb753bc2bc016f9fe5a865a516",
+        "fixtures/tsjs_tool_config_paths/lib/menu.ts": "af0e88a354c36088a29868831dff70f03c5b3d0a2a3ab804edc68ac2b6f6e346",
+        "fixtures/tsjs_tool_config_paths/lib/notes.ts": "c66e8b4118ddc24f142faae8fe7115a297c21a134164267b43b67d423e39f29c",
+        "fixtures/tsjs_tool_config_paths/lib/orphan.ts": "35d89378a92b3ddef4a48488a5d2aa19366dc3834defd845014f534fd32538d3",
+        "fixtures/tsjs_tool_config_paths/lib/preload.ts": "960666c98faf0aed7e8921e80c502a6aed04186b622128c8957b2d43289185f2",
+        "fixtures/tsjs_tool_config_paths/lib/prose.ts": "ac9b8d9015eab7f08f5c9854ea046d148f7850ac9c618d0f6353372bc283eb60",
+        "fixtures/tsjs_tool_config_paths/lib/renderer.ts": "0f2482ef7f0864c89b5669221d65d8ed6bf6c0d7f07a6f5e5902f77d0ced765a",
+        "fixtures/tsjs_tool_config_paths/lib/resource-en.js": "ebc4439f23b518bb000ba7a07d7089f02709009fdeaacf530ca9e79c2c6dee53",
+        "fixtures/tsjs_tool_config_paths/lib/stale.ts": "48a9a147c7e6c849f7ccee970aeeb18cf186da057041ace58068de45253cc76e",
+        "fixtures/tsjs_tool_config_paths/package.json": "18e7815db018bab0abb0ad76da47d8faeae496f6f352c3d2d6d09e9e9f2c292c",
+        "fixtures/tsjs_tool_config_paths/webpack.config.ts": "c99a79346eb5cff8cd7066c82979b357ef0b0c6a444470266f7fdf0f845d4e8a"
+      },
+      "decisions": [
+        {
+          "kind": "variable",
+          "file": "lib/excluded.ts",
+          "symbol": "excluded",
+          "decision": "unused",
+          "source_rationale": "The only non-declaration mention is webpack module.rules.exclude; excluding a source from a loader is not execution or import. No public package export exposes it."
+        },
+        {
+          "kind": "variable",
+          "file": "lib/mentioned.ts",
+          "symbol": "mentioned",
+          "decision": "unused",
+          "source_rationale": "The path appears only in a comment in forge.config.ts, with no import or loading position."
+        },
+        {
+          "kind": "variable",
+          "file": "lib/notes.ts",
+          "symbol": "stalePath",
+          "decision": "unused",
+          "source_rationale": "lib/app.ts imports and reads note from notes.ts, but never imports stalePath. The exported string itself is unreferenced and does not load lib/stale.ts."
+        },
+        {
+          "kind": "variable",
+          "file": "lib/orphan.ts",
+          "symbol": "orphan",
+          "decision": "unused",
+          "source_rationale": "No source or tool-config path refers to this file; there is no public package API or consumer for its constant."
+        },
+        {
+          "kind": "variable",
+          "file": "lib/prose.ts",
+          "symbol": "prose",
+          "decision": "unused",
+          "source_rationale": "The only path mention is text inside the note string. No import or executable loading position consumes this file or export."
+        },
+        {
+          "kind": "variable",
+          "file": "lib/stale.ts",
+          "symbol": "stale",
+          "decision": "unused",
+          "source_rationale": "The path occurs as a string in the unread stalePath binding, not as a tool loading value or source import."
+        }
+      ]
+    },
+    {
+      "id": "typescript-package-manifest-named-files",
+      "fixture_path": "fixtures/tsjs_package_keys",
+      "original_expectations_sha256": "82b8ba0cb52dde0733983f2ea1c225318d6b8f9b217654513ebac5668f950e74",
+      "source_sha256": {
+        "fixtures/tsjs_package_keys/package.json": "df74db0a592a182a935c10a579e99b717be0bf4e5245f4548a6d1dbe55c5d51e",
+        "fixtures/tsjs_package_keys/src/described.ts": "76d9230125c0541a75d3c929e452ffbe6fb5f50ace329a73638bfc04e69eec72",
+        "fixtures/tsjs_package_keys/src/ext/plugin.ts": "c79ed116fe44384d1318e419b30a779991e0f6c3b1aab6cbd158e2be439cc911",
+        "fixtures/tsjs_package_keys/src/ignored.ts": "27d1b515608b530f63a16409d241b62aa9662fcde1afe0336a30e5dd79af75ba",
+        "fixtures/tsjs_package_keys/src/index.ts": "5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29",
+        "fixtures/tsjs_package_keys/templates/run_tool.js": "b8ff7eb2a7c67b749144cc7f275f97b10558665acf5c6a9ff79137df22240c9e",
+        "fixtures/tsjs_package_keys/templates/shipped/inner.js": "15dfa8cc4c37a7b69b3a363b523d12405cf3e1bdc7b5e2537b740e31c81ccd72"
+      },
+      "decisions": [
+        {
+          "kind": "variable",
+          "file": "src/described.ts",
+          "symbol": "described",
+          "decision": "unused",
+          "source_rationale": "Only package.description mentions this path. The manifest uses src/index.ts as main and has no export or executable host path for described.ts."
+        },
+        {
+          "kind": "variable",
+          "file": "src/ignored.ts",
+          "symbol": "ignored",
+          "decision": "unused",
+          "source_rationale": "eslintIgnore names a lint exclusion, not an importing consumer. The source exports one constant with no reader; the existing unused-file label remains unchanged."
+        }
+      ]
+    },
+    {
+      "id": "typescript-react-native-platform-extensions",
+      "fixture_path": "fixtures/tsjs_platform_rn",
+      "original_expectations_sha256": "5ca01c126f0eda0a2df96502a6fe3d7e4c6613d74c7b7673d13651fec471e1db",
+      "source_sha256": {
+        "fixtures/tsjs_platform_rn/App.tsx": "bc43e713c0bce0cea4bd22118b315d88af981d406f90112a763a1047964740c2",
+        "fixtures/tsjs_platform_rn/hooks/lonely.web.ts": "c4d035fa669cf25ae7ec69a2539cbe80dfa0a4ac10e68b8b3785950994cc605a",
+        "fixtures/tsjs_platform_rn/hooks/useGone.ios.ts": "2d7b59256668fed767701d6d5b73fdb11f3b74450f97b49d000e413bcb388abf",
+        "fixtures/tsjs_platform_rn/hooks/useGone.ts": "637548e824285f0e9973e6a7571bc264ed6edbc39808710074c0121e21faa2f0",
+        "fixtures/tsjs_platform_rn/hooks/useScale.ts": "9af85f52e0b5fc8aa1ffd63ef41bb6760ef87c921a46645d93e7aa67a4ca12f9",
+        "fixtures/tsjs_platform_rn/hooks/useScale.web.ts": "a6173c446f885cc7822a3356282398ab234fb68fab6f05c276daa74822148a33",
+        "fixtures/tsjs_platform_rn/package.json": "f915a7acdbfdb4392daaee6a591ed90968b48cfcab8435c3617d3202b7eddb7f",
+        "fixtures/tsjs_platform_rn/ui/Button.android.tsx": "840d22aa5f49996f44502552baf05fb7b7f065b772ff09f33acfac79f18baa48",
+        "fixtures/tsjs_platform_rn/ui/Button.ios.tsx": "17712ecd7717d0906694adcba5911b334d8ae8cb77ec38d107fa5745382fd469"
+      },
+      "decisions": [
+        {
+          "kind": "function",
+          "file": "hooks/lonely.web.ts",
+          "symbol": "lonely",
+          "decision": "unused",
+          "source_rationale": "App.tsx imports only the useScale and Button stems. Platform resolution expands siblings of those imports, not every .web.ts file; lonely has no call, import or exposed package entry."
+        },
+        {
+          "kind": "function",
+          "file": "hooks/useGone.ios.ts",
+          "symbol": "useGone",
+          "decision": "unused",
+          "source_rationale": "No source imports the useGone stem or directly calls this platform implementation; the private application exposes only App.tsx."
+        },
+        {
+          "kind": "function",
+          "file": "hooks/useGone.ts",
+          "symbol": "useGone",
+          "decision": "unused",
+          "source_rationale": "The default implementation and its iOS sibling both lack an importing stem or direct caller. Neither is the package entry or a declaration the app exports."
+        }
+      ]
+    },
+    {
+      "id": "typescript-platform-suffix-without-react-native",
+      "fixture_path": "fixtures/tsjs_platform_none",
+      "original_expectations_sha256": "d24d0d6191ab5b182a3f1679e09f4d866ca369a263fb334ab13f706f6c3e0d8a",
+      "source_sha256": {
+        "fixtures/tsjs_platform_none/package.json": "6b2fa6efe4ceb2c550b2eba73bbcffe1eb818ddccd42d79a7ab5399319c9d49a",
+        "fixtures/tsjs_platform_none/src/index.ts": "167b1b090e8d44858a35e20d57fc9864373e26d696e117c5f2af23a5e1a14155",
+        "fixtures/tsjs_platform_none/src/scale.ts": "f8af2bb6b7fe6977d0d463be9a91a47cd65cee176126705a7aee6ac3d68864a9",
+        "fixtures/tsjs_platform_none/src/scale.web.ts": "496fae2b250b530dfbf761e4a11e5552955a1d538b5c43664234ba6563db83f5"
+      },
+      "decisions": [
+        {
+          "kind": "function",
+          "file": "src/scale.web.ts",
+          "symbol": "scale",
+          "decision": "unused",
+          "source_rationale": "src/index.ts imports ./scale and reads its result; that resolves to scale.ts. There is no React Native/Expo platform resolver, direct scale.web import or package interface for the .web sibling."
+        }
+      ]
+    },
+    {
+      "id": "decorator-factory-registry",
+      "fixture_path": "fixtures/decorator_factory_registry",
+      "original_expectations_sha256": "3daf211f2a7c913e2bd1e6ce4db8d4be8ce9d87bdccc8165c132c57a576415eb",
+      "source_sha256": {
+        "fixtures/decorator_factory_registry/app.py": "da792561461808bebc51b85440af59d3ff4f67bcbfda8aba644e9f93fce98f44",
+        "fixtures/decorator_factory_registry/routes.py": "1648beca63b650494c9a7ba7eb97778b48df3298458a2ce5754d93eb1819a699"
+      },
+      "decisions": [
+        {
+          "kind": "parameter",
+          "file": "routes.py",
+          "symbol": "name",
+          "decision": "unused",
+          "source_rationale": "Tagger.label(self, name) constructs a closure that reads self.count and function only. name is never read or captured, including by the returned passthrough decorator. The application passes a string but no execution path uses its value. This is an unread-parameter label, not authorization to remove a public signature argument."
+        }
+      ]
+    }
+  ]
+}

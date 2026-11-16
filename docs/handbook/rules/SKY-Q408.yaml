@@ -1,0 +1,76 @@
+id: SKY-Q408
+title: Undeclared npm dependency
+family: quality
+severity: MEDIUM
+languages:
+- TypeScript
+- JavaScript
+- package.json
+gate:
+  full: counted
+  note: Reported as quality; counts toward max_quality.
+run_with: '`skylos . --quality`'
+what_it_is: A literal source import or supported configuration use names an npm package missing
+  from the owning package.json. Hoisting a dependency from an ancestor package does not declare
+  it for a workspace source file.
+why_it_matters: The source may work only because a different workspace or a transitive dependency
+  happened to install the package. A clean install or dependency upgrade can then fail.
+flagged_example:
+  language: javascript
+  expect_file: src/app.js
+  expect_line: 1
+  files:
+  - filename: package.json
+    language: json
+    code: |
+      {"name":"shop","version":"1.0.0","dependencies":{}}
+  - filename: src/app.js
+    code: |
+      import "chalk";
+not_flagged_example:
+  language: javascript
+  files:
+  - filename: package.json
+    language: json
+    code: |
+      {"name":"shop","version":"1.0.0","dependencies":{"chalk":"^5.0.0"}}
+  - filename: src/app.js
+    code: |
+      import "chalk";
+  why: The owning manifest explicitly declares the imported package.
+how_skylos_decides:
+- Runs with quality analysis and reads package manifests without installing packages or running
+  package scripts.
+- Assigns source files to their nearest package.json. Reads literal imports, re-exports, require/import
+  calls and supported literal tool configuration; built-ins, local paths and proven workspace
+  aliases are excluded.
+- Checks dependencies, devDependencies, optionalDependencies and peerDependencies in the owner.
+  Reports MEDIUM at the source or configuration use when its package is missing.
+- Does not claim that the registry package exists or that an SDK API is valid. Unknown loaders
+  and unread source are recorded in analysis_summary.npm_dependency_analysis and cannot prove
+  dependency non-use.
+source_refs:
+- path: skylos/rules/quality/npm_dependencies.py
+  symbol: def scan_npm_dependencies(
+- path: test/test_npm_dependency_usage.py
+  symbol: def test_literal_unlisted_dependency_is_reported_at_source
+fix:
+  explanation: Declare the intended package in the manifest that owns the source, using an
+    appropriate dependency section and version, or remove the unwanted import.
+  language: json
+  filename: package.json
+  code: |
+    {"name":"shop","version":"1.0.0","dependencies":{"chalk":"^5.0.0"}}
+false_alarms_and_suppression:
+  misfires:
+  - A deployment may deliberately provide an undeclared package globally; the repository alone
+    does not declare that contract.
+  - Only bounded literal source/configuration forms are read. Unknown configuration is recorded
+    rather than executed.
+  suppress:
+  - check: config
+    text: Set `[tool.skylos] ignore = ["SKY-Q408"]` to disable this rule project-wide.
+related:
+- SKY-U005
+- SKY-Q409
+- SKY-D222
