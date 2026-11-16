@@ -782,3 +782,60 @@ def test_slow_registry_lookups_end_inside_the_hook_deadline(project, monkeypatch
     started = clock.monotonic()
     decision, _ = hook(project, "npm install left-pad@1.3.0", FakeSources())
     assert decision == "ask" and clock.monotonic() - started < 4
+
+
+# --------------------------------------------------------------------------
+# explicit installs: package with little history (SKY-SCA-NEW001)
+# --------------------------------------------------------------------------
+
+
+class HistorySources(FakeSources):
+    def __init__(self, histories, **kwargs):
+        super().__init__(**kwargs)
+        self.histories = histories
+        self.history_calls: list[tuple[str, str]] = []
+
+    def package_history(self, ecosystem, name):
+        self.history_calls.append((ecosystem, name))
+        return self.histories.get(name, {"status": "established"})
+
+
+NEW_PACKAGE = {
+    "status": "new", "ecosystem": "npm", "age_days": 4, "release_count": 1,
+    "owners": ["someone"], "registry_url": "https://www.npmjs.com/package/left-pad",
+}  # fmt: skip
+
+
+def test_package_with_little_history_is_held_until_checked(project):
+    sources = HistorySources({"left-pad": NEW_PACKAGE})
+    decision, reason = hook(project, "npm install left-pad@1.3.0", sources)
+    assert decision == "deny"
+    assert "1 package has little history on its registry" in reason
+    assert "first published on npm 4 days ago, 1 release, published by someone" in reason
+    assert "https://www.npmjs.com/package/left-pad" in reason
+    assert "approved_packages" in reason and "ask" in reason
+
+
+def test_established_package_is_not_held(project):
+    sources = HistorySources({})
+    assert hook(project, "npm install left-pad@1.3.0", sources) == ("allow", "")
+    assert sources.history_calls == [("npm", "left-pad")]
+
+
+def test_approved_package_is_installed_without_a_history_lookup(project):
+    sources = HistorySources({"left-pad": NEW_PACKAGE})
+    pyproject = '[tool.skylos.supply_chain]\napproved_packages = ["npm:left-pad"]\n'
+    assert hook(project, "npm install left-pad@1.3.0", sources, pyproject=pyproject) == ("allow", "")
+    assert sources.history_calls == []
+
+
+def test_unproven_packages_off_turns_the_history_check_off(project):
+    sources = HistorySources({"left-pad": NEW_PACKAGE})
+    pyproject = '[tool.skylos.supply_chain]\nunproven_packages = "off"\n'
+    assert hook(project, "npm install left-pad@1.3.0", sources, pyproject=pyproject) == ("allow", "")
+    assert sources.history_calls == []
+
+
+def test_unreadable_history_holds_nothing(project):
+    sources = HistorySources({"left-pad": {"status": "unknown"}})
+    assert hook(project, "npm install left-pad@1.3.0", sources) == ("allow", "")

@@ -15,6 +15,11 @@
 * **npm provenance.** A version published without the provenance its earlier
   versions had (``ca9.api.check_provenance``) is held. "unknown" holds
   nothing.
+* **Package history.** A package whose name is new or barely used on its
+  registry (``ca9.api.package_history``: first published under 30 days ago, or
+  under 180 days old with at most 2 releases) is held until someone has
+  checked it and listed it in ``approved_packages``. ``unproven_packages =
+  "off"`` turns this off. "unknown" holds nothing.
 * **Lockfile installs** (``npm ci``, ``uv sync``, ``pip install -r``...): the
   locked packages get the malware check, within the hook's time budget.
 
@@ -68,6 +73,7 @@ CA9_UPGRADE = "pip install -U ca9"
 KIND_MALWARE = "malware"
 KIND_TOO_NEW = "too_new"
 KIND_PROVENANCE = "provenance"
+KIND_UNPROVEN = "unproven"
 OUTCOME_UNREACHABLE = "unreachable"
 OUTCOME_UNCHECKED = "unchecked"
 OUTCOME_MALWARE_ALLOWED = "malware_allowed"
@@ -155,6 +161,18 @@ class Sources:
             return {"status": "unknown"}
         if answer.get("status") == "unknown" and "not available" in str(answer.get("reason")):
             return {"status": "engine_missing"}
+        return answer
+
+    def package_history(self, ecosystem: str, name: str) -> dict[str, Any]:
+        function = _ca9_function("package_history")
+        if function is None:
+            return {"status": "engine_missing"}
+        try:
+            answer = function(_CA9_ECOSYSTEMS[ecosystem], name)
+        except Exception:  # noqa: BLE001
+            return {"status": "unknown"}
+        if not isinstance(answer, dict):
+            return {"status": "unknown"}
         return answer
 
     def provenance(self, ecosystem: str, name: str, version: str) -> dict[str, Any]:
@@ -287,17 +305,28 @@ def check_supply_chain(
     if policy.check_provenance:
         second += [lambda i=i: sources.provenance(NPM, i.package["name"], i.version)
                    for i in npm_gated]  # fmt: skip
+    unproven_items = []
+    if policy.unproven_packages != "off":
+        unproven_items = [
+            i for i in gated
+            if not policy.is_approved(_CA9_ECOSYSTEMS[i.package["ecosystem"]], i.package["name"])
+        ]  # fmt: skip
+        second += [lambda i=i: sources.package_history(i.package["ecosystem"], i.package["name"])
+                   for i in unproven_items]  # fmt: skip
     answers = run_parallel(second, deadline)
     if isinstance(answers[0], dict):
         verdicts.update(answers[0])
     ages: dict[int, Any] = {}
     provenance: dict[int, Any] = {}
+    histories: dict[int, Any] = {}
     offset = 1
     if age_hours > 0:
         ages = {id(i): answers[offset + n] for n, i in enumerate(gated)}
         offset += len(gated)
     if policy.check_provenance:
         provenance = {id(i): answers[offset + n] for n, i in enumerate(npm_gated)}
+        offset += len(npm_gated)
+    histories = {id(i): answers[offset + n] for n, i in enumerate(unproven_items)}
 
     suggestions = {
         _key(i.package["ecosystem"], i.package["name"], str(answer.get("suggested_version")))
@@ -317,10 +346,11 @@ def check_supply_chain(
 
     findings = result.setdefault("findings", [])
     unverified = result.setdefault("unverified", [])
-    counts = {KIND_MALWARE: 0, KIND_TOO_NEW: 0, KIND_PROVENANCE: 0}
+    counts = {KIND_MALWARE: 0, KIND_TOO_NEW: 0, KIND_PROVENANCE: 0, KIND_UNPROVEN: 0}
     for item in explicit:
         _explicit_outcome(item, verdicts, ages.get(id(item)), provenance.get(id(item)),
-                          age_hours, policy.block_malware, findings, unverified, counts)  # fmt: skip
+                          age_hours, policy.block_malware, findings, unverified, counts,
+                          history=histories.get(id(item)))  # fmt: skip
     for item in locked:
         _locked_outcome(item, verdicts, policy.block_malware, findings, unverified, counts)
     result["release_age_hours"] = age_hours
@@ -517,7 +547,7 @@ def _feed_fallback(sources: Sources, verdicts: dict[Key, _Verdict], keys: list[K
 
 
 def _explicit_outcome(item, verdicts, age, provenance, age_hours, block, findings, unverified,
-                      counts) -> None:  # fmt: skip
+                      counts, *, history=None) -> None:  # fmt: skip
     package = item.package
     ecosystem, name = package["ecosystem"], package["name"]
     if item.version:
@@ -553,6 +583,9 @@ def _explicit_outcome(item, verdicts, age, provenance, age_hours, block, finding
             counts[KIND_PROVENANCE] += 1
         elif status == "engine_missing":
             _note(item, f"provenance not checked (the installed ca9 cannot check it: {CA9_UPGRADE})")
+    if isinstance(history, dict) and history.get("status") in {"new", "thin_history"}:
+        findings.append(_unproven(package, item.version, history))
+        counts[KIND_UNPROVEN] += 1
     if item.reasons and not package.get("flagged") and package.get("state") != "unknown":
         outcome = OUTCOME_UNREACHABLE
         if not item.network:
@@ -626,6 +659,22 @@ def _too_new(package, version, age, age_hours, verdicts) -> dict[str, Any]:
         message += " There is no older version to suggest."
     return {**package, "version": version, "kind": KIND_TOO_NEW, "rule_id": "SKY-SCA-AGE001",
             "suggested_version": safe, "age_hours": age.get("age_hours"), "message": message}  # fmt: skip
+
+
+def _unproven(package, version, history) -> dict[str, Any]:
+    from skylos.rules.sca.package_history import describe_history, history_metadata
+
+    name = package["name"]
+    ecosystem = _CA9_ECOSYSTEMS[package["ecosystem"]]
+    facts = history_metadata(history)
+    where = f" See {facts['registry_url']}." if facts.get("registry_url") else ""
+    message = (
+        f"{package['ecosystem']} package '{name}' has little history: "
+        f"{describe_history(history)}. A name an AI model invented can be registered "
+        f"by anyone, so check it is the package you meant.{where}"
+    )
+    return {**package, "version": version, "kind": KIND_UNPROVEN, "rule_id": "SKY-SCA-NEW001",
+            "approve_with": f"{ecosystem}:{name}", "message": message, **facts}  # fmt: skip
 
 
 def _provenance(package, version, answer) -> dict[str, Any]:

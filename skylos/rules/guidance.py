@@ -909,6 +909,9 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-SCA-INT001": {
         "default": "Regenerate the lockfile with your package manager so every entry has a hash."
     },
+    "SKY-SCA-NEW001": {
+        "default": "Open the registry page and check it is the package you meant. Remove it if not; list it in approved_packages under [tool.skylos.supply_chain] if it is."
+    },
     "SKY-SCA-LIC001": {
         "default": "Replace the dependency, or record a license exception your policy allows."
     },

@@ -4532,6 +4532,85 @@ def _declared_by_name_mapping(mod, required_paths, from_imports, ctx):
     return all(path_is_provided(path, provided) for path in paths)
 
 
+def _existing_undeclared_template(mod, dists, message, ctx):
+    """An undeclared import whose package exists on PyPI.
+
+    Existing is not the same as trustworthy: a name an AI model invented can be
+    registered by anyone. When the package is new or barely used
+    (``skylos.rules.sca.package_history``), the finding asks for a check
+    instead of recommending the package be declared.
+    """
+    for dist in dists:
+        history = _unproven_history(dist, ctx)
+        if history is None:
+            continue
+        from skylos.rules.sca.package_history import (
+            describe_history,
+            history_metadata,
+        )
+
+        facts = history_metadata(history)
+        where = f" ({facts['registry_url']})" if facts.get("registry_url") else ""
+        dist = _normalize_name(dist)
+        template = _undeclared_template(
+            mod,
+            (
+                f"Undeclared import '{mod}'. PyPI package '{dist}' has little "
+                f"history: {describe_history(history)}. Check it is the package "
+                f"you meant{where} before declaring it."
+            ),
+        )
+        template["metadata"] = {
+            "package_name": dist,
+            "supply_chain_signal": "unproven_package",
+            "approve_with": f"pypi:{_normalize_name(dist)}",
+            **facts,
+        }
+        return template
+    return _undeclared_template(mod, message)
+
+
+def _unproven_history(dist, ctx):
+    """ca9's history for ``dist`` when it is new or barely used, else None.
+
+    Nothing is looked up for an approved or internal package, when the policy
+    turns the check off, or when private registries are configured without
+    ``internal_packages`` (the name may be private).
+    """
+    cache = ctx.setdefault("package_history", {})
+    key = _normalize_name(dist)
+    if key in cache:
+        return cache[key]
+    cache[key] = None
+    try:
+        from skylos.commands.hook_locked_packages import is_internal
+        from skylos.rules.sca import package_history
+        from skylos.rules.sca.supply_chain import load_ca9_api
+        from skylos.supply_chain.policy import load_supply_chain_policy
+
+        policy = ctx.get("supply_chain_policy")
+        if policy is None:
+            policy = load_supply_chain_policy(ctx.get("repo_root"))
+            ctx["supply_chain_policy"] = policy
+        if (
+            policy.unproven_packages == "off"
+            or policy.is_approved("pypi", key)
+            or is_internal("pypi", key, tuple(policy.internal_packages))
+            or (policy.private_registries and not policy.internal_packages)
+        ):
+            return None
+        lookup = package_history.history_function(load_ca9_api())
+        if lookup is None:
+            return None
+        history = lookup("pypi", key)
+    except Exception as exc:  # noqa: BLE001 - history is advisory, never fatal
+        logger.debug("package history unavailable: %s", type(exc).__name__)
+        return None
+    if isinstance(history, dict) and history.get("status") in package_history.UNPROVEN_STATUSES:
+        cache[key] = history
+    return cache[key]
+
+
 def _classify_installed_import(mod, ctx, *, root_only=True):
     if mod not in ctx["installed_mapping"]:
         return _NO_FINDING
@@ -4548,10 +4627,12 @@ def _classify_installed_import(mod, ctx, *, root_only=True):
         return None
 
     dist_hint = ", ".join(sorted(known_dists))
-    return _undeclared_template(
+    return _existing_undeclared_template(
         mod,
+        sorted(known_dists),
         f"Undeclared import '{mod}' (provided by: {dist_hint}). "
         f"Add to {DECLARATION_FILES_TEXT}.",
+        ctx,
     )
 
 
@@ -4571,12 +4652,14 @@ def _classify_mapped_import(mod, ctx, *, root_only=True):
             return None
 
         if _tracked_pypi_status(mapped_dist, ctx) == "exists":
-            return _undeclared_template(
+            return _existing_undeclared_template(
                 mod,
+                [mapped_dist],
                 (
                     f"Undeclared import '{mod}' (provided by: "
                     f"{mapped_dist}). Add to {DECLARATION_FILES_TEXT}."
                 ),
+                ctx,
             )
     return _NO_FINDING
 
@@ -4603,9 +4686,11 @@ def _classify_registry_import(mod, ctx, manifest_context, submodules=frozenset()
     if pypi_status == "missing" and _is_confident_hallucination_candidate(mod):
         return _hallucinated_template(mod)
     if pypi_status == "exists" and manifest_context:
-        return _undeclared_template(
+        return _existing_undeclared_template(
             mod,
+            [mod],
             (f"Undeclared import '{mod}'. Not found in {DECLARATION_FILES_TEXT}."),
+            ctx,
         )
     if manifest_context:
         return _undeclared_template(

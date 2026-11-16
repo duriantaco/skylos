@@ -1,0 +1,145 @@
+id: SKY-SCA-NEW001
+title: Dependency name is new or barely used on its registry
+family: supply-chain
+severity: MEDIUM
+languages: [requirements*.txt, pyproject.toml, setup.cfg, setup.py, uv.lock, poetry.lock, package.json, npm, pnpm and Yarn lockfiles]
+gate:
+  full: listed
+  opt_in: >-
+    `unproven_packages = "block"` under `[tool.skylos.supply_chain]` makes
+    the finding HIGH and counts it toward `max_dependency_vulnerabilities`.
+  note: >-
+    In the default `warn` mode the finding is reported and no gate counts
+    it. `unproven_packages = "off"` stops the check.
+
+what_it_is: >-
+  A package registry lets anyone register an unused name. SKY-SCA-NEW001
+  reports a direct npm or PyPI dependency whose name has almost no history
+  there: it was first published less than 30 days ago, or it is less than
+  180 days old and has at most 2 releases.
+
+why_it_matters: >-
+  AI coding tools sometimes invent package names, and they tend to invent
+  the same ones again and again. An attacker can register such a name and
+  wait for someone to install it (slopsquatting). Once registered the name
+  exists, so a check that only asks "is this a real package?" passes. Its
+  age and release count are facts the uploader cannot backdate. A new
+  package from a real project also matches, so the finding asks you to
+  check, it does not say the package is malicious.
+
+flagged_example:
+  language: text
+  expect_file: requirements.txt
+  expect_line: 1
+  verify:
+    mode: manual
+    reason: >-
+      The result depends on the day of the scan: Skylos asks PyPI or npm
+      when the project was first published, so a name is reported only
+      while it is young. Checked by hand on 16 Nov 2026, when `fitz` on
+      PyPI was 96 days old with 1 release.
+  files:
+    - filename: requirements.txt
+      code: |
+        fitz
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+
+not_flagged_example:
+  language: text
+  files:
+    - filename: requirements.txt
+      code: |
+        PyMuPDF
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [project]
+        name = "shop"
+        version = "1.0.0"
+  why: >-
+    PyMuPDF is imported as `fitz`, which is why `fitz` gets typed into
+    requirements files, but the package to install is `PyMuPDF`. It has
+    years of history on PyPI, so it is not reported. The `fitz` project on
+    PyPI was, when this page was written, a few months old with a single
+    release. A package you have checked and listed in `approved_packages`
+    is not reported either.
+
+how_skylos_decides:
+  - >-
+    Runs with `--sca` (part of `-a`). It checks direct dependencies only:
+    pinned ones from the dependency inventory, and PyPI names declared
+    without a version, such as `fitz` or `flask>=3`.
+  - >-
+    For each one Skylos asks the `ca9` library, which reads the project's
+    first publish time and release count from PyPI's JSON API or the npm
+    registry. These lookups are the only network requests this rule makes,
+    and an old project is answered from a local cache afterwards.
+  - >-
+    Reported: first published under 30 days ago, or under 180 days old with
+    at most 2 releases. On 2,521 dependencies of 184 popular Python projects
+    that was 0.6%, mostly a project's own brand-new packages.
+  - >-
+    Links, descriptions and author names never decide the result: the
+    uploader writes them. They are shown so you can check the package.
+  - >-
+    Never looked up: transitive dependencies, names matching
+    `internal_packages`, packages that resolve from a private registry, and
+    approved packages. With `private_registries` set and no
+    `internal_packages`, names declared without a version are not looked up
+    either, so a private name is not sent to a public registry.
+  - >-
+    A registry that cannot be read is counted in
+    `sca_coverage.supply_chain.package_history` and reports nothing.
+  - >-
+    Packages approved in Skylos Cloud are added to the repository's
+    `approved_packages`. In pull-request CI the repository's list comes from
+    the base commit, so a pull request cannot approve its own new package.
+
+source_refs:
+  - path: skylos/rules/sca/package_history.py
+    symbol: "def evaluate_package_history("
+  - path: skylos/rules/sca/package_history.py
+    symbol: "def _candidates("
+    note: direct, public-registry, not internal, not approved.
+  - path: skylos/supply_chain/policy.py
+    symbol: "def package_matches("
+  - path: skylos/core/gatekeeper.py
+    symbol: "def _unproven_package_warning("
+    note: gates count the finding only in block mode.
+  - path: test/test_sca_package_history.py
+    symbol: "def test_new_and_thin_history_dependencies_are_reported("
+
+fix:
+  explanation: >-
+    Open the registry page in the message and check the package is the one
+    you meant: who publishes it, whether it links to real source code, and
+    whether the name matches what the documentation of the library you
+    wanted says to install. If it is wrong, remove it. If it is right, add
+    it to `approved_packages`.
+  language: toml
+  filename: pyproject.toml
+  code: |
+    [tool.skylos.supply_chain]
+    approved_packages = ["pypi:some-new-package"]
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A genuinely new package, including your own organization's, is
+      reported until it is approved or has aged.
+    - >-
+      A name registered more than 180 days ago, or one with 3 or more
+      releases, is not reported even if nobody uses it.
+  suppress:
+    - text: >-
+        List the package in `approved_packages` under
+        `[tool.skylos.supply_chain]`, or set `unproven_packages = "off"`.
+        Like the other dependency rules `ca9` decides, it is not hidden by
+        `[tool.skylos] ignore` in a full scan.
+
+related: [SKY-SCA-AGE001, SKY-D222, SKY-D223]

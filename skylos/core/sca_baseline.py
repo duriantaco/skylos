@@ -46,7 +46,7 @@ _FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
 
 SUPPLY_CHAIN_TRUST_RULES = frozenset(
     {f"SKY-D{number}" for number in range(365, 378)}
-    | {"SKY-SCA-UPG001", "SKY-SCA-HRD001", "SKY-SCA-AGE001"}
+    | {"SKY-SCA-UPG001", "SKY-SCA-HRD001", "SKY-SCA-AGE001", "SKY-SCA-NEW001"}
 )
 
 

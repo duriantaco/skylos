@@ -62,6 +62,7 @@ version.
 | SKY-SCA-SRC001 | CRITICAL (HIGH when transitive) | possible dependency confusion; needs `internal_packages` |
 | SKY-SCA-SRC003 | MEDIUM | a Git dependency not pinned to a commit, or a URL without a hash |
 | SKY-SCA-AGE001 | HIGH | a locked version younger than `min_release_age_hours`; scans check it only when you set the value |
+| SKY-SCA-NEW001 | MEDIUM | a direct dependency whose name is new or barely used on its registry; check it is the package you meant |
 | SKY-SCA-LIC001 | HIGH (configurable) | a licence on your deny list, or missing from your allow list |
 | SKY-SCA-HRD001 | HIGH | a change that weakens install hardening (diff scans only) |
 | SKY-SCA-SRC004 | HIGH | a pull request points a package at a private, Git or URL source this repository did not use for it, or at a new host (diff scans only) |

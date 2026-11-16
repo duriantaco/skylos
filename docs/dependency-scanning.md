@@ -696,6 +696,7 @@ read before it is reported:
 | `SKY-SCA-SRC004` | HIGH | In a pull request, a lockfile points a package at a private, Git or URL source this repository did not use for it, or at a new host. Advisory databases do not cover it, so it blocks until reviewed. Packages matching `internal_packages` on the target branch are exempt; the pull request cannot add its own exemption |
 | `SKY-SCA-INT001` | MEDIUM | A registry entry in `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock` or `poetry.lock` without an integrity hash (an empty value counts as missing). Never for `requirements.txt`, and not for npm `inBundle` entries, which ship inside their parent's verified tarball |
 | `SKY-SCA-AGE001` | HIGH | The locked version is younger than `min_release_age_hours`. Scans check this only when the policy sets it |
+| `SKY-SCA-NEW001` | MEDIUM | A direct npm or PyPI dependency whose name is new on its registry (first published under 30 days ago) or barely used (under 180 days old with at most 2 releases). A name an AI model invented and someone then registered exists, so the existence checks pass; its history is what gives it away. The message links the registry page. Remove the package, or list it in `approved_packages` once checked. Set `unproven_packages = "block"` to make it HIGH and fail the gate, or `"off"` to stop the check |
 
 Configure them in `pyproject.toml`; a synced Skylos Cloud policy can only
 tighten these values:
@@ -705,7 +706,17 @@ tighten these values:
 internal_packages = ["acme-*", "@acme/*"]
 private_registries = ["https://pypi.acme.dev/simple"]
 min_release_age_hours = 24
+unproven_packages = "warn"           # "off", "warn" (default) or "block"
+approved_packages = ["pypi:new-but-reviewed"]
 ```
+
+`approved_packages` takes `name`, `pypi:name` or `npm:name`, with `*`
+wildcards. Packages approved in Skylos Cloud are added to the repository's
+list, and in pull-request CI the repository's list is read from the base
+commit, so a pull request cannot approve its own new package. Internal packages, packages from a
+private registry and transitive dependencies are never looked up. An
+undeclared import (`SKY-D223`) of a package with little history says to
+check the package instead of telling you to declare it.
 
 `--index-url` alone is an exclusive index and is not confusion. Source URLs in
 findings drop user info and query values other than Git refs; archive URLs keep
@@ -715,8 +726,9 @@ dependency does not fail an existing gate; a synced Skylos Cloud gate counts it.
 missing, older than API version 1 or fails, the scan continues with OSV
 findings only and `sca_coverage.supply_chain.notes` says
 `ca9_supply_chain_api_unavailable` or `ca9_supply_chain_api_failed`. These
-findings sit in `dependency_vulnerabilities`; all but `SKY-SCA-SRC003` count
-toward the dependency gate like advisories.
+findings sit in `dependency_vulnerabilities`; all but `SKY-SCA-SRC003` and
+`SKY-SCA-NEW001` in `warn` mode count toward the dependency gate like
+advisories.
 
 ### Pull request checks: upgrades and weakened hardening
 

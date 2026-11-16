@@ -50,7 +50,10 @@ Individual check flags:
   (needs `[tool.skylos.supply_chain] internal_packages`), `SKY-SCA-SRC003`
   unpinned Git / unhashed URL, `SKY-SCA-SRC004` (diff scans) a package moved to
   a source the repository did not use, `SKY-SCA-INT001` lockfile entry without
-  integrity, `SKY-SCA-AGE001` (only with `min_release_age_hours`). Missing ca9
+  integrity, `SKY-SCA-AGE001` (only with `min_release_age_hours`),
+  `SKY-SCA-NEW001` a direct dependency whose name is new or barely used on
+  its registry (`unproven_packages` off/warn/block, `approved_packages`;
+  warn mode is not counted by gates). Missing ca9
   is a note in `sca_coverage.supply_chain.notes`, not an error.
   `analysis_summary.dependency_inventory`, `supply_chain_posture`,
   `ci_inventory` and `agent_hooks` are uploaded next to `sca_coverage`

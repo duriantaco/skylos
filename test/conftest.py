@@ -280,6 +280,25 @@ def _no_pypi_wheel_lookups(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_package_history_lookups(monkeypatch):
+    """Scans must not ask the real PyPI or npm how old a package is.
+
+    The history check reads as unavailable. Tests that cover it stub
+    ``skylos.rules.sca.package_history.history_function`` with answers.
+    """
+    from skylos.rules.sca import package_history
+
+    monkeypatch.setattr(package_history, "history_function", lambda _api: None)
+    from skylos.commands import hook_supply_chain
+
+    monkeypatch.setattr(
+        hook_supply_chain.Sources,
+        "package_history",
+        lambda self, ecosystem, name: {"status": "unknown"},
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_installed_requirement_records(monkeypatch):
     """Dependency checks must not read the test interpreter's Requires-Dist.
 
