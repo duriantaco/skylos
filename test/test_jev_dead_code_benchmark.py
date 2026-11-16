@@ -109,17 +109,17 @@ def test_checked_in_ground_truth_builds_blind_plan_without_duplicate_arms():
     plan = build_plan(MANIFEST_PATH)
 
     assert plan["network_used"] is False
-    assert plan["case_count"] == 145
-    assert plan["request_count"] == 151
-    assert plan["ground_truth_count"] == 720
-    assert plan["decision_count"] == 760
+    assert plan["case_count"] == 151
+    assert plan["request_count"] == 157
+    assert plan["ground_truth_count"] == 769
+    assert plan["decision_count"] == 809
     assert plan["neutralization_status_counts"] == {
         "applied": 6,
-        "skipped": 29,
-        "not_applicable": 110,
+        "skipped": 30,
+        "not_applicable": 115,
     }
-    assert plan["unused_count"] == 264
-    assert plan["used_count"] == 456
+    assert plan["unused_count"] == 297
+    assert plan["used_count"] == 472
     assert plan["model"] == "jev-1.13.0"
     assert plan["endpoint"] == JEV_ENDPOINT
 

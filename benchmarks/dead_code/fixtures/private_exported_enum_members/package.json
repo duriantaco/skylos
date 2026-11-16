@@ -1,0 +1,6 @@
+{
+  "name": "private-enum-import-contract",
+  "private": true,
+  "type": "module",
+  "main": "app.ts"
+}

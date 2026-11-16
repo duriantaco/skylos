@@ -8668,7 +8668,7 @@
     },
     {
       "id": "private-exported-enum-members",
-      "path": "../../corpus/fixtures/private_exported_enum_members",
+      "path": "fixtures/private_exported_enum_members",
       "description": "Imported aliases in a closed private package consume individual enum members.",
       "languages": [
         "typescript"
