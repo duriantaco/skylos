@@ -176,3 +176,14 @@ def test_button_asset_is_compact_and_self_contained():
                 assert value[1:] in ids
                 references.append(value)
     assert references  # Pixel glyphs are embedded in this SVG.
+
+
+def test_report_button_source_passes_html_security_scan(capsys):
+    from skylos.cicd import pr_summary
+    from skylos.rules.danger.danger import scan_ctx
+
+    source = Path(pr_summary.__file__)
+    findings = scan_ctx(source.parent, [source])
+
+    assert "Scan failed for" not in capsys.readouterr().err
+    assert not [finding for finding in findings if finding["rule_id"] == "SKY-D228"]

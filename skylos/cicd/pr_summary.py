@@ -7,6 +7,7 @@ risk review JSON. Every section degrades on its own when its input is absent.
 
 from __future__ import annotations
 
+import html
 import os
 import re
 from dataclasses import dataclass
@@ -110,7 +111,8 @@ def report_button(run_url: str | None) -> str | None:
     if not isinstance(run_url, str) or not _REPORT_URL_RE.fullmatch(run_url):
         return None
     return (
-        f'<a href="{run_url}"><img src="{REPORT_BUTTON_URL}" '
+        f'<a href="{html.escape(run_url, quote=True)}">'
+        f'<img src="{REPORT_BUTTON_URL}" '
         'alt="View Skylos report" width="192" height="40"></a>'
     )
 

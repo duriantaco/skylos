@@ -290,7 +290,9 @@ def test_full_brief_is_exactly_the_expected_comment():
     assert len(_visible(EXPECTED)) == 29
 
 
-def test_absent_inputs_drop_their_sections():
+def test_absent_inputs_drop_their_sections(monkeypatch):
+    # This case has no Actions report, even when pytest itself runs in Actions.
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
     body = _post(None)
     for marker in (
         "**Gate:**",
