@@ -12,13 +12,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _fixture(tmp_path, name):
+    fixture_root = (ROOT / 'corpus' / 'fixtures').resolve()
+    source = (fixture_root / name).resolve()
+    if not source.is_relative_to(fixture_root):
+        raise ValueError(f'fixture path escapes corpus fixtures: {name}')
     target = tmp_path / 'project'
-    shutil.copytree(ROOT / 'corpus' / 'fixtures' / name, target)
+    shutil.copytree(source, target)
     return target
 
 
 def _scan(path, **kwargs):
     return json.loads(analyze(str(path), grep_verify=False, grep_cache=False, **kwargs))
+
+
+def test_fixture_rejects_path_traversal(tmp_path):
+    with pytest.raises(ValueError, match='fixture path escapes corpus fixtures'):
+        _fixture(tmp_path, '..')
 
 
 def test_npm_usage_reports_findings_and_rule_coverage(tmp_path):
