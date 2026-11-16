@@ -156,8 +156,9 @@ also see:
   line), **Read first** (the change map's entries as `file:line · symbol ·
   why`, with a count of what is left to read, proven unchanged and not
   mapped), **Not checked by tests** (changed lines no test checks) and
-  **Needs a person** (risk classes and who can clear them), a link to the
-  workflow run, and the issue tables under **Details**. Later pushes edit
+  **Needs a person** (risk classes and who can clear them), a compact pixel
+  **View report** button linking to the workflow run, and the issue tables
+  under **Details**. Later pushes edit
   this same comment instead of adding new ones, and it says so when every
   issue it reported on the changed lines is fixed;
 - the gate table in the gate job's summary and the Done receipt with the full

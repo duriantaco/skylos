@@ -257,7 +257,7 @@ EXPECTED = """<!-- skylos-review -->
 
 A person with write access approving the head commit turns this check green; bot approvals and approvals of older commits do not.
 
-[Full receipt and change map](https://github.com/acme/app/actions/runs/123)
+<a href="https://github.com/acme/app/actions/runs/123"><img src="https://raw.githubusercontent.com/duriantaco/skylos/main/assets/pr-review/view-report-v1.svg" alt="View Skylos report" width="192" height="40"></a>
 
 <details><summary>Details</summary>
 
@@ -298,7 +298,7 @@ def test_absent_inputs_drop_their_sections():
         "**Read first**",
         "**Not checked by tests**",
         "**Needs a person**",
-        "Full receipt",
+        "View Skylos report",
     ):
         assert marker not in body
     assert "<details><summary>Details</summary>" in body

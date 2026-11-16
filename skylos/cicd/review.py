@@ -23,7 +23,13 @@ from skylos.cicd.evidence import (
     sanitize_markdown_text,
     sanitize_untrusted_text,
 )
-from skylos.cicd.pr_summary import SummaryInputs, brief_lines, verdict_line
+from skylos.cicd.pr_summary import (
+    SummaryInputs,
+    brief_lines,
+    report_button,
+    run_url_from_env,
+    verdict_line,
+)
 from skylos.cicd.risk_passport import (
     build_risk_passport,
     format_risk_passport_markdown,
@@ -1708,6 +1714,10 @@ def _post_summary_comment(
         if brief:
             head.append("")
             head.extend(brief)
+    else:
+        button = report_button(run_url_from_env())
+        if button:
+            head.extend(["", button])
     lines: list[str] = []
     lines.extend(format_risk_passport_markdown(risk_passport))
     lines.extend(
