@@ -11,6 +11,8 @@ import textwrap
 import pytest
 import yaml
 
+from test.fixture_paths import write_fixture
+
 
 ACTION_PATH = Path(__file__).resolve().parents[1] / "action.yml"
 GIT = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "init.defaultBranch=main"]
@@ -32,7 +34,7 @@ def _pr_checkout(tmp_path, *, shallow):
     seed = tmp_path / "seed"
     seed.mkdir()
     _git(seed, "init", "-q")
-    (seed / "app.py").write_text("x = 1\n")
+    write_fixture(tmp_path, "seed/app.py", "x = 1\n")
     _git(seed, "add", ".")
     _git(seed, "commit", "-q", "-m", "base")
     origin = tmp_path / "origin.git"
@@ -43,7 +45,7 @@ def _pr_checkout(tmp_path, *, shallow):
         clone += ["--depth", "1", "--no-local"]
     _git(tmp_path, *clone, f"file://{origin}" if shallow else str(origin), str(work))
     _git(work, "checkout", "-q", "-b", "feature")
-    (work / "app.py").write_text("x = 1\ny = 2\n")
+    write_fixture(tmp_path, "work/app.py", "x = 1\ny = 2\n", overwrite=True)
     _git(work, "commit", "-q", "-am", "change")
     # Like actions/checkout: only the checked-out ref, no remote-tracking main.
     subprocess.run([*GIT, "update-ref", "-d", "refs/remotes/origin/main"], cwd=work)
@@ -52,10 +54,10 @@ def _pr_checkout(tmp_path, *, shallow):
 
 def _run(action, step_name, cwd, tmp_path, **env_overrides):
     step = next(s for s in action["runs"]["steps"] if s["name"] == step_name)
-    calls = tmp_path / "cli-calls.jsonl"
-    calls.write_text("")
-    stub = tmp_path / "stub_python.py"
-    stub.write_text(  # skylos: ignore[SKY-D324] fixed filename under pytest tmp_path
+    calls = write_fixture(tmp_path, "cli-calls.jsonl", "", overwrite=True)
+    stub = write_fixture(
+        tmp_path,
+        "stub_python.py",
         textwrap.dedent(
             """\
             import json, os, sys
@@ -73,7 +75,7 @@ def _run(action, step_name, cwd, tmp_path, **env_overrides):
                 raise SystemExit("Unexpected Python invocation: " + repr(args))
             """
         ),
-        encoding="utf-8",
+        overwrite=True,
     )
     outputs = tmp_path / "outputs"
     env = {
@@ -150,7 +152,7 @@ def test_pull_request_without_common_history_falls_back_with_a_notice(action, tm
     assert "::notice::Skylos scanned the whole repository" in stdout
 
 
-@pytest.mark.parametrize("base_ref", ["main;touch pwned", "$(id)", "a b"])
+@pytest.mark.parametrize("base_ref", ["main;touch pwned", "$(touch pwned)", "a b"])
 def test_unexpected_base_ref_is_not_used(action, tmp_path, base_ref):
     work = _pr_checkout(tmp_path, shallow=False)
     calls, out, _ = _run(action, "Run Skylos Scan", work, tmp_path, GITHUB_BASE_REF=base_ref)
