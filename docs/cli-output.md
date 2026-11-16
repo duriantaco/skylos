@@ -1188,6 +1188,15 @@ steps:
 Upload applies to source scans (not `image:` scans) and uses
 `github/codeql-action/upload-sarif`.
 
+On `pull_request` events the action scans and gates only the lines the pull
+request changes (`diff: auto`, the default), using the target branch's policy,
+so findings already in the repository don't fail it. Set `diff: "false"` to
+scan the whole repository. A shallow checkout works: the action fetches the
+history it needs, and `fetch-depth: 0` on `actions/checkout` skips that fetch.
+The Skylos Cloud upload step runs only with a `token` input or GitHub OIDC
+(`permissions: id-token: write`); otherwise it is skipped instead of scanning
+a second time.
+
 ## Provenance Attribution
 
 `skylos provenance` reads recorded contributions and declared commit

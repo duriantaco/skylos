@@ -50,7 +50,9 @@ def _run_step(action, step_name, analysis, tmp_path):
         "SKYLOS_PATH": "project with spaces",
         "SKYLOS_ANALYSIS": analysis,
         "SKYLOS_CONFIDENCE": "73",
-        "SKYLOS_TOKEN": "",
+        # The upload step skips itself without a token or GitHub OIDC.
+        "SKYLOS_TOKEN": "test-token" if step_name == "Upload to Skylos Dashboard" else "",
+        "GITHUB_EVENT_NAME": "push",
         "GITHUB_OUTPUT": str(tmp_path / "outputs"),
         "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
         "SKYLOS_TEST_PYTHON": sys.executable,

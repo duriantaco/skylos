@@ -27,6 +27,10 @@ inputs:
     description: "Scan mode: 'scan' (report only), 'gate' (fail on issues), or source-only 'review' (PR comments + gate)"
     required: false
     default: "gate"
+  diff:
+    description: "On pull requests, scan and gate only the lines the PR changes ('auto', the default), so findings already in the repository don't fail it. 'false' scans the whole repository. With a shallow checkout the action fetches the history it needs; set fetch-depth: 0 on actions/checkout to skip that."
+    required: false
+    default: "auto"
   analysis:
     description: "Analysis types to run (space-separated): dead-code security quality ai-defects secrets sca (aliases: dependency, dependencies)"
     required: false
@@ -220,6 +224,7 @@ runs:
         SKYLOS_CONFIDENCE: ${{ inputs.confidence }}
         SKYLOS_TOKEN: ${{ inputs.token }}
         SKYLOS_UPLOAD_SARIF: ${{ inputs.upload-sarif }}
+        SKYLOS_DIFF_MODE: ${{ inputs.diff }}
         SKYLOS_GO_BIN: ${{ format('{0}/skylos-go-engine/skylos-go{1}', runner.temp, runner.os == 'Windows' && '.exe' || '') }}
       run: |
         REPORT="skylos-report.json"
@@ -228,6 +233,31 @@ runs:
         if [ "$SKYLOS_UPLOAD_SARIF" = "true" ]; then
           SARIF_ARGS=(--sarif skylos.sarif)
           echo "sarif=skylos.sarif" >> "$GITHUB_OUTPUT"
+        fi
+
+        # Pull requests: scan only the changed lines, with the policy of the
+        # target branch, as `skylos cicd init` workflows do.
+        DIFF_ARGS=()
+        if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] && [ "$SKYLOS_DIFF_MODE" != "false" ] \
+          && [[ "${GITHUB_BASE_REF:-}" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+          BASE="origin/$GITHUB_BASE_REF"
+          # Both fetches are best effort: without them the scan covers everything.
+          if ! git fetch --no-tags --quiet origin "+refs/heads/$GITHUB_BASE_REF:refs/remotes/$BASE" 2>/dev/null; then
+            echo "::debug::Could not fetch $BASE"
+          fi
+          if ! git merge-base "$BASE" HEAD >/dev/null 2>&1 \
+            && [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+            if ! git fetch --no-tags --quiet --unshallow origin 2>/dev/null; then
+              echo "::debug::Could not fetch the full history"
+            fi
+          fi
+          if MERGE_BASE="$(git merge-base "$BASE" HEAD 2>/dev/null)"; then
+            export SKYLOS_POLICY_BASE="$MERGE_BASE"
+            DIFF_ARGS=(--diff-base "$BASE" --diff "$BASE")
+            echo "diff_base=$BASE" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Skylos scanned the whole repository: no common history with $BASE. Set fetch-depth: 0 on actions/checkout to check only this pull request's changes."
+          fi
         fi
 
         # Build flags from analysis types
@@ -254,6 +284,7 @@ runs:
           --confidence "$SKYLOS_CONFIDENCE" \
           $FLAGS \
           "${SARIF_ARGS[@]}" \
+          "${DIFF_ARGS[@]}" \
           --json > "$REPORT"
         SCAN_STATUS=$?
         set -e
@@ -298,7 +329,12 @@ runs:
         SKYLOS_VERIFY_MODEL_INPUT: ${{ inputs.verify-model }}
         SKYLOS_GO_BIN: ${{ format('{0}/skylos-go-engine/skylos-go{1}', runner.temp, runner.os == 'Windows' && '.exe' || '') }}
       run: |
-        # Upload works with SKYLOS_TOKEN or tokenless via GitHub OIDC
+        # Upload works with SKYLOS_TOKEN or tokenless via GitHub OIDC. With
+        # neither, an upload can only fail: skip it rather than scan again.
+        if [ -z "$SKYLOS_TOKEN" ] && [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+          echo "::notice::Skylos Cloud upload skipped: no token input and no GitHub OIDC. To upload, add permissions: id-token: write (with the Skylos GitHub App installed) or the token input."
+          exit 0
+        fi
         FLAGS=""
         if echo "$SKYLOS_ANALYSIS" | grep -q "security"; then
           FLAGS="$FLAGS --danger"
@@ -361,9 +397,17 @@ runs:
       id: gate
       if: inputs.image == '' && (inputs.mode == 'gate' || inputs.mode == 'review')
       shell: bash
+      env:
+        SKYLOS_PATH: ${{ inputs.path }}
+        SKYLOS_DIFF_BASE_REF: ${{ steps.scan.outputs.diff_base }}
       run: |
+        DIFF_ARGS=()
+        if [ -n "$SKYLOS_DIFF_BASE_REF" ]; then
+          DIFF_ARGS=("$SKYLOS_PATH" --diff-base "$SKYLOS_DIFF_BASE_REF")
+        fi
         set +e
         python -m skylos.cli cicd gate \
+          "${DIFF_ARGS[@]}" \
           --input skylos-report.json \
           --summary
         RESULT=$?

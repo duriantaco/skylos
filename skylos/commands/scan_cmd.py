@@ -2630,7 +2630,13 @@ def _run_scan_command(
     if not args.json and getattr(args, "format", "rich") != "pretty":
         from skylos.ui.risk_view import next_fix_line
 
-        first_fix = next_fix_line(output_result, root_path=project_root, config=config)
+        first_fix = next_fix_line(
+            output_result,
+            root_path=project_root,
+            config=config,
+            # An upload is judged by the Cloud policy, printed after it.
+            local_gate=not args.upload,
+        )
     if (
         not args.json
         and getattr(args, "format", "rich") != "pretty"
