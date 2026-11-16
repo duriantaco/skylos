@@ -332,7 +332,7 @@ runs:
         # Upload works with SKYLOS_TOKEN or tokenless via GitHub OIDC. With
         # neither, an upload can only fail: skip it rather than scan again.
         if [ -z "$SKYLOS_TOKEN" ] && [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-          echo "Skylos Cloud upload skipped: no token input and no GitHub OIDC (add permissions: id-token: write to upload)."
+          echo "::notice::Skylos Cloud upload skipped: no token input and no GitHub OIDC. To upload, add permissions: id-token: write (with the Skylos GitHub App installed) or the token input."
           exit 0
         fi
         FLAGS=""

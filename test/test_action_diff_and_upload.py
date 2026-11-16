@@ -179,7 +179,7 @@ def test_gate_without_scan_base_is_unchanged(action, tmp_path):
 def test_upload_is_skipped_without_token_or_oidc(action, tmp_path):
     calls, _, stdout = _run(action, "Upload to Skylos Dashboard", tmp_path, tmp_path)
     assert calls == []
-    assert "upload skipped" in stdout
+    assert "::notice::Skylos Cloud upload skipped" in stdout
 
 
 @pytest.mark.parametrize(
