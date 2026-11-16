@@ -223,6 +223,13 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-SCA-NEW001",
+        "Dependency name is new or barely used on its registry",
+        "dependency",
+        "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-SCA-UPG001",
         "Dependency upgrade adds install-time or import-time code",
         "dependency",

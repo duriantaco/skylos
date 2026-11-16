@@ -397,6 +397,7 @@ def _built_in_gate_dependencies(dependencies):
         finding
         for finding in dependencies or ()
         if _rule_id(finding) not in REPORT_ONLY_DEPENDENCY_RULES
+        and not _unproven_package_warning(finding)
     ]
 
 
@@ -408,7 +409,17 @@ def _gate_dependencies(dependencies):
         finding
         for finding in dependencies or ()
         if _rule_id(finding) not in ADVICE_ONLY_DEPENDENCY_RULES
+        and not _unproven_package_warning(finding)
     ]
+
+
+def _unproven_package_warning(finding) -> bool:
+    """``SKY-SCA-NEW001`` asks for a check; it fails a gate only when the
+    supply-chain policy sets ``unproven_packages = "block"``."""
+    if _rule_id(finding) != "SKY-SCA-NEW001":
+        return False
+    metadata = finding.get("metadata") if isinstance(finding, dict) else None
+    return not (isinstance(metadata, dict) and metadata.get("action") == "block")
 
 
 def _new_rule_scope(results):

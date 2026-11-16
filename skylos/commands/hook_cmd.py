@@ -1640,6 +1640,8 @@ _FINDING_HEADS = {
                 "{n} package versions are newer than the release cooldown."),
     "provenance": ("1 package version lost the provenance its earlier versions had.",
                    "{n} package versions lost the provenance their earlier versions had."),
+    "unproven": ("1 package has little history on its registry.",
+                 "{n} packages have little history on their registry."),
 }  # fmt: skip
 
 
@@ -1686,6 +1688,15 @@ def _finding_guidance(findings: list[dict[str, Any]], age_hours: Any) -> str:
             f"{age_hours} hours old. The user can change the wait with "
             "min_release_age_hours under [tool.skylos.supply_chain] in pyproject.toml "
             "(0 turns it off)."
+        )
+    if "unproven" in kinds:
+        lines.append(
+            "Do not install a package with little history on your own judgement: ask "
+            "the user to open the registry page above and confirm it is the package "
+            "they meant. Once confirmed, the user adds it to approved_packages under "
+            "[tool.skylos.supply_chain] in pyproject.toml (for example "
+            'approved_packages = ["pypi:name"]); unproven_packages = "off" turns '
+            "this check off."
         )
     if "provenance" in kinds:
         lines.append(

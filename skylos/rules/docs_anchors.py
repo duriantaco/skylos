@@ -306,6 +306,7 @@ RULE_DOCS_ANCHORS = {
     "SKY-SCA-API001": "supply-chain",
     "SKY-SCA-HRD001": "supply-chain",
     "SKY-SCA-INT001": "supply-chain",
+    "SKY-SCA-NEW001": "supply-chain",
     "SKY-SCA-LIC001": "supply-chain",
     "SKY-SCA-MAL000": "supply-chain",
     "SKY-SCA-SRC001": "supply-chain",
