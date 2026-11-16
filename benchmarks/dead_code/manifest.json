@@ -8169,6 +8169,108 @@
           }
         ]
       }
+    },
+    {
+      "id": "string-named-backend-dispatch",
+      "path": "fixtures/string_named_backend_dispatch",
+      "description": "Method names a class builds as strings inside a method and a dispatcher calls through getattr(channel, name) stay alive; an unlisted sibling is reported.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Neutral reduction of a blind-repository false positive (backend tables built in a property and dispatched by runtime name)."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "channels/video.py",
+            "symbol": "_cli_read"
+          },
+          {
+            "kind": "function",
+            "file": "channels/video.py",
+            "symbol": "_api_read"
+          },
+          {
+            "kind": "function",
+            "file": "channels/video.py",
+            "symbol": "_cli_hot"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "channels/video.py",
+            "symbol": "_legacy_read"
+          }
+        ]
+      }
+    },
+    {
+      "id": "decorator-factory-registry",
+      "path": "fixtures/decorator_factory_registry",
+      "description": "Callbacks registered through a source-owned decorator factory are alive regardless of the factory's method name; a factory that does not store its argument registers nothing.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Registration is proven from the factory body (the nested function stores its argument), not from a verb such as register."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_encode_upper"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_encode_hex"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_tagged_only"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_never_registered"
+          }
+        ]
+      }
     }
   ]
 }

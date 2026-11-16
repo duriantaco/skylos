@@ -57,6 +57,16 @@ class ImplicitRefTracker:
         # Source-owned discovery sites: (base, caller, module, line, kind,
         # reflected receiver). A base name alone does not establish liveness.
         self.discovered_subclass_bases = set()
+        # (owner class, identifier) for whole-identifier string literals
+        # written inside a class body, such as a dispatch table of method
+        # names. They only count once the project also looks members up by a
+        # runtime name (``getattr(obj, name)``); see apply_class_member_strings.
+        self.class_member_strings = set()
+        self.opaque_member_lookup = False
+        # owner class -> exact member names, and the same per subclass once
+        # the hierarchy is known (set_class_hierarchy).
+        self._class_exact_names = {}
+        self._class_exact_allowed = {}
 
     def __getattr__(self, name):
         if name == "known_qualified_refs":
@@ -69,6 +79,10 @@ class ImplicitRefTracker:
             "module_call_args": set,
             "reflected_modules": set,
             "discovered_subclass_bases": set,
+            "class_member_strings": set,
+            "opaque_member_lookup": bool,
+            "_class_exact_names": dict,
+            "_class_exact_allowed": dict,
         }
         if name in defaults:
             value = defaults[name]()
@@ -93,10 +107,31 @@ class ImplicitRefTracker:
             return
         self._class_patterns.append(entry)
 
+    def apply_class_member_strings(self) -> None:
+        """Turn a class's own method-name strings into class-scoped refs.
+
+        ``(("cli", "_cli_read"), ("api", "_api_read"))`` stored by a class and
+        later dispatched through ``getattr(channel, method_name)`` names the
+        methods it can call. Without a runtime-name lookup anywhere in the
+        project a string is only text, so nothing is credited.
+        """
+        self._class_exact_names = {}
+        self._class_exact_allowed = {}
+        if not self.opaque_member_lookup:
+            return
+        for owner, name in self.class_member_strings:
+            self._class_exact_names.setdefault(owner, set()).add(name)
+
+    def has_class_member_names(self) -> bool:
+        return bool(self._class_exact_names)
+
     def set_class_hierarchy(self, children_of):
         """Record direct subclasses so class-scoped patterns reach overrides."""
         closure = {}
-        for owner in {entry[3] for entry in self._class_patterns}:
+        owners = {entry[3] for entry in self._class_patterns} | set(
+            self._class_exact_names
+        )
+        for owner in owners:
             seen = set()
             stack = list(children_of.get(owner, ()))
             while stack:
@@ -107,6 +142,11 @@ class ImplicitRefTracker:
                 stack.extend(children_of.get(child, ()))
             closure[owner] = seen
         self._subclasses_of = closure
+        allowed = {}
+        for owner, names in self._class_exact_names.items():
+            for member_owner in {owner, *closure.get(owner, ())}:
+                allowed.setdefault(member_owner, set()).update(names)
+        self._class_exact_allowed = allowed
 
     def merge(self, other) -> None:
         """Fold the tracker a worker process returned into this one.
@@ -143,6 +183,11 @@ class ImplicitRefTracker:
         self.discovered_subclass_bases.update(
             getattr(other, "discovered_subclass_bases", ()) or ()
         )
+        self.class_member_strings.update(
+            getattr(other, "class_member_strings", ()) or ()
+        )
+        if getattr(other, "opaque_member_lookup", False):
+            self.opaque_member_lookup = True
 
     def reset_for_worker_file(self) -> None:
         """Start a pool worker's file with an empty tracker.
@@ -167,6 +212,10 @@ class ImplicitRefTracker:
         self.module_call_args = set()
         self.reflected_modules = set()
         self.discovered_subclass_bases = set()
+        self.class_member_strings = set()
+        self.opaque_member_lookup = False
+        self._class_exact_names = {}
+        self._class_exact_allowed = {}
 
     def reset_dynamic_refs(self) -> None:
         self._class_patterns.clear()
@@ -175,6 +224,10 @@ class ImplicitRefTracker:
         self.module_call_args.clear()
         self.reflected_modules.clear()
         self.discovered_subclass_bases.clear()
+        self.class_member_strings.clear()
+        self.opaque_member_lookup = False
+        self._class_exact_names = {}
+        self._class_exact_allowed = {}
 
     def _class_pattern_match(self, definition):
         if not self._class_patterns:
@@ -214,6 +267,11 @@ class ImplicitRefTracker:
         if class_match is not None:
             confidence, pattern = class_match
             return True, confidence, f"pattern '{pattern}'"
+
+        if self._class_exact_allowed:
+            owner = _owner_of(str(def_qname or ""))
+            if simple_name in self._class_exact_allowed.get(owner, ()):
+                return True, 70, f"pattern '{simple_name}'"
 
         def_file = str(definition.filename)
         def_line = definition.line
