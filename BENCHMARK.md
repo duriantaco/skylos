@@ -30,31 +30,34 @@ and four selected dead-code positives are detected. These are development result
 
 Matched runs use the same SDK/workspace configuration. No earlier required
 detection was lost on these labels. Real-repository security recall remains
-unmeasured. Repeated full scans stay in the Desktop archive; curated source
-truth, results and regressions are versioned in Git.
+unmeasured. Repeated full scans and historical reports stay in the
+[archive](benchmarks/review_2026_11_17/ARTIFACTS.md); compact final evidence,
+source truth and regressions are versioned in Git.
 
 ## Earlier source audit — 17 November 2026
 
 The [new confirmed-results report](benchmarks/review_2026_11_17/ground_truth_audit/confirmed_results.md)
 adds five fresh source-labelled repositories and reruns Vulture, Ruff, Bandit,
 Knip, ESLint security, Staticcheck and Gosec. Three agents read the assigned
-source trees before scans; exact labels, raw results and postscan adjudications
-are preserved. The [complete corpus inventory](benchmarks/review_2026_11_17/CORPUS_INVENTORY.md)
-lists every existing case and recovered Desktop target.
+source trees before scans. Source labels and compact final evidence remain
+versioned. The [complete corpus inventory](benchmarks/review_2026_11_17/CORPUS_INVENTORY.md)
+lists existing cases and recovered Desktop targets; the
+[archive inventory](benchmarks/review_2026_11_17/ARTIFACTS.md) locates historical
+reports and full raw results.
 
 Source review found incorrect old labels and hidden Skylos misses. Only 17 of
 44 legacy Vulture FP labels and six of 28 Knip FP labels have direct confirmed
 consumer evidence; other rows include conditional framework contracts,
 retention policies and incorrect ground truth. Competitive contract scores
-must not be presented as independently adjudicated accuracy. A versioned
-three-label correction benchmark exposes two unloaded JS files and an
+must not be presented as independently adjudicated accuracy. The three source-label
+corrections now in the canonical benchmark exposed two unloaded JS files and an
 unreachable Python backend. Security recall on the fresh repositories remains
 unmeasured. Exact-location security labels, F1 arithmetic and competitor
 pickle/eval matching are corrected; nine new paired location controls pass.
 
 ## Independently reviewed precision follow-up — 17 November 2026
 
-[Source-labelled results](benchmarks/review_2026_11_17/confirmed_results.md) preserve
+The [archived precision follow-up](benchmarks/review_2026_11_17/ARTIFACTS.md) preserves
 73 facts across Mux, Hono, Slim, Petclinic and tiny-http, each independently
 source-reviewed and frozen before reruns. The cohort was previously explored,
 so this is not a new blind study. Unknown and incomplete facts stay unscored.
@@ -70,20 +73,24 @@ false positives while retaining five unused positives and seven required
 warnings on dynamic controls. Those warnings are policy contracts, not seven
 confirmed vulnerabilities. The PHP fixture retains six unused positives.
 
-All [538 existing regression cases](benchmarks/review_2026_11_17/FINAL_REGRESSION_AFTER_PHP.md)
-retain their prior expectations and recorded finding counts after the final
-PHP patch. Shared corpus: 84/84; default dead code: 151/151, TP297/FP0/FN0/TN472;
-default security: 277/277, TP150/FP0/FN0/TN140. Challenges remain unchanged:
+The [archived PHP-only rerun](benchmarks/review_2026_11_17/ARTIFACTS.md)
+preserved expectations and recorded finding counts for 538 existing regression
+cases after that patch. Shared corpus: 84/84; default dead code: 151/151,
+TP297/FP0/FN0/TN472; default security: 277/277, TP150/FP0/FN0/TN140.
+Challenges remained unchanged at that stage:
 dead code 12 FN and 6 strict-unlabelled penalties; security 8 FN and 1 FP.
 Strict unlabelled penalties are not source-confirmed false positives.
 
 The earlier seven default Go misses came from unavailable SDK discovery.
 Explicit SDK restores them with the same engine; this is an environment
 correction, not detector improvement. Saved source snapshots isolate the
-three detector changes from concurrent scorer edits. The [full inventory](benchmarks/review_2026_11_17/CORPUS_INVENTORY.md)
-and all-language [dead-code](benchmarks/review_2026_11_17/DEAD_CODE_GAP_EVIDENCE.md)
-and [security](benchmarks/review_2026_11_17/SECURITY_GAP_EVIDENCE.md) matrices separate
-coverage omissions, unsupported scopes, measurement limits and observed defects.
+three detector changes from concurrent scorer edits. The
+[corpus inventory](benchmarks/review_2026_11_17/CORPUS_INVENTORY.md) and
+[dead-code](benchmarks/review_2026_11_17/DEAD_CODE_GAP_EVIDENCE.md) /
+[security](benchmarks/review_2026_11_17/SECURITY_GAP_EVIDENCE.md) gap matrices
+separate coverage omissions, unsupported scopes, measurement limits and observed
+defects. Historical snapshots are [archived](benchmarks/review_2026_11_17/ARTIFACTS.md);
+the completed repair results above supersede these earlier outcomes.
 
 ## Current Regression Suites
 

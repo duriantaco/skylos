@@ -12,25 +12,26 @@ This inventory separates missing benchmark evidence from missing detectors.
 It records the state reviewed in November 2026. A unit test, shared synthetic
 corpus and independent repository holdout answer different questions.
 
-The [source-reviewed audit](review_2026_11_17/ground_truth_audit/confirmed_results.md)
-adds five fresh source-labelled repositories and competitor reruns. Its
-three-label correction manifest exposes **three additional Skylos misses**
-(two JS files whose paths reach a no-op helper and an unreachable Python
-backend): TP290/FP1/FN10/TN468. The original manifest remains unchanged.
+The [source-reviewed audit and repairs](review_2026_11_17/ground_truth_audit/confirmed_results.md)
+include five source-labelled repositories and competitor reruns. The audit
+exposed three mistakes in old used labels: two JS files whose paths reach a
+no-op helper and an unreachable Python backend. These corrections now live in
+the canonical dead-code manifest; previous manifests and detailed comparison
+runs are [archived](review_2026_11_17/ARTIFACTS.md).
 Only 17/44 Vulture and 6/28 Knip legacy FP labels were confirmed directly;
 other mismatches include incorrect labels, retention policies and unresolved
 framework contracts. These columns are not independent tool precision.
 
-New concrete gaps are receiver-proven callback decorators (Pyee), bounded CI
-runner expressions (Blinker), Go package/build definition identity, excluded
-Go test methods, and missing JS variable extraction. The linked report gives
-safe/unsafe or used/unused counterexamples needed before suppressing warnings.
+The repaired issues include receiver-proven callback decorators (Pyee), bounded
+CI runner expressions (Blinker), Go package/build definition identity, excluded
+Go test methods and missing JS variable extraction. The final report documents
+the paired safe/unsafe or used/unused controls that guard these repairs.
 Exact-location security labels and nine new paired controls now work; most
 default security labels still use legacy rule-only matching. F1 arithmetic and
 Bandit pickle/eval matching are corrected. Real-repository security positives
 remain insufficient to measure recall.
 
-The [73-fact reviewed follow-up](review_2026_11_17/confirmed_results.md) now
+The [archived 73-fact follow-up](review_2026_11_17/ARTIFACTS.md)
 confirms two Slim callback false positives (fixed), two unused PHP imports
 (still detected), and one conditional tiny-http example security miss (retained).
 All labels were independently checked and frozen before scored reruns; the
@@ -39,10 +40,13 @@ cases retain their prior expectations after the PHP correction.
 
 Explicit Go SDK discovery restores the earlier seven default misses with the
 same binary, so they are an environment/completeness-reporting issue, not seven
-remaining detector defects. The two challenge suites retain their failures.
-The [complete inventory](review_2026_11_17/CORPUS_INVENTORY.md) and exact all-language
-[dead-code](review_2026_11_17/DEAD_CODE_GAP_EVIDENCE.md) / [security](review_2026_11_17/SECURITY_GAP_EVIDENCE.md)
-matrices give source, test and manifest evidence. Unsupported, unknown and
+remaining detector defects. Both challenge suites now pass; their earlier
+failures remain in the archive. The
+[corpus inventory](review_2026_11_17/CORPUS_INVENTORY.md) and
+[dead-code](review_2026_11_17/DEAD_CODE_GAP_EVIDENCE.md) /
+[security](review_2026_11_17/SECURITY_GAP_EVIDENCE.md) gap matrices give the
+source, test and manifest evidence; detailed historical runs are
+[archived](review_2026_11_17/ARTIFACTS.md). Unsupported, unknown and
 missing-extraction outcomes receive no pass credit.
 
 | Area | Evidence we have | Gap and next useful contract |
@@ -56,10 +60,10 @@ missing-extraction outcomes receive no pass credit.
 | AI verification evidence | 56 contracts, including JS/TS assertion diffs and nine explicitly unsupported language outcomes; incomplete results earn no accuracy or absence credit | Add independent multi-language change labels and deeper semantic API proofs. A successful unsupported-outcome contract is excluded from accuracy scoring |
 | Independent dead-code evidence | Existing pinned repository comparisons, a small Python fresh holdout and five known-used Rake methods | Extend independently labelled holdouts to C#, Kotlin, Rust, Dart, PHP and C++; broaden Ruby labels to unused symbols and frameworks. Keep holdout labels separate from tuning fixtures |
 | Framework evidence | Existing framework repository corpus checks count drift | Add per-symbol used/unused labels and negative controls; a lower finding count alone does not prove fewer false positives |
-| Existing challenge cases | Separate adversarial manifests preserve unresolved cases | The C# owner identity and three JS asset challenge cases now pass strict scoring and join the default suite. Kotlin fixed-format `printf` argv and the separately documented security misses remain unresolved; keep their labels fixed |
+| Existing challenge cases | Separate adversarial manifests retain their reviewed contracts; all 17 dead-code and nine security cases now pass | Extend the challenge patterns while preserving existing labels and explicit unknown outcomes; passing these contracts is not broad capability evidence |
 | Python random method capture | Constructor-instance aliases, copied methods and visible rebinding have native/direct regression controls | A method copied directly from an imported `random` module before that module alias is rebound can still be missed at a later credential sink. Its required warning remains a strict expected-failure contract; it is not labelled safe |
-| Go security callable identity | Default corpus now pairs SQL, SSRF, command, redirect, path, XSS, TLS and cookie behavior | Six reproduced misses remain in the optional security challenge: copied `http.Get`/client methods, `exec.Command`, `os.ReadFile`, a request type alias and TLS `InsecureSkipVerify` field assignment. These are detector gaps, not safe cases |
-| Dart sanitizer identity | Default command/path/SSRF pairs remain; direct unsafe calls still warn | A source-owned identity helper called `canonicalize` hides command and URL input. Two positive optional challenges preserve the miss; provider proof and sink-specific sanitizers need deeper work |
+| Go security callable identity | Default corpus pairs SQL, SSRF, command, redirect, path, XSS, TLS and cookie behavior; six captured-provider/request-alias/TLS challenge cases now pass | Broaden source and mutation controls beyond these matched patterns; their success does not establish general provider or taint coverage |
+| Dart sanitizer identity | Default command/path/SSRF pairs remain; local identity helpers named `canonicalize` no longer hide the two unsafe command/URL challenge cases | Broader provider proof and sink-specific sanitizer semantics still need deeper contracts; unknown helpers do not establish safety |
 | Local API verification | Python, TS/JS, Go and Java have supported checks | PHP, Rust, Dart, C#, C++, Kotlin, Shell, Ruby and Swift explicitly report unsupported verification; static scanning is a separate capability |
 | Dependency ecosystems | Existing Cargo, Composer, NuGet, Pub and RubyGems inventory/SCA | SwiftPM, CocoaPods and Hex remain unsupported; a lockfile inventory alone does not prove vulnerability coverage |
 | WebAssembly artifacts | No dedicated Wasm analyzer or labelled artifact corpus | Proposed next artifact corpus: host imports and granted capabilities against an explicit policy, runtime resource limits and malformed/unsupported modules; host configuration can make a module's outcome unknown |

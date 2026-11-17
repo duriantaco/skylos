@@ -1,0 +1,388 @@
+{
+  "schema_version": 1,
+  "scope": "Compact index of previously recorded development measurements; no new benchmark run implied.",
+  "source_commit": "ca17bb2e12248bc02893ead2dc957f19cb25baff",
+  "five_repository_measurement": {
+    "source": {
+      "path": "benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/fresh_final_registry/summary.json",
+      "sha256": "883fd9b94a108e2bc6e22cd2d4482cdd1dd75267ad751c085df226f89b524c05",
+      "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/fresh_final_registry/summary.json"
+    },
+    "phase": "development_remeasurement_after_source_was_used_for_fixes",
+    "total_counts": {
+      "retained_used_control": 146,
+      "unscored": 4,
+      "incomplete_label_location": 1,
+      "true_positive": 4,
+      "safe_property_policy_warning": 1,
+      "retained_safe_control": 2
+    },
+    "scan_configuration": {
+      "conf": 60,
+      "enable_danger": true,
+      "grep_verify": true,
+      "grep_cache": false,
+      "trace_file": false,
+      "enable_quality": false,
+      "enable_secrets": false,
+      "enable_sca": false,
+      "enable_ai_defects": false,
+      "enable_dependency_hallucinations": false
+    },
+    "go_engine_sha256": "3865e4716c344400c8b1d1e37fe8464d89de6084c70b16cbfd335e525dbdc907",
+    "analyzer_source_hashes_sha256": "220e8899b610a92dfd9becc27d29ba5cb7eb218e56f95000d466af86da951ea4",
+    "repositories": [
+      {
+        "id": "jfhbrook--pyee",
+        "revision": "be2025fc579a033326157dd41b5ad1f319d7d827",
+        "labels_sha256": "ca17aba6211170f0c95cf48a674b87a1a5d09a5db474d8dbd37350ce087e8ce6",
+        "source_integrity": "all_tracked_Git_blobs_and_frozen_hashes_unchanged",
+        "analysis_issues": [],
+        "raw_report_sha256": "56158a27747443aba111dfa6ce11e3e2de4b81b56562a7eed16fee3bb29757c8",
+        "counts": {
+          "retained_used_control": 74,
+          "unscored": 2,
+          "incomplete_label_location": 1
+        },
+        "warning_counts": {
+          "unused_functions": 1,
+          "unused_imports": 0,
+          "unused_classes": 0,
+          "unused_variables": 0,
+          "unused_parameters": 0,
+          "unused_files": 1,
+          "danger": 13
+        },
+        "unscored_or_policy_outcomes": [
+          {
+            "file": "pyee/cls.py",
+            "line": 36,
+            "symbol": "Handlers.reset",
+            "outcome": "unscored",
+            "issues": [
+              "Unknown or explicitly inapplicable source fact"
+            ]
+          },
+          {
+            "file": "pyee/cls.py",
+            "line": 33,
+            "symbol": "Handlers.__iter__",
+            "outcome": "unscored",
+            "issues": [
+              "Unknown or explicitly inapplicable source fact"
+            ]
+          },
+          {
+            "file": "tests/test_sync.py",
+            "line": 369,
+            "symbol": "test_if_serializable",
+            "outcome": "incomplete_label_location",
+            "issues": [
+              "Frozen location does not contain described deserialization call"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "pallets-eco--blinker",
+        "revision": "c3364059663df1ddce32799d6b1922af89a345f6",
+        "labels_sha256": "ca17aba6211170f0c95cf48a674b87a1a5d09a5db474d8dbd37350ce087e8ce6",
+        "source_integrity": "all_tracked_Git_blobs_and_frozen_hashes_unchanged",
+        "analysis_issues": [],
+        "raw_report_sha256": "ef34862761f3d740df132eb0d9400da6c1b5d55486aff4780070fcc8ed3adcdc",
+        "counts": {
+          "retained_used_control": 36,
+          "true_positive": 1,
+          "safe_property_policy_warning": 1,
+          "unscored": 1
+        },
+        "warning_counts": {
+          "unused_functions": 1,
+          "unused_imports": 0,
+          "unused_classes": 0,
+          "unused_variables": 0,
+          "unused_parameters": 0,
+          "unused_files": 0,
+          "danger": 7
+        },
+        "unscored_or_policy_outcomes": [
+          {
+            "file": "tests/test_symbol.py",
+            "line": 25,
+            "symbol": "test_pickled_symbols",
+            "outcome": "safe_property_policy_warning",
+            "issues": []
+          },
+          {
+            "file": "src/blinker/base.py",
+            "line": 420,
+            "symbol": "Signal._make_cleanup_sender",
+            "outcome": "unscored",
+            "issues": [
+              "No applicable native rule identity; absence earns no safe credit"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "lukeed--regexparam",
+        "revision": "d05da2631beb7c5620774dae207cb09c7cbf24cc",
+        "labels_sha256": "98aca5cf07106c98276d48b0575027f1c056dce2836c2545c495bb466ac20cf7",
+        "source_integrity": "all_tracked_Git_blobs_and_frozen_hashes_unchanged",
+        "analysis_issues": [],
+        "raw_report_sha256": "1f096d7b1addfb09481f0169735518de0aa036235cd430468c1946bef73c3667",
+        "counts": {
+          "retained_used_control": 8,
+          "retained_safe_control": 1
+        },
+        "warning_counts": {
+          "unused_functions": 0,
+          "unused_imports": 0,
+          "unused_classes": 0,
+          "unused_variables": 0,
+          "unused_parameters": 0,
+          "unused_files": 0,
+          "danger": 5
+        },
+        "unscored_or_policy_outcomes": []
+      },
+      {
+        "id": "lukeed--trouter",
+        "revision": "c5176edd1cd94b439a341c6b009f2f7b3d42d5a6",
+        "labels_sha256": "98aca5cf07106c98276d48b0575027f1c056dce2836c2545c495bb466ac20cf7",
+        "source_integrity": "all_tracked_Git_blobs_and_frozen_hashes_unchanged",
+        "analysis_issues": [],
+        "raw_report_sha256": "d0d8104d97a7d10a26636f0f1bbb503872ba4e1d8e7a51c3c67efddece912c63",
+        "counts": {
+          "retained_used_control": 10,
+          "retained_safe_control": 1
+        },
+        "warning_counts": {
+          "unused_functions": 0,
+          "unused_imports": 0,
+          "unused_classes": 0,
+          "unused_variables": 0,
+          "unused_parameters": 0,
+          "unused_files": 0,
+          "danger": 5
+        },
+        "unscored_or_policy_outcomes": []
+      },
+      {
+        "id": "goji--goji",
+        "revision": "490b001d03d16a116d7c44d95d216c69a1aae798",
+        "labels_sha256": "fdd9850dd09eb0f3f54c320132ac59fc5690d3575022591bebaf4a14e3b3828c",
+        "source_integrity": "all_tracked_Git_blobs_and_frozen_hashes_unchanged",
+        "analysis_issues": [],
+        "raw_report_sha256": "27bc7e533200ba64e60021133338553033f0c22b684a1d59000e97798036e0b7",
+        "counts": {
+          "retained_used_control": 18,
+          "true_positive": 3,
+          "unscored": 1
+        },
+        "warning_counts": {
+          "unused_functions": 3,
+          "unused_imports": 0,
+          "unused_classes": 0,
+          "unused_variables": 0,
+          "unused_parameters": 0,
+          "unused_files": 0
+        },
+        "unscored_or_policy_outcomes": [
+          {
+            "file": "pat/pat.go",
+            "line": 132,
+            "symbol": "patternRe",
+            "outcome": "unscored",
+            "issues": [
+              "Unknown or explicitly inapplicable source fact"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "integration_receipt": "fixes_2026_11_17/suites/MAIN_MERGE_VALIDATION.json",
+  "competitor_contracts": [
+    {
+      "tool": "vulture",
+      "version": "2.16",
+      "case_count": 27,
+      "counts": {
+        "true_positives": 50,
+        "false_positives": 43,
+        "false_negatives": 5,
+        "true_negatives": 54
+      },
+      "source": {
+        "path": "benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/competitors/dead_code-vulture-summary.json",
+        "sha256": "01b2d095ffaf7e157c0f87e24f1f771098b0f3e090e4114f56c98e512b20ec22",
+        "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/competitors/dead_code-vulture-summary.json"
+      },
+      "scope_note": "Same mapped regression contracts; unsupported diagnostic kinds and source-adjudicated caveats remain in confirmed_results.md."
+    },
+    {
+      "tool": "ruff",
+      "version": "0.17.5 F401/F841",
+      "case_count": 27,
+      "counts": {
+        "true_positives": 5,
+        "false_positives": 1,
+        "false_negatives": 50,
+        "true_negatives": 96
+      },
+      "source": {
+        "path": "benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/competitors/dead_code-ruff-summary.json",
+        "sha256": "ea60c2db93530afb84a07f6cad298ce7390afefc814ef48d771a7e85760ffaad",
+        "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/competitors/dead_code-ruff-summary.json"
+      },
+      "scope_note": "Same mapped regression contracts; unsupported diagnostic kinds and source-adjudicated caveats remain in confirmed_results.md."
+    },
+    {
+      "tool": "bandit",
+      "version": "1.9.4",
+      "case_count": 78,
+      "counts": {
+        "true_positives": 12,
+        "false_positives": 8,
+        "false_negatives": 31,
+        "true_negatives": 33
+      },
+      "source": {
+        "path": "benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/competitors/security-bandit-summary.json",
+        "sha256": "677e28505ee4a5226486805e2103abd9e24583679cb1a5a0824e513ccd137ba1",
+        "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/competitors/security-bandit-summary.json"
+      },
+      "scope_note": "Same mapped regression contracts; unsupported diagnostic kinds and source-adjudicated caveats remain in confirmed_results.md."
+    },
+    {
+      "tool": "knip",
+      "version": "6.45.1",
+      "counts": {
+        "TP": 64,
+        "FP": 26,
+        "FN": 1,
+        "TN": 34,
+        "unsupported": 50
+      },
+      "errors": [
+        "corpus-conditional-assets-direct",
+        "corpus-conditional-assets-plain",
+        "corpus-conditional-assets-jinja"
+      ],
+      "source": {
+        "path": "benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/knip_final/KNIP_EXISTING_DEFAULT_COMPARISON.json",
+        "sha256": "3538325682bda9825064ba0e91b349644b479e78ca68cf7185314db3b73cbf72",
+        "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/knip_final/KNIP_EXISTING_DEFAULT_COMPARISON.json"
+      },
+      "scope_note": "Normal plugins;125 eligible labels,50 unsupported labels,3 no-package-manifest failures. FP counts are contract mismatches."
+    },
+    {
+      "tool": "ESLint with eslint-plugin-security",
+      "versions": {
+        "eslint": "10.15.0",
+        "security": "4.2.1",
+        "parser": "8.73.0"
+      },
+      "counts": {
+        "TP": 2,
+        "TN": 7,
+        "FN": 7
+      },
+      "scope": "All 58 TS/JS security cases scanned. Only the 16 labels for eval and Node command-execution families are compared; unrelated rule families remain unsupported. Shell-enabled spawn/execFile variants are within Node command family, and absent detections count as misses in this family-level evaluation. The installed competitor rule source only matches dynamic child_process.exec; that narrower pattern scope explains those misses.",
+      "source": {
+        "path": "benchmarks/review_2026_11_17/ground_truth_audit/ESLINT_SECURITY_COMPARISON.json",
+        "sha256": "a2c1f638119d0c5f731e66b6b1cc9ed3025cc25d2938c04bf38502b968cdf27c",
+        "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/ESLINT_SECURITY_COMPARISON.json"
+      }
+    }
+  ],
+  "limitations": [
+    "These are selected contracts, not population precision or recall.",
+    "Contract mismatch FP columns are not independently established competitor false-positive counts.",
+    "Real-repository security recall is unmeasured: the five-repository cohort has no confirmed unsafe positives.",
+    "Unknown, unsupported, incomplete-label-location and safe-property policy outcomes are preserved and earn no safe-control credit."
+  ],
+  "cleanup_validation": {
+    "base_commit": "ca17bb2e12248bc02893ead2dc957f19cb25baff",
+    "production_code_tests_canonical_manifests_and_fixtures_unchanged": true,
+    "immutable_final_labels_and_review_receipts_unchanged": true,
+    "focused_tests": {
+      "passed": 114,
+      "files": [
+        "test/test_review_holdout_labels.py",
+        "test/test_reviewed_ground_truth_runner.py",
+        "test/test_reviewed_ground_truth_audit.py",
+        "test/test_development_remeasurement.py",
+        "test/test_php_private_callable_arguments.py",
+        "test/test_php_private_callable_audit.py"
+      ]
+    },
+    "archived_sealed_study_recovery": {
+      "targets": 5,
+      "facts": 73,
+      "complete_seal_chain_validated": true
+    },
+    "suites": {
+      "deadcode": {
+        "case_count": 151,
+        "pass_count": 151,
+        "failure_count": 0,
+        "analysis_status": "complete",
+        "counts": {
+          "true_positives": 300,
+          "false_positives": 0,
+          "false_negatives": 0,
+          "true_negatives": 469
+        },
+        "report_sha256": "f808f6022cd62aadaf7521b4f8b3376d6a2214c6fa4a3a6214c3dd153d372b96"
+      },
+      "security": {
+        "case_count": 277,
+        "pass_count": 277,
+        "failure_count": 0,
+        "analysis_status": "complete",
+        "counts": {
+          "true_positives": 150,
+          "false_positives": 0,
+          "false_negatives": 0,
+          "true_negatives": 140
+        },
+        "report_sha256": "12e1fd58575518ac87a2b75d09155a9c3cb382d8187066410ab66f13e0d1950e"
+      },
+      "corpus": {
+        "case_count": 84,
+        "pass_count": 84,
+        "failure_count": 0,
+        "analysis_status": "complete",
+        "report_sha256": "e01ce33d1e23eeffe35a82930dad2775c29a9a2f6a0e6950f125dd0abb24d036"
+      },
+      "dead-challenge": {
+        "case_count": 17,
+        "pass_count": 17,
+        "failure_count": 0,
+        "analysis_status": "complete",
+        "counts": {
+          "true_positives": 48,
+          "false_positives": 0,
+          "false_negatives": 0,
+          "true_negatives": 95
+        },
+        "report_sha256": "7744f3338a5dba8031c10b9c1ea94c4e7df99445f404796d5b2bedbeea3c919d"
+      },
+      "sec-challenge": {
+        "case_count": 9,
+        "pass_count": 9,
+        "failure_count": 0,
+        "analysis_status": "complete",
+        "counts": {
+          "true_positives": 8,
+          "false_positives": 0,
+          "false_negatives": 0,
+          "true_negatives": 1
+        },
+        "report_sha256": "fd054210fe3b18c9dea6ea53ae3a36e3647f7a208aa3414b26cab8efcb335370"
+      }
+    }
+  }
+}
