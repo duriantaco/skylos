@@ -1577,6 +1577,7 @@ def _finalize_report_upload(
             gate_message=quality_gate.get("message"),
             trust_notice=data.get("upload_trust_notice"),
             gate_context=gate_context(result, BASE_URL),
+            gate_reported=result.get("quality_gate_reported") is not False,
         )
     if replayed:
         result["replayed"] = True
@@ -1621,6 +1622,7 @@ def _print_report_upload_success(
     gate_message=None,
     trust_notice=None,
     gate_context=None,
+    gate_reported=True,
 ) -> None:
     if replayed:
         print(
@@ -1644,7 +1646,10 @@ def _print_report_upload_success(
         print(assessment_coverage_text(assessment_data))
     else:
         _print_report_grade(grade_data)
-    _print_quality_gate_result(passed, new_violations, plan, gate_message, gate_context)
+    if gate_reported:
+        _print_quality_gate_result(passed, new_violations, plan, gate_message, gate_context)
+    else:
+        print("No quality gate result was reported for this upload.")
     _print_upload_trust_notice(trust_notice)
     if gate_context is not None:
         print(f"\n🔗 View details: {gate_context.details_url}")
@@ -1703,6 +1708,14 @@ def _quality_gate_reasons(message) -> list[str]:
 def _print_quality_gate_result(
     passed: bool, new_violations: int, plan: str, message=None, context=None
 ) -> None:
+    from skylos.cloud.upload_status import TRUSTED_UPLOADS
+
+    if context is not None and context.upload_trust not in TRUSTED_UPLOADS:
+        print(context.status(passed))
+        if not passed:
+            for reason in _quality_gate_reasons(message):
+                print(f"   - {reason}")
+        return
     subject = "Quality gate"
     history = None
     if context is not None:

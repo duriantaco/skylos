@@ -159,7 +159,9 @@ def test_print_connected_result_plain_output_omits_raw_token(capsys):
     output = capsys.readouterr().out
     assert raw_token not in output
     assert "export SKYLOS_API_KEY=" not in output
-    assert "Token saved locally" in output
+    assert "Sign-in saved locally. No token to find or copy." in output
+    assert "Verified quality gates and checks" in output
+    assert "SKYLOS_API_KEY" not in output
 
 
 def test_print_connected_result_console_output_omits_raw_token():
@@ -185,7 +187,53 @@ def test_print_connected_result_console_output_omits_raw_token():
     output = "\n".join(console.messages)
     assert raw_token not in output
     assert "export SKYLOS_API_KEY=" not in output
-    assert "Token saved locally" in output
+    assert "Sign-in saved locally. No token to find or copy." in output
+    assert "Verified quality gates and checks" in output
+    assert "SKYLOS_API_KEY" not in output
+
+
+def test_cloud_login_cancel_does_not_fall_back_to_token_prompt(monkeypatch):
+    monkeypatch.setattr(loginmod, "get_current_connection", lambda **kwargs: None)
+    monkeypatch.setattr(loginmod, "browser_login", lambda **kwargs: None)
+    manual = Mock()
+    save = Mock()
+    monkeypatch.setattr(loginmod, "manual_token_fallback", manual)
+    monkeypatch.setattr(loginmod, "_save_login_result", save)
+
+    assert loginmod.run_login(allow_manual=False, continue_scan=True) is None
+
+    manual.assert_not_called()
+    save.assert_not_called()
+
+
+def test_new_project_login_cancel_does_not_keep_unrelated_current_project(monkeypatch):
+    current = Mock(
+        return_value=loginmod.LoginResult("OLD", "old", "Old", "Org", "free")
+    )
+    monkeypatch.setattr(loginmod, "get_current_connection", current)
+    monkeypatch.setattr(loginmod, "browser_login", lambda **kwargs: None)
+    save = Mock()
+    monkeypatch.setattr(loginmod, "_save_login_result", save)
+
+    assert loginmod.run_login(allow_manual=False, keep_existing=False) is None
+
+    current.assert_not_called()
+    save.assert_not_called()
+
+
+def test_cloud_login_success_says_scan_is_continuing(monkeypatch, capsys):
+    result = loginmod.LoginResult("TOK", "proj_1", "Project", "Org", "free")
+    monkeypatch.setattr(loginmod, "get_current_connection", lambda **kwargs: None)
+    monkeypatch.setattr(loginmod, "browser_login", lambda **kwargs: result)
+    save = Mock()
+    monkeypatch.setattr(loginmod, "_save_login_result", save)
+
+    assert loginmod.run_login(allow_manual=False, continue_scan=True) is result
+
+    save.assert_called_once_with(result, base_url="https://skylos.dev")
+    output = capsys.readouterr().out
+    assert "Continuing the scan and upload to this project." in output
+    assert "Run skylos cloud" not in output
 
 
 @pytest.mark.parametrize("use_console", [False, True])

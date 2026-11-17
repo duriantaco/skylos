@@ -242,12 +242,20 @@ def _public_upload_receipt(response: dict) -> dict:
     import re
 
     from skylos.api import BASE_URL
+    from skylos.cloud.upload_status import (
+        TRUSTED_UPLOADS,
+        upload_trust,
+        verification_receipt,
+    )
 
     receipt = {"status": "uploaded" if response.get("success") else "failed"}
     scan_id = response.get("scan_id")
     if isinstance(scan_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", scan_id):
         receipt["scan_id"] = scan_id
         receipt["url"] = f"{BASE_URL.rstrip('/')}/dashboard/scans/{scan_id}"
+    if response.get("success"):
+        receipt["upload_trust"] = upload_trust(response)
+        receipt["verification"] = verification_receipt(response, BASE_URL)
     gate = response.get("quality_gate")
     gate = gate if isinstance(gate, dict) else {}
     public_gate = {
@@ -263,6 +271,9 @@ def _public_upload_receipt(response: dict) -> dict:
         public_gate["passed"] = response["quality_gate_passed"]
     if public_gate:
         receipt["quality_gate"] = public_gate
+        receipt["quality_gate_status"] = (
+            "reported" if upload_trust(response) in TRUSTED_UPLOADS else "preview"
+        )
     if response.get("quality_gate_reported") is False:
         receipt["quality_gate_status"] = "not_reported"
     if response.get("success") and "previous_gate" in response:
@@ -1000,6 +1011,32 @@ def _run_scan_command(
     config_file = context.config_file
     report_scope_options = _report_scope_options(args, config)
     machine_output = _is_main_machine_output(args)
+    from skylos.commands.project_context import command_project_context
+
+    # Cloud credentials and git metadata belong to the scanned repository,
+    # even when an absolute target was passed from another working directory.
+    raw_upload_report = upload_report
+    raw_resolve_destination = _resolve_upload_destination
+    raw_print_destination = _print_upload_destination
+
+    def upload_report(*upload_args, **upload_kwargs):
+        with command_project_context(project_root):
+            return raw_upload_report(*upload_args, **upload_kwargs)
+
+    def _resolve_upload_destination(root):
+        with command_project_context(root):
+            return raw_resolve_destination(root)
+
+    def _print_upload_destination(output_console, root, destination):
+        with command_project_context(root):
+            return raw_print_destination(output_console, root, destination)
+
+    if args.upload and not getattr(args, "_cloud_command", False):
+        from skylos.commands.cloud_cmd import _ensure_connected
+
+        with command_project_context(project_root):
+            if not _ensure_connected(cli_module, project_root, machine_output=machine_output):
+                raise SystemExit(1)
     explicit_rich_upload = (
         getattr(args, "_explicit_upload_requested", False)
         and getattr(args, "format", "rich") == "rich"
@@ -1545,7 +1582,8 @@ def _run_scan_command(
             try:
                 from skylos.api import verify_report
 
-                vresp = verify_report(result, quiet=False)
+                with command_project_context(project_root):
+                    vresp = verify_report(result, quiet=False)
                 if vresp.get("success"):
                     console.print("[good]✓ Verified evidence attached[/good]")
                 else:
@@ -1584,7 +1622,8 @@ def _run_scan_command(
                 )
                 from skylos.api import get_git_root
 
-                git_root = get_git_root()
+                with command_project_context(project_root):
+                    git_root = get_git_root()
                 if not git_root:
                     raise RuntimeError("not a git repository")
                 prov_base = getattr(args, "provenance_base", None)
@@ -1856,7 +1895,9 @@ def _run_scan_command(
 
                 link_line = formatted_gate_line(upload_resp, _cloud_base_url)
                 if link_line is None:
-                    link_line = f"View Cloud gate and results: {receipt['url']}"
+                    from skylos.cloud.upload_status import verification_heading
+
+                    link_line = f"{verification_heading(upload_resp)} — Results: {receipt['url']}"
                 print(link_line, file=sys.stderr)
                 if formatted_destination is not None:
                     from skylos.cloud.upload_destination import (
@@ -2468,7 +2509,7 @@ def _run_scan_command(
         from skylos.ui.tui import run_tui
 
         run_tui(output_result, root_path=project_root)
-    elif not args.upload or getattr(args, "_cloud_command", False):
+    elif not args.upload or getattr(args, "_cloud_command", False) or args.output:
         display_result = output_result
         _cli_limit = getattr(args, "limit", None)
         advice_options = {}
@@ -2699,46 +2740,8 @@ def _run_scan_command(
             console.print(f"    └─ {escape(str(item['file']))}:{item['line']}")
 
     if args.upload and not args.json:
-        from skylos.api import get_project_token as _check_token
-
         upload_destination = _resolve_upload_destination(project_root)
-        has_link, using_env = _print_upload_destination(
-            console, project_root, upload_destination
-        )
-
-        if (not has_link) and (not using_env) and (not _check_token()):
-            if _is_tty() and not _is_ci():
-                console.print(
-                    "\n[bold yellow]No Skylos token found.[/bold yellow] "
-                    "Let's connect to Skylos Cloud.\n"
-                )
-                from skylos.cloud.login import run_login
-
-                login_result = run_login(console=console)
-                if login_result is None:
-                    console.print("[dim]Upload cancelled.[/dim]")
-                    raise SystemExit(0)
-            elif _is_ci():
-                console.print(
-                    "[warn]No GitHub Actions or GitLab CI identity and no SKYLOS_TOKEN, so nothing was uploaded.[/warn]"
-                )
-                console.print(
-                    "  On GitHub Actions: give the job `permissions: id-token: write` and "
-                    "upload from a push to the default branch (pull_request uploads are "
-                    "not accepted). Otherwise set SKYLOS_TOKEN to a CI project token."
-                )
-                console.print(
-                    "  See: https://github.com/duriantaco/skylos/blob/main/docs/first-gated-pr.md"
-                )
-                raise SystemExit(1)
-            else:
-                from skylos.cloud.login import manual_token_fallback
-
-                login_result = manual_token_fallback(console=console)
-                if login_result is None:
-                    raise SystemExit(1)
-            upload_destination = _resolve_upload_destination(project_root)
-            _print_upload_destination(console, project_root, upload_destination)
+        _print_upload_destination(console, project_root, upload_destination)
 
         if _refuse_mismatched_upload(console, upload_destination):
             raise SystemExit(1)
@@ -2751,7 +2754,8 @@ def _run_scan_command(
             result["done_receipt"] = done_receipt
         cloud_command = getattr(args, "_cloud_command", False)
         if cloud_command:
-            _print_cloud_upload_start(console)
+            with command_project_context(project_root):
+                _print_cloud_upload_start(console)
         upload_resp = upload_report(
             result,
             is_forced=args.force,

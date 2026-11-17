@@ -3696,8 +3696,10 @@ def _run_pre_analysis_steps(args, project_root, console):
     custom_rules_data = None
     try:
         from skylos.cloud.sync import load_custom_rules
+        from skylos.commands.project_context import command_project_context
 
-        loaded_rules = load_custom_rules()
+        with command_project_context(project_root):
+            loaded_rules = load_custom_rules()
         custom_rules_data = loaded_rules.get("rules") or []
         custom_rules_coverage = {
             key: value for key, value in loaded_rules.items() if key != "rules"

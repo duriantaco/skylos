@@ -11,6 +11,20 @@ from rich.console import Console
 import skylos.cli as cli
 
 
+@pytest.fixture(autouse=True)
+def connected_upload(monkeypatch):
+    # Exercise analysis/upload readiness after the explicit upload preflight.
+    # The real destination resolver stays active, with a local whoami response.
+    monkeypatch.setenv("SKYLOS_TOKEN", "test-upload-token")
+    monkeypatch.setattr(
+        "skylos.api.get_project_info",
+        lambda _token: {
+            "ok": True,
+            "project": {"id": "test-project", "name": "Test project", "repo_url": None},
+        },
+    )
+
+
 def test_rich_upload_explains_missing_ripgrep_and_still_uploads(tmp_path, monkeypatch):
     from skylos.core.grep_verify_common import _python_grep_secure_reads_available
 
