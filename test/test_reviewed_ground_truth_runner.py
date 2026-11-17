@@ -1,12 +1,13 @@
 """Mock-only gates and scoring: never scan a third-party checkout."""
-from contextlib import nullcontext
-from copy import deepcopy
 import importlib.util
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from test.fixture_paths import make_fixture_directory, write_fixture
 
 PATH = Path(__file__).resolve().parents[1] / 'benchmarks/review_2026_11_17/run_reviewed_ground_truth.py'
 spec = importlib.util.spec_from_file_location('reviewed_runner', PATH)
@@ -28,19 +29,36 @@ def fixture_seal(tmp_path, label=None, mutate_review=None, status='frozen_after_
     label = label or fact()
     original = {k:v for k,v in label.items() if k not in {'label_author','independent_reviewer','review_resolution'}}
     draft = dict(reviewer='author', repo='https://example.com/repo', revision='b'*40, rows=[original])
-    (tmp_path/'draft.json').write_text(json.dumps(draft))
+    write_fixture(
+        tmp_path,
+        (tmp_path / "draft.json").relative_to(tmp_path),
+        json.dumps(draft),
+        overwrite=True,
+    )
     review = dict(reviewer='reviewer', draft_file='draft.json', draft_sha256=runner.digest(tmp_path/'draft.json'),
         verdicts=[dict(id=label['id'], verdict='agree', reviewed_truth=label['truth'])])
     if mutate_review:
         mutate_review(review)
-    (tmp_path/'review.json').write_text(json.dumps(review))
+    write_fixture(
+        tmp_path,
+        (tmp_path / "review.json").relative_to(tmp_path),
+        json.dumps(review),
+        overwrite=True,
+    )
     manifest = dict(version=1, scan=dict(conf=60), targets=[dict(id='repo', repo='https://example.com/repo',
         checkout='repo', scan_root='.', ref='b'*40, source_files=[dict(path='src/app.py',sha256='a'*64)], facts=[label])])
-    (tmp_path/'manifest.json').write_text(json.dumps(manifest))
+    write_fixture(
+        tmp_path,
+        (tmp_path / "manifest.json").relative_to(tmp_path),
+        json.dumps(manifest),
+        overwrite=True,
+    )
     seal = dict(status=status, frozen_at='2026-01-01T00:00:00+00:00',
         manifest=dict(path='manifest.json',sha256=runner.digest(tmp_path/'manifest.json')),
         review_artifacts=[dict(path='review.json',sha256=runner.digest(tmp_path/'review.json'))])
-    path=tmp_path/'freeze.json';path.write_text(json.dumps(seal))
+    path=tmp_path/'freeze.json';write_fixture(
+        tmp_path, (path).relative_to(tmp_path), json.dumps(seal), overwrite=True
+    )
     return path
 
 
@@ -54,8 +72,18 @@ def test_invalid_review_refuses_before_engine_load(tmp_path, monkeypatch, proble
     if problem=='same-author':label['independent_reviewer']='author'
     freeze=fixture_seal(tmp_path,label,status='draft' if problem=='draft' else 'frozen_after_independent_review')
     if problem=='missing':freeze.unlink()
-    if problem=='altered-review':(tmp_path/'review.json').write_text('{}')
-    if problem=='changed-draft':(tmp_path/'draft.json').write_text('{}')
+    if problem=='altered-review':write_fixture(
+            tmp_path,
+            (tmp_path / "review.json").relative_to(tmp_path),
+            "{}",
+            overwrite=True,
+        )
+    if problem=='changed-draft':write_fixture(
+            tmp_path,
+            (tmp_path / "draft.json").relative_to(tmp_path),
+            "{}",
+            overwrite=True,
+        )
     if problem in {'empty-review','unresolved','wrong-truth','missing-verdict','wrong-reviewer'}:
         review=json.loads((tmp_path/'review.json').read_text())
         if problem=='empty-review':review={}
@@ -63,8 +91,15 @@ def test_invalid_review_refuses_before_engine_load(tmp_path, monkeypatch, proble
         elif problem=='wrong-truth':review['verdicts'][0]['reviewed_truth']='unused'
         elif problem=='missing-verdict':review['verdicts']=[]
         else:review['reviewer']='third-agent'
-        (tmp_path/'review.json').write_text(json.dumps(review))
-        seal=json.loads(freeze.read_text());seal['review_artifacts'][0]['sha256']=runner.digest(tmp_path/'review.json');freeze.write_text(json.dumps(seal))
+        write_fixture(
+            tmp_path,
+            (tmp_path / "review.json").relative_to(tmp_path),
+            json.dumps(review),
+            overwrite=True,
+        )
+        seal=json.loads(freeze.read_text());seal['review_artifacts'][0]['sha256']=runner.digest(tmp_path/'review.json');write_fixture(
+            tmp_path, (freeze).relative_to(tmp_path), json.dumps(seal), overwrite=True
+        )
     monkeypatch.setattr(runner,'load_engine',lambda _:pytest.fail('engine imported before valid freeze'))
     with pytest.raises((ValueError,FileNotFoundError,KeyError)):
         runner.execute(options(tmp_path,freeze))
@@ -90,14 +125,23 @@ def test_frozen_manifest_cannot_discard_review_semantics(tmp_path, change):
         review_path = tmp_path / 'review.json'
         review = json.loads(review_path.read_text())
         review['verdicts'].append(dict(id='omitted-positive', verdict='agree', reviewed_truth='unused'))
-        review_path.write_text(json.dumps(review))
+        write_fixture(
+            tmp_path,
+            (review_path).relative_to(tmp_path),
+            json.dumps(review),
+            overwrite=True,
+        )
     else:
         final['score_eligible'] = True
-    path.write_text(json.dumps(manifest))
+    write_fixture(
+        tmp_path, (path).relative_to(tmp_path), json.dumps(manifest), overwrite=True
+    )
     seal = json.loads(freeze.read_text())
     seal['manifest']['sha256'] = runner.digest(path)
     seal['review_artifacts'][0]['sha256'] = runner.digest(tmp_path / 'review.json')
-    freeze.write_text(json.dumps(seal))
+    write_fixture(
+        tmp_path, (freeze).relative_to(tmp_path), json.dumps(seal), overwrite=True
+    )
     with pytest.raises(ValueError):
         runner.load_frozen(freeze)
 
@@ -130,10 +174,14 @@ def test_reviewed_owner_and_derived_category_cannot_drift(tmp_path, change):
     manifest = json.loads(path.read_text())
     final = manifest['targets'][0]['facts'][0]
     final['owner_class' if change == 'owner' else 'finding_category'] = 'Other' if change == 'owner' else 'unused_variables'
-    path.write_text(json.dumps(manifest))
+    write_fixture(
+        tmp_path, (path).relative_to(tmp_path), json.dumps(manifest), overwrite=True
+    )
     seal = json.loads(freeze.read_text())
     seal['manifest']['sha256'] = runner.digest(path)
-    freeze.write_text(json.dumps(seal))
+    write_fixture(
+        tmp_path, (freeze).relative_to(tmp_path), json.dumps(seal), overwrite=True
+    )
     with pytest.raises(ValueError):
         runner.load_frozen(freeze)
 
@@ -198,8 +246,15 @@ def test_security_requires_rule_file_and_range_on_same_finding(tmp_path):
 
 def test_mock_run_withholds_labels_and_refuses_overwrite(tmp_path,monkeypatch):
     freeze=fixture_seal(tmp_path);args=options(tmp_path,freeze)
-    (args.analyzer_root/'skylos').mkdir(parents=True)
-    (args.analyzer_root/'skylos/__init__.py').write_text('# mock analyzer identity\n')
+    make_fixture_directory(
+        tmp_path, (args.analyzer_root / "skylos").relative_to(tmp_path)
+    )
+    write_fixture(
+        tmp_path,
+        (args.analyzer_root / "skylos/__init__.py").relative_to(tmp_path),
+        "# mock analyzer identity\n",
+        overwrite=True,
+    )
     scanned=[];verified=[]
     def analyze(path,**kwargs):
         scanned.append((path,kwargs))

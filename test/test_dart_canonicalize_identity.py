@@ -1,12 +1,14 @@
 import pytest
+
 from skylos.visitors.languages.dart import scan_dart_file
+from test.fixture_paths import write_fixture
 
 pytest.importorskip("tree_sitter_dart_orchard")
 
 
 def scan(tmp_path, source):
     path = tmp_path / "app.dart"
-    path.write_text(source)
+    write_fixture(tmp_path, (path).relative_to(tmp_path), source, overwrite=True)
     return {f["rule_id"] for f in scan_dart_file(str(path), {})[7]}
 
 

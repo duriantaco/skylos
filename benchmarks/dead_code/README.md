@@ -11,8 +11,10 @@ The benchmark framework lives in the Skylos repo because it must version with an
 
 The default manifest contains **151 cases and 769 symbol labels**: 300 unused and
 469 used. The November 17 source audit corrects three mistaken used labels: two
-unloaded JS files and an unreachable Python backend. The original manifest and
-source evidence remain preserved in the [repair report](../review_2026_11_17/ground_truth_audit/fixes_2026_11_17/FIXES_IMPLEMENTED.md).
+unloaded JS files and an unreachable Python backend. The
+[final results](../review_2026_11_17/ground_truth_audit/confirmed_results.md)
+record the repairs; historical manifests and detailed source reports are
+[archived](../review_2026_11_17/ARTIFACTS.md).
 Source-reviewed label completions are recorded in `source_label_review_2026_11_16.json`; those are
 corrections to regression coverage and do not establish independent accuracy.
 Twenty-two cases (92 labels: 47 unused, 45 used) are paired TS/JS liveness

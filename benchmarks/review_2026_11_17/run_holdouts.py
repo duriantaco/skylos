@@ -1,7 +1,10 @@
 """Replay frozen open-set labels without executing any target code.
 
+Historical inputs are in the verified archive described in ARTIFACTS.md.
 Example: python run_holdouts.py --checkout-root /path/to/checkouts
   --analyzer-root /path/to/skylos --output /path/to/new-results-directory
+  --manifest /path/to/extracted/blind_manifest.json
+  --scope-review /path/to/extracted/blind_scope_review.json
 Raw reports are kept alongside the summary; existing outputs are never replaced.
 """
 

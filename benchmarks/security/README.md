@@ -44,7 +44,8 @@ All fields must match the same finding. Paths are relative to the fixture root
 source lines. Legacy string labels still match rule presence anywhere in the
 case. Unmatched findings remain unreviewed; selected-label precision does not
 measure all emitted warnings. The new source-reviewed pairs and competitor
-audit are in [the November 17 review](../review_2026_11_17/ground_truth_audit/).
+audit are in the [final November 17 results](../review_2026_11_17/ground_truth_audit/confirmed_results.md);
+detailed historical runs are [archived](../review_2026_11_17/ARTIFACTS.md).
 
 ## Run
 
@@ -96,7 +97,7 @@ function/method values, an HTTP request alias and a TLS field assignment, plus
 two Dart regressions where a local identity helper named `canonicalize` must
 not hide unsafe input. The November 17 repairs detect all eight positives and
 retain the Kotlin quiet control. Their original labels are unchanged. See the
-[implementation and regression evidence](../review_2026_11_17/ground_truth_audit/fixes_2026_11_17/FIXES_IMPLEMENTED.md).
+[final results and regression evidence](../review_2026_11_17/ground_truth_audit/confirmed_results.md).
 
 ## Adding Cases
 

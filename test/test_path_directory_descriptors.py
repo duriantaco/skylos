@@ -3,6 +3,7 @@
 import pytest
 
 from skylos.rules.danger.danger import scan_ctx
+from test.fixture_paths import write_fixture
 
 
 def _scan(tmp_path, flags, *, before="", arguments="path", extra=""):
@@ -19,7 +20,7 @@ def _scan(tmp_path, flags, *, before="", arguments="path", extra=""):
         + "        os.close(descriptor)\n"
     )
     path = tmp_path / "app.py"
-    path.write_text(source, encoding="utf-8")
+    write_fixture(tmp_path, (path).relative_to(tmp_path), source, overwrite=True)
     return {row["rule_id"] for row in scan_ctx(tmp_path, [path])}
 
 
@@ -34,9 +35,7 @@ def _scan(tmp_path, flags, *, before="", arguments="path", extra=""):
         ),
     ],
 )
-def test_proven_directory_descriptor_has_no_file_read_finding(
-    tmp_path, flags, extra
-):
+def test_proven_directory_descriptor_has_no_file_read_finding(tmp_path, flags, extra):
     rules = _scan(tmp_path, flags, extra=extra)
 
     assert "SKY-D325" not in rules
@@ -83,8 +82,11 @@ def test_directory_spelling_does_not_prove_an_untampered_provider(
 
 
 def test_imported_provider_mutation_keeps_file_read_finding(tmp_path):
-    (tmp_path / "patch_flags.py").write_text(
-        "import os\nos.O_DIRECTORY = 0\n", encoding="utf-8"
+    write_fixture(
+        tmp_path,
+        (tmp_path / "patch_flags.py").relative_to(tmp_path),
+        "import os\nos.O_DIRECTORY = 0\n",
+        overwrite=True,
     )
 
     rules = _scan(
@@ -106,8 +108,11 @@ def test_shadowed_imported_flag_is_not_a_directory_guarantee(tmp_path):
 
 
 def test_project_provider_named_os_is_not_a_directory_guarantee(tmp_path):
-    (tmp_path / "os.py").write_text(
-        "O_RDONLY = 0\nO_DIRECTORY = 0\n", encoding="utf-8"
+    write_fixture(
+        tmp_path,
+        (tmp_path / "os.py").relative_to(tmp_path),
+        "O_RDONLY = 0\nO_DIRECTORY = 0\n",
+        overwrite=True,
     )
 
     rules = _scan(tmp_path, "os.O_RDONLY | os.O_DIRECTORY")

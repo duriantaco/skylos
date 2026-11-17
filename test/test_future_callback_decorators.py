@@ -10,10 +10,16 @@ import pytest
 from skylos.analyzer import analyze
 from skylos.deadcode.future_callbacks import find_future_callback_targets
 from skylos.deadcode.python_ast import ParsedPythonFile
+from test.fixture_paths import write_fixture
 
 
 def _scan(tmp_path, source):
-    (tmp_path / "app.py").write_text(textwrap.dedent(source))
+    write_fixture(
+        tmp_path,
+        (tmp_path / "app.py").relative_to(tmp_path),
+        textwrap.dedent(source),
+        overwrite=True,
+    )
     report = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
     return {item["simple_name"] for item in report.get("unused_functions", [])}
 

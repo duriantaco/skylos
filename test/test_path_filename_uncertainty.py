@@ -3,8 +3,10 @@
 import ast
 
 from skylos.rules.danger.danger_fs.path_flow import scan
-from skylos.rules.danger.danger_fs.path_provenance import resolve_helper_parameter_findings
-
+from skylos.rules.danger.danger_fs.path_provenance import (
+    resolve_helper_parameter_findings,
+)
+from test.fixture_paths import write_fixture
 
 FILTER = """def prepare(raw):
     cleaned = ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in raw)
@@ -16,26 +18,41 @@ foreign.register(background)
 """
 
 
-def _scan(tmp_path, *, helper=FILTER, opaque=OPAQUE, expression="prepare(payload.flightId)", extra=""):
+def _scan(
+    tmp_path,
+    *,
+    helper=FILTER,
+    opaque=OPAQUE,
+    expression="prepare(payload.flightId)",
+    extra="",
+):
     app = (
         "from pathlib import Path\nfrom fastapi import FastAPI\n"
         "from pydantic import BaseModel\nfrom storage import load, other\n"
         "app = FastAPI()\n"
         "class FlightRequest(BaseModel):\n    flightId: str\n"
-        + helper + opaque
+        + helper
+        + opaque
         + "@app.post('/read')\ndef view(payload: FlightRequest):\n"
-        + "    return load(Path('/srv') / " + expression + " / 'manifest.json')\n"
+        + "    return load(Path('/srv') / "
+        + expression
+        + " / 'manifest.json')\n"
         + extra
     )
     storage = (
         "def load(path):\n    return open(path).read()\n"
         "def other(path):\n    return open(path).read()\n"
     )
-    (tmp_path / "pyproject.toml").write_text('[project]\nname="uncertainty"\n')
+    write_fixture(
+        tmp_path,
+        (tmp_path / "pyproject.toml").relative_to(tmp_path),
+        '[project]\nname="uncertainty"\n',
+        overwrite=True,
+    )
     findings = []
     for name, text in {"app.py": app, "storage.py": storage}.items():
         path = tmp_path / name
-        path.write_text(text)
+        write_fixture(tmp_path, (path).relative_to(tmp_path), text, overwrite=True)
         scan(ast.parse(text), path, findings)
     suppressed = []
     kept = resolve_helper_parameter_findings(
@@ -49,7 +66,9 @@ def _assert_unverified_check(row):
     metadata = row["metadata"]
     assert metadata["path_source"] == "resolved_caller"
     assert metadata["path_provenance"]["status"] == "untrusted"
-    assert metadata["path_provenance"]["validation_uncertainty"]["status"] == "unverified"
+    assert (
+        metadata["path_provenance"]["validation_uncertainty"]["status"] == "unverified"
+    )
     assert metadata["security_evidence"]["source"]
     assert metadata["security_evidence"]["guards_seen"]
     assert "native-string/runtime assumptions" in row["message"]
@@ -65,12 +84,15 @@ def test_unverified_request_model_keeps_warning_and_acknowledges_filter(tmp_path
 
 
 def test_reject_on_change_check_is_not_reported_as_absent(tmp_path):
-    helper = FILTER + """def checked(raw):
+    helper = (
+        FILTER
+        + """def checked(raw):
     safe = prepare(raw)
     if safe != raw:
         raise ValueError('invalid')
     return raw
 """
+    )
     rows, _ = _scan(tmp_path, helper=helper, expression="checked(payload.flightId)")
     rows = [row for row in rows if row["symbol"] == "load"]
 
@@ -107,7 +129,8 @@ def test_proven_native_filter_remains_withheld(tmp_path):
 
     assert not [row for row in rows if row["symbol"] == "load"]
     assert any(
-        row["rule_id"] == "SKY-D215" and row["symbol"] == "load"
+        row["rule_id"] == "SKY-D215"
+        and row["symbol"] == "load"
         and row["metadata"]["path_provenance"]["status"] == "safe"
         for row in suppressed
     )
@@ -125,5 +148,8 @@ def unsafe(raw: str):
 
     by_symbol = {row["symbol"]: row for row in rows}
     _assert_unverified_check(by_symbol["load"])
-    assert "validation_uncertainty" not in by_symbol["other"]["metadata"]["path_provenance"]
+    assert (
+        "validation_uncertainty"
+        not in by_symbol["other"]["metadata"]["path_provenance"]
+    )
     assert "filename check body is present" not in by_symbol["other"]["message"]

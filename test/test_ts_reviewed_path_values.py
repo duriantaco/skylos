@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from skylos.analyzer import analyze
+from test.fixture_paths import make_fixture_directory, write_fixture
 
 
 def scan(root, *, provider="module.exports = { run() {} };", extra=""):
@@ -27,8 +28,8 @@ def scan(root, *, provider="module.exports = { run() {} };", extra=""):
     }
     for name, source in files.items():
         path = root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(source)
+        make_fixture_directory(root, (path.parent).relative_to(root))
+        write_fixture(root, (path).relative_to(root), source, overwrite=True)
     report = json.loads(analyze(str(root), conf=0, grep_verify=False))
     dead = {
         Path(f["file"]).relative_to(root).as_posix()
@@ -87,7 +88,9 @@ def test_unused_and_directly_ignored_path_values_do_not_create_file_edges(tmp_pa
         "opaque.js": 'console.log("opaque");',
     }
     for name, source in files.items():
-        (tmp_path / name).write_text(source)
+        write_fixture(
+            tmp_path, (tmp_path / name).relative_to(tmp_path), source, overwrite=True
+        )
     report = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
     dead = {Path(f["file"]).name for f in report.get("unused_files", [])}
     assert {"ignored.js", "unread.js"} <= dead
@@ -112,8 +115,11 @@ def test_opaque_dependencies_or_unstable_path_provider_preserve_targets(
 
 
 def test_other_module_can_replace_an_empty_export_through_its_own_alias(tmp_path):
-    (tmp_path / "patch.js").write_text(
-        'const shared = require("./lib/shared.js"); shared.run = externalLoader;'
+    write_fixture(
+        tmp_path,
+        (tmp_path / "patch.js").relative_to(tmp_path),
+        'const shared = require("./lib/shared.js"); shared.run = externalLoader;',
+        overwrite=True,
     )
     _, dead = scan(tmp_path, extra='require("./patch.js");')
     assert "tools/input.ts" not in dead
@@ -129,16 +135,32 @@ def test_other_module_can_replace_an_empty_export_through_its_own_alias(tmp_path
     ],
 )
 def test_local_empty_consumer_also_requires_stable_dependency_effects(tmp_path, patch):
-    (tmp_path / "package.json").write_text('{"private":true,"main":"index.js"}')
-    (tmp_path / "index.js").write_text(
+    write_fixture(
+        tmp_path,
+        (tmp_path / "package.json").relative_to(tmp_path),
+        '{"private":true,"main":"index.js"}',
+        overwrite=True,
+    )
+    write_fixture(
+        tmp_path,
+        (tmp_path / "index.js").relative_to(tmp_path),
         patch + '\nconst path = require("node:path");\n'
         "function discard(value) {}\n"
-        'discard(path.join(__dirname, "feature.js"));\n'
+        'discard(path.join(__dirname, "feature.js"));\n',
+        overwrite=True,
     )
-    (tmp_path / "patch-path.js").write_text(
-        'require("node:path").join = unknownLoader;'
+    write_fixture(
+        tmp_path,
+        (tmp_path / "patch-path.js").relative_to(tmp_path),
+        'require("node:path").join = unknownLoader;',
+        overwrite=True,
     )
-    (tmp_path / "feature.js").write_text('console.log("feature");')
+    write_fixture(
+        tmp_path,
+        (tmp_path / "feature.js").relative_to(tmp_path),
+        'console.log("feature");',
+        overwrite=True,
+    )
     report = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
     dead = {Path(f["file"]).name for f in report.get("unused_files", [])}
     assert "feature.js" not in dead

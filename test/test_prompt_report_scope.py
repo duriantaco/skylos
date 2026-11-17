@@ -5,15 +5,16 @@ import base64
 import pytest
 
 from skylos.security.injection_scanner import scan_file
+from test.fixture_paths import make_fixture_directory, write_fixture
 
 
 def _scan(tmp_path, text, filename="observer.py"):
     path = tmp_path / filename
-    path.parent.mkdir(parents=True, exist_ok=True)
+    make_fixture_directory(tmp_path, (path.parent).relative_to(tmp_path))
     content = text
     if path.suffix == ".py":
         content = 'SYSTEM_PROMPT = """' + text + '"""\n'
-    path.write_text(content, encoding="utf-8")
+    write_fixture(tmp_path, (path).relative_to(tmp_path), content, overwrite=True)
     return scan_file(path, scan_path=filename)
 
 

@@ -505,9 +505,11 @@ class TestMainFunction:
             "analysis_summary": {"total_files": 2, "excluded_folders": []},
         }
 
-    def test_main_json_output(self, mock_skylos_result, disconnected_custom_rules):
+    def test_main_json_output(
+        self, mock_skylos_result, disconnected_custom_rules, tmp_path
+    ):
         """testing main function with JSON output"""
-        test_args = ["cli.py", "test_path", "--json", "--no-provenance"]
+        test_args = ["cli.py", str(tmp_path), "--json", "--no-provenance"]
 
         with (
             patch("sys.argv", test_args),
@@ -2429,7 +2431,10 @@ def test_main_json_ai_security_categories_match_finding_arrays(monkeypatch, tmp_
     assert "security" not in output["ai_security_stats"]["by_category"]
 
 
-def test_main_upload_gate_failed_exits_when_not_forced(monkeypatch):
+def test_main_upload_gate_failed_exits_when_not_forced(
+    monkeypatch, disconnected_custom_rules
+):
+    monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [],
@@ -2442,7 +2447,9 @@ def test_main_upload_gate_failed_exits_when_not_forced(monkeypatch):
         "secrets": [],
     }
 
-    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--upload", "--strict"])
+    monkeypatch.setattr(
+        cli.sys, "argv", ["skylos", ".", "--upload", "--strict", "--no-provenance"]
+    )
 
     fake_logger = Mock()
     fake_logger.console = Mock()
@@ -2462,15 +2469,20 @@ def test_main_upload_gate_failed_exits_when_not_forced(monkeypatch):
                 "scan_id": "scan123",
                 "quality_gate_passed": False,
             },
-        ),
+        ) as upload,
     ):
         with pytest.raises(SystemExit) as e:
             cli.main()
 
         assert e.value.code == 1
+    upload.assert_called_once()
+    assert upload.call_args.kwargs["is_forced"] is False
 
 
-def test_explicit_rich_upload_shows_analysis_stages(monkeypatch):
+def test_explicit_rich_upload_shows_analysis_stages(
+    monkeypatch, disconnected_custom_rules
+):
+    monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [],
@@ -2522,7 +2534,9 @@ def test_explicit_rich_upload_shows_analysis_stages(monkeypatch):
     [(False, (True, False)), (True, (False, True))],
     ids=["free-workspace", "ci-upload"],
 )
-def test_upload_with_zero_credits_still_uploads(monkeypatch, in_ci, destination):
+def test_upload_with_zero_credits_still_uploads(
+    monkeypatch, in_ci, destination, disconnected_custom_rules
+):
     """Uploads never cost credits, so a 0-credit workspace still uploads."""
     result = {
         "analysis_summary": {"total_files": 1},
@@ -2535,6 +2549,7 @@ def test_upload_with_zero_credits_still_uploads(monkeypatch, in_ci, destination)
         "quality": [],
         "secrets": [],
     }
+    monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
     monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--upload", "--no-provenance"])
     fake_logger = Mock()
     fake_logger.console = Mock()
@@ -2571,8 +2586,9 @@ def test_upload_with_zero_credits_still_uploads(monkeypatch, in_ci, destination)
 
 
 def test_explicit_rich_upload_interrupted_during_analysis_reports_no_upload(
-    monkeypatch,
+    monkeypatch, disconnected_custom_rules
 ):
+    monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
     monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--upload"])
     fake_logger = Mock()
     fake_logger.console = Mock()
@@ -2597,7 +2613,10 @@ def test_explicit_rich_upload_interrupted_during_analysis_reports_no_upload(
     upload.assert_not_called()
 
 
-def test_explicit_rich_upload_reports_incomplete_scan_before_exit(monkeypatch):
+def test_explicit_rich_upload_reports_incomplete_scan_before_exit(
+    monkeypatch, disconnected_custom_rules
+):
+    monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
     result = {
         "analysis_summary": {
             "total_files": 1,
@@ -2641,6 +2660,7 @@ def test_explicit_rich_upload_reports_incomplete_scan_before_exit(monkeypatch):
 def test_main_json_upload_calls_upload_report_quiet(
     monkeypatch, tmp_path, disconnected_custom_rules
 ):
+    monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [],
@@ -2719,7 +2739,8 @@ def test_main_json_upload_calls_upload_report_quiet(
         for call in mock_print.call_args_list
         if call.kwargs.get("file") is sys.stderr
     ] == [
-        f"View Cloud gate and results: {BASE_URL.rstrip('/')}/dashboard/scans/fixture-scan"
+        "Scan uploaded — verification status not reported · policy preview: pass — "
+        f"Results: {BASE_URL.rstrip('/')}/dashboard/scans/fixture-scan"
     ]
     printed_payload = json.loads(stdout_calls[0].args[0])
     assert (
@@ -2730,11 +2751,20 @@ def test_main_json_upload_calls_upload_report_quiet(
     assert printed_payload["quality"] == []
     assert printed_payload["secrets"] == []
     assert "provenance_summary" in printed_payload
+    # A passing policy response without upload identity is only a preview.
     assert printed_payload["upload"] == {
         "status": "uploaded",
         "scan_id": "fixture-scan",
         "url": f"{BASE_URL.rstrip('/')}/dashboard/scans/fixture-scan",
+        "upload_trust": "unknown",
+        "verification": {
+            "status": "unknown",
+            "message": (
+                "Your scan is saved. Cloud did not report its upload verification status."
+            ),
+        },
         "quality_gate": {"passed": True},
+        "quality_gate_status": "preview",
     }
 
 
@@ -3490,6 +3520,7 @@ def test_concise_circular_dependency_without_location_remains_visible():
 def test_main_json_incomplete_analysis_exits_two_after_output(
     monkeypatch, disconnected_custom_rules
 ):
+    monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
     result = {
         "analysis_summary": {
             "total_files": 1,
@@ -3571,6 +3602,7 @@ def test_incomplete_language_summary_uses_operational_exit_code():
 def test_main_json_sca_operational_status_controls_exit_and_upload(
     monkeypatch, receipt, expected_exit, gate_args, disconnected_custom_rules
 ):
+    monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
     result = {
         "analysis_summary": {
             "total_files": 1,
@@ -3624,7 +3656,15 @@ def test_main_json_sca_operational_status_controls_exit_and_upload(
             "status": "uploaded",
             "scan_id": "fixture-sca-scan",
             "url": f"{BASE_URL.rstrip('/')}/dashboard/scans/fixture-sca-scan",
+            "upload_trust": "unknown",
+            "verification": {
+                "status": "unknown",
+                "message": (
+                    "Your scan is saved. Cloud did not report its upload verification status."
+                ),
+            },
             "quality_gate": {"passed": True},
+            "quality_gate_status": "preview",
         }
     )
     stdout_calls = [
@@ -3641,7 +3681,8 @@ def test_main_json_sca_operational_status_controls_exit_and_upload(
         []
         if expected_exit
         else [
-            f"View Cloud gate and results: {BASE_URL.rstrip('/')}/dashboard/scans/fixture-sca-scan"
+            "Scan uploaded — verification status not reported · policy preview: pass — "
+            f"Results: {BASE_URL.rstrip('/')}/dashboard/scans/fixture-sca-scan"
         ]
     )
     printed = json.loads(stdout_calls[0].args[0])
@@ -3798,7 +3839,10 @@ def test_main_llm_output_is_quiet_and_gate_failure_exits_nonzero(monkeypatch, ll
     progress.assert_not_called()
 
 
-def test_main_upload_gate_failed_does_not_exit_when_forced(monkeypatch):
+def test_main_upload_gate_failed_does_not_exit_when_forced(
+    monkeypatch, disconnected_custom_rules
+):
+    monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [],
@@ -3811,7 +3855,11 @@ def test_main_upload_gate_failed_does_not_exit_when_forced(monkeypatch):
         "secrets": [],
     }
 
-    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--force"])
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["skylos", ".", "--upload", "--strict", "--force", "--no-provenance"],
+    )
 
     fake_logger = Mock()
     fake_logger.console = Mock()
@@ -3830,12 +3878,14 @@ def test_main_upload_gate_failed_does_not_exit_when_forced(monkeypatch):
                 "scan_id": "scan123",
                 "quality_gate": {"passed": False, "message": "Too many issues"},
             },
-        ),
+        ) as upload,
         patch("skylos.cli.sys.exit") as sx,
     ):
         cli.main()
 
     sx.assert_not_called()
+    upload.assert_called_once()
+    assert upload.call_args.kwargs["is_forced"] is True
 
 
 def test_main_command_exec_success_exits_zero(monkeypatch):

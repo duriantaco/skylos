@@ -12,6 +12,7 @@ from skylos.cloud import login, sync
 from skylos.cloud.upload_destination import resolve_upload_destination
 from skylos.commands import cloud_cmd, scan_cmd
 from skylos.reporting import provenance
+from test.fixture_paths import make_fixture_directory, write_fixture
 
 
 def _git(root, *args):
@@ -24,9 +25,14 @@ def _git(root, *args):
 
 
 def _fixture_repo(root):
-    root.mkdir()
+    make_fixture_directory(root.parent, (root).relative_to(root.parent))
     _git(root, "init", "-q", "-b", "main")
-    (root / "app.py").write_text("VALUE = 1\n")
+    write_fixture(
+        root.parent,
+        (root / "app.py").relative_to(root.parent),
+        "VALUE = 1\n",
+        overwrite=True,
+    )
     _git(root, "add", "app.py")
     _git(
         root,
@@ -59,10 +65,17 @@ def scan_repos(monkeypatch, tmp_path):
     target = tmp_path / "target"
     for root in (caller, target):
         _fixture_repo(root)
-        (root / ".skylos").mkdir()
-        (root / ".skylos/link.json").write_text(json.dumps({"project_id": root.name}))
+        make_fixture_directory(tmp_path, (root / ".skylos").relative_to(tmp_path))
+        write_fixture(
+            tmp_path,
+            (root / ".skylos/link.json").relative_to(tmp_path),
+            json.dumps({"project_id": root.name}),
+            overwrite=True,
+        )
     credentials = tmp_path / "credentials.json"
-    credentials.write_text(
+    write_fixture(
+        tmp_path,
+        (credentials).relative_to(tmp_path),
         json.dumps(
             {
                 "token": "caller-token",
@@ -72,7 +85,8 @@ def scan_repos(monkeypatch, tmp_path):
                     "target": {"token": "target-token"},
                 },
             }
-        )
+        ),
+        overwrite=True,
     )
     monkeypatch.chdir(caller)
     monkeypatch.delenv("SKYLOS_TOKEN", raising=False)
@@ -343,14 +357,21 @@ def test_main_json_upload_rejects_unrelated_saved_token_before_analysis(
     repos = scan_repos
     credentials = json.loads(repos.credentials.read_text())
     del credentials["tokens"]["target"]
-    repos.credentials.write_text(json.dumps(credentials))
+    write_fixture(
+        repos.credentials.parent,
+        (repos.credentials).relative_to(repos.credentials.parent),
+        json.dumps(credentials),
+        overwrite=True,
+    )
     if not target_linked:
         (repos.target / ".skylos/link.json").unlink()
     # A TTY must not make a machine-output invocation open browser sign-in.
     monkeypatch.setattr(cli, "_is_tty", lambda: True)
 
     def unexpected_work(*_args, **_kwargs):
-        pytest.fail("missing target credentials must stop before login, analysis or upload")
+        pytest.fail(
+            "missing target credentials must stop before login, analysis or upload"
+        )
 
     monkeypatch.setattr(login, "run_login", unexpected_work)
     monkeypatch.setattr(login, "manual_token_fallback", unexpected_work)

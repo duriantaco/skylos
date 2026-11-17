@@ -1605,7 +1605,7 @@ def test_cli_guardrail_static_json_output_passthrough(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sys,
         "argv",
-        ["skylos", "test_path", "--json", "--no-provenance"],
+        ["skylos", str(tmp_path), "--json", "--no-provenance"],
     )
 
     with (

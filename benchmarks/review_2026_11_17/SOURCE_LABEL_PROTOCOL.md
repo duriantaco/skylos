@@ -61,7 +61,7 @@ No eligible positive labels means recall is unmeasured, never 100%.
 ## Executed freeze
 
 The independent reviewer checked all 73 normalized facts and the scoring
-implementation; 36 mock tests passed. The [freeze](reviewed_ground_truth_freeze.json)
+implementation; 36 mock tests passed. The [freeze](https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/reviewed_ground_truth_freeze.json)
 was written at `2026-11-17T00:34:46.437693+00:00`, before the new scan starts
 recorded in the result summaries. Original drafts and reviewer artifacts are
 hash-bound; none was changed after scanning. Slim/Petclinic's final recorded
@@ -71,5 +71,5 @@ implemented the scoring runner.
 An initial execution lacked a discoverable Go SDK. Those outputs are retained
 as `reviewed_before/` and `reviewed_after/`. The explicit-SDK reruns use the same
 frozen labels and runner, with environment provenance in
-[reviewed_sdk_environment.json](reviewed_sdk_environment.json). Environment
+[reviewed_sdk_environment.json](https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/reviewed_sdk_environment.json). Environment
 restoration is not credited as an analyzer improvement.

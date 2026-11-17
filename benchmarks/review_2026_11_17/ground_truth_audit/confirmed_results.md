@@ -121,20 +121,36 @@ warnings and remaining conditional labels are documented in the source audit.
 the full PHP suite (611), Python shared checks (258), TS checks (166) and
 independent semantic/resource controls also pass; these sets overlap and
 are not summed as unique tests. The source-frozen five-repository receipt is
-`fixes_2026_11_17/fresh_final_registry/summary.json`.
+[the compact result index](RESULTS.json); the full original receipt is archived.
+
+## Artifact cleanup validation
+
+The artifact-only cleanup leaves production code, tests, canonical manifests,
+fixtures and final source-label bytes unchanged from `ca17bb2e`. All five
+suites above were rerun and still pass; 114 focused runner/PHP tests also pass.
+The [compact result index](RESULTS.json) records this validation and report hashes.
 
 ## Corpus, evidence and reproduction
 
 The [complete inventory](../CORPUS_INVENTORY.md) lists every corpus case,
 manifest, framework/language stratum, recovered Desktop target and historical
-cohort. The [original source audit](confirmed_results.before_repairs.md),
-[implementation details](fixes_2026_11_17/FIXES_IMPLEMENTED.md), per-agent repair
-reports, frozen SOURCE_LABELS files and raw receipts preserve provenance.
+cohort. The [dead-code](../DEAD_CODE_GAP_EVIDENCE.md) and
+[security](../SECURITY_GAP_EVIDENCE.md) matrices preserve the scoped gap review.
 
-The repair suite receipts are in fixes_2026_11_17/suites; source/peer reviews and
-paired regression results accompany each language. Large repeated scans and
-cloned targets are retained in the Desktop archive and excluded from Git;
-versioned summaries, source hashes, tests, manifests and reports remain in Git.
-See [artifact policy](../ARTIFACTS.md). Coverage gaps outside these supported
-contracts remain listed in the inventory; no broad framework/name exclusions,
-confidence increase, LLM verification or execution of third-party applications/tests/package scripts was used.
+The immutable `SOURCE_LABELS_*` files and independent review receipts remain
+versioned. [Label provenance](GROUND_TRUTH_PROVENANCE.json) maps their accepted
+drafts to the complete archive. [Source corrections](SOURCE_CORRECTION_SUMMARY.json)
+preserve selected Python verdicts and the unscored location error. The retained
+Python legacy, Knip and security adjudications preserve competitor scope limits.
+
+The [result index](RESULTS.json) retains final counts, pinned revisions, source
+hashes and links to original measurements. The integration receipt above and
+canonical regression fixtures remain in Git. Full scans, duplicated manifests,
+intermediate runs and superseded reports are preserved in the verified
+[artifact archive](../ARTIFACTS.md), with a portable source-commit recovery path.
+The historical harness datasets must be restored from that complete archive
+before replaying them; their unit tests create their own sealed inputs.
+
+Coverage gaps outside the selected contracts remain listed in the inventory.
+No broad framework/name exclusions, confidence increase, LLM verification or
+execution of third-party applications, tests or package scripts was used.
