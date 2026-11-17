@@ -56,6 +56,35 @@ _CLAUSE_START = (
 _SKIP_DIRECTIVE_RE = re.compile(
     r"skip\s+(security|analysis|review|scanning|checks?)\b", re.I
 )
+_REPORT_SUPPRESSION_RE = re.compile(
+    r"do\s+not\s+(flag|report|detect|scan|warn|alert)\b", re.I
+)
+_REVIEW_REPORT_OBJECT_RE = re.compile(
+    r"\b(?:security|vulnerabilit(?:y|ies)|bugs?|defects?|flaws?|findings?|issues?"
+    r"|risks?|warnings?|alerts?|checks?|reviews?|reviewers?|audits?|scanners?"
+    r"|analysis|scanning|SAST|DAST|code|source|files?|commits?|tests?"
+    r"|docstrings?|validation|SQL|injections?|traversal|symlinks?|credentials?"
+    r"|secrets?|passwords?|leaks?|CWE(?:-\d+)?|CVE(?:-\d+-\d+)?"
+    r"|XSS|SSRF|CSRF|XXE|RCE|IDOR|LFI|RFI|DoS|DDoS|CORS|PII"
+    r"|authentication|authorization|access\s+control|privilege\s+escalation"
+    r"|(?:buffer|heap|stack|integer)\s+(?:overflows?|underflows?)"
+    r"|memory\s+corruption|out[- ]of[- ]bounds|use[- ]after[- ]free|double[- ]free"
+    r"|prototype\s+pollution|race\s+conditions?|data\s+races?|deadlocks?"
+    r"|(?:command|code|arbitrary)\s+execution"
+    r"|(?:builtins\s*\.\s*)?(?:eval|exec)|subprocess|Popen"
+    r"|os\s*\.\s*(?:system|popen|exec\w*)"
+    r"|(?:pickle|marshal)\s*\.\s*loads?|yaml\s*\.\s*(?:unsafe_)?load)\b",
+    re.I,
+)
+_REVIEW_ROLE_CONTEXT_RE = re.compile(
+    r"\b(?:reviewers?|auditors?|linters?|scanners?"
+    r"|(?:security|code|source|pull\s+request)\s+(?:review|audit|analysis|scan))\b",
+    re.I,
+)
+# A sentence period ends the subject; a dot inside a qualified API does not.
+_REPORT_CLAUSE_BOUNDARY_RE = re.compile(
+    r"(?<!\w)\.|\.(?!\w)|[!?;]|\b(?:but|however|instead)\b", re.I
+)
 _COMPOUND_CHECK_SUBJECT_RE = re.compile(
     r"(?:^|[.!?\n\"'])[ \t]*(?:[-*+][ \t]+)?"
     r"(?:the|a|an|this|that|these|those)[ \t]+"
@@ -116,7 +145,7 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"(?:^|\.\s+)act\s+as\s+(a|an|the)\b", re.I), "HIGH"),
     (re.compile(r"pretend\s+(you\s+are|to\s+be)\b", re.I), "HIGH"),
     (_NEW_INSTRUCTION_RE, "HIGH"),
-    (re.compile(r"do\s+not\s+(flag|report|detect|scan|warn|alert)\b", re.I), "MEDIUM"),
+    (_REPORT_SUPPRESSION_RE, "MEDIUM"),
     (_SKIP_DIRECTIVE_RE, "MEDIUM"),
     (re.compile(r"approve\s+all\s+(changes?|code|commits?)\b", re.I), "MEDIUM"),
     (re.compile(r"mark\s+(this|all|everything)\s+(as\s+)?safe\b", re.I), "MEDIUM"),
@@ -202,7 +231,11 @@ def _names_a_control(text: str, match: re.Match) -> bool:
 
 
 def _pattern_matches(
-    pattern: re.Pattern, text: str, *, placeholder_description: bool = False
+    pattern: re.Pattern,
+    text: str,
+    *,
+    placeholder_description: bool = False,
+    reviewer_context: bool = False,
 ):
     """Keep individual directives, excluding narrow non-directive shapes.
 
@@ -214,6 +247,30 @@ def _pattern_matches(
             continue
         if _names_a_control(text, match):
             continue
+        if pattern is _REPORT_SUPPRESSION_RE and not reviewer_context:
+            # A domain instruction such as limiting image classifications is
+            # not a request to suppress a code review. Require an applicable
+            # object in this clause, or an explicit reviewer/scanner context.
+            # Each match is checked independently: a benign sentence cannot
+            # exempt a later security directive in the same prompt.
+            tail = text[match.end() : match.end() + 512]
+            boundary = _REPORT_CLAUSE_BOUNDARY_RE.search(tail)
+            subject = _REVIEW_REPORT_OBJECT_RE.search(tail)
+            has_subject = subject is not None and (
+                boundary is None or subject.start() < boundary.start()
+            )
+            # A dotted API name can itself span punctuation (``os . system``).
+            # A later sentence's security vocabulary cannot supply the object.
+            truncated_clause = (
+                match.end() + len(tail) < len(text) and boundary is None
+            )
+            prefix = text[max(0, match.start() - 192) : match.start()]
+            if not (
+                has_subject
+                or _REVIEW_ROLE_CONTEXT_RE.search(prefix)
+                or truncated_clause
+            ):
+                continue
         if pattern is _SKIP_DIRECTIVE_RE:
             predicate = _CHECK_VERIFICATION_RE.get(match.group(1).lower())
             if (
@@ -478,6 +535,7 @@ def _instruction_pattern_evidence(
     primary: re.Pattern,
     *,
     placeholder_description: bool = False,
+    reviewer_context: bool = False,
 ) -> dict:
     """Describe the matched instructions without treating their context as safe.
 
@@ -489,7 +547,10 @@ def _instruction_pattern_evidence(
     patterns = sorted(_PATTERNS, key=lambda item: item[0] is not primary)
     for pattern, severity in patterns:
         for match in _pattern_matches(
-            pattern, text, placeholder_description=placeholder_description
+            pattern,
+            text,
+            placeholder_description=placeholder_description,
+            reviewer_context=reviewer_context,
         ):
             if len(signals) >= MAX_PATTERN_EVIDENCE:
                 complete = False
@@ -551,6 +612,7 @@ def scan_file(
     is_reviewer_config = not is_agent_instruction and is_ai_reviewer_config_path(
         display_path
     )
+    reviewer_context = is_agent_instruction or is_reviewer_config
     if not is_scannable_path(filepath, display_path):
         return []
 
@@ -702,6 +764,7 @@ def scan_file(
                     pattern,
                     normalized,
                     placeholder_description=placeholder_description,
+                    reviewer_context=reviewer_context,
                 ),
                 None,
             )
@@ -717,6 +780,7 @@ def scan_file(
                         pattern,
                         normalized,
                         placeholder_description=placeholder_description,
+                        reviewer_context=reviewer_context,
                     ),
                     None,
                 )
@@ -755,6 +819,7 @@ def scan_file(
                     line_no,
                     pattern,
                     placeholder_description=placeholder_description,
+                    reviewer_context=reviewer_context,
                 )
                 matched_context = pattern_evidence["signals"][0]["context"]
                 snippet = matched_context[:100]
@@ -786,7 +851,12 @@ def scan_file(
     for decoded_text, line_no in decoded_blobs:
         normalized = normalize(decoded_text)
         for pattern, base_severity in _PATTERNS:
-            if next(_pattern_matches(pattern, normalized), None) is not None:
+            if next(
+                _pattern_matches(
+                    pattern, normalized, reviewer_context=reviewer_context
+                ),
+                None,
+            ) is not None:
                 snippet = decoded_text.strip()[:80]
                 payload_severity, payload_rule = high_signal("HIGH")
                 findings.append(

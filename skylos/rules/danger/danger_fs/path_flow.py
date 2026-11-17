@@ -1581,6 +1581,41 @@ class _PathFlowChecker(TaintVisitor):
             return self._get_os_open_write_flags(flags.id)
         return False
 
+    def _os_open_is_directory_read(self, node):
+        """A proven O_DIRECTORY descriptor cannot consume file contents.
+
+        This restricts the opened object type, not the path: traversal checks
+        still apply. Unknown flags and getattr(..., 0) fallbacks establish no
+        directory guarantee, and spelling a flag never proves its provider.
+        """
+        flags = _bound_argument(node, 1, "flags")
+        leaves = _bit_or_leaves(flags)
+        if not leaves:
+            return False
+        resolved = {self._os_flag(leaf) for leaf in leaves}
+        if not {"O_DIRECTORY", "O_RDONLY"} <= resolved:
+            return False
+        if not resolved <= {"O_DIRECTORY", "O_RDONLY", "O_CLOEXEC"}:
+            return False
+        names = [(node.func, "os.open")]
+        names.extend((leaf, f"os.{self._os_flag(leaf)}") for leaf in leaves)
+        for expression, qualified in names:
+            name = _expr_name(expression)
+            if not name or not self._import_names_are_stable(name):
+                return False
+            if self.untrusted_sources.resolved_import(
+                self._current_function(), name
+            ) != qualified:
+                return False
+            if not provider_binding_is_stable(
+                qualified,
+                self.untrusted_sources.module,
+                self.file_path,
+                getattr(self, "project_root", None),
+            ):
+                return False
+        return True
+
     def _add_finding(self, node, rule_id, severity, message, evidence=None, path_expr=None):
         key = (rule_id, getattr(node, "lineno", 0), getattr(node, "col_offset", 0))
         if key in self._emitted:
@@ -2063,7 +2098,7 @@ class _PathFlowChecker(TaintVisitor):
             ):
                 if self._os_open_uses_write_flags(node):
                     self._flag_symlink_write_if_unsafe(node, first_path)
-                else:
+                elif not self._os_open_is_directory_read(node):
                     self._flag_symlink_read_if_unsafe(node, first_path)
 
         if (

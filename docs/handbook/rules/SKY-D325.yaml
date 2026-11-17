@@ -79,6 +79,11 @@ how_skylos_decides:
     an earlier statement of the same function, or when it uses the `os`
     module's `O_CREAT | O_EXCL`.
   - >-
+    Skips a proven read-only `os.open()` with the native `O_DIRECTORY`
+    flag: it opens a directory descriptor, not file contents. SKY-D215
+    still checks its path. Unknown flags and a fallback such as
+    `getattr(os, "O_DIRECTORY", 0)` do not prove this exception.
+  - >-
     Skips the read when earlier statements in the same function mention
     both a link or containment check (`is_symlink`, `readlink`, `lstat`,
     `S_ISLNK`, `O_NOFOLLOW`, `resolve`, `relative_to`, `is_relative_to`, or
@@ -95,6 +100,10 @@ how_skylos_decides:
     plain helper's parameter is reported only when the scanned callers pass
     untrusted input (otherwise it moves to `suppressed`). Reports MEDIUM on
     the line of the read call.
+  - >-
+    Caller provenance does not establish an attacker's ability to create or
+    replace a symlink. The finding states that prerequisite separately from
+    the read-size concern; deployment permissions still need review.
 
 source_refs:
   - path: skylos/rules/danger/danger_fs/path_flow.py
