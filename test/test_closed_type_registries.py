@@ -8,6 +8,7 @@ import pytest
 
 from skylos.analyzer import analyze
 from skylos.benchmarks.dead_code import run_manifest
+from test.fixture_paths import write_fixture
 
 _TABLE = """
 class Bus:
@@ -27,7 +28,12 @@ class Bus:
 
 
 def _project(tmp_path, consumer, *, extra="", table=_TABLE):
-    (tmp_path / "routes.py").write_text(textwrap.dedent(table))
+    write_fixture(
+        tmp_path,
+        (tmp_path / "routes.py").relative_to(tmp_path),
+        textwrap.dedent(table),
+        overwrite=True,
+    )
     source = """
 from routes import Bus
 
@@ -42,7 +48,12 @@ def run():
 """
     source += textwrap.indent(textwrap.dedent(extra).strip(), "    ") + "\n"
     source += textwrap.indent(textwrap.dedent(consumer).strip(), "    ") + "\n\nrun()\n"
-    (tmp_path / "app.py").write_text(textwrap.dedent(source))
+    write_fixture(
+        tmp_path,
+        (tmp_path / "app.py").relative_to(tmp_path),
+        textwrap.dedent(source),
+        overwrite=True,
+    )
     raw = json.loads(
         analyze(str(tmp_path), conf=60, grep_verify=True, grep_cache=False)
     )
@@ -101,8 +112,16 @@ def test_bool_mro_preserves_int_handler(tmp_path):
                 return callback(value)
         return None""",
     )
-    (tmp_path / "routes.py").write_text(textwrap.dedent(table))
-    (tmp_path / "app.py").write_text("""from routes import Bus
+    write_fixture(
+        tmp_path,
+        (tmp_path / "routes.py").relative_to(tmp_path),
+        textwrap.dedent(table),
+        overwrite=True,
+    )
+    write_fixture(
+        tmp_path,
+        (tmp_path / "app.py").relative_to(tmp_path),
+        """from routes import Bus
 bus = Bus()
 @bus.register(int)
 def numeric(value):
@@ -111,7 +130,9 @@ def numeric(value):
 def text_only(value):
     return 2
 print(bus.send(True))
-""")
+""",
+        overwrite=True,
+    )
     report = json.loads(analyze(str(tmp_path), conf=60, grep_verify=False))
     unused = {f["simple_name"] for f in report.get("unused_functions", [])}
     assert "numeric" not in unused
@@ -141,15 +162,25 @@ def test_unknown_registration_callable_before_decoration_has_no_negative_proof(
     from skylos.deadcode.closed_type_registries import closed_type_registry_unused
     from skylos.deadcode.python_ast import parse_python_files
 
-    (tmp_path / "routes.py").write_text(textwrap.dedent(_TABLE))
-    (tmp_path / "app.py").write_text("""from routes import Bus
+    write_fixture(
+        tmp_path,
+        (tmp_path / "routes.py").relative_to(tmp_path),
+        textwrap.dedent(_TABLE),
+        overwrite=True,
+    )
+    write_fixture(
+        tmp_path,
+        (tmp_path / "app.py").relative_to(tmp_path),
+        """from routes import Bus
 bus = Bus()
 bus.register = unknown_registration
 @bus.register(str)
 def callback(value):
     return 1
 print(bus.send("text"))
-""")
+""",
+        overwrite=True,
+    )
     paths = list(tmp_path.glob("*.py"))
     definitions = {}
     for parsed in parse_python_files(paths):
@@ -179,7 +210,9 @@ print(bus.send("text"))
 def test_nonpython_entrypoint_context_abstains(tmp_path, filename, content):
     from test.test_closed_type_registry_independent_review import negative_names
 
-    (tmp_path / filename).write_text(content)
+    write_fixture(
+        tmp_path, (tmp_path / filename).relative_to(tmp_path), content, overwrite=True
+    )
     assert negative_names(tmp_path, "print(router.deliver('text'))") == set()
 
 

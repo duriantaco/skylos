@@ -8,6 +8,7 @@ import pytest
 from skylos.analyzer import analyze
 from skylos.engines.go_runner import GoEngineError, resolve_go_engine_bin
 from skylos.visitors.languages.go import clear_go_cache, scan_go_file
+from test.fixture_paths import make_fixture_directory, write_fixture
 
 
 @pytest.fixture(autouse=True)
@@ -37,15 +38,15 @@ def _scan_go(tmp_path: Path, code: str) -> list[dict]:
     except GoEngineError:
         pytest.skip("skylos-go engine binary not available")
 
-    (
-        tmp_path / "go.mod"
-    ).write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+    write_fixture(
+        tmp_path,
+        (tmp_path / "go.mod").relative_to(tmp_path),
         "module example.com/demo\n\ngo 1.22\n",
-        encoding="utf-8",
+        overwrite=True,
     )
     file_path = tmp_path / "main.go"
-    file_path.write_text(
-        code, encoding="utf-8"
+    write_fixture(
+        tmp_path, (file_path).relative_to(tmp_path), code, overwrite=True
     )  # skylos: ignore[SKY-D324] pytest tmp_path fixture
     clear_go_cache()
     return scan_go_file(str(file_path), {})[7]
@@ -61,31 +62,35 @@ def _scan_go_full(tmp_path: Path, code: str) -> tuple:
     except GoEngineError:
         pytest.skip("skylos-go engine binary not available")
 
-    (
-        tmp_path / "go.mod"
-    ).write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+    write_fixture(
+        tmp_path,
+        (tmp_path / "go.mod").relative_to(tmp_path),
         "module example.com/demo\n\ngo 1.22\n",
-        encoding="utf-8",
+        overwrite=True,
     )
     file_path = tmp_path / "main.go"
-    file_path.write_text(
-        code, encoding="utf-8"
+    write_fixture(
+        tmp_path, (file_path).relative_to(tmp_path), code, overwrite=True
     )  # skylos: ignore[SKY-D324] pytest tmp_path fixture
     clear_go_cache()
     return scan_go_file(str(file_path), {})
 
 
 def test_go_symlinked_file_outside_scan_root_not_scanned(tmp_path):
-    (tmp_path / "go.mod").write_text(
+    write_fixture(
+        tmp_path,
+        (tmp_path / "go.mod").relative_to(tmp_path),
         "module example.com/demo\n\ngo 1.22\n",
-        encoding="utf-8",
+        overwrite=True,
     )
     outside = tmp_path.parent / f"{tmp_path.name}-outside"
-    outside.mkdir()
+    make_fixture_directory(tmp_path.parent, (outside).relative_to(tmp_path.parent))
     target = outside / "secret.go"
-    target.write_text(
+    write_fixture(
+        tmp_path.parent,
+        (target).relative_to(tmp_path.parent),
         'package main\n\nconst token = "password=supersecretvalue"\n\nfunc main(){ println(token) }\n',
-        encoding="utf-8",
+        overwrite=True,
     )
     link = tmp_path / "leak.go"
     try:
@@ -130,11 +135,15 @@ def test_go_generated_file_skips_quality_findings(tmp_path):
 
 
 def test_go_interface_methods_with_multiple_implementers_are_live(tmp_path):
-    (tmp_path / "go.mod").write_text(
+    write_fixture(
+        tmp_path,
+        (tmp_path / "go.mod").relative_to(tmp_path),
         "module example.com/demo\n\ngo 1.22\n",
-        encoding="utf-8",
+        overwrite=True,
     )
-    (tmp_path / "main.go").write_text(
+    write_fixture(
+        tmp_path,
+        (tmp_path / "main.go").relative_to(tmp_path),
         """package main
 
 type refresher interface { refresh() error }
@@ -150,7 +159,7 @@ func (d *databases) refresh() error { return nil }
 
 func main(){ _, _ = newDroplets(), newDatabases() }
 """,
-        encoding="utf-8",
+        overwrite=True,
     )
     clear_go_cache()
 
@@ -162,11 +171,15 @@ func main(){ _, _ = newDroplets(), newDatabases() }
 
 
 def test_go_cumulative_flag_parser_hook_is_live(tmp_path):
-    (tmp_path / "go.mod").write_text(
+    write_fixture(
+        tmp_path,
+        (tmp_path / "go.mod").relative_to(tmp_path),
         "module example.com/demo\n\ngo 1.22\n",
-        encoding="utf-8",
+        overwrite=True,
     )
-    (tmp_path / "main.go").write_text(
+    write_fixture(
+        tmp_path,
+        (tmp_path / "main.go").relative_to(tmp_path),
         """package main
 
 type parser struct{}
@@ -177,7 +190,7 @@ func (*parser) IsCumulative() bool { return true }
 
 func main(){ _ = newParser() }
 """,
-        encoding="utf-8",
+        overwrite=True,
     )
     clear_go_cache()
 

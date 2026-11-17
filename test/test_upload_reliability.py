@@ -56,6 +56,8 @@ from skylos.api._upload_transport import (
     describe_http_failure,
     parse_retry_after,
 )
+from skylos.core.safe_cache_io import read_project_text_no_symlink
+from test.fixture_paths import make_fixture_directory, write_fixture
 
 TOKEN = "skylos_test_token_do_not_store"
 
@@ -80,8 +82,13 @@ def _ok(scan_id="scan-1", **extra):
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
     root = tmp_path / "repo"
-    (root / "src").mkdir(parents=True)
-    (root / "src" / "app.py").write_text("def main():\n    return 1\n")
+    make_fixture_directory(tmp_path, (root / "src").relative_to(tmp_path))
+    write_fixture(
+        tmp_path,
+        (root / "src" / "app.py").relative_to(tmp_path),
+        "def main():\n    return 1\n",
+        overwrite=True,
+    )
     monkeypatch.setattr(api, "get_project_token", lambda: TOKEN)
     monkeypatch.setattr(api, "get_git_root", lambda: str(root))
     monkeypatch.setattr(api, "get_git_info", lambda: ("0" * 40, "main", "tester", None))
@@ -120,9 +127,12 @@ def _queue(repo):
 
 def _read_pending(path):
     """The record JSON of a saved upload (after its signature line)."""
-    data = gzip.decompress(
-        Path(path).read_bytes()  # skylos: ignore[SKY-D215] saved pytest queue fixture
+    path = Path(path)
+    saved = read_project_text_no_symlink(
+        path.parent, path, max_bytes=16 << 20, encoding="latin-1", newline=""
     )
+    assert saved is not None, "pending fixture must be a contained regular file"
+    data = gzip.decompress(saved.encode("latin-1"))
     header, _, body = data.partition(b"\n")
     assert header.startswith(b"SKYLOS-PENDING-UPLOAD 3 ")
     return json.loads(body)
@@ -418,7 +428,7 @@ def test_paths_are_normalized_inside_the_project():
 
 def test_absolute_paths_become_relative_or_no_location(tmp_path):
     base = tmp_path / "repo"
-    (base / "src").mkdir(parents=True)
+    make_fixture_directory(tmp_path, (base / "src").relative_to(tmp_path))
     findings = [
         {"rule_id": "A", "file_path": str(base / "src" / "a.py"), "line_number": 1},
         {
@@ -444,7 +454,7 @@ def test_absolute_paths_become_relative_or_no_location(tmp_path):
 
 def test_dotdot_path_is_placed_by_the_absolute_file_when_it_is_inside(tmp_path):
     base = tmp_path / "repo"
-    (base / "src").mkdir(parents=True)
+    make_fixture_directory(tmp_path, (base / "src").relative_to(tmp_path))
     findings = [
         {
             "rule_id": "A",
@@ -459,7 +469,7 @@ def test_dotdot_path_is_placed_by_the_absolute_file_when_it_is_inside(tmp_path):
 
 def test_folder_paths_have_no_location(tmp_path):
     base = tmp_path / "repo"
-    (base / "src" / "pkg").mkdir(parents=True)
+    make_fixture_directory(tmp_path, (base / "src" / "pkg").relative_to(tmp_path))
     findings = [{"rule_id": "SKY-U005", "file_path": "src/pkg", "line_number": 0}]
     apply_upload_contract(findings, "", base_dir=base)
     assert findings[0]["file_path"] == ""
@@ -594,7 +604,7 @@ def test_without_a_git_root_paths_are_relative_to_the_working_directory(
     assert str(repo) not in json.dumps(prepared.legacy_payload)
 
     elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
+    make_fixture_directory(tmp_path, (elsewhere).relative_to(tmp_path))
     monkeypatch.chdir(elsewhere)
     prepared = api._prepare_report_upload(
         _result(repo, quality=[_quality(repo)]), analyzer_owned=True
@@ -1035,6 +1045,7 @@ def test_upload_transport_source_has_no_invisible_format_characters():
 
 def test_render_upload_failure_escapes_markup(capsys):
     from rich.console import Console
+
     import skylos.cli as cli
 
     console = Console(record=True, width=200)
@@ -1290,8 +1301,11 @@ def test_sent_and_saved_uploads_never_contain_the_token_or_secret_snippets(
     repo, tmp_path, monkeypatch
 ):
     keys_file = repo / "src" / "keys.py"
-    keys_file.write_text(  # skylos: ignore[SKY-D324] fixed file under fresh pytest tmp_path
-        "AWS = 'AKIAIOSFODNN7EXAMPLE'\n"
+    write_fixture(
+        tmp_path,
+        (keys_file).relative_to(tmp_path),
+        "AWS = 'AKIAIOSFODNN7EXAMPLE'\n",
+        overwrite=True,
     )
     post = _Calls(requests.exceptions.ConnectionError("x"))
     monkeypatch.setattr(api.requests, "post", post)
@@ -1376,7 +1390,7 @@ def test_queue_lives_in_the_user_state_folder_not_the_checkout(
     repo, tmp_path, monkeypatch
 ):
     home = tmp_path / "home"
-    home.mkdir()
+    make_fixture_directory(tmp_path, (home).relative_to(tmp_path))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("SKYLOS_PENDING_UPLOAD_DIR")
     # Use the real ~/.skylos layout, under the temporary HOME set above.
@@ -1423,9 +1437,9 @@ def test_each_repository_has_its_own_queue(tmp_path):
 
 def test_pending_folder_refuses_a_symlinked_repository_queue(tmp_path):
     target = tmp_path / "elsewhere"
-    target.mkdir()
+    make_fixture_directory(tmp_path, (target).relative_to(tmp_path))
     queue = tmp_path / "root" / "repo-id"
-    queue.parent.mkdir()
+    make_fixture_directory(tmp_path, (queue.parent).relative_to(tmp_path))
     queue.symlink_to(target)
     path = _pending_uploads.save_pending_upload(
         queue,
@@ -1444,7 +1458,7 @@ def test_pending_folder_refuses_a_symlinked_repository_queue(tmp_path):
 
 def test_pending_folder_refuses_a_symlinked_queue_root(tmp_path):
     target = tmp_path / "elsewhere"
-    target.mkdir()
+    make_fixture_directory(tmp_path, (target).relative_to(tmp_path))
     root = tmp_path / "pending"
     root.symlink_to(target, target_is_directory=True)
     queue = root / "repo-id"
@@ -1481,7 +1495,7 @@ def test_pending_listing_refuses_a_symlinked_queue_root(tmp_path):
 @pytest.mark.skipif(os.name != "posix", reason="POSIX queue permissions")
 def test_pending_folder_refuses_a_public_queue_root(tmp_path):
     root = tmp_path / "pending"
-    root.mkdir()
+    make_fixture_directory(tmp_path, (root).relative_to(tmp_path))
     os.chmod(root, 0o755)
     queue = root / "repo-id"
 
@@ -1504,9 +1518,9 @@ def test_pending_folder_refuses_a_public_queue_root(tmp_path):
 @pytest.mark.skipif(os.name != "posix", reason="POSIX queue permissions")
 def test_pending_folder_refuses_a_public_repository_queue(tmp_path):
     root = tmp_path / "pending"
-    root.mkdir(mode=0o700)
+    make_fixture_directory(tmp_path, (root).relative_to(tmp_path))
     queue = root / "repo-id"
-    queue.mkdir(mode=0o700)
+    make_fixture_directory(tmp_path, (queue).relative_to(tmp_path))
     os.chmod(queue, 0o755)
 
     path = _pending_uploads.save_pending_upload(
@@ -1533,13 +1547,16 @@ def test_unsigned_or_tampered_records_are_never_sent(repo, tmp_path, monkeypatch
     forged = queue / f"{KEYS[1]}.json.gz"
     record = _read_pending(good)
     record["idempotency_key"] = KEYS[1]
-    forged.write_bytes(  # skylos: ignore[SKY-D324] fixed filename in pytest queue
+    write_fixture(
+        tmp_path,
+        (forged).relative_to(tmp_path),
         gzip.compress(
             b"SKYLOS-PENDING-UPLOAD 3 "
             + b"0" * 64
             + b"\n"
             + json.dumps(record).encode()
-        )
+        ),
+        overwrite=True,
     )
     os.chmod(forged, 0o600)
     # A signed record with its body changed afterwards.
@@ -1547,8 +1564,8 @@ def test_unsigned_or_tampered_records_are_never_sent(repo, tmp_path, monkeypatch
     original = gzip.decompress(tampered.read_bytes())
     raw = original.replace(b'"kind":"report"', b'"kind":"forged"')
     assert raw != original
-    tampered.write_bytes(  # skylos: ignore[SKY-D324] existing pytest queue fixture
-        gzip.compress(raw)
+    write_fixture(
+        tmp_path, (tampered).relative_to(tmp_path), gzip.compress(raw), overwrite=True
     )
     # A valid record moved in from another repository's queue.
     other = _save(_queue(tmp_path / "other-repo"), KEYS[3])
@@ -1577,10 +1594,13 @@ def test_uploads_saved_in_the_repository_by_older_versions_are_never_sent(
     repo, tmp_path, monkeypatch, capsys
 ):
     legacy = repo / ".skylos" / "pending-uploads"
-    legacy.mkdir(parents=True)
+    make_fixture_directory(tmp_path, (legacy).relative_to(tmp_path))
     planted = legacy / f"{KEYS[0]}.json.gz"
-    planted.write_bytes(  # skylos: ignore[SKY-D324] fixed filename under pytest repo
-        gzip.compress(b'{"format":"skylos-pending-upload","version":2}')
+    write_fixture(
+        tmp_path,
+        (planted).relative_to(tmp_path),
+        gzip.compress(b'{"format":"skylos-pending-upload","version":2}'),
+        overwrite=True,
     )
     os.chmod(planted, 0o600)
     post = _Calls(_ok())
@@ -1673,7 +1693,12 @@ def test_unreadable_or_planted_files_are_skipped(tmp_path):
     good = _save(directory, KEYS[0])
     loose = _save(directory, KEYS[1])
     os.chmod(loose, 0o644)  # e.g. a copy committed to the repository
-    (directory / f"{KEYS[2]}.json.gz").write_bytes(b"not gzip")
+    write_fixture(
+        tmp_path,
+        (directory / f"{KEYS[2]}.json.gz").relative_to(tmp_path),
+        b"not gzip",
+        overwrite=True,
+    )
     os.chmod(directory / f"{KEYS[2]}.json.gz", 0o600)
     (directory / f"{KEYS[3]}.json.gz").symlink_to(good)
     pending, unreadable = _pending_uploads.list_pending_uploads(directory)

@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from test.fixture_paths import write_fixture
 from test.test_reviewed_ground_truth_runner import fact, fixture_seal, runner
 
 
@@ -10,10 +11,14 @@ def _rewrite_manifest(tmp_path, freeze, mutate):
     path = tmp_path / 'manifest.json'
     manifest = json.loads(path.read_text())
     mutate(manifest['targets'][0])
-    path.write_text(json.dumps(manifest))
+    write_fixture(
+        tmp_path, (path).relative_to(tmp_path), json.dumps(manifest), overwrite=True
+    )
     seal = json.loads(freeze.read_text())
     seal['manifest']['sha256'] = runner.digest(path)
-    freeze.write_text(json.dumps(seal))
+    write_fixture(
+        tmp_path, (freeze).relative_to(tmp_path), json.dumps(seal), overwrite=True
+    )
 
 
 def test_review_cannot_be_reused_for_unreviewed_revision(tmp_path):
@@ -40,10 +45,14 @@ def test_explicitly_reviewed_matching_span_is_accepted(tmp_path):
     path = tmp_path / 'review.json'
     review = json.loads(path.read_text())
     review['verdicts'][0]['recommended_match_span'] = {'start_line': 10, 'end_line': 12}
-    path.write_text(json.dumps(review))
+    write_fixture(
+        tmp_path, (path).relative_to(tmp_path), json.dumps(review), overwrite=True
+    )
     seal = json.loads(freeze.read_text())
     seal['review_artifacts'][0]['sha256'] = runner.digest(path)
-    freeze.write_text(json.dumps(seal))
+    write_fixture(
+        tmp_path, (freeze).relative_to(tmp_path), json.dumps(seal), overwrite=True
+    )
     _rewrite_manifest(tmp_path, freeze, lambda target: target['facts'][0].update(start_line=10, end_line=12))
     assert runner.load_frozen(freeze)[1]['targets'][0]['facts'][0]['end_line'] == 12
 

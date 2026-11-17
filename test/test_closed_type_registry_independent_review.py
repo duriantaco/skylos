@@ -8,6 +8,7 @@ import ast
 from types import SimpleNamespace
 
 from skylos.deadcode.closed_type_registries import closed_type_registry_unused
+from test.fixture_paths import write_fixture
 
 ROUTER = """class Router:
     def __init__(self):
@@ -48,8 +49,15 @@ def run():
         + "\n".join("    " + line for line in body.splitlines())
         + "\n\nrun()\n"
     )
-    (root / "routes.py").write_text(ROUTER + routes_extra)
-    (root / "app.py").write_text(imports + app)
+    write_fixture(
+        root,
+        (root / "routes.py").relative_to(root),
+        ROUTER + routes_extra,
+        overwrite=True,
+    )
+    write_fixture(
+        root, (root / "app.py").relative_to(root), imports + app, overwrite=True
+    )
     definitions = {}
     for path in (root / "routes.py", root / "app.py"):
         tree = ast.parse(path.read_text())

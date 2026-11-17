@@ -118,8 +118,10 @@ def test_checked_in_ground_truth_builds_blind_plan_without_duplicate_arms():
         "skipped": 30,
         "not_applicable": 115,
     }
-    assert plan["unused_count"] == 297
-    assert plan["used_count"] == 472
+    # The source review corrected two unloaded JS files and an unreachable
+    # Python backend from used to unused; the 769-label denominator is intact.
+    assert plan["unused_count"] == 300
+    assert plan["used_count"] == 469
     assert plan["model"] == "jev-1.13.0"
     assert plan["endpoint"] == JEV_ENDPOINT
 

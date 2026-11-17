@@ -1,13 +1,18 @@
 import pytest
+
 from skylos.visitors.languages.kotlin import scan_kotlin_file
+from test.fixture_paths import write_fixture
 
 
 def scan(tmp_path, expression):
     path = tmp_path / "App.kt"
-    path.write_text(
+    write_fixture(
+        tmp_path,
+        (path).relative_to(tmp_path),
         "import javax.servlet.http.HttpServletRequest\nclass Page { fun run(req: HttpServletRequest): Any { return "
         + expression
-        + " } }"
+        + " } }",
+        overwrite=True,
     )
     return {f["rule_id"] for f in scan_kotlin_file(str(path), {})[7]}
 

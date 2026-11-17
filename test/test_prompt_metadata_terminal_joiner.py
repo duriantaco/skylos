@@ -1,11 +1,19 @@
 import json
+
 import pytest
+
 from skylos.security.injection_scanner import scan_file
+from test.fixture_paths import write_fixture
 
 
 def write(tmp_path, data, name="package.json"):
     path = tmp_path / name
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    write_fixture(
+        tmp_path,
+        (path).relative_to(tmp_path),
+        json.dumps(data, ensure_ascii=False, indent=2),
+        overwrite=True,
+    )
     return scan_file(path)
 
 
@@ -36,5 +44,10 @@ def test_agent_instruction_metadata_is_not_exempt(tmp_path):
 
 def test_duplicate_description_cannot_hide_a_word_joiner(tmp_path):
     path = tmp_path / "package.json"
-    path.write_text('{\n"description":"abc\u200ddef", "description":"Helper 🙇\u200d"\n}')
+    write_fixture(
+        tmp_path,
+        (path).relative_to(tmp_path),
+        '{\n"description":"abc\u200ddef", "description":"Helper 🙇\u200d"\n}',
+        overwrite=True,
+    )
     assert any(f["type"] == "hidden_char" for f in scan_file(path))

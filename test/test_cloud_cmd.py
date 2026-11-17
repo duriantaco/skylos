@@ -23,6 +23,7 @@ from skylos.done.config import DoneConfig
 from skylos.done.engine import CheckOutcome, DoneResult
 from skylos.done.receipt import build_receipt, read_receipt, write_receipt
 from skylos.done.session import invalidate_latest_receipt
+from test.fixture_paths import make_fixture_directory, write_fixture
 from test.test_cli_report_serialization import _configure
 
 BASE = "https://skylos.dev"
@@ -320,9 +321,19 @@ def repo(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_is_ci", lambda: False)
     monkeypatch.setattr("skylos.cloud.login.run_login", _no_scan)
     root = tmp_path / "shop"
-    root.mkdir()
-    (root / "shop.py").write_text("def total(items):\n    return sum(items)\n")
-    (root / "pyproject.toml").write_text(DONE_TABLE)
+    make_fixture_directory(tmp_path, (root).relative_to(tmp_path))
+    write_fixture(
+        tmp_path,
+        (root / "shop.py").relative_to(tmp_path),
+        "def total(items):\n    return sum(items)\n",
+        overwrite=True,
+    )
+    write_fixture(
+        tmp_path,
+        (root / "pyproject.toml").relative_to(tmp_path),
+        DONE_TABLE,
+        overwrite=True,
+    )
     _git(root, "init", "-q", "-b", "main")
     _commit(root, "start")
     return root
@@ -387,7 +398,12 @@ def test_a_fresh_receipt_for_head_rides_on_the_upload(repo, monkeypatch, capsys)
 
 def test_without_a_receipt_done_runs_against_the_base_first(repo, monkeypatch, capsys):
     _git(repo, "checkout", "-qb", "feat/x")
-    (repo / "shop.py").write_text("def total(items):\n    return sum(items) + 0\n")
+    write_fixture(
+        repo,
+        (repo / "shop.py").relative_to(repo),
+        "def total(items):\n    return sum(items) + 0\n",
+        overwrite=True,
+    )
     _commit(repo, "change")
     seen = _scan_spy(monkeypatch)
     calls = _fake_done(monkeypatch, repo)
@@ -413,7 +429,12 @@ def test_on_the_base_branch_done_compares_with_head(repo, monkeypatch):
 
 def test_a_receipt_for_another_commit_makes_done_run_again(repo, monkeypatch):
     assert write_receipt(repo, _receipt_for(repo)) is not None
-    (repo / "shop.py").write_text("def total(items):\n    return sum(items) + 0\n")
+    write_fixture(
+        repo,
+        (repo / "shop.py").relative_to(repo),
+        "def total(items):\n    return sum(items) + 0\n",
+        overwrite=True,
+    )
     _commit(repo, "change")
     seen = _scan_spy(monkeypatch)
     calls = _fake_done(monkeypatch, repo)
@@ -425,7 +446,12 @@ def test_a_receipt_for_another_commit_makes_done_run_again(repo, monkeypatch):
 
 
 def test_a_dirty_tree_sends_the_findings_without_a_receipt(repo, monkeypatch, capsys):
-    (repo / "shop.py").write_text("def total(items):\n    return sum(items) + 1\n")
+    write_fixture(
+        repo,
+        (repo / "shop.py").relative_to(repo),
+        "def total(items):\n    return sum(items) + 1\n",
+        overwrite=True,
+    )
     seen = _scan_spy(monkeypatch)
     monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
 
@@ -438,7 +464,12 @@ def test_a_dirty_tree_sends_the_findings_without_a_receipt(repo, monkeypatch, ca
 def test_without_a_done_table_nothing_runs_and_the_sent_line_says_so(
     repo, monkeypatch, capsys
 ):
-    (repo / "pyproject.toml").write_text('[project]\nname = "shop"\n')
+    write_fixture(
+        repo,
+        (repo / "pyproject.toml").relative_to(repo),
+        '[project]\nname = "shop"\n',
+        overwrite=True,
+    )
     _commit(repo, "no table")
     seen = _scan_spy(monkeypatch)
     monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
@@ -450,9 +481,16 @@ def test_without_a_done_table_nothing_runs_and_the_sent_line_says_so(
 
 
 def test_an_uncommitted_done_table_is_named_instead_of_run(repo, monkeypatch):
-    (repo / "pyproject.toml").write_text('[project]\nname = "shop"\n')
+    write_fixture(
+        repo,
+        (repo / "pyproject.toml").relative_to(repo),
+        '[project]\nname = "shop"\n',
+        overwrite=True,
+    )
     _commit(repo, "no table")
-    (repo / "pyproject.toml").write_text(DONE_TABLE)
+    write_fixture(
+        repo, (repo / "pyproject.toml").relative_to(repo), DONE_TABLE, overwrite=True
+    )
     seen = _scan_spy(monkeypatch)
     monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
 
@@ -638,7 +676,12 @@ def test_cloud_scan_sends_the_receipt_of_this_commit(monkeypatch, capsys, tmp_pa
     _cloud_scan(monkeypatch, tmp_path, response, command=["cloud"])
     monkeypatch.setattr(cli, "_is_ci", lambda: False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    (tmp_path / "pyproject.toml").write_text(DONE_TABLE)
+    write_fixture(
+        tmp_path,
+        (tmp_path / "pyproject.toml").relative_to(tmp_path),
+        DONE_TABLE,
+        overwrite=True,
+    )
     _git(tmp_path, "init", "-q", "-b", "main")
     _commit(tmp_path, "start")
     assert write_receipt(tmp_path, _receipt_for(tmp_path)) is not None

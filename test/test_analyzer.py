@@ -653,41 +653,33 @@ class TestSkylos:
         assert 0 < probe_keys.index_probes <= logarithmic_bound
 
     def test_mark_refs_direct_reference(self, skylos):
-        mock_def = Mock()
-        mock_def.type = "function"
-        mock_def.simple_name = "function"
-        mock_def.name = "module.function"
-        mock_def.references = 0
+        definition = Definition("module.function", "function", Path("module.py"), 1)
 
-        skylos.defs = {"module.function": mock_def}
+        skylos.defs = {"module.function": definition}
         skylos.refs = [("module.function", None)]
 
         skylos._mark_refs()
 
-        assert mock_def.references == 1
+        assert definition.references == 1
 
     def test_mark_refs_import_reference(self, skylos):
-        mock_import = Mock()
-        mock_import.type = "import"
-        mock_import.simple_name = "imported_func"
-        mock_import.name = "other_module.imported_func"
-        mock_import.references = 0
-
-        mock_original = Mock()
-        mock_original.type = "function"
-        mock_original.simple_name = "imported_func"
-        mock_original.references = 0
+        imported = Definition(
+            "other_module.imported_func", "import", Path("module.py"), 1
+        )
+        original = Definition(
+            "other_module.imported_func", "function", Path("other_module.py"), 1
+        )
 
         skylos.defs = {
-            "module.imported_func": mock_import,
-            "other_module.imported_func": mock_original,
+            "module.imported_func": imported,
+            "other_module.imported_func": original,
         }
         skylos.refs = [("module.imported_func", None)]
 
         skylos._mark_refs()
 
-        assert mock_import.references == 1
-        assert mock_original.references == 2
+        assert imported.references == 1
+        assert original.references == 2
 
     def test_mark_refs_qualified_prefix_includes_descendant_definitions(
         self, skylos, mock_definition
