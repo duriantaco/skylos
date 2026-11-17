@@ -49,6 +49,7 @@ from skylos.ui.security_evidence import security_evidence_details
 from skylos.reporting.path_display import (
     group_path_checks,
     path_check_details,
+    path_review_lines,
     path_rule_label,
 )
 
@@ -1347,6 +1348,8 @@ def render_results(
         console.print(ADVICE_PRIORITY_NOTE, style="muted")
     for note in scope_note_lines(result):
         console.print(f"[muted]{escape(note)}[/muted]")
+    for note in path_review_lines(result, root_path=root_path):
+        console.print(escape(note), style="warn", soft_wrap=True)
     console.print()
 
     _render_analysis_warnings(console, result, root_path=root_path, limit=limit)

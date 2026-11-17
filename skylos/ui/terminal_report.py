@@ -35,6 +35,7 @@ from skylos.reporting.sca_summary import is_advisory
 from skylos.reporting.path_display import (
     group_path_checks,
     path_check_details,
+    path_review_lines,
     path_rule_label,
 )
 from skylos.reporting.typing_coverage import typing_coverage_text
@@ -209,6 +210,8 @@ def render_pretty_results(
         )
     for note in scope_note_lines(result):
         console.print(Text(f"  {_sanitize_terminal_text(note)}", style="dim"))
+    for note in path_review_lines(result, root_path=root_path):
+        console.print(Text(_sanitize_terminal_text(note), style="yellow"))
     _print_directory_rollups(console, result)
     console.print()
 

@@ -629,6 +629,29 @@ def _has_any(source: str, tokens: tuple[str, ...]) -> bool:
     return any(token in source for token in tokens)
 
 
+def _mentions_file_open(tree) -> bool:
+    """Dispatch aliases and spaced calls without granting provider identity.
+
+    The path checker still resolves the provider and scope. This gate only
+    prevents the text fast path from discarding a real imported file open.
+    """
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module in {"os", "io", "_io", "builtins"}
+            and any(alias.name == "open" for alias in node.names)
+        ):
+            return True
+        if isinstance(node, ast.Call) and (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "open"
+            or isinstance(node.func, ast.Attribute)
+            and node.func.attr == "open"
+        ):
+            return True
+    return False
+
+
 def scan_trojan_source_text(src: str, file_path: Path, findings: list[dict]) -> None:
     if not any(char in src for char in _BIDI_CONTROL_CHARS):
         return
@@ -720,7 +743,7 @@ def scan_file_with_tree(
         scan_sql_raw(tree, file_path, findings)
     if _has_any(source_lower, _SSRF_TOKENS):
         scan_ssrf(tree, file_path, findings)
-    if _has_any(source_lower, _PATH_TOKENS):
+    if _has_any(source_lower, _PATH_TOKENS) or _mentions_file_open(tree):
         scan_path(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _XSS_TOKENS):
         scan_xss(tree, file_path, findings, project_root=project_root)

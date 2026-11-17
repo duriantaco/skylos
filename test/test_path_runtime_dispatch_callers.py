@@ -98,18 +98,21 @@ def _resolve(tmp_path, extra):
         for f in suppressed
         if f["rule_id"] == "SKY-D215"
     )
-    return traversal, statuses, suppressed
+    return traversal, statuses, kept
 
 
 def test_dispatch_in_a_separate_program_leaves_the_proof_unknown_not_untrusted(
     tmp_path,
 ):
-    traversal, statuses, suppressed = _resolve(tmp_path, {"tools/runner.py": RUNNER})
-    assert traversal == []
-    assert statuses == ["unknown", "unknown"]
+    traversal, statuses, kept = _resolve(tmp_path, {"tools/runner.py": RUNNER})
+    assert sorted(traversal) == [
+        ("storage.py", 2, "unknown"),
+        ("storage.py", 7, "unknown"),
+    ]
+    assert statuses == []
     chains = [
         chain[0]
-        for row in suppressed
+        for row in kept
         if row["rule_id"] == "SKY-D215"
         for chain in row["metadata"]["path_provenance"]["unknown"]
     ]

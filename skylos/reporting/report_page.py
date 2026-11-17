@@ -22,6 +22,7 @@ from skylos.reporting.issue_summary import (
     total_text,
 )
 from skylos.reporting.top_risks import rank_risks, scan_verdict, top_risks
+from skylos.reporting.path_display import path_review_lines
 
 REPORT_FORMATS = ("md", "html")
 _GIT_TIMEOUT_SECONDS = 10
@@ -106,7 +107,7 @@ def scan_metadata(project_root, *, now=None) -> dict:
     }
 
 
-def _coverage_gaps(result, summary) -> list[str]:
+def _coverage_gaps(result, summary, *, project_root=None) -> list[str]:
     gaps = []
     sca = _mapping(_mapping(result.get("analysis_summary")).get("sca_coverage"))
     if "dependencies" in summary["not_checked"]:
@@ -136,6 +137,7 @@ def _coverage_gaps(result, summary) -> list[str]:
         gaps.append(
             f"{len(errors)} {noun}: see the scan output for the files affected."
         )
+    gaps.extend(path_review_lines(result, root_path=project_root))
     gaps.append(_ALWAYS_TRUE)
     return gaps
 
@@ -209,7 +211,7 @@ def build_report(result, *, project_root=None, config=None, now=None) -> dict:
         "summary": summary,
         "categories": _category_rows(result, summary),
         "gate": _gate_status(result, config),
-        "coverage_gaps": _coverage_gaps(result, summary),
+        "coverage_gaps": _coverage_gaps(result, summary, project_root=project_root),
         "files": _mapping(result.get("analysis_summary")).get("total_files"),
         "lines": _mapping(result.get("analysis_summary")).get("total_loc"),
     }

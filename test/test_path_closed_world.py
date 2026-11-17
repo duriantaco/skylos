@@ -6,12 +6,11 @@ Per-file analysis keeps a helper parameter as a possible remote source
 prove the module is never imported, named or registered with a framework, so
 every caller is in the file the per-file analysis already followed.
 
-A finding this test-code proof does not drop goes on to ``path_provenance``,
-which resolves the helper's callers: it is reported when a resolved caller
-passes untrusted input, and otherwise recorded in ``suppressed`` as ``safe``
-or ``unknown`` (test_path_provenance.py). Several cases here used to assert
-that such a finding stayed reported; they now assert that the test-code proof
-still refuses it (``_classified`` is not None) and what provenance found.
+A finding this test-code proof does not drop goes on to ``path_provenance``.
+Known untrusted inputs stay reported with their source chains; unresolved
+callers stay visible for review as ``unknown``. Only proven-safe paths move
+to ``suppressed``. These tests distinguish that provenance policy from the
+separate proof that a module is used only by test code.
 """
 
 import json
@@ -71,14 +70,21 @@ def _classified(result: dict, key: tuple[str, str, str]) -> str | None:
     """What ``path_provenance`` made of a finding the test-code proof kept:
     ``reported``, ``safe`` or ``unknown``. None when the finding is missing
     or was dropped as unreferenced test code."""
-    if key in _path_findings(result):
+    for finding in result.get("danger") or []:
+        if (Path(finding["file"]).name, finding.get("symbol"), finding["rule_id"]) != key:
+            continue
+        if (finding.get("metadata") or {}).get("path_provenance", {}).get("status") == "unknown":
+            assert key not in _path_findings(result, "suppressed")
+            return "unknown"
         return "reported"
     for finding in result.get("suppressed") or []:
         if (Path(finding["file"]).name, finding.get("symbol"), finding["rule_id"]) != key:
             continue
         if finding.get("reason") == TEST_MODULE_REASON:
             return None
-        return finding["metadata"]["path_provenance"]["status"]
+        status = finding["metadata"]["path_provenance"]["status"]
+        assert status != "unknown", "Unresolved path findings must remain visible"
+        return status
     return None
 
 
@@ -114,7 +120,7 @@ def test_unimported_test_module_helpers_are_dropped(tmp_path):
 def test_script_helpers_are_kept(tmp_path):
     """Outside test code the test-code proof never applies. Changed: the
     callers now decide. ``sys.argv`` is the operator's input, and nothing
-    calls ``_write_doc``, so neither is reported.
+    calls ``_write_doc``, so the write stays visible as unresolved.
     """
     root = _project(
         tmp_path,
@@ -131,7 +137,7 @@ def test_script_helpers_are_kept(tmp_path):
 
 
 def test_helper_imported_by_a_route_module_is_kept(tmp_path):
-    """Nothing calls _write_doc. Changed: an unknown caller is not reported."""
+    """No visible caller proves _write_doc safe; keep an unresolved review."""
     root = _project(
         tmp_path,
         {
@@ -173,7 +179,7 @@ def test_relative_import_counts_as_an_importer(tmp_path):
 
 def test_module_named_in_a_string_is_kept(tmp_path):
     """Changed: the helper is not test code; nothing calls it, so provenance
-    leaves it unknown rather than reported.
+    leaves it unknown and visible for review.
     """
     root = _project(
         tmp_path,
@@ -190,7 +196,7 @@ def test_module_named_in_a_string_is_kept(tmp_path):
 
 def test_module_named_in_config_is_kept(tmp_path):
     """Changed: the config names ``handler``, which does not exist; nothing
-    calls ``_read_doc``, so it is unknown rather than reported.
+    calls ``_read_doc``, so it is unknown and visible for review.
     """
     root = _project(
         tmp_path,
@@ -205,7 +211,7 @@ def test_module_named_in_config_is_kept(tmp_path):
 
 def test_module_with_framework_registration_decorator_is_kept(tmp_path):
     """Changed: ``process`` is only reached through the Celery decorator, whose
-    callers are not visible, so ``_read`` is unknown rather than reported.
+    callers are not visible, so ``_read`` is unknown and visible for review.
     """
     root = _project(
         tmp_path,
@@ -225,7 +231,7 @@ def test_module_with_framework_registration_decorator_is_kept(tmp_path):
     assert _classified(result, ("worker.py", "_read", "SKY-D325")) == "unknown"
     provenance = next(
         f["metadata"]["path_provenance"]
-        for f in result["suppressed"]
+        for f in result["danger"]
         if f.get("symbol") == "_read" and f["rule_id"] == "SKY-D325"
     )
     assert any("decorated with `celery_app.task`" in chain[0] for chain in provenance["unknown"])
@@ -249,7 +255,7 @@ def test_module_importing_a_web_framework_is_kept(tmp_path):
 
 def test_subdirectory_scan_is_not_a_closed_world(tmp_path):
     """Changed: not dropped as test code (the scan is partial); provenance
-    cannot see every caller either, so it is unknown rather than reported.
+    cannot see every caller either, so it is unknown and visible for review.
     """
     root = _project(tmp_path, {"tests/test_docs.py": HELPERS})
 
@@ -359,7 +365,7 @@ def test_plugin_loaded_by_pkgutil_is_kept(tmp_path):
 
 
 def test_library_function_is_kept(tmp_path):
-    """Changed: that is unknown, which is recorded rather than reported."""
+    """Changed: that is unknown, which stays visible for review."""
     root = _project(
         tmp_path,
         {
@@ -395,7 +401,7 @@ def test_script_helper_passed_as_a_callback_is_kept(tmp_path):
 
 def test_script_helper_reached_through_main_is_kept(tmp_path):
     """Changed: ``build(sys.argv[1])`` passes the operator's CLI argument and
-    nothing calls ``_write_doc``; neither is reported.
+    nothing calls ``_write_doc``; that write remains unresolved.
     """
     root = _project(
         tmp_path,

@@ -48,6 +48,53 @@ Even `source_to_sink` does not verify runtime exploitation or complete external 
 
 ## Reports and determinism
 
+For Python path rules D215, D324 and D325, caller provenance also determines
+whether a candidate can be suppressed:
+
+| `metadata.path_provenance.status` | Result |
+|---|---|
+| `untrusted` | A modeled input reaches the operation; the finding and its chain remain reported. |
+| `safe` | The complete caller analysis proves safe inputs for that particular rule; the candidate is suppressed with its proof. |
+| `unknown` | A caller, source, provider or boundary is unresolved; the candidate stays visible as a review item. |
+| `incomplete` | An analysis limit or error interrupted the trace; the candidate stays reported. |
+
+Unknown and incomplete findings retain their severity and gate behavior.
+They are not counted as proven-safe suppressions. Rich, pretty, HTML and
+Markdown output show an unresolved-path review summary with bounded examples;
+JSON exposes `analysis_summary.path_review` and the full per-finding chains.
+A zero review count describes the reported candidates, not complete security
+coverage of every possible runtime path.
+
+Path provenance and explanation status are separate. A partial explanation
+does not refute a finding. A filename sanitizer may protect traversal while
+leaving symlink following or an unbounded read possible; safety evidence is
+specific to the rule and to the checked value before the operation.
+
+Symlink proofs belong to the exact native open operation. A check elsewhere
+in the function, a flag name, or a precheck that can race does not suppress
+D324 or D325. Native `O_NOFOLLOW` or exclusive creation can establish
+final-component write safety; ancestor containment remains a separate check.
+Read safety also requires bounded reads through the descriptor that was
+opened, with no unresolved handle escape, replacement or premature closure.
+Custom openers, changed I/O providers and unresolved flag values do not
+inherit native atomic guarantees. An observed read through an exclusive
+update handle still receives the read check.
+
+For modeled native Python subprocess launches, a fixed child `sys.argv`
+position follows the corresponding parent argument, with separate steps at
+the process boundary. An untrusted sibling argument does not taint a literal
+argument in a different position. A safe parent value proves safety only when
+the child target and runtime context are established. Relative targets can
+remain candidates without proving the working directory.
+
+Operator sources in imported modules keep their possible worker contexts
+through directed import edges. Importing a shared utility does not join two
+otherwise unrelated scripts into one process. Environment, working-directory
+and stdin transports are checked separately from argv. Unsupported parser
+fields, opaque execution options, provider mutations, dynamic imports and
+exhausted context budgets remain explicit reviews or incomplete traces.
+These are static models; the analysis never launches the child program.
+
 JSON stores `metadata.security_trace`. The existing semantic `metadata.security_evidence` packet remains unchanged. Located trace fields do not upgrade a finding to verified or refuted. SARIF uses the recorded per-step locations for code flows and keeps the trace in metadata; compact uploads also retain trace and receiver evidence. When the source-resolved walk finds no source but the detector recorded an untrusted chain (`metadata.sql_provenance`, `redirect_provenance` or `path_provenance`), the trace adds that chain as a `source` step and `propagation` steps (edge kind `provenance`) with their file, line and column. Python steps also carry `snippet`, the single source line at their location (at most 240 characters) with every string literal replaced by `<literal>` and comments removed; a step on a line a secret finding flags, or where credential redaction would apply, has no snippet. SARIF puts the snippet in each thread-flow location's `region.snippet`; the compact upload fallback keeps step locations without code and keeps the provenance chains.
 
 The same selected source snapshot, configuration, analyzer/model version and work limits produce the same trace IDs and ordered steps. Limits count files, bytes, AST nodes, callers, depth and steps rather than wall-clock time. Reaching a limit produces a partial explanation and preserves the finding. `analysis_summary.security_trace_coverage` describes explanation availability separately from detector coverage.

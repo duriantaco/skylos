@@ -58,6 +58,7 @@ def _assert_unverified_check(row):
 
 def test_unverified_request_model_keeps_warning_and_acknowledges_filter(tmp_path):
     rows, _ = _scan(tmp_path)
+    rows = [row for row in rows if row["symbol"] == "load"]
 
     assert len(rows) == 1
     _assert_unverified_check(rows[0])
@@ -71,6 +72,7 @@ def test_reject_on_change_check_is_not_reported_as_absent(tmp_path):
     return raw
 """
     rows, _ = _scan(tmp_path, helper=helper, expression="checked(payload.flightId)")
+    rows = [row for row in rows if row["symbol"] == "load"]
 
     assert len(rows) == 1
     _assert_unverified_check(rows[0])
@@ -78,6 +80,7 @@ def test_reject_on_change_check_is_not_reported_as_absent(tmp_path):
 
 def test_missing_filter_has_no_validation_uncertainty_note(tmp_path):
     rows, _ = _scan(tmp_path, helper="def prepare(raw):\n    return raw.strip()\n")
+    rows = [row for row in rows if row["symbol"] == "load"]
 
     assert len(rows) == 1
     assert "validation_uncertainty" not in rows[0]["metadata"]["path_provenance"]
@@ -93,6 +96,7 @@ def test_known_unsafe_custom_string_caller_is_still_reported(tmp_path):
 view(FlightRequest.model_construct(flightId=Raw('input')))
 """
     rows, _ = _scan(tmp_path, opaque="", extra=extra)
+    rows = [row for row in rows if row["symbol"] == "load"]
 
     assert len(rows) == 1
     _assert_unverified_check(rows[0])
@@ -101,8 +105,15 @@ view(FlightRequest.model_construct(flightId=Raw('input')))
 def test_proven_native_filter_remains_withheld(tmp_path):
     rows, suppressed = _scan(tmp_path, opaque="")
 
-    assert not rows
-    assert any(row["rule_id"] == "SKY-D215" for row in suppressed)
+    assert not [row for row in rows if row["symbol"] == "load"]
+    assert any(
+        row["rule_id"] == "SKY-D215" and row["symbol"] == "load"
+        and row["metadata"]["path_provenance"]["status"] == "safe"
+        for row in suppressed
+    )
+    # An unrelated unused helper is unresolved, not covered by load's proof.
+    [other] = [row for row in rows if row["symbol"] == "other"]
+    assert other["metadata"]["path_provenance"]["status"] == "unknown"
 
 
 def test_unrelated_later_sink_does_not_inherit_the_note(tmp_path):

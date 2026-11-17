@@ -168,15 +168,17 @@ def test_validated_request_value_through_a_character_filter_is_traversal_safe(
 
 def test_public_package_importers_stay_unknown_instead_of_safe(tmp_path):
     kept, statuses = _scan(tmp_path, HEADER + START + REPLAY + VIEW, package=True)
-    assert not kept
-    assert statuses == ["unknown", "unknown"]
+    assert len(kept) == 2
+    assert statuses == []
+    assert all(f["metadata"]["path_provenance"]["status"] == "unknown" for f in kept)
 
 
 def test_calls_on_unresolved_receivers_stay_unknown_instead_of_safe(tmp_path):
     extra = {"jobs.py": "def run(service):\n    service.view(object())\n"}
     kept, statuses = _scan(tmp_path, HEADER + VIEW, extra=extra)
-    assert not kept
-    assert statuses == ["unknown", "unknown"]
+    assert len(kept) == 2
+    assert statuses == []
+    assert all(f["metadata"]["path_provenance"]["status"] == "unknown" for f in kept)
 
 
 def test_patching_in_unrelated_programs_and_tests_does_not_disable_the_proof(tmp_path):
@@ -379,13 +381,13 @@ def export(name: str):
         "if __name__ == '__main__':\n    print(read_doc(sys.argv[1]))\n"
     )
     files = {"app.py": HEADER + route, "storage.py": STORAGE, "report.py": report}
-    _, suppressed = _resolve(tmp_path, files, tmp_path)
-    reader = [f for f in suppressed if f["symbol"] == "read_doc"]
+    kept, suppressed = _resolve(tmp_path, files, tmp_path)
+    reader = [f for f in kept if f["symbol"] == "read_doc"]
     assert {f["rule_id"] for f in reader} == {"SKY-D215", "SKY-D325"}
+    assert not [f for f in suppressed if f["symbol"] == "read_doc"]
     for finding in reader:
         provenance = finding["metadata"]["path_provenance"]
-        assert provenance["status"] == "unknown"
-        assert any(
-            "process launch passes untrusted arguments" in chain[0]
-            for chain in provenance["unknown"]
-        )
+        # Following the launch can establish taint for a read while filename
+        # validation assumptions remain unresolved for traversal. Neither is safe.
+        assert provenance["status"] in {"unknown", "untrusted"}
+        assert provenance.get(provenance["status"])

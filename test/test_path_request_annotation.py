@@ -52,7 +52,7 @@ def _project(tmp_path: Path, files: dict[str, str]) -> Path:
 def _scan(tmp_path, files):
     result = json.loads(analyze(str(_project(tmp_path, files)), enable_danger=True))
     reported = {
-        finding["rule_id"]
+        finding["rule_id"]: finding
         for finding in result.get("danger") or []
         if finding.get("rule_id") in PATH_RULES and finding.get("symbol") == "translate"
     }
@@ -102,16 +102,25 @@ def test_non_request_annotation_turns_off_the_request_name_convention(tmp_path, 
         tmp_path,
         {"app/__init__.py": "", "app/kernel.py": _kernel(annotation, imports, classes)},
     )
-    assert reported == set()
-    assert suppressed["SKY-D215"]["metadata"]["path_provenance"]["status"] == "unknown"
+    assert set(reported) == {"SKY-D215", "SKY-D324"}
+    assert not suppressed
+    for row in reported.values():
+        provenance = row["metadata"]["path_provenance"]
+        assert provenance["status"] == "unknown"
+        assert not provenance.get("untrusted")
 
 
 def test_non_request_annotation_in_a_flask_module_turns_off_the_convention(tmp_path):
     kernel = _kernel(
         ": TranslateRequest", "from flask import Flask\n\napp = Flask(__name__)\n"
     )
-    reported, _ = _scan(tmp_path, {"app/__init__.py": "", "app/kernel.py": kernel})
-    assert reported == set()
+    reported, suppressed = _scan(tmp_path, {"app/__init__.py": "", "app/kernel.py": kernel})
+    assert set(reported) == {"SKY-D215", "SKY-D324"}
+    assert not suppressed
+    for row in reported.values():
+        provenance = row["metadata"]["path_provenance"]
+        assert provenance["status"] == "unknown"
+        assert not provenance.get("untrusted")
 
 
 REQUEST_FORMS = {
@@ -221,7 +230,7 @@ def test_annotated_parameter_still_reports_when_a_route_passes_request_data(tmp_
     reported, _ = _scan(
         tmp_path, {"app/__init__.py": "", "app/kernel.py": kernel, "app/api.py": api}
     )
-    assert {"SKY-D215", "SKY-D324"} <= reported
+    assert {"SKY-D215", "SKY-D324"} <= reported.keys()
 
 
 GUARDS_THAT_DO_NOT_GUARD = {

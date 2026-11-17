@@ -2,9 +2,9 @@
 
 ``path_provenance`` follows a helper's parameter to the call sites it can
 resolve in the scanned source. A finding stays reported only when a resolved
-chain starts at untrusted input; every step is recorded in
-``metadata.path_provenance``. A caller it cannot resolve leaves the finding
-``unknown``: not reported, but kept in ``suppressed`` with the chain.
+chain starts at untrusted input or cannot be resolved; every step is recorded
+in ``metadata.path_provenance``. Unresolved callers stay visible as
+``unknown``. Only proven-safe paths move to ``suppressed``.
 """
 
 import json
@@ -390,7 +390,7 @@ def test_one_untrusted_caller_is_reported_beside_safe_ones(tmp_path):
     assert any(chain[0].startswith("app/report.py:5 literal") for chain in provenance["safe"])
 
 
-def test_process_launch_with_request_arguments_keeps_cli_paths_unproven(tmp_path):
+def test_process_launch_with_request_arguments_reaches_cli_paths(tmp_path):
     root = _project(
         tmp_path,
         {
@@ -402,10 +402,12 @@ def test_process_launch_with_request_arguments_keeps_cli_paths_unproven(tmp_path
             "    return subprocess.run([sys.executable, 'scripts/report.py', request.args['doc']])\n",
         },
     )
-    finding = _suppressed(_scan(root), "_read_doc")["SKY-D325"]
+    finding = _reported(_scan(root), "_read_doc")["SKY-D325"]
     provenance = finding["metadata"]["path_provenance"]
-    assert provenance["status"] == "unknown"
-    assert any("process launch passes untrusted arguments" in chain[0] for chain in provenance["unknown"])
+    assert provenance["status"] == "untrusted"
+    chain = provenance["untrusted"][0]
+    assert any("web.py:" in step for step in chain)
+    assert any("scripts/report.py:" in step for step in chain)
 
 
 def test_request_value_assigned_to_an_instance_after_construction_is_reported(tmp_path):
@@ -551,7 +553,7 @@ def test_local_container_filled_by_another_function_is_not_proven_safe(tmp_path)
             "if __name__ == '__main__':\n    main()\n",
         },
     )
-    finding = _suppressed(_scan(root), "_read")["SKY-D215"]
+    finding = _reported(_scan(root), "_read")["SKY-D215"]
     assert _status(finding) == "unknown"
 
 
@@ -749,11 +751,11 @@ def test_local_variable_named_like_a_request_is_followed_not_assumed(tmp_path):
     assert _status(_suppressed(result, "_read")["SKY-D215"]) == "safe"
 
 
-def test_helper_without_callers_is_unknown_not_reported(tmp_path):
+def test_helper_without_callers_stays_visible_as_unknown(tmp_path):
     root = _project(tmp_path, {"lib.py": READER})
     result = _scan(root)
-    assert _reported(result, "read_file") == {}
-    finding = _suppressed(result, "read_file")["SKY-D215"]
+    assert _suppressed(result, "read_file") == {}
+    finding = _reported(result, "read_file")["SKY-D215"]
     assert _status(finding) == "unknown"
     assert any(
         "no call of `read_file` in the scanned project" in chain[0]
@@ -771,8 +773,8 @@ def test_helper_passed_as_a_callback_is_unknown_with_the_escape_recorded(tmp_pat
         },
     )
     result = _scan(root)
-    assert _reported(result, "read_file") == {}
-    unknown = _suppressed(result, "read_file")["SKY-D215"]["metadata"]["path_provenance"]["unknown"]
+    assert _suppressed(result, "read_file") == {}
+    unknown = _reported(result, "read_file")["SKY-D215"]["metadata"]["path_provenance"]["unknown"]
     assert any("app/plugins.py:3 `read_file` is passed as a value" in chain[0] for chain in unknown)
 
 
@@ -786,7 +788,7 @@ def test_same_name_on_another_module_is_not_a_caller(tmp_path):
             "def read_config(handle):\n    return json.load(handle)\n",
         },
     )
-    provenance = _suppressed(_scan(root), "load")["SKY-D215"]["metadata"]["path_provenance"]
+    provenance = _reported(_scan(root), "load")["SKY-D215"]["metadata"]["path_provenance"]
     steps = [step for kind in ("unknown", "safe", "operator") for chain in provenance.get(kind, []) for step in chain]
     assert not any(step.startswith("config.py") for step in steps)
     assert any("no call of `load`" in step for step in steps)
@@ -803,8 +805,8 @@ def test_subdirectory_scan_cannot_prove_safety(tmp_path):
         },
     )
     result = _scan(root / "app")
-    assert _reported(result, "read_file") == {}
-    provenance = _suppressed(result, "read_file")["SKY-D215"]["metadata"]["path_provenance"]
+    assert _suppressed(result, "read_file") == {}
+    provenance = _reported(result, "read_file")["SKY-D215"]["metadata"]["path_provenance"]
     assert provenance["status"] == "unknown"
     assert provenance["complete_project"] is False
 
@@ -817,7 +819,7 @@ def test_public_function_of_a_package_is_unknown_even_with_constant_callers(tmp_
             "mylib/storage.py": READER + "\n\nDEFAULT = read_file('default.bin')\n",
         },
     )
-    provenance = _suppressed(_scan(root), "read_file")["SKY-D215"]["metadata"]["path_provenance"]
+    provenance = _reported(_scan(root), "read_file")["SKY-D215"]["metadata"]["path_provenance"]
     assert provenance["status"] == "unknown"
     assert any("public in an importable package" in chain[0] for chain in provenance["unknown"])
 
@@ -968,8 +970,8 @@ def test_configured_closure_root_preserves_unresolved_caller_evidence(tmp_path):
         },
     )
     result = _scan(root)
-    assert _reported(result, "_load") == {}
-    record = _suppressed(result, "_load")["SKY-D215"]["metadata"]["path_provenance"]
+    assert _suppressed(result, "_load") == {}
+    record = _reported(result, "_load")["SKY-D215"]["metadata"]["path_provenance"]
     assert record["status"] == "unknown"
     explained = False
     for chain in record["unknown"]:

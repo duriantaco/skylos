@@ -21,9 +21,10 @@ resolve, then classifies what reaches the path:
     operator input (CLI arguments, environment, working directory).
 ``unknown``
     Anything else. Unknown is neither proof of an attack nor proof of safety,
-    so the finding is not reported as a vulnerability.
+    so the finding stays visible as an unresolved path review. Its existing
+    severity and gate behavior are preserved.
 
-Safe and unknown findings move to ``suppressed``. Every finding gets
+Only safe findings move to ``suppressed``. Every finding gets
 ``metadata.path_provenance``: the located steps that were followed, origin
 first, and the step that stayed unresolved.
 """
@@ -96,7 +97,7 @@ SAFE_REASON = (
 )
 UNKNOWN_REASON = (
     "the path comes from a helper parameter whose callers could not all be "
-    "resolved; unknown is not proof of an attack (see metadata.path_provenance)"
+    "resolved; its safety remains unverified (see metadata.path_provenance)"
 )
 INCOMPLETE_NOTE = (
     "caller analysis stopped at a limit before every chain was followed; the "
@@ -305,13 +306,6 @@ _RQ_OPTIONS = frozenset(
 )  # fmt: skip
 _DOWNLOADERS = frozenset({"urllib.request.urlretrieve"})
 _HASH_DIGEST = re.compile(r"^(?:hashlib|hmac)\.[\w.]*\.hexdigest$")
-_PROCESS_LAUNCHES = frozenset(
-    {"subprocess.run", "subprocess.call", "subprocess.check_call",
-     "subprocess.check_output", "subprocess.Popen", "os.system", "os.popen",
-     "os.execv", "os.execve", "os.execvp", "os.execvpe", "os.execl", "os.execlp",
-     "os.spawnv", "os.spawnl", "os.spawnvp", "asyncio.create_subprocess_exec",
-     "asyncio.create_subprocess_shell"}
-)  # fmt: skip
 _INDIRECT_CALLERS = {
     "threading.Thread": "target",
     "threading.Timer": "function",
@@ -464,20 +458,41 @@ def _with_hidden_callers(facts, escapes, step):
 
 
 class _Facts:
-    """Chains of located steps, origin first, grouped by what the origin is."""
+    """Located chains plus structured operator-source identities.
+
+    Explanation chains are bounded for display. Process safety must retain
+    the origins separately, including origins beyond that explanation limit.
+    Missing or exhausted origin metadata cannot establish operator-only input.
+    """
 
     KINDS = (UNTRUSTED, INCOMPLETE, OPERATOR, SAFE, UNKNOWN, PARAMETER)
 
     def __init__(self):
         self.chains = {kind: [] for kind in self.KINDS}
+        self.operator_origins = set()
+        self.operator_origins_complete = True
 
     @classmethod
-    def leaf(cls, kind, step):
+    def leaf(cls, kind, step, *, operator_origin=None):
         facts = cls()
         facts.chains[kind].append((step,))
+        if kind == OPERATOR:
+            if operator_origin is None:
+                facts.operator_origins_complete = False
+            else:
+                facts.operator_origins.add(operator_origin)
         return facts
 
     def add(self, other):
+        self.operator_origins_complete &= other.operator_origins_complete
+        for origin in other.operator_origins:
+            if (
+                len(self.operator_origins) >= _MAX_SITES
+                and origin not in self.operator_origins
+            ):
+                self.operator_origins_complete = False
+                break
+            self.operator_origins.add(origin)
         for kind in self.KINDS:
             mine = self.chains[kind]
             for chain in other.chains[kind]:
@@ -489,6 +504,8 @@ class _Facts:
 
     def then(self, step):
         facts = _Facts()
+        facts.operator_origins = set(self.operator_origins)
+        facts.operator_origins_complete = self.operator_origins_complete
         for kind in self.KINDS:
             facts.chains[kind] = [_extend(chain, step) for chain in self.chains[kind]]
         return facts
@@ -496,6 +513,11 @@ class _Facts:
     def moved(self, source, target, step):
         """The same facts with ``source`` chains re-filed under ``target``."""
         facts = _Facts()
+        if source != OPERATOR:
+            facts.operator_origins = set(self.operator_origins)
+            facts.operator_origins_complete = self.operator_origins_complete
+        if target == OPERATOR:
+            facts.operator_origins_complete = False
         for kind in self.KINDS:
             facts.chains[kind] = list(self.chains[kind])
         for chain in self.chains[source]:
@@ -1089,7 +1111,6 @@ class _Project:
         self._site_cache = {}
         self._param_value_active = set()
         self._import_maps = {}
-        self._launch = None
         self._operator_stdin = None
         self._constant_tables = {}
         self._store_cache = {}
@@ -2973,29 +2994,6 @@ class _Project:
             else:
                 sites.escapes.append(f"{rel}:{number} a config file names `{fn.name}`; its caller is not visible")
 
-    def launches_with_untrusted_arguments(self):
-        """A process launch in the project whose arguments carry untrusted
-        input: then CLI arguments are not proven to come from the operator."""
-        if self._launch is not None:
-            return self._launch
-        self._launch = ""
-        tracer = _Tracer(self, TRAVERSAL_RULE)
-        tracer.filename_proofs = False
-        for unit in self.units:
-            if unit.is_test:
-                continue
-            for call, scope in unit.calls:
-                values = self.values(unit, scope, call.func)
-                if not values or not any(value.kind == "ext" and value.name in _PROCESS_LAUNCHES for value in values):
-                    continue
-                for argument in [*call.args, *[keyword.value for keyword in call.keywords]]:
-                    tracer.work = 0
-                    facts = tracer.trace(unit, scope, argument)
-                    if facts.chains[UNTRUSTED]:
-                        self._launch = _step(unit, call, "a process launch passes untrusted arguments")
-                        return self._launch
-        return self._launch
-
     def constant_table(self, unit, scope, expr):
         """``expr`` names a module-level literal table of constants that
         nothing in the project can change."""
@@ -3313,8 +3311,12 @@ def _default_of(fn, name):
 
 
 def _same_facts(left, right):
-    return all(
-        set(left.chains[kind]) == set(right.chains[kind]) for kind in _Facts.KINDS
+    return (
+        left.operator_origins == right.operator_origins
+        and left.operator_origins_complete == right.operator_origins_complete
+        and all(
+            set(left.chains[kind]) == set(right.chains[kind]) for kind in _Facts.KINDS
+        )
     )
 
 
@@ -3834,7 +3836,7 @@ class _Tracer:
             return _Facts.leaf(UNKNOWN, _step(unit, fn, f"the object `{name}` itself"))
         entry = self.project.parameter_entry(unit, fn, param)
         if entry is not None:
-            return _Facts.leaf(entry[0], entry[1])
+            return _Facts.leaf(entry[0], entry[1], operator_origin=(unit, "cli") if entry[0] == OPERATOR else None)
         return self._callers(unit, fn, name)
 
     def _callers(self, unit, fn, name):
@@ -3851,7 +3853,7 @@ class _Tracer:
         sites = self.project.call_sites(unit, fn)
         facts = _Facts()
         for kind, step in sites.entries:
-            facts.add(_Facts.leaf(kind, step))
+            facts.add(_Facts.leaf(kind, step, operator_origin=(unit, "cli") if kind == OPERATOR else None))
         gateway = _gateway_parameter(fn, name)
         if gateway and not sites.entries and not unit.is_test:
             facts.add(_Facts.leaf(UNTRUSTED, _step(unit, fn, f"{gateway} request data `{name}` of `{_function_label(fn)}`")))
@@ -4368,7 +4370,8 @@ class _Tracer:
                 return _Facts.leaf(SAFE, _step(unit, node, proof))
         source = self._attribute_source(unit, scope, node)
         if source is not None:
-            return _Facts.leaf(source[0], _step(unit, node, source[1]))
+            origin = (unit, source[2]) if len(source) > 2 else None
+            return _Facts.leaf(source[0], _step(unit, node, source[1]), operator_origin=origin)
         base = node.value
         owner_class = self._self_class(unit, scope, base)
         if owner_class is not None:
@@ -4656,12 +4659,12 @@ class _Tracer:
             if value.kind == "ext":
                 name = value.name
                 if name == "sys.argv" or name.startswith("sys.argv."):
-                    return OPERATOR, "CLI arguments `sys.argv`"
+                    return OPERATOR, "CLI arguments `sys.argv`", "cli"
                 if name == "os.environ":
-                    return OPERATOR, "process environment `os.environ`"
+                    return OPERATOR, "process environment `os.environ`", "environment"
                 if name == "sys.stdin" or name.startswith("sys.stdin."):
                     kind = self._stdin_kind(unit, scope, "sys.stdin.read")
-                    return kind, "standard input `sys.stdin`"
+                    return kind, "standard input `sys.stdin`", "stdin"
                 if name in _SAFE_ATTRIBUTES:
                     return SAFE, f"interpreter location `{name}`"
         base = node.value
@@ -4676,6 +4679,11 @@ class _Tracer:
         return None
 
     def _subscript(self, unit, scope, node, env):
+        from skylos.rules.danger.danger_fs.path_process_flow import python_argv_facts
+
+        process_facts = python_argv_facts(self, unit, scope, node, env)
+        if process_facts is not None:
+            return process_facts
         base_values = self.project.values(unit, scope, node.value)
         if base_values and all(value.kind == "ext" and value.name == "os.environ" for value in base_values):
             return self._environment(unit, node, node.slice)
@@ -4712,7 +4720,7 @@ class _Tracer:
         if isinstance(key, ast.Constant) and isinstance(key.value, str):
             if key.value in _CGI_VARIABLES or key.value.startswith("HTTP_"):
                 return _Facts.leaf(UNTRUSTED, _step(unit, node, f"CGI request variable `{key.value}`"))
-            return _Facts.leaf(OPERATOR, _step(unit, node, f"environment variable `{key.value}`"))
+            return _Facts.leaf(OPERATOR, _step(unit, node, f"environment variable `{key.value}`"), operator_origin=(unit, "environment"))
         return _Facts.leaf(UNKNOWN, _step(unit, node, "environment variable chosen at run time"))
 
     def _call(self, unit, scope, node, env):
@@ -5025,7 +5033,7 @@ class _Tracer:
                     return selected
                 kind = self._stdin_kind(unit, scope, name)
                 return _Facts.leaf(
-                    kind, _step(unit, node, f"standard input `{name}()`")
+                    kind, _step(unit, node, f"standard input `{name}()`"), operator_origin=(unit, "stdin")
                 )
             if name in _ENV_CALLS:
                 if node.args:
@@ -5051,7 +5059,7 @@ class _Tracer:
             if _HASH_DIGEST.match(name.replace("()", "")):
                 return _Facts.leaf(SAFE, _step(unit, node, f"hex digest from `{name.replace('()', '')}`"))
             if name in _OPERATOR_CALLS:
-                return _Facts.leaf(OPERATOR, _step(unit, node, f"working directory `{name}()`"))
+                return _Facts.leaf(OPERATOR, _step(unit, node, f"working directory `{name}()`"), operator_origin=(unit, "cwd"))
             if name in _SAFE_CALLS:
                 return _Facts.leaf(SAFE, _step(unit, node, f"`{name}()` returns a number, clock value or identifier"))
             if name in _TEMP_CALLS:
@@ -5155,10 +5163,10 @@ class _Tracer:
             value.kind in {"extinst", "extattr"} and value.name.startswith("argparse.")
             for value in parsers
         ):
-            return _Facts.leaf(OPERATOR, _step(unit, node, f"CLI arguments `{_describe(node)}`"))
+            return _Facts.leaf(OPERATOR, _step(unit, node, f"CLI arguments `{_describe(node)}`"), operator_origin=(unit, "cli"))
         if parsers and all(value.kind == "inst" for value in parsers):
             if all(self._extends_argparse(value.node) for value in parsers):
-                return _Facts.leaf(OPERATOR, _step(unit, node, f"CLI arguments `{_describe(node)}`"))
+                return _Facts.leaf(OPERATOR, _step(unit, node, f"CLI arguments `{_describe(node)}`"), operator_origin=(unit, "cli"))
         return _Facts.leaf(UNKNOWN, _step(unit, node, f"`{_describe(node)}` is not a proven command-line parser"))
 
     def _extends_argparse(self, cls_node):
@@ -5212,6 +5220,8 @@ class _Tracer:
             return _with_hidden_callers(_Facts.leaf(SAFE, step), escapes, step)
         summary = self._summary(fn, info[0], element)
         facts = _Facts()
+        facts.operator_origins = set(summary.operator_origins)
+        facts.operator_origins_complete = summary.operator_origins_complete
         for kind in _Facts.KINDS:
             if kind != PARAMETER:
                 facts.chains[kind] = list(summary.chains[kind])
@@ -7436,8 +7446,8 @@ def needs_provenance(finding):
 def resolve_helper_parameter_findings(findings, *, scan_path, project_root, suppressed):
     """Findings with each helper-parameter path finding, and each one whose
     only source is a naming convention, classified by resolved callers.
-    Untrusted and incomplete ones stay reported; safe and unknown ones move to
-    ``suppressed`` with ``metadata.path_provenance``."""
+    Untrusted, unknown and incomplete paths stay reported. Only proven-safe
+    paths move to ``suppressed`` with ``metadata.path_provenance``."""
     candidates = [finding for finding in findings if needs_provenance(finding)]
     if not candidates:
         return findings
@@ -7494,11 +7504,22 @@ def _resolve(findings, root, files, complete, suppressed):
         if status == INCOMPLETE:
             kept.append(updated)
             continue
-        updated["category"] = "danger"
-        if status == SAFE:
-            updated["reason"] = SAFE_REASON
-        else:
+        if status != SAFE:
             updated["reason"] = UNKNOWN_REASON
+            kind = {
+                "SKY-D215": "path traversal",
+                "SKY-D324": "symlink-following write",
+                "SKY-D325": "symlink-following or unbounded read",
+            }.get(updated.get("rule_id"), "filesystem path")
+            updated["message"] = (
+                f"Needs review: {kind} safety is unresolved because not all "
+                "caller or source paths could be established. Inspect the "
+                "recorded path_provenance trace; unresolved input is not a safety proof."
+            )
+            kept.append(updated)
+            continue
+        updated["category"] = "danger"
+        updated["reason"] = SAFE_REASON
         suppressed.append(updated)
     return kept
 
@@ -7541,6 +7562,9 @@ def _classify(project, tracers, finding):
         tracers[tracer_key] = tracer
     tracer.work = 0
     facts = tracer.trace(unit, unit.scope_of(operand), operand).then(_sink_step(unit, finding, operand))
+    from skylos.rules.danger.danger_fs.path_process_flow import operator_launch_gap
+
+    facts.add(operator_launch_gap(tracer, facts).then(_sink_step(unit, finding, operand)))
     if tracer.work > _MAX_WORK:
         limits.append("analysis budget reached for this finding")
     if project.truncated:
@@ -7554,13 +7578,7 @@ def _classify(project, tracers, finding):
     elif facts.chains[UNKNOWN] or facts.empty():
         status = UNKNOWN
     else:
-        launch = ""
-        if facts.chains[OPERATOR]:
-            launch = project.launches_with_untrusted_arguments()
-        if launch:
-            facts.add(_Facts.leaf(UNKNOWN, launch).then("CLI arguments are not proven to come from the operator"))
-            status = UNKNOWN
-        elif project.complete:
+        if project.complete:
             status = SAFE
         else:
             limits.append("the scan covers part of the project; callers outside it are not visible")

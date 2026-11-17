@@ -176,9 +176,10 @@ how_skylos_decides:
     chain starts at untrusted data.
   - >-
     Moves a helper-parameter finding to the suppressed list when every
-    resolved caller passes literals, operator input or other safe values,
-    and also when a caller cannot be resolved (including a helper nobody
-    calls). A chain cut off by a depth or size limit stays reported.
+    caller is resolved and passes literals, operator input or other proven
+    safe values. An unresolved caller (including a helper nobody calls)
+    stays visible as a path-safety review, with the missing edge recorded.
+    A chain cut off by a depth or size limit stays reported too.
   - >-
     Does not report paths whose only source is the person running the
     program: command-line arguments and environment variables.
@@ -192,7 +193,7 @@ how_skylos_decides:
     `is_relative_to()`, `relative_to()`, `startswith()` or `commonpath()`,
     where the failing branch raises, returns, breaks, continues or calls
     `abort()`; an `assert` of the same; or `name in ALLOWED` where `ALLOWED`
-    is a literal collection or an upper-case name. A prefix check on a path
+    is a source-proven constant allowlist. A prefix check on a path
     that was not normalised does not count.
   - >-
     TypeScript and JavaScript: request data from a route handler reaching

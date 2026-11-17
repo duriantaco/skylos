@@ -67,8 +67,13 @@ def test_cli_selected_stdin_in_mixed_project_does_not_become_http_input(tmp_path
             "web.py": "from flask import Flask\napp=Flask(__name__)\n",
         },
     )
-    assert not [row for row in visible if row.get("symbol") == "save"]
-    assert any(row.get("symbol") == "save" for row in suppressed)
+    reviews = [row for row in visible if row.get("symbol") == "save"]
+    assert reviews
+    assert not [row for row in suppressed if row.get("symbol") == "save"]
+    for row in reviews:
+        provenance = row["metadata"]["path_provenance"]
+        assert provenance["status"] == "unknown"
+        assert not provenance.get("untrusted")
 
 
 @pytest.mark.parametrize(

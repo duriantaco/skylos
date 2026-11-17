@@ -394,19 +394,25 @@ group resolves to Click/Typer or the function has Click/Typer parameter
 decorators; findings resting on these conventions or on no source at all are
 traced the same way. When a caller budget, depth limit, file size budget or
 analysis error cuts a chain off, the finding stays reported as `incomplete`.
-Otherwise it moves to `suppressed` as `safe` (complete scan, no hidden caller,
+Only a `safe` result moves to `suppressed` (complete scan, no hidden caller,
 and every caller passes literals, the module's location, clock or numeric
-values, temporary paths, test values or operator input) or `unknown` (a
+values, temporary paths, test values or operator input). An `unknown` result (a
 caller, receiver, callback, decorator, external base class or public package
-API that cannot be resolved); unknown is neither proof of an attack nor of
-safety. When a filename-filter body is recognized but its native-string or
+API that cannot be resolved) stays visible as a path-safety review, with its
+original rule, severity and gate behavior. Unknown is neither proof of an
+attack nor of safety. `analysis_summary.path_review` counts these unresolved
+and incomplete findings and gives bounded examples; the full located chains
+remain on each finding. When a filename-filter body is recognized but its native-string or
 runtime assumptions remain unverified, D215 keeps the warning and describes
 that validation uncertainty instead of claiming that no check exists. The
 local provenance record includes `validation_uncertainty`; this does not
 change severity, source evidence or gate behavior.
 A path whose only proven source is the program operator (a CLI
-argument or environment variable) is suppressed, unless a project process
-launch passes untrusted arguments. An exclusive create (`open(p, "x")`,
+argument or environment variable) can be suppressed. A modeled Python child
+process follows its selected argument back to the parent source using the
+current rule's safety checks. An unresolved process target, argument binding
+or provider remains a visible review; a launch of another known script does
+not make unrelated operator arguments untrusted. An exclusive create (`open(p, "x")`,
 `os.open` with the `os` module's `O_CREAT | O_EXCL`) cannot follow a final
 symlink, so D324/D325 skip it while D215 still checks it.
 An `os.open` call proven to include the native `O_DIRECTORY` flag and only

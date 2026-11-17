@@ -7268,9 +7268,13 @@ class Skylos:
         )
         if enable_danger:
             from skylos.security.trace_report import trace_coverage
+            from skylos.reporting.path_display import path_review_summary
 
             result["analysis_summary"]["security_trace_coverage"] = trace_coverage(
                 all_dangers
+            )
+            result["analysis_summary"]["path_review"] = path_review_summary(
+                result.get("danger")
             )
         if unused_dependency_analysis is not None:
             result["analysis_summary"]["unused_dependency_analysis"] = (

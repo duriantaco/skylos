@@ -658,25 +658,36 @@ def test_bounded_nofollow_read_is_not_symlink_finding(tmp_path):
 import os
 import stat
 
-MAX_BYTES = 4096
-
 def load(path):
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    max_bytes = 4096
+    flags = os.O_RDONLY | os.O_NOFOLLOW
     fd = os.open(path, flags)
     try:
         file_stat = os.fstat(fd)
         if not stat.S_ISREG(file_stat.st_mode):
             raise ValueError("not a regular file")
-        if file_stat.st_size > MAX_BYTES:
+        if file_stat.st_size > max_bytes:
             raise ValueError("too large")
         with os.fdopen(fd, "rb") as handle:
-            return handle.read(MAX_BYTES)
+            return handle.read(max_bytes)
     finally:
         os.close(fd)
 """,
     )
     assert "SKY-D324" not in _rule_ids(out)
     assert "SKY-D325" not in _rule_ids(out)
+
+
+def test_bounded_read_with_zero_nofollow_fallback_is_not_an_atomic_proof(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_fallback_read.py",
+        "import os\ndef load(path):\n"
+        "    fd=os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))\n"
+        "    try:\n        return os.read(fd, 4096)\n"
+        "    finally:\n        os.close(fd)\n",
+    )
+    assert "SKY-D325" in _rule_ids(out)
 
 
 def test_pytest_tmp_path_literal_fixture_write_is_not_path_finding(tmp_path):

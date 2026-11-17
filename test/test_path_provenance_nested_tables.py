@@ -197,8 +197,8 @@ def test_unknown_container_mutator_is_not_a_safe_proof(tmp_path, monkeypatch):
     )
     source = _insert(source, "mutate(houses)", before_definition=False)
     result = _scan(tmp_path, monkeypatch, source)
-    assert _rows(result, "danger") == []
-    [finding] = _rows(result, "suppressed")
+    assert _rows(result, "suppressed") == []
+    [finding] = _rows(result, "danger")
     _assert_identity(finding, source)
     proof = finding["metadata"]["path_provenance"]
     assert proof["status"] == "unknown"
@@ -208,7 +208,8 @@ def test_unknown_container_mutator_is_not_a_safe_proof(tmp_path, monkeypatch):
         for chain in proof["unknown"]
         for step in chain
     )
-    assert _rows(json.loads(json.dumps(result)), "suppressed") == [finding]
+    assert _rows(json.loads(json.dumps(result)), "danger") == [finding]
+    assert check_gate(result, GATE)[0] is False
 
 
 def test_escaped_callback_with_a_path_component_keeps_unknown_caller_evidence(
@@ -220,8 +221,8 @@ def test_escaped_callback_with_a_path_component_keeps_unknown_caller_evidence(
     source = source.replace("house = houses[side]", "house = houses['base'] / side")
     source = _insert(source, "register(reset_house)", before_definition=False)
     result = _scan(tmp_path, monkeypatch, source)
-    assert _rows(result, "danger") == []
-    [finding] = _rows(result, "suppressed")
+    assert _rows(result, "suppressed") == []
+    [finding] = _rows(result, "danger")
     _assert_identity(finding, source)
     proof = finding["metadata"]["path_provenance"]
     assert proof["status"] == "unknown"
@@ -230,4 +231,5 @@ def test_escaped_callback_with_a_path_component_keeps_unknown_caller_evidence(
         for chain in proof["unknown"]
         for step in chain
     )
-    assert _rows(json.loads(json.dumps(result)), "suppressed") == [finding]
+    assert _rows(json.loads(json.dumps(result)), "danger") == [finding]
+    assert check_gate(result, GATE)[0] is False

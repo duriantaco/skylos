@@ -1477,6 +1477,10 @@ def _done_receipt_for_upload(
 
 
 def _without_local_only_receipts(summary: dict[str, Any]) -> dict[str, Any]:
+    # Review examples contain local filesystem locations. Findings already
+    # transport their bounded, repository-relative provenance separately.
+    if "path_review" in summary:
+        summary = {key: value for key, value in summary.items() if key != "path_review"}
     diff = summary.get("supply_chain_diff")
     checks = None
     if isinstance(diff, dict):

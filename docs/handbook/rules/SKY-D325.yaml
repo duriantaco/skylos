@@ -10,8 +10,8 @@ cwe: [CWE-59]
 what_it_is: >-
   A symbolic link (symlink) is a file that points to another path; reading
   it reads the target. SKY-D325 reports a file read whose path is built
-  from outside input, when nothing in the function rejects links or other
-  special files and nothing caps how much is read.
+  from outside input when the exact operation lacks established protection
+  against following links or consuming unbounded contents.
 
 why_it_matters: >-
   If someone can leave a link named `report.csv` in the export folder, a
@@ -59,15 +59,17 @@ not_flagged_example:
   why: >-
     The path is an argument of a Click command, so it comes from the person
     running the program, who can already read any file they choose. Skylos
-    treats Click and Typer arguments, `sys.argv` and environment variables
-    as the operator's input, not as an attacker's.
+    traces Click and Typer arguments, `sys.argv` and environment variables
+    in their process contexts. This standalone command has no modeled
+    launcher supplying an untrusted value.
 
 how_skylos_decides:
   - >-
     Looks at Python reads: `open()` and a path's `.open()` in a read mode
     (`r`; a `+` mode when the handle is seen being read; a mode it cannot
-    read), `Path.read_text()` and `read_bytes()`, and `os.open()` without
-    write flags.
+    read), `Path.read_text()` and `read_bytes()`, and read-only `os.open()`.
+    Observed descriptor reads also count after a read/write open or exclusive
+    create. Unknown or rebound flags retain both read and write checks.
   - >-
     The path must be able to carry outside data: a tainted value (a
     function parameter, `request.*`, `input()`, `os.getenv()`), a string
@@ -75,30 +77,28 @@ how_skylos_decides:
     such a value with `Path(x).name`. A base name joined to a fixed folder
     is still reported: the last part can be a link.
   - >-
-    Skips an `os.open()` call when `O_NOFOLLOW` appears in the call or in
-    an earlier statement of the same function, or when it uses the `os`
-    module's `O_CREAT | O_EXCL`.
+    Recognizes exclusive creates only with native operation and mode or flag
+    proof. A no-follow flag must be the native value passed to that exact
+    open operation; mentioning it or using a fallback of zero proves nothing.
   - >-
     Skips a proven read-only `os.open()` with the native `O_DIRECTORY`
     flag: it opens a directory descriptor, not file contents. SKY-D215
     still checks its path. Unknown flags and a fallback such as
     `getattr(os, "O_DIRECTORY", 0)` do not prove this exception.
   - >-
-    Skips the read when earlier statements in the same function mention
-    both a link or containment check (`is_symlink`, `readlink`, `lstat`,
-    `S_ISLNK`, `O_NOFOLLOW`, `resolve`, `relative_to`, `is_relative_to`, or
-    a file-type check) and a size cap (`st_size`, `MAX_BYTES`, `MAX_FILE`,
-    `MAX_SIDE`) or file-type check (`is_file`, `S_ISREG`, `fstat`). A
-    file-type name alone meets both. It matches names only.
+    A native no-follow descriptor also needs proven finite reads through
+    that same descriptor or its own native file handle. Unknown sizes,
+    mutable bindings, escaped or replaced descriptors, and repeated reads
+    that can accumulate unbounded contents do not establish this proof.
   - >-
-    A `with open(...) as fh` block whose handle is only read in constant
-    chunks (`fh.read(65536)`, `shutil.copyfileobj()`) needs only the link
-    or containment check.
+    A bare mention of `is_file`, `fstat`, containment or a size-related name
+    does not certify a read. Checks on another path, ignored checks and
+    prechecks that can race with the open do not establish atomic safety.
   - >-
     Decides who controls the path as SKY-D324 does: request data and route
-    or MCP tool arguments are reported, operator input is skipped, and a
-    plain helper's parameter is reported only when the scanned callers pass
-    untrusted input (otherwise it moves to `suppressed`). Reports MEDIUM on
+    or MCP tool arguments are reported. Operator and helper inputs are traced
+    in their possible process contexts. Only proven-safe candidates move to
+    `suppressed`; unresolved or incomplete sources stay visible. Reports MEDIUM on
     the line of the read call.
   - >-
     Caller provenance does not establish an attacker's ability to create or
@@ -112,13 +112,15 @@ source_refs:
     symbol: "def _has_symlink_read_guard"
   - path: skylos/rules/danger/danger_fs/path_flow.py
     symbol: "def _record_safety_tokens"
-    note: the guard names, recorded per function.
+    note: check-like names are observations, not descriptor safety proofs.
   - path: skylos/rules/danger/danger_fs/path_flow.py
     symbol: "def _handle_reads_bounded"
   - path: skylos/rules/danger/danger_fs/path_flow.py
     symbol: "_OPERATOR_SOURCE_MARKERS = ("
   - path: skylos/rules/danger/danger_fs/path_provenance.py
     symbol: "def resolve_helper_parameter_findings"
+  - path: skylos/rules/danger/danger_fs/atomic_open_proof.py
+    symbol: "class AtomicOpenProofs"
   - path: test/test_dangerous.py
     symbol: "def test_fixed_base_basename_read_still_flags_symlink_read"
 
@@ -137,17 +139,20 @@ fix:
 
     app = Flask(__name__)
     EXPORTS_DIR = Path("/srv/app/exports")
-    MAX_EXPORT_BYTES = 10 * 1024 * 1024
 
 
     @app.get("/exports")
     def download_export():
+        limit = 10 * 1024 * 1024
         name = Path(request.args["file"]).name
         fd = os.open(EXPORTS_DIR / name, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd, "rb") as fh:
-            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+        try:
+            file_stat = os.fstat(fd)
+            if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size > limit:
                 abort(404)
-            data = fh.read(MAX_EXPORT_BYTES)
+            data = os.read(fd, limit)
+        finally:
+            os.close(fd)
         return data, 200, {"Content-Type": "text/csv"}
 
 false_alarms_and_suppression:
@@ -156,9 +161,9 @@ false_alarms_and_suppression:
       A read inside a folder only your own process writes to cannot be
       redirected, but Skylos cannot see who writes the folder.
     - >-
-      The guard is found by name, so it can also hide a real problem: an
-      earlier `path.is_file()`, which follows links, is enough to silence
-      the rule, and so is a bare `.resolve()` together with a size check.
+      A precheck can be useful but may race with the eventual open. A bare
+      `is_file`, `fstat`, containment or size-related name is not proof that
+      this descriptor is protected and its contents are bounded.
     - >-
       `O_NOFOLLOW` kept in a module constant is not seen inside the
       function. Write it in the call or in a local variable.

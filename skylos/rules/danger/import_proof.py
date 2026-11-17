@@ -50,9 +50,17 @@ _READ_BUILTINS = {
 }
 _IMMUTABLE_VALUES = {
     "os.name",
+    "sys.executable",
     "os.O_RDONLY",
     "os.O_DIRECTORY",
     "os.O_CLOEXEC",
+    "os.O_NOFOLLOW",
+    "os.O_CREAT",
+    "os.O_EXCL",
+    "os.O_WRONLY",
+    "os.O_RDWR",
+    "os.O_TRUNC",
+    "os.O_APPEND",
     "ssl.CERT_NONE",
     "ssl.CERT_OPTIONAL",
     "ssl.CERT_REQUIRED",
@@ -358,6 +366,11 @@ class _Effects:
             return values
         if isinstance(node, ast.Subscript):
             bases = self.refs(node.value, depth + 1)
+            if self.native_argv_item(node, bases):
+                # A constant-index read of untouched native argv yields a
+                # string, not the mutable argv list or a provider capability.
+                # Writes and escapes of the whole list still retain its refs.
+                return set()
             if (
                 bases == {"sys.path"}
                 and isinstance(node.ctx, ast.Load)
@@ -622,6 +635,19 @@ class _Effects:
             )
         return True
 
+    def native_argv_item(self, node, bases=None):
+        if not isinstance(node, ast.Subscript) or not isinstance(node.ctx, ast.Load):
+            return False
+        index = node.slice
+        if isinstance(index, ast.UnaryOp) and isinstance(index.op, ast.USub):
+            index = index.operand
+        return (
+            isinstance(index, ast.Constant)
+            and type(index.value) is int
+            and (self.refs(node.value) if bases is None else bases) == {"sys.argv"}
+            and self.canonical_reference(node.value)
+        )
+
     def implicit_use_is_safe(self, node, sensitive, immutable_values=None):
         immutable_values = (
             _IMMUTABLE_VALUES if immutable_values is None else immutable_values
@@ -691,6 +717,8 @@ class _Effects:
             if capability(node.slice):
                 return False
             if capability(node.value):
+                if self.native_argv_item(node):
+                    return True
                 native_namespace = any(
                     name in {"sys.path", "sys.modules"}
                     or name.endswith((".__dict__", ".__globals__"))

@@ -1,46 +1,50 @@
 from __future__ import annotations
+
 import ast
 import os
 import re
 import sys
 from pathlib import Path
 from string import Formatter
+
 from skylos.core.safe_cache_io import read_project_text_no_symlink
-from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
-from skylos.rules.danger.module_namespace import (
-    attribute_write_names,
-    has_mock_api_patching,
-    module_name_for,
-    module_rebinding,
-)
 from skylos.rules.danger.builtin_bindings import builtin_references
-from skylos.rules.danger.import_proof import provider_binding_is_stable
+from skylos.rules.danger.danger_fs.atomic_open_proof import AtomicOpenProofs
 from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
-from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
-from skylos.rules.danger.danger_fs.prefix_separator import (
-    AMBIGUOUS_BINDING,
-    binding_value,
-    bound_names,
-    dotted as prefix_dotted,
-    ends_with_separator,
-    module_level_imports,
-    scope_bindings,
-)
 from skylos.rules.danger.danger_fs.filename_match import (
     filename_match_subject,
     names_when,
     native_text_name,
     validated_return,
 )
-from skylos.security.receiver_resolution import ReceiverResolver
-from skylos.rules.danger.danger_fs.path_open_modes import PathOpenModes
 from skylos.rules.danger.danger_fs.open_read_evidence import UpdateHandleReads
+from skylos.rules.danger.danger_fs.path_open_modes import PathOpenModes
+from skylos.rules.danger.danger_fs.prefix_separator import (
+    AMBIGUOUS_BINDING,
+    binding_value,
+    bound_names,
+    ends_with_separator,
+    module_level_imports,
+    scope_bindings,
+)
+from skylos.rules.danger.danger_fs.prefix_separator import (
+    dotted as prefix_dotted,
+)
+from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
+from skylos.rules.danger.import_proof import provider_binding_is_stable
+from skylos.rules.danger.module_namespace import (
+    attribute_write_names,
+    has_mock_api_patching,
+    module_name_for,
+    module_rebinding,
+)
+from skylos.rules.danger.taint import PATH_SANITIZERS, TaintVisitor
 from skylos.rules.danger.untrusted_sources import (
-    is_traversal_safe_value,
     UntrustedSourceIndex,
     entrypoint_decorator,
+    is_traversal_safe_value,
 )
-
+from skylos.security.receiver_resolution import ReceiverResolver
 
 SYMLINK_WRITE_RULE = "SKY-D324"
 SYMLINK_READ_RULE = "SKY-D325"
@@ -135,15 +139,23 @@ class _HelperParameterEvidence(dict):
     complete repository scan (``closed_world``)."""
 
 
-_FROM_PARAMETER = "the path comes from a function parameter whose callers are not visible"
+_FROM_PARAMETER = (
+    "the path comes from a function parameter whose callers are not visible"
+)
 
 
 def _helper_parameter_message(rule_id, message):
     """The finding rests on a parameter, not on input Skylos saw: say so
     instead of "untrusted" or "attacker-controlled"."""
     if rule_id == "SKY-D215":
-        served = re.match(r"Possible path traversal: untrusted path served by (\w+)\(\)", message)
-        where = f"{served.group(1)}() serves a path" if served else "a filesystem call uses a path"
+        served = re.match(
+            r"Possible path traversal: untrusted path served by (\w+)\(\)", message
+        )
+        where = (
+            f"{served.group(1)}() serves a path"
+            if served
+            else "a filesystem call uses a path"
+        )
         return (
             f"Possible path traversal: {where} from a function parameter whose "
             "callers are not visible, with no containment check; if a caller can "
@@ -188,7 +200,9 @@ def _mark_helper_parameter(finding, evidence, path_expr=None):
         finding.setdefault("metadata", {})["path_operand"] = location
     if isinstance(evidence, _HelperParameterEvidence):
         finding.setdefault("metadata", {})["path_source"] = HELPER_PARAMETER_SOURCE
-        finding["message"] = _helper_parameter_message(finding["rule_id"], finding["message"])
+        finding["message"] = _helper_parameter_message(
+            finding["rule_id"], finding["message"]
+        )
 
 
 # Fix 3 support: a file handle read only in bounded chunks.
@@ -203,7 +217,9 @@ def _constant_size(node, constants):
         return node.value if node.value > 0 else None
     if isinstance(node, ast.Name):
         return constants.get(node.id)
-    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.LShift, ast.Mult, ast.Add)):
+    if isinstance(node, ast.BinOp) and isinstance(
+        node.op, (ast.LShift, ast.Mult, ast.Add)
+    ):
         left = _constant_size(node.left, constants)
         right = _constant_size(node.right, constants)
         if left is None or right is None:
@@ -265,7 +281,11 @@ def _handle_reads_bounded(target, body, constants):
             if parent.attr != "read":
                 return False
             if isinstance(call, ast.Call) and call.func is parent:
-                if len(call.args) == 1 and not call.keywords and _constant_size(call.args[0], constants):
+                if (
+                    len(call.args) == 1
+                    and not call.keywords
+                    and _constant_size(call.args[0], constants)
+                ):
                     continue
                 return False
             if (
@@ -511,7 +531,9 @@ def _class_method_spans(module):
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
         bases = tuple(_expr_name(base) or "" for base in node.bases)
-        spans.append((node.lineno, getattr(node, "end_lineno", node.lineno), methods, bases))
+        spans.append(
+            (node.lineno, getattr(node, "end_lineno", node.lineno), methods, bases)
+        )
     return tuple(spans)
 
 
@@ -545,7 +567,10 @@ def _unpack_filter_is_safe(node):
     members that leave the destination or link outside it."""
     for keyword in node.keywords:
         if keyword.arg == "filter":
-            return isinstance(keyword.value, ast.Constant) and keyword.value.value in {"data", "tar"}
+            return isinstance(keyword.value, ast.Constant) and keyword.value.value in {
+                "data",
+                "tar",
+            }
     return False
 
 
@@ -650,6 +675,8 @@ class _PathFlowChecker(TaintVisitor):
         self.receiver_resolver = None
         self._receiver_proofs = {}
         self.path_open_modes = None
+        self.atomic_open_proofs = None
+        self._native_open_refs = frozenset()
         self.update_handle_reads = None
         self._attribute_writes = (frozenset(), True)
         self._class_methods = ()
@@ -669,6 +696,7 @@ class _PathFlowChecker(TaintVisitor):
     def visit_Module(self, node):
         self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
         self._builtin_string_refs = builtin_references(node, {"str"})
+        self._native_open_refs = builtin_references(node, {"open"})
         self._module_rebound = frozenset(bound_names(node))
         self._module_bindings = scope_bindings(node)
         self._module_import_aliases = module_level_imports(node)
@@ -706,6 +734,12 @@ class _PathFlowChecker(TaintVisitor):
             self.path_open_modes = PathOpenModes(node, self.receiver_resolver)
         except Exception:
             self.path_open_modes = None
+        try:
+            self.atomic_open_proofs = AtomicOpenProofs(
+                node, self.path_open_modes, self._native_atomic_provider
+            )
+        except Exception:
+            self.atomic_open_proofs = None
         self._constant_sizes = _module_constant_sizes(node)
         self._class_methods = _class_method_spans(node)
         try:
@@ -1086,7 +1120,10 @@ class _PathFlowChecker(TaintVisitor):
         if not tainted:
             return False
         return _prove_containment(
-            file_path, target.name, frozenset(tainted), getattr(self, "project_root", None)
+            file_path,
+            target.name,
+            frozenset(tainted),
+            getattr(self, "project_root", None),
         )
 
     def _project_function(self, node):
@@ -1094,7 +1131,9 @@ class _PathFlowChecker(TaintVisitor):
         module or of a project module it imports."""
         module = getattr(self.untrusted_sources, "module", None)
         dotted = _qualified_name(node)
-        if not dotted or not _helper_namespace_is_stable(module, dotted, self.file_path):
+        if not dotted or not _helper_namespace_is_stable(
+            module, dotted, self.file_path
+        ):
             return None
         head = dotted.split(".", 1)[0]
         # A module definition does not identify a caller's local parameter,
@@ -1107,7 +1146,9 @@ class _PathFlowChecker(TaintVisitor):
                 return self.file_path, local
         if not dotted or not self._import_names_are_stable(dotted):
             return None
-        resolved = self.untrusted_sources.resolved_import(self._current_function(), dotted)
+        resolved = self.untrusted_sources.resolved_import(
+            self._current_function(), dotted
+        )
         if not resolved or "." not in resolved:
             return None
         if not _helper_namespace_is_stable(module, resolved, self.file_path):
@@ -1117,7 +1158,11 @@ class _PathFlowChecker(TaintVisitor):
         if file_path is None:
             return None
         tree = _parsed_module(file_path, getattr(self, "project_root", None))
-        target = _unique_module_function(tree, function_name, file_path) if tree is not None else None
+        target = (
+            _unique_module_function(tree, function_name, file_path)
+            if tree is not None
+            else None
+        )
         return (file_path, target) if target is not None else None
 
     def is_tainted(self, node):
@@ -1305,7 +1350,10 @@ class _PathFlowChecker(TaintVisitor):
         helper = self._module_functions.get(name)
         if helper is None or name in self._global_names:
             return False
-        if "*" in self._module_bindings or len(self._module_bindings.get(name, ())) != 1:
+        if (
+            "*" in self._module_bindings
+            or len(self._module_bindings.get(name, ())) != 1
+        ):
             return False
         function = self._current_function()
         if function is not None:
@@ -1415,7 +1463,11 @@ class _PathFlowChecker(TaintVisitor):
             # Only the shapes polarity_names reads; everything else is shared.
             if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
                 operand = rewrite(node.operand)
-                return node if operand is node.operand else ast.UnaryOp(op=node.op, operand=operand)
+                return (
+                    node
+                    if operand is node.operand
+                    else ast.UnaryOp(op=node.op, operand=operand)
+                )
             if isinstance(node, ast.BoolOp):
                 values = [rewrite(value) for value in node.values]
                 if all(new is old for new, old in zip(values, node.values)):
@@ -1426,7 +1478,9 @@ class _PathFlowChecker(TaintVisitor):
                 replaced = [bound_check(side) or side for side in sides]
                 if all(new is old for new, old in zip(replaced, sides)):
                     return node
-                return ast.Compare(left=replaced[0], ops=node.ops, comparators=replaced[1:])
+                return ast.Compare(
+                    left=replaced[0], ops=node.ops, comparators=replaced[1:]
+                )
             return node
 
         return rewrite(test)
@@ -1616,28 +1670,116 @@ class _PathFlowChecker(TaintVisitor):
         ):
             self._mark_safety("archive_member_guard")
 
-    def _has_symlink_write_guard(self):
-        safety = self._current_safety()
-        return (
-            safety["symlink_guard"]
-            or safety["nofollow"]
-            or safety["regular_file"]
-            or safety["containment"]
+    def _native_atomic_expression(self, expression, qualified):
+        name = _expr_name(expression)
+        if not name:
+            return False
+        if qualified == "builtins.open" and id(expression) in self._native_open_refs:
+            resolved = qualified
+        else:
+            if not self._import_names_are_stable(name):
+                return False
+            resolved = self.untrusted_sources.resolved_import(
+                self._current_function(), name
+            )
+        return resolved == qualified and self._native_atomic_provider(qualified)
+
+    def _native_atomic_provider(self, qualified):
+        return provider_binding_is_stable(
+            qualified,
+            self.untrusted_sources.module,
+            self.file_path,
+            getattr(self, "project_root", None),
         )
 
-    def _has_symlink_read_path_guard(self):
-        safety = self._current_safety()
-        return (
-            safety["symlink_guard"]
-            or safety["nofollow"]
-            or safety["regular_file"]
-            or safety["containment"]
+    def _has_symlink_write_guard(self, node):
+        proof = self.atomic_open_proofs
+        return proof is not None and (
+            proof.nofollow(node, self._native_atomic_expression)
+            or proof.exclusive(node, self._native_atomic_expression)
         )
 
-    def _has_symlink_read_guard(self):
-        safety = self._current_safety()
-        return self._has_symlink_read_path_guard() and (
-            safety["bounded_read"] or safety["regular_file"]
+    def _has_symlink_read_guard(self, node):
+        proof = self.atomic_open_proofs
+        return (
+            proof is not None
+            and proof.nofollow(node, self._native_atomic_expression)
+            and proof.bounded_descriptor_read(node, self._native_atomic_expression)
+        )
+
+    def _native_path_receiver(self, expression, depth=0):
+        if depth > 16 or self.path_open_modes is None:
+            return False
+        if isinstance(expression, ast.Name):
+            value = self.path_open_modes._binding(expression)
+            return value is not None and self._native_path_receiver(value, depth + 1)
+        if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Div):
+            return (
+                isinstance(expression.right, ast.Constant)
+                and type(expression.right.value) is str
+                and self._native_path_receiver(expression.left, depth + 1)
+            )
+        if isinstance(expression, ast.Call):
+            return any(
+                self._native_atomic_expression(expression.func, qualified)
+                for qualified in (
+                    "pathlib.Path",
+                    "pathlib.PosixPath",
+                    "pathlib.WindowsPath",
+                )
+            )
+        return False
+
+    def _native_exclusive_mode(self, node, bound_method):
+        if any(isinstance(argument, ast.Starred) for argument in node.args) or any(
+            keyword.arg is None for keyword in node.keywords
+        ):
+            return False
+        if not bound_method:
+            opener = _bound_argument(node, 7, "opener")
+            if opener is not None and not (
+                isinstance(opener, ast.Constant) and opener.value is None
+            ):
+                return False
+            return any(
+                self._native_atomic_expression(node.func, provider)
+                for provider in ("builtins.open", "io.open", "_io.open")
+            )
+        if not all(
+            self._native_atomic_provider(provider)
+            for provider in ("io.open", "pathlib.io.open")
+        ):
+            return False
+        modes = (
+            self.path_open_modes.modes(node, bound_method=True)
+            if self.path_open_modes is not None
+            else None
+        )
+        if (
+            not modes
+            or any("b" not in mode for mode in modes)
+            and not all(
+                self._native_atomic_provider(provider)
+                for provider in ("io.text_encoding", "pathlib.io.text_encoding")
+            )
+        ):
+            return False
+        return (
+            isinstance(node.func, ast.Attribute)
+            and self._native_path_receiver(node.func.value)
+            and all(
+                provider_binding_is_stable(
+                    qualified,
+                    self.untrusted_sources.module,
+                    self.file_path,
+                    getattr(self, "project_root", None),
+                )
+                for qualified in (
+                    "pathlib.Path",
+                    "pathlib.PosixPath",
+                    "pathlib.WindowsPath",
+                )
+            )
         )
 
     def _has_archive_guard(self):
@@ -1659,12 +1801,18 @@ class _PathFlowChecker(TaintVisitor):
         and no attribute write that could replace it."""
         flag = None
         if isinstance(leaf, ast.Attribute) and isinstance(leaf.value, ast.Name):
-            if self.import_aliases.get(leaf.value.id) == "os" and not self._locally_bound(leaf.value.id):
+            if self.import_aliases.get(
+                leaf.value.id
+            ) == "os" and not self._locally_bound(leaf.value.id):
                 flag = leaf.attr
         elif isinstance(leaf, ast.Name):
             qualified = self.import_aliases.get(leaf.id, "")
             parts = qualified.split(".")
-            if len(parts) == 2 and parts[0] == "os" and not self._locally_bound(leaf.id):
+            if (
+                len(parts) == 2
+                and parts[0] == "os"
+                and not self._locally_bound(leaf.id)
+            ):
                 flag = parts[1]
         if flag is None:
             return None
@@ -1687,24 +1835,23 @@ class _PathFlowChecker(TaintVisitor):
         return OS_OPEN_EXCLUSIVE_FLAGS <= flags
 
     def _os_open_is_exclusive(self, node):
-        flags = _bound_argument(node, 1, "flags")
-        if flags is None:
-            return False
-        if self._exclusive_create_flags(flags):
-            return True
-        if isinstance(flags, ast.Name):
-            return self._get_os_open_exclusive(flags.id)
-        return False
+        return (
+            self.atomic_open_proofs is not None
+            and self.atomic_open_proofs.exclusive(node, self._native_atomic_expression)
+        )
 
-    def _os_open_uses_write_flags(self, node):
-        flags = _bound_argument(node, 1, "flags")
-        if flags is None:
-            return False
-        if _node_mentions(flags, OS_OPEN_WRITE_FLAGS):
-            return True
-        if isinstance(flags, ast.Name):
-            return self._get_os_open_write_flags(flags.id)
-        return False
+    def _os_open_directions(self, node):
+        if self.atomic_open_proofs is not None:
+            native_flags = self.atomic_open_proofs.flags(
+                node, self._native_atomic_expression
+            )
+            if native_flags is not None:
+                return (
+                    bool(native_flags & OS_OPEN_WRITE_FLAGS),
+                    not native_flags & {"O_WRONLY", "O_RDWR"},
+                )
+        # Unknown providers and flags cannot establish either direction absent.
+        return True, True
 
     def _os_open_is_directory_read(self, node):
         """A proven O_DIRECTORY descriptor cannot consume file contents.
@@ -1728,9 +1875,10 @@ class _PathFlowChecker(TaintVisitor):
             name = _expr_name(expression)
             if not name or not self._import_names_are_stable(name):
                 return False
-            if self.untrusted_sources.resolved_import(
-                self._current_function(), name
-            ) != qualified:
+            if (
+                self.untrusted_sources.resolved_import(self._current_function(), name)
+                != qualified
+            ):
                 return False
             if not provider_binding_is_stable(
                 qualified,
@@ -1741,7 +1889,9 @@ class _PathFlowChecker(TaintVisitor):
                 return False
         return True
 
-    def _add_finding(self, node, rule_id, severity, message, evidence=None, path_expr=None):
+    def _add_finding(
+        self, node, rule_id, severity, message, evidence=None, path_expr=None
+    ):
         key = (rule_id, getattr(node, "lineno", 0), getattr(node, "col_offset", 0))
         if key in self._emitted:
             return
@@ -2014,16 +2164,20 @@ class _PathFlowChecker(TaintVisitor):
         formatted = [
             part for part in expr.values if isinstance(part, ast.FormattedValue)
         ]
-        return bool(formatted) and all(
-            part.conversion == -1
-            and part.format_spec is None
-            and (removed(part.value) or set()) >= separators
-            for part in formatted
-        ) and provider_binding_is_stable(
-            "builtins.str.replace",
-            self.untrusted_sources.module,
-            self.file_path,
-            getattr(self, "project_root", None),
+        return (
+            bool(formatted)
+            and all(
+                part.conversion == -1
+                and part.format_spec is None
+                and (removed(part.value) or set()) >= separators
+                for part in formatted
+            )
+            and provider_binding_is_stable(
+                "builtins.str.replace",
+                self.untrusted_sources.module,
+                self.file_path,
+                getattr(self, "project_root", None),
+            )
         )
 
     def _posix_filename_branch(self, expr):
@@ -2065,7 +2219,7 @@ class _PathFlowChecker(TaintVisitor):
     def _flag_symlink_write_if_unsafe(self, node, path_expr):
         if not self._path_needs_symlink_protection(path_expr):
             return
-        if self._has_symlink_write_guard():
+        if self._has_symlink_write_guard(node):
             return
         evidence = self._untrusted_path_evidence(path_expr, "filesystem write")
         if evidence is None:
@@ -2102,9 +2256,7 @@ class _PathFlowChecker(TaintVisitor):
         if not self._path_needs_symlink_protection(path_expr):
             return
         bounded = id(node) in self._bounded_opens
-        if self._has_symlink_read_guard() or (
-            bounded and self._has_symlink_read_path_guard()
-        ):
+        if self._has_symlink_read_guard(node):
             return
         evidence = self._untrusted_path_evidence(path_expr, "filesystem read")
         if evidence is None:
@@ -2114,7 +2266,9 @@ class _PathFlowChecker(TaintVisitor):
             if bounded
             else "Possible symlink-following or unbounded read on attacker-controlled path; require a regular in-root file and a size cap."
         )
-        self._add_finding(node, SYMLINK_READ_RULE, "MEDIUM", message, evidence, path_expr)
+        self._add_finding(
+            node, SYMLINK_READ_RULE, "MEDIUM", message, evidence, path_expr
+        )
 
     def _flag_archive_extract_if_unsafe(self, node):
         if self._has_archive_guard():
@@ -2133,7 +2287,10 @@ class _PathFlowChecker(TaintVisitor):
                 modes = self.path_open_modes.modes(node, bound_method=bound_method)
             except Exception:
                 modes = None
-        if _exclusive_create_modes(modes):
+        exclusive = _exclusive_create_modes(modes) and self._native_exclusive_mode(
+            node, bound_method
+        )
+        if exclusive and not any("+" in mode for mode in modes):
             return
         may_read = modes is None
         may_write = modes is None
@@ -2150,7 +2307,7 @@ class _PathFlowChecker(TaintVisitor):
                         may_read = True
                 if _mode_writes(mode):
                     may_write = True
-        if may_write:
+        if may_write and not exclusive:
             self._flag_symlink_write_if_unsafe(node, path_expr)
         if may_read:
             self._flag_symlink_read_if_unsafe(node, path_expr)
@@ -2165,8 +2322,25 @@ class _PathFlowChecker(TaintVisitor):
 
     def visit_Call(self, node: ast.Call):
         qn = _qualified_name(node)
+        canonical = self._canonical_call_name(node)
+        if canonical in FIRST_PATH_PARAMETERS or canonical in {
+            "builtins.open",
+            "io.open",
+            "_io.open",
+        }:
+            resolved = self.untrusted_sources.resolved_import(
+                self._current_function(), qn or ""
+            )
+            if resolved == canonical:
+                qn = (
+                    "open"
+                    if canonical in {"builtins.open", "io.open", "_io.open"}
+                    else canonical
+                )
         method_sink = isinstance(node.func, ast.Attribute) and node.func.attr in {
-            *self.PATHLIB_WRITE_METHODS, *self.PATHLIB_READ_METHODS, "open"
+            *self.PATHLIB_WRITE_METHODS,
+            *self.PATHLIB_READ_METHODS,
+            "open",
         }
         method_operand = None
         bound_path_method = True
@@ -2191,7 +2365,6 @@ class _PathFlowChecker(TaintVisitor):
         if first_path is not None:
             self._flag_if_tainted_path(node, first_path)
 
-        canonical = self._canonical_call_name(node)
         if canonical == "shutil.unpack_archive" and not _unpack_filter_is_safe(node):
             self._flag_archive_extract_if_unsafe(node)
         if canonical in FILE_RESPONSE_SINKS:
@@ -2216,15 +2389,17 @@ class _PathFlowChecker(TaintVisitor):
             self._flag_open_operations(node, first_path)
 
         if qn == "os.open" and first_path is not None:
-            if (
-                not _node_mentions(node, {"O_NOFOLLOW"})
-                and not self._current_safety()["nofollow"]
-                and not self._os_open_is_exclusive(node)
-            ):
-                if self._os_open_uses_write_flags(node):
-                    self._flag_symlink_write_if_unsafe(node, first_path)
-                elif not self._os_open_is_directory_read(node):
-                    self._flag_symlink_read_if_unsafe(node, first_path)
+            writes, readonly = self._os_open_directions(node)
+            if writes and not self._os_open_is_exclusive(node):
+                self._flag_symlink_write_if_unsafe(node, first_path)
+            reads = (
+                self.atomic_open_proofs is not None
+                and self.atomic_open_proofs.descriptor_read_observed(
+                    node, self._canonical_call_name, self._update_handle_is_read
+                )
+            )
+            if reads or readonly and not self._os_open_is_directory_read(node):
+                self._flag_symlink_read_if_unsafe(node, first_path)
 
         if (
             isinstance(node.func, ast.Attribute)
@@ -2370,10 +2545,14 @@ def _helper_namespace_is_stable(tree, dotted, file_path=None):
     cache_key = (id(tree), str(file_path))
     entry = _HELPER_NAMESPACES.get(cache_key)
     if entry is None or entry[0] is not tree:
-        dynamic, rebound = module_rebinding(tree, module_name_for(file_path) if file_path else None)
+        dynamic, rebound = module_rebinding(
+            tree, module_name_for(file_path) if file_path else None
+        )
         attributes, computed = attribute_write_names(tree)
         global_names = {
-            name for node in ast.walk(tree) if isinstance(node, ast.Global)
+            name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Global)
             for name in node.names
         }
         entry = (
@@ -2403,7 +2582,8 @@ def _unique_module_function(tree, name, file_path=None):
         unique = {
             key: nodes[0]
             for key, nodes in defs.items()
-            if len(nodes) == 1 and len(bindings.get(key, ())) == 1
+            if len(nodes) == 1
+            and len(bindings.get(key, ())) == 1
             and not nodes[0].decorator_list
             and _helper_namespace_is_stable(tree, key, file_path)
         }
@@ -2427,7 +2607,9 @@ _PROOF_ERRORS = (
     RecursionError, MemoryError, ValueError, TypeError, AttributeError,
     KeyError, IndexError, OSError, SyntaxError,
 )  # fmt: skip
-_CONTAINMENT_CALLEES = frozenset({"commonpath", "relative_to", "is_relative_to", "startswith"})
+_CONTAINMENT_CALLEES = frozenset(
+    {"commonpath", "relative_to", "is_relative_to", "startswith"}
+)
 
 
 def _checks_containment(function):
@@ -2446,7 +2628,9 @@ def _own_returns(function):
         if isinstance(node, ast.Return):
             yield node
             continue
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
             continue
         pending.extend(ast.iter_child_nodes(node))
 
@@ -2507,7 +2691,11 @@ def _resolve_helper_call(call, tree, file_path, project_root, scope=None):
     if helper_file is None:
         return None
     helper_tree = _parsed_module(helper_file, project_root)
-    helper = _unique_module_function(helper_tree, function_name, helper_file) if helper_tree else None
+    helper = (
+        _unique_module_function(helper_tree, function_name, helper_file)
+        if helper_tree
+        else None
+    )
     return (helper_file, helper) if helper is not None else None
 
 
@@ -2532,7 +2720,10 @@ def _prove_wrapper(file_path, tree, function, tainted, project_root):
                 or (isinstance(value, ast.Name) and value.id in parameters)
             ):
                 return False
-            if isinstance(value, ast.Name) and len(scope_bindings(function).get(value.id, ())) != 1:
+            if (
+                isinstance(value, ast.Name)
+                and len(scope_bindings(function).get(value.id, ())) != 1
+            ):
                 return False
         located = _resolve_helper_call(call, tree, file_path, project_root, function)
         if located is None:
@@ -2571,7 +2762,9 @@ def _prove_containment(file_path, name, tainted, project_root):
     # Fewer tainted parameters cannot taint a return more, so a proof with
     # every parameter tainted holds for each subset.
     tree = _parsed_module(file_path, project_root)
-    target = _unique_module_function(tree, name, file_path) if tree is not None else None
+    target = (
+        _unique_module_function(tree, name, file_path) if tree is not None else None
+    )
     if target is None:
         _CONTAINMENT_PROOFS[key] = False
         return False
@@ -2581,7 +2774,10 @@ def _prove_containment(file_path, name, tainted, project_root):
     ):
         _CONTAINMENT_PROOFS[key] = True
         return True
-    if key in _CONTAINMENT_ACTIVE or len(_CONTAINMENT_ACTIVE) >= _CONTAINMENT_MAX_ACTIVE:
+    if (
+        key in _CONTAINMENT_ACTIVE
+        or len(_CONTAINMENT_ACTIVE) >= _CONTAINMENT_MAX_ACTIVE
+    ):
         return False
     if not _checks_containment(target):
         _CONTAINMENT_ACTIVE.add(key)

@@ -170,13 +170,15 @@ def test_unproved_constructor_is_neither_taint_nor_safety_proof(
     tmp_path, monkeypatch, source
 ):
     result = _scan(tmp_path, monkeypatch, source)
-    assert _rows(result, "danger") == []
-    suppressed = {row["rule_id"]: row for row in _rows(result, "suppressed")}
-    assert {"SKY-D215", "SKY-D325"} <= suppressed.keys()
+    visible = {row["rule_id"]: row for row in _rows(result, "danger")}
+    assert {"SKY-D215", "SKY-D325"} <= visible.keys()
     assert all(
         row["metadata"]["path_provenance"]["status"] == "unknown"
-        for row in suppressed.values()
+        for row in visible.values()
     )
+    assert _rows(result, "suppressed") == []
+    assert _rows(listed_result(result), "danger") == _rows(result, "danger")
+    assert check_gate(result, GATE)[0] is False
 
 
 def test_default_string_subclass_of_a_literal_retains_safe_provenance(

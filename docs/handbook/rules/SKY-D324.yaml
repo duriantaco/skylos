@@ -11,8 +11,8 @@ what_it_is: >-
   A symbolic link (symlink) is a file that points to another path. When a
   program writes to a path whose last part is a symlink, the operating
   system writes to the link's target instead. SKY-D324 reports a file write
-  whose path is built from outside input, with nothing in the function that
-  rejects symlinks.
+  whose path is built from outside input, when the exact open operation
+  lacks established atomic protection against following a final symlink.
 
 why_it_matters: >-
   If an attacker can place a link in the folder (through another upload, an
@@ -70,7 +70,8 @@ how_skylos_decides:
     Looks at Python writes: `open()` and a path's `.open()` in a mode that
     can write (`w`, `a`, `+`; a mode it cannot read counts as both read and
     write), `Path.write_text()` and `write_bytes()`, and `os.open()` with
-    `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_TRUNC` or `O_APPEND`.
+    `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_TRUNC` or `O_APPEND`. Unknown or
+    rebound flags retain both read and write checks.
   - >-
     The path must be able to carry outside data: a tainted value (a
     function parameter, `request.*`, `input()`, `os.getenv()`), a string
@@ -79,22 +80,20 @@ how_skylos_decides:
     link.
   - >-
     Skips exclusive creates (`open(p, "x")`, or `os.open()` with the `os`
-    module's `O_CREAT | O_EXCL`) and an `os.open()` call that names
-    `O_NOFOLLOW`.
+    module's `O_CREAT | O_EXCL`) and an `os.open()` call proven to use
+    native `O_NOFOLLOW`.
   - >-
-    Skips the write when an earlier statement in the same function mentions
-    a link, file-type or containment check: `is_symlink`, `readlink`,
-    `lstat`, `S_ISLNK`, `O_NOFOLLOW`, `is_file`, `S_ISREG`, `fstat`,
-    `resolve`, `relative_to` or `is_relative_to`. It matches the name only;
-    it does not prove that the check rejects the path.
+    Atomic flags must belong to that exact native open operation, with
+    stable function and flag providers. A flag name, fallback value,
+    unrelated check, ignored result or later check is not a safety proof.
+    A path precheck can race with the eventual open.
   - >-
     Decides who controls the path. Request data and route or MCP tool
-    arguments are reported. Click or Typer command arguments, `sys.argv` and
-    environment variables belong to whoever runs the program, so they are
-    skipped. For a plain helper's parameter, Skylos follows the callers
-    through the scanned project: it reports when a resolved caller passes
-    untrusted input, keeps the finding when the trace is cut off, and
-    otherwise moves it to `suppressed` as safe or unknown.
+    arguments are reported. CLI and environment values are followed through
+    modeled worker launch contexts before they can be treated as operator
+    input. For a helper's parameter, Skylos follows the scanned callers.
+    Proven-safe candidates are suppressed; unknown and incomplete sources
+    remain visible reviews with their original severity and gate behavior.
   - >-
     Reports HIGH on the line of the write call. When the path still holds
     the raw input instead of a base name, the same line usually also gets
@@ -108,12 +107,14 @@ source_refs:
     note: read and write modes, exclusive creates.
   - path: skylos/rules/danger/danger_fs/path_flow.py
     symbol: "def _record_safety_tokens"
-    note: the guard names, recorded per function.
+    note: check-like names are observations, not atomic-open safety proofs.
   - path: skylos/rules/danger/danger_fs/path_flow.py
     symbol: "def _untrusted_path_evidence"
     note: operator input is skipped; helper parameters go to the caller trace.
   - path: skylos/rules/danger/danger_fs/path_provenance.py
     symbol: "def resolve_helper_parameter_findings"
+  - path: skylos/rules/danger/danger_fs/atomic_open_proof.py
+    symbol: "class AtomicOpenProofs"
   - path: test/test_dangerous.py
     symbol: "def test_symlink_following_write_flags_attacker_controlled_output"
 
@@ -150,9 +151,9 @@ false_alarms_and_suppression:
       at the top of the file) are not seen inside the function, so a safe
       `os.open(path, WRITE_FLAGS)` is still reported.
     - >-
-      The other way round, any earlier mention of a guard name silences the
-      rule: a bare `.resolve()` with no containment check, or an `is_file()`
-      test, which itself follows links.
+      A precheck can be useful but cannot establish an atomic open: the path
+      may change between the check and the operation. Use flags on that
+      operation rather than relying on a check-like name elsewhere.
     - >-
       A helper whose callers Skylos cannot resolve is moved to `suppressed`
       as unknown instead of being reported; look there when a scan of part

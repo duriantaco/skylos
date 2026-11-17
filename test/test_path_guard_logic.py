@@ -44,7 +44,7 @@ def _d215(tmp_path, body):
     )
     assert not result.get("analysis_errors")
     return [
-        row["file"].rsplit("/", 1)[-1]
+        row
         for row in result.get("danger", [])
         if row["rule_id"] == "SKY-D215"
     ]
@@ -89,7 +89,15 @@ def _d215(tmp_path, body):
     ],
 )
 def test_checks_the_whole_test_guarantees_are_kept(tmp_path, body):
-    assert _d215(tmp_path, body) == []
+    rows = _d215(tmp_path, body)
+    assert not [row for row in rows if row["file"].endswith("/app.py")]
+    if "return open(" in body:
+        # Direct guarded reads leave the imported helper unused and unresolved.
+        [helper] = rows
+        assert helper["file"].endswith("/storage.py")
+        assert helper["metadata"]["path_provenance"]["status"] == "unknown"
+    else:
+        assert rows == []
 
 
 @pytest.mark.parametrize(
@@ -131,4 +139,13 @@ def test_checks_the_whole_test_guarantees_are_kept(tmp_path, body):
     ],
 )
 def test_checks_an_or_makes_optional_still_report(tmp_path, body):
-    assert _d215(tmp_path, body)
+    rows = _d215(tmp_path, body)
+    if "return open(" in body:
+        # A review for the unused helper cannot stand in for the unsafe route.
+        assert any(row["file"].endswith("/app.py") for row in rows)
+    else:
+        assert any(
+            row["file"].endswith("/storage.py")
+            and row["metadata"]["path_provenance"]["status"] == "untrusted"
+            for row in rows
+        )
