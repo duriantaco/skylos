@@ -96,6 +96,22 @@ class AtomicOpenProofs:
         separate bounded proof still requires native providers and ownership.
         """
         scope = self.module.scope(call)
+        binding = self.module.parents.get(call)
+        targets = (
+            binding.targets
+            if isinstance(binding, ast.Assign)
+            else [binding.target]
+            if isinstance(binding, ast.AnnAssign)
+            else []
+        )
+        if any(
+            isinstance(target, ast.Name)
+            and target.id in self.modes.captured_names.get(scope, ())
+            for target in targets
+        ):
+            # Proof-only local lookup intentionally rejects captured values.
+            # That uncertainty cannot establish absence of descriptor reads.
+            return True
 
         def same_descriptor(node, seen=frozenset()):
             if node is call:
