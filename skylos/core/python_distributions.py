@@ -98,6 +98,8 @@ CURATED_IMPORT_PATHS = {
     "pyopenssl": ("OpenSSL",),
     # Canonical package trees: github.com/scrapy/pypydispatcher and
     # pypi.org/project/python-consul2/ (a drop-in python-consul fork).
+    # matplotlib also installs the top-level pylab module and mpl_toolkits.
+    "matplotlib": ("matplotlib", "mpl_toolkits", "pylab"),
     "pypydispatcher": ("pydispatch",),
     "pytelegrambotapi": ("telebot",),
     "python-dateutil": ("dateutil",),

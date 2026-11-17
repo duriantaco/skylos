@@ -1,0 +1,90 @@
+{
+  "scope": "Integration with current main; selected regression contracts, not population accuracy",
+  "feature_parent": "603a905954acbcecac40fee1c6a8201b069003b3",
+  "main_parent": "bea91bd7931877add57e673f3005e8bbe7718c7b",
+  "merge_resolution": "Retain the source-reviewed 300 unused / 469 used dead-code labels.",
+  "additional_fix": "Require stable callable identity before trusting source-defined path containment helpers; reject shadowing, decoration, rebinding and mutation. Mock patching also invalidates the proof; an unused mock import preserves it.",
+  "tests": [
+    {
+      "scope": "Merged path, precision, action, CI, output and dependency tests before the identity guard addition",
+      "passed": 1102
+    },
+    {
+      "scope": "All path and blind precision tests after the identity guard addition",
+      "passed": 915,
+      "new_callable_identity_controls": 22
+    }
+  ],
+  "test_counts_overlap": true,
+  "suites": {
+    "default_dead_code": {
+      "case_count": 151,
+      "pass_count": 151,
+      "failure_count": 0,
+      "analysis_status": "complete",
+      "counts": {
+        "true_positives": 300,
+        "false_positives": 0,
+        "false_negatives": 0,
+        "true_negatives": 469
+      },
+      "raw_report_sha256": "9935b4534c4e51d93419ce4ceb495c0e666bb4cb66649d9a66e92cf378a437a3"
+    },
+    "default_security": {
+      "case_count": 277,
+      "pass_count": 277,
+      "failure_count": 0,
+      "analysis_status": "complete",
+      "counts": {
+        "true_positives": 150,
+        "false_positives": 0,
+        "false_negatives": 0,
+        "true_negatives": 140
+      },
+      "raw_report_sha256": "b0cc4ff40760c44c6c7a93160c12302bb43d303841ebd5b27dde7da15426355c"
+    },
+    "shared_corpus": {
+      "case_count": 84,
+      "pass_count": 84,
+      "failure_count": 0,
+      "analysis_status": "complete",
+      "raw_report_sha256": "8fee91edb8f14d3860201ade3f7d54f40db7828700eb6e1144edce821e5593a7"
+    },
+    "dead_code_challenge": {
+      "case_count": 17,
+      "pass_count": 17,
+      "failure_count": 0,
+      "analysis_status": "complete",
+      "counts": {
+        "true_positives": 48,
+        "false_positives": 0,
+        "false_negatives": 0,
+        "true_negatives": 95
+      },
+      "raw_report_sha256": "aafbfdb67ef5b33cd8356bab44a92c4536b2e1ed22dc755c51bc1ef7ebea1ad7"
+    },
+    "security_challenge": {
+      "case_count": 9,
+      "pass_count": 9,
+      "failure_count": 0,
+      "analysis_status": "complete",
+      "counts": {
+        "true_positives": 8,
+        "false_positives": 0,
+        "false_negatives": 0,
+        "true_negatives": 1
+      },
+      "raw_report_sha256": "161d75a98e30d7b0e7a9746a49771fe8838572c7a7d24229898ad6a4be9a5e2c"
+    }
+  },
+  "checks": [
+    "Ruff F checks on identity guard and new tests",
+    "Generated repository map current",
+    "Rule documentation parity with documented extra IDs allowed"
+  ],
+  "limitations": "Pinned repository and competitor measurements are preserved from the prior development run; real-repository security recall remains unmeasured.",
+  "tested_source_git_blobs": {
+    "skylos/rules/danger/danger_fs/path_flow.py": "adf17fc0c6a1d8e48e05cdab92fd3db4de557bb6",
+    "test/test_path_helper_callable_identity.py": "f0f55ce4e848b4a6a74ebf7f30964c5ddab0426a"
+  }
+}

@@ -13,8 +13,7 @@ The default manifest contains **151 cases and 769 symbol labels**: 300 unused an
 469 used. The November 17 source audit corrects three mistaken used labels: two
 unloaded JS files and an unreachable Python backend. The original manifest and
 source evidence remain preserved in the [repair report](../review_2026_11_17/ground_truth_audit/fixes_2026_11_17/FIXES_IMPLEMENTED.md).
-Source-reviewed label
-completions are recorded in `source_label_review_2026_11_16.json`; those are
+Source-reviewed label completions are recorded in `source_label_review_2026_11_16.json`; those are
 corrections to regression coverage and do not establish independent accuracy.
 Twenty-two cases (92 labels: 47 unused, 45 used) are paired TS/JS liveness
 contracts for reads and loads that no import statement spells out:

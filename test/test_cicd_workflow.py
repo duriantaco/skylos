@@ -16,6 +16,7 @@ from skylos.commands.done_cmd import build_map_parser
 from skylos.commands.done_cmd import build_parser as build_done_parser
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.config.cicd.github_actions import scan_github_actions
+from test.fixture_paths import write_fixture
 
 PR_UPLOAD_JOBS = ("pr-policy", "pr-scan", "pr-publish")
 
@@ -138,6 +139,81 @@ def test_workflow_pull_request_analysis_is_diff_aware():
     assert '--diff-base "$pr_base_ref"' in content
     assert '--diff "$pr_base_ref"' in content
     assert "github.base_ref" not in content
+
+
+def _run_step_on_push(tmp_path, step_name, before, *, event="push"):
+    """Run a generated step under bash with a stub skylos; return its command."""
+    import subprocess
+
+    # Execute only repository-generated steps; callers select a step and a
+    # literal event, rather than supplying shell source.
+    steps = yaml.safe_load(generate_workflow(use_upload=False))["jobs"]["skylos"]["steps"]
+    script = next(s for s in steps if s.get("name") == step_name)["run"]
+    events = {"push": "push", "pull_request": "pull_request"}
+    script = script.replace("${{ github.event_name }}", events[event])
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    stub = write_fixture(
+        tmp_path, "bin/skylos", '#!/bin/sh\necho "skylos $*"\n', overwrite=True
+    )
+    stub.chmod(0o755)
+    repo = tmp_path / "repo"
+    if not repo.exists():
+        repo.mkdir()
+        git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        for msg in ("one", "two"):
+            subprocess.run(
+                [*git, "commit", "-q", "--allow-empty", "-m", msg],
+                cwd=repo,
+                check=True,
+            )
+    if before == "PARENT":
+        before = subprocess.run(
+            ["git", "rev-parse", "HEAD~1"], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+    env = {"PATH": f"{bindir}:/usr/bin:/bin", "PUSH_BEFORE_SHA": before}
+    out = subprocess.run(
+        ["bash", "-e", "-c", script], cwd=repo, env=env, check=True, capture_output=True, text=True
+    )
+    return out.stdout.strip().splitlines()[-1], before
+
+
+def test_no_upload_push_gate_checks_only_what_the_push_changed(tmp_path):
+    # Without an upload job the gate also runs on pushes to main. A legacy
+    # repository must not go red there for findings that were already present.
+    content = generate_workflow(use_upload=False)
+    assert "PUSH_BEFORE_SHA: ${{ github.event.before }}" in content
+
+    command, before = _run_step_on_push(tmp_path, "Quality Gate", "PARENT")
+    assert command == (
+        f"skylos cicd gate . --input skylos-results.json --diff-base {before} --summary"
+    )
+
+    command, before = _run_step_on_push(tmp_path, "Run Skylos Analysis", "PARENT")
+    assert f"--diff-base {before} --diff {before}" in command
+
+
+@pytest.mark.parametrize(
+    "before",
+    ["0000000000000000000000000000000000000000", "deadbeef" * 5, ""],
+)
+def test_no_upload_push_without_usable_base_reports_without_failing(tmp_path, before):
+    command, _ = _run_step_on_push(tmp_path, "Quality Gate", before)
+    assert command == "skylos cicd gate --input skylos-results.json --summary --advisory"
+
+
+def test_no_upload_pull_request_gate_is_unchanged(tmp_path):
+    command, _ = _run_step_on_push(tmp_path, "Quality Gate", "", event="pull_request")
+    assert command == (
+        "skylos cicd gate . --input skylos-results.json --diff-base origin/main --summary"
+    )
+
+
+def test_upload_workflow_leaves_pushes_to_the_upload_job():
+    content = generate_workflow(use_upload=True)
+    assert "PUSH_BEFORE_SHA" not in content
+    assert "github.event_name != 'push'" in content
 
 
 def test_workflow_quotes_base_ref_in_pr_review_step():

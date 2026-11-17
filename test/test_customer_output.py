@@ -346,3 +346,16 @@ def test_remediation_dry_run_needs_no_key_and_lists_what_it_would_fix(
     assert exc.value.code == 0
     assert "No OPENAI_API_KEY" not in output
     assert "Dry run" in output and "db.py" in output
+
+
+def test_next_fix_line_drops_the_local_gate_claim_when_cloud_decides(tmp_path):
+    # An upload is judged by the Skylos Cloud policy, printed after this line.
+    # "(it blocks the gate)" from the local limits contradicted a Cloud pass.
+    from skylos.ui.risk_view import next_fix_line
+
+    local = next_fix_line(_result(), root_path=tmp_path, config={})
+    assert local.startswith("fix SKY-D212 ")
+    assert local.endswith(" first (it blocks the gate)")
+
+    cloud = next_fix_line(_result(), root_path=tmp_path, config={}, local_gate=False)
+    assert cloud == local.removesuffix(" (it blocks the gate)")

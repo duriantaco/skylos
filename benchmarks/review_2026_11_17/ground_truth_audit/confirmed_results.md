@@ -5,6 +5,19 @@ challenge suites pass with no incomplete cases.** Source-first labels and
 competitor adjudications remain preserved; these results describe selected
 regression contracts, not population accuracy.
 
+## Integration with current main
+
+Merged main at `bea91bd7`, preserving the corrected ground-truth labels.
+All five suites below still pass. An independent merge review found that a
+shadowed or replaced path helper could inherit a sanitizer proof; the fix now
+requires stable callable identity, including guards for mock patching. Real
+local/imported helpers and unused mock imports remain quiet.
+The merged tree passed 1,102 targeted tests before this guard addition, then
+915 path/precision tests including 22 new identity controls after it. These
+test sets overlap. The default security suite was rerun after the guard and
+remains 277/277. [Integration receipt](fixes_2026_11_17/suites/MAIN_MERGE_VALIDATION.json)
+records the scope and report hashes; earlier competitor measurements are unchanged.
+
 ## Matched results
 
 | Suite | Cases passing | TP / FP / FN / TN |

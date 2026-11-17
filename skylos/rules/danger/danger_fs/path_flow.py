@@ -1,8 +1,11 @@
 from __future__ import annotations
 import ast
+import os
 import re
 import sys
+from pathlib import Path
 from string import Formatter
+from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
 from skylos.rules.danger.module_namespace import (
     attribute_write_names,
@@ -1031,7 +1034,7 @@ class _PathFlowChecker(TaintVisitor):
 
     def _is_sanitizer_call(self, node):
         if not super()._is_sanitizer_call(node):
-            return False
+            return self._is_project_containment_call(node)
         name = self.untrusted_sources.resolved_import(
             self._current_function(), _qualified_name(node)
         )
@@ -1043,6 +1046,79 @@ class _PathFlowChecker(TaintVisitor):
             base = _bound_argument(node, 0, "directory")
             return base is not None and not self.is_tainted(base)
         return True
+
+    def _is_project_containment_call(self, node):
+        """A call to a project function whose body proves every path it
+        returns is contained (or does not carry the tainted arguments)."""
+        if not isinstance(node, ast.Call) or self.untrusted_sources is None:
+            return False
+        if any(isinstance(arg, ast.Starred) for arg in node.args) or any(
+            keyword.arg is None for keyword in node.keywords
+        ):
+            return False
+        if not any(self.is_tainted(arg) for arg in node.args) and not any(
+            self.is_tainted(keyword.value) for keyword in node.keywords
+        ):
+            return False
+        cache = self.__dict__.setdefault("_project_function_cache", {})
+        key = (id(node), id(self._current_function()))
+        if key not in cache:
+            cache[key] = self._project_function(node)
+        located = cache[key]
+        if located is None:
+            return False
+        file_path, target = located
+        parameters = [
+            argument.arg for argument in (*target.args.posonlyargs, *target.args.args)
+        ]
+        known = set(_function_arguments(target))
+        tainted = set()
+        for index, arg in enumerate(node.args):
+            if index >= len(parameters):
+                return False
+            if self.is_tainted(arg):
+                tainted.add(parameters[index])
+        for keyword in node.keywords:
+            if keyword.arg not in known:
+                return False
+            if self.is_tainted(keyword.value):
+                tainted.add(keyword.arg)
+        if not tainted:
+            return False
+        return _prove_containment(
+            file_path, target.name, frozenset(tainted), getattr(self, "project_root", None)
+        )
+
+    def _project_function(self, node):
+        """(file, def) for a call to a unique module-level function of this
+        module or of a project module it imports."""
+        module = getattr(self.untrusted_sources, "module", None)
+        dotted = _qualified_name(node)
+        if not dotted or not _helper_namespace_is_stable(module, dotted, self.file_path):
+            return None
+        head = dotted.split(".", 1)[0]
+        # A module definition does not identify a caller's local parameter,
+        # assignment or enclosing closure binding with the same spelling.
+        if any(head in scope_bindings(scope) for scope in self._function_stack):
+            return None
+        if isinstance(node.func, ast.Name) and module is not None:
+            local = _unique_module_function(module, node.func.id, self.file_path)
+            if local is not None:
+                return self.file_path, local
+        if not dotted or not self._import_names_are_stable(dotted):
+            return None
+        resolved = self.untrusted_sources.resolved_import(self._current_function(), dotted)
+        if not resolved or "." not in resolved:
+            return None
+        if not _helper_namespace_is_stable(module, resolved, self.file_path):
+            return None
+        module_name, _, function_name = resolved.rpartition(".")
+        file_path = _module_file(getattr(self, "project_root", None), module_name)
+        if file_path is None:
+            return None
+        tree = _parsed_module(file_path, getattr(self, "project_root", None))
+        target = _unique_module_function(tree, function_name, file_path) if tree is not None else None
+        return (file_path, target) if target is not None else None
 
     def is_tainted(self, node):
         if _is_path_name_projection(node) or is_traversal_safe_value(node):
@@ -1304,7 +1380,56 @@ class _PathFlowChecker(TaintVisitor):
         """Names a containment or allowlist check vouches for when ``test``
         evaluates to ``holds``. ``a or b`` holding proves only what both
         prove; ``a and b`` failing likewise."""
-        return polarity_names(test, holds, self._containment_call_names)
+        return polarity_names(
+            self._inline_bound_checks(test), holds, self._containment_call_names
+        )
+
+    def _inline_bound_checks(self, test):
+        """``common = os.path.commonpath([...])`` then ``if common != base``:
+        read the comparison through a name bound once to a containment call,
+        when every name that call reads is itself bound once (a later
+        rebinding of the checked path must not inherit the check)."""
+        function = self._current_function()
+        if function is None:
+            return test
+        bindings = self._function_bindings.get(id(function))
+        if bindings is None:
+            bindings = scope_bindings(function)
+            self._function_bindings[id(function)] = bindings
+
+        def bound_check(node):
+            if not isinstance(node, ast.Name):
+                return None
+            values = bindings.get(node.id)
+            if not values or len(values) != 1 or not isinstance(values[0], ast.Call):
+                return None
+            call = values[0]
+            if not self._containment_call_names(call):
+                return None
+            for name in _names_in(call):
+                if len(bindings.get(name, ())) > 1:
+                    return None
+            return call
+
+        def rewrite(node):
+            # Only the shapes polarity_names reads; everything else is shared.
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+                operand = rewrite(node.operand)
+                return node if operand is node.operand else ast.UnaryOp(op=node.op, operand=operand)
+            if isinstance(node, ast.BoolOp):
+                values = [rewrite(value) for value in node.values]
+                if all(new is old for new, old in zip(values, node.values)):
+                    return node
+                return ast.BoolOp(op=node.op, values=values)
+            if isinstance(node, ast.Compare):
+                sides = [node.left, *node.comparators]
+                replaced = [bound_check(side) or side for side in sides]
+                if all(new is old for new, old in zip(replaced, sides)):
+                    return node
+                return ast.Compare(left=replaced[0], ops=node.ops, comparators=replaced[1:])
+            return node
+
+        return rewrite(test)
 
     def _containment_call_names(self, call):
         if _callee_last(call) == "commonpath":
@@ -2111,6 +2236,378 @@ class _PathFlowChecker(TaintVisitor):
 
         self._record_safety_tokens(node)
         self.generic_visit(node)
+
+
+class _ContainmentProbeChecker(_PathFlowChecker):
+    """Visits module-level statements and the target function only."""
+
+    def visit_FunctionDef(self, node):
+        if node is self._probe_target:
+            return super().visit_FunctionDef(node)
+        return None
+
+    def visit_AsyncFunctionDef(self, node):
+        if node is self._probe_target:
+            return super().visit_AsyncFunctionDef(node)
+        return None
+
+    def visit_ClassDef(self, node):
+        return None
+
+    def _taint_params(self, fn):
+        super()._taint_params(fn)
+        if fn is self._probe_target:
+            for argument in _function_arguments(fn):
+                if argument not in self._probe_tainted:
+                    self._set(argument, False)
+
+    def visit_Return(self, node):
+        if self._current_function() is self._probe_target:
+            value = node.value
+            self._probe_returns.append(
+                value is None
+                or not self.is_tainted(value)
+                or self._path_is_contained(value)
+            )
+        self.generic_visit(node)
+
+
+def _function_arguments(fn):
+    arguments = fn.args
+    names = [
+        argument.arg
+        for argument in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)
+    ]
+    if arguments.vararg:
+        names.append(arguments.vararg.arg)
+    if arguments.kwarg:
+        names.append(arguments.kwarg.arg)
+    return names
+
+
+# Project helpers proven to return only contained paths:
+# (root, path, name, tainted params) -> bool. In-progress keys read as False.
+_CONTAINMENT_PROOFS: dict = {}
+_CONTAINMENT_ACTIVE: set = set()
+_CONTAINMENT_MAX_ACTIVE = 4
+_PARSED_HELPER_MODULES: dict = {}
+# A long-lived process (editor, MCP server) scans again after edits: the
+# analyzer clears these per run, and parsed files are keyed by their stat.
+_MAX_CACHED_ENTRIES = 4096
+_MAX_HELPER_BYTES = 2_000_000
+
+
+def reset_containment_proofs() -> None:
+    _CONTAINMENT_PROOFS.clear()
+    _CONTAINMENT_ACTIVE.clear()
+    _PARSED_HELPER_MODULES.clear()
+    _UNIQUE_FUNCTIONS.clear()
+    _HELPER_NAMESPACES.clear()
+
+
+def _bounded(cache):
+    if len(cache) >= _MAX_CACHED_ENTRIES:
+        cache.clear()
+    return cache
+
+
+def _parsed_module(path, project_root):
+    """Parse only bounded, regular project sources without following symlinks."""
+    if not project_root:
+        return None
+    try:
+        root = Path(project_root).resolve(strict=True)
+        candidate = Path(os.path.abspath(path))
+        candidate.relative_to(root)
+        # Check before cache hits too: replacing a helper with a symlink must
+        # not reuse a proof from the previous, regular project source.
+        if candidate.resolve(strict=True) != candidate:
+            return None
+        stat = candidate.stat()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    key = (
+        str(root),
+        str(candidate),
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+        stat.st_size,
+        stat.st_ino,
+        stat.st_dev,
+    )
+    cached = _PARSED_HELPER_MODULES.get(key)
+    if cached is None:
+        try:
+            source = read_project_text_no_symlink(
+                root, candidate, max_bytes=_MAX_HELPER_BYTES
+            )
+            cached = (
+                ast.parse(source, filename=str(candidate))
+                if source is not None
+                else False
+            )
+        except (OSError, SyntaxError, ValueError, UnicodeDecodeError):
+            cached = False
+        _bounded(_PARSED_HELPER_MODULES)[key] = cached
+    return cached or None
+
+
+_UNIQUE_FUNCTIONS: dict = {}
+_HELPER_NAMESPACES: dict = {}
+_CALLABLE_REPLACEMENT_ATTRIBUTES = frozenset(
+    {"__code__", "__defaults__", "__kwdefaults__", "__call__"}
+)
+
+
+def _helper_namespace_is_stable(tree, dotted, file_path=None):
+    """Source-visible namespace or callable mutation invalidates body proofs.
+
+    Attribute writes are checked independent of receiver spelling, so an
+    alias to a function or project module cannot hide its replacement.
+    """
+    if not isinstance(tree, ast.Module):
+        return False
+    cache_key = (id(tree), str(file_path))
+    entry = _HELPER_NAMESPACES.get(cache_key)
+    if entry is None or entry[0] is not tree:
+        dynamic, rebound = module_rebinding(tree, module_name_for(file_path) if file_path else None)
+        attributes, computed = attribute_write_names(tree)
+        global_names = {
+            name for node in ast.walk(tree) if isinstance(node, ast.Global)
+            for name in node.names
+        }
+        entry = (
+            tree,
+            dynamic or computed or has_mock_api_patching(tree),
+            rebound | attributes | global_names,
+            attributes,
+        )
+        _bounded(_HELPER_NAMESPACES)[cache_key] = entry
+    return (
+        not entry[1]
+        and not set(dotted.split(".")) & entry[2]
+        and not _CALLABLE_REPLACEMENT_ATTRIBUTES & entry[3]
+    )
+
+
+def _unique_module_function(tree, name, file_path=None):
+    """The one module-level ``def name`` that nothing else in the module
+    rebinds; None for anything ambiguous."""
+    index = _UNIQUE_FUNCTIONS.get(id(tree))
+    if index is None or index[0] is not tree:
+        defs = {}
+        for statement in tree.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                defs.setdefault(statement.name, []).append(statement)
+        bindings = scope_bindings(tree)
+        unique = {
+            key: nodes[0]
+            for key, nodes in defs.items()
+            if len(nodes) == 1 and len(bindings.get(key, ())) == 1
+            and not nodes[0].decorator_list
+            and _helper_namespace_is_stable(tree, key, file_path)
+        }
+        index = (tree, unique)
+        _bounded(_UNIQUE_FUNCTIONS)[id(tree)] = index
+    return index[1].get(name)
+
+
+def _module_file(project_root, dotted):
+    if not project_root or not dotted:
+        return None
+    base = os.path.join(str(project_root), *dotted.split("."))
+    for candidate in (base + ".py", os.path.join(base, "__init__.py")):
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+# A proof that cannot finish is not a proof: the call stays unsanitized.
+_PROOF_ERRORS = (
+    RecursionError, MemoryError, ValueError, TypeError, AttributeError,
+    KeyError, IndexError, OSError, SyntaxError,
+)  # fmt: skip
+_CONTAINMENT_CALLEES = frozenset({"commonpath", "relative_to", "is_relative_to", "startswith"})
+
+
+def _checks_containment(function):
+    """Cheap syntax filter before a full probe: the body calls a
+    containment check itself."""
+    callees = {
+        _callee_last(node) for node in ast.walk(function) if isinstance(node, ast.Call)
+    }
+    return bool(callees & _CONTAINMENT_CALLEES) and bool(callees & _NORMALIZER_CALLEES)
+
+
+def _own_returns(function):
+    pending = list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Return):
+            yield node
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        pending.extend(ast.iter_child_nodes(node))
+
+
+def _module_import_aliases(tree, file_path, project_root):
+    """name -> dotted module or ``module.attr`` for module-level imports."""
+    aliases = {}
+    package = None
+    if project_root:
+        relative = os.path.relpath(os.path.dirname(str(file_path)), str(project_root))
+        package = "" if relative == "." else relative.replace(os.sep, ".")
+    for statement in tree.body:
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                if alias.asname:
+                    aliases[alias.asname] = alias.name
+        elif isinstance(statement, ast.ImportFrom):
+            module = statement.module or ""
+            if statement.level:
+                if package is None:
+                    continue
+                parts = package.split(".") if package else []
+                if statement.level - 1 > len(parts):
+                    continue
+                base = parts[: len(parts) - (statement.level - 1)]
+                module = ".".join([*base, module] if module else base)
+            for alias in statement.names:
+                if alias.name != "*":
+                    aliases[alias.asname or alias.name] = f"{module}.{alias.name}"
+    return aliases
+
+
+def _resolve_helper_call(call, tree, file_path, project_root, scope=None):
+    """(file, def) for ``f(...)``, ``mod.f(...)`` or ``pkg.mod.f(...)`` that
+    names a unique module-level project function."""
+    func = call.func
+    dotted = _qualified_name(call)
+    if not dotted or not _helper_namespace_is_stable(tree, dotted, file_path):
+        return None
+    head = dotted.split(".", 1)[0]
+    if scope is not None and head in scope_bindings(scope):
+        return None
+    if isinstance(func, ast.Name):
+        local = _unique_module_function(tree, func.id, file_path)
+        if local is not None:
+            return str(file_path), local
+    head, _, rest = dotted.partition(".")
+    if len(scope_bindings(tree).get(head, ())) != 1:
+        return None
+    target = _module_import_aliases(tree, file_path, project_root).get(head)
+    if target is None:
+        return None
+    resolved = f"{target}.{rest}" if rest else target
+    if not _helper_namespace_is_stable(tree, resolved, file_path):
+        return None
+    module_name, _, function_name = resolved.rpartition(".")
+    helper_file = _module_file(project_root, module_name)
+    if helper_file is None:
+        return None
+    helper_tree = _parsed_module(helper_file, project_root)
+    helper = _unique_module_function(helper_tree, function_name, helper_file) if helper_tree else None
+    return (helper_file, helper) if helper is not None else None
+
+
+def _prove_wrapper(file_path, tree, function, tainted, project_root):
+    """Every return passes only parameters and literals straight into a
+    project function that is itself proven for the tainted parameters."""
+    returns = list(_own_returns(function))
+    if not returns:
+        return False
+    parameters = set(_function_arguments(function))
+    for node in returns:
+        call = node.value
+        if not isinstance(call, ast.Call):
+            return False
+        if any(isinstance(arg, ast.Starred) for arg in call.args) or any(
+            keyword.arg is None for keyword in call.keywords
+        ):
+            return False
+        for value in [*call.args, *(keyword.value for keyword in call.keywords)]:
+            if not (
+                isinstance(value, ast.Constant)
+                or (isinstance(value, ast.Name) and value.id in parameters)
+            ):
+                return False
+            if isinstance(value, ast.Name) and len(scope_bindings(function).get(value.id, ())) != 1:
+                return False
+        located = _resolve_helper_call(call, tree, file_path, project_root, function)
+        if located is None:
+            return False
+        helper_file, helper = located
+        helper_parameters = [
+            argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)
+        ]
+        known = set(_function_arguments(helper))
+        passed = set()
+        for index, value in enumerate(call.args):
+            if index >= len(helper_parameters):
+                return False
+            if isinstance(value, ast.Name) and value.id in tainted:
+                passed.add(helper_parameters[index])
+        for keyword in call.keywords:
+            if keyword.arg not in known:
+                return False
+            if isinstance(keyword.value, ast.Name) and keyword.value.id in tainted:
+                passed.add(keyword.arg)
+        if passed and not _prove_containment(
+            helper_file, helper.name, frozenset(passed), project_root
+        ):
+            return False
+    return True
+
+
+def _prove_containment(file_path, name, tainted, project_root):
+    """Whether ``name`` (module-level in ``file_path``) returns only paths
+    that are untainted or contained when exactly ``tainted`` params are."""
+    key = (str(project_root), str(file_path), name, tainted)
+    cached = _CONTAINMENT_PROOFS.get(key)
+    if cached is not None:
+        return cached
+    _bounded(_CONTAINMENT_PROOFS)
+    # Fewer tainted parameters cannot taint a return more, so a proof with
+    # every parameter tainted holds for each subset.
+    tree = _parsed_module(file_path, project_root)
+    target = _unique_module_function(tree, name, file_path) if tree is not None else None
+    if target is None:
+        _CONTAINMENT_PROOFS[key] = False
+        return False
+    everything = frozenset(_function_arguments(target))
+    if tainted != everything and _prove_containment(
+        file_path, name, everything, project_root
+    ):
+        _CONTAINMENT_PROOFS[key] = True
+        return True
+    if key in _CONTAINMENT_ACTIVE or len(_CONTAINMENT_ACTIVE) >= _CONTAINMENT_MAX_ACTIVE:
+        return False
+    if not _checks_containment(target):
+        _CONTAINMENT_ACTIVE.add(key)
+        try:
+            verdict = _prove_wrapper(file_path, tree, target, tainted, project_root)
+        except _PROOF_ERRORS:
+            verdict = False
+        finally:
+            _CONTAINMENT_ACTIVE.discard(key)
+        _CONTAINMENT_PROOFS[key] = verdict
+        return verdict
+    _CONTAINMENT_ACTIVE.add(key)
+    try:
+        probe = _ContainmentProbeChecker(str(file_path), [], sanitizers=PATH_SANITIZERS)
+        probe.project_root = project_root
+        probe._probe_target = target
+        probe._probe_tainted = tainted
+        probe._probe_returns = []
+        probe.visit(tree)
+        verdict = bool(probe._probe_returns) and all(probe._probe_returns)
+    except _PROOF_ERRORS:
+        verdict = False
+    finally:
+        _CONTAINMENT_ACTIVE.discard(key)
+    _CONTAINMENT_PROOFS[key] = verdict
+    return verdict
 
 
 def scan(tree, file_path, findings, *, project_root=None):
