@@ -417,6 +417,9 @@ _EMPTY_RESULT = {
 
 
 def _run_main(monkeypatch, argv, destination, upload_response):
+    # These flow tests begin connected; the resolver below owns the separate
+    # destination/mismatch behavior being exercised.
+    monkeypatch.setenv("SKYLOS_TOKEN", "test-upload-token")
     monkeypatch.setattr(cli.sys, "argv", argv)
     monkeypatch.setattr(cli, "_resolve_upload_destination", lambda _root: destination)
     fake_logger = Mock()

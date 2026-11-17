@@ -2258,7 +2258,9 @@ def test_local_server_outage_then_resend_via_cli(
     assert local_cloud.raw == [first_bytes]
     out = capsys.readouterr().out
     assert "Saved uploads: 1 sent." in out
-    assert f"View the scan: {api.BASE_URL}/dashboard/scans/scan-late" in out
+    assert f"View details: {api.BASE_URL}/dashboard/scans/scan-late" in out
+    assert "upload verification not reported" in out
+    assert "PASSED" not in out
     assert _pending_files(tmp_path) == []
 
 

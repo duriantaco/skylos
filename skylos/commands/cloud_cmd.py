@@ -9,6 +9,8 @@ from typing import Sequence
 
 from rich.console import Console
 
+from skylos.commands.project_context import command_project_context
+
 CLOUD_HELP = """Usage: skylos cloud [PATH] [scan flags]
 
 Scan PATH (default .) with every check, show the findings, upload them to
@@ -19,7 +21,10 @@ Skylos Cloud, then show the quality gate for this branch and one link to it.
           for secrets), the branch, the commit, the git author email of each
           flagged line, and a map of your functions and classes (names,
           files, lines, sizes, which calls which). Not your repository.
-  Login:  opens your browser the first time to pick this repo's project.
+  Login:  opens your browser the first time to pick this repo's project;
+          your sign-in is saved. No token to find or copy for local scans.
+  Trust:  browser sign-in saves developer reports. Verified quality gates and
+          checks require CI authentication (follow setup on the saved scan).
   Gate:   the Skylos Cloud quality gate for this branch. Exit 0 even when it
           fails; add --gate to exit 1 when it fails (use this in CI). Your
           local [tool.skylos.gate] limits are only used by skylos . --gate.
@@ -37,15 +42,18 @@ Other Cloud commands:           skylos login (switch project), skylos whoami,
 """
 
 NOT_CONNECTED = (
-    "Not connected to Skylos Cloud. Run skylos login in a terminal, "
-    "or set SKYLOS_TOKEN to a project token (create one in your project's "
-    "Settings on skylos.dev)."
+    "Skylos Cloud sign-in required. Run skylos cloud PATH in a terminal "
+    "without output-format flags to sign in in your browser, then retry. "
+    "For unattended CI, use GitHub Actions/GitLab OIDC or a SKYLOS_TOKEN secret."
 )
 OPENING_LOGIN = (
-    "Not connected to Skylos Cloud yet. Log in and pick this repo's project "
-    "in the browser; nothing is scanned or uploaded until you do."
+    "Sign in to Skylos Cloud in your browser and choose this repo's project. "
+    "The scan and upload will continue here; no token to copy."
 )
-LOGIN_CANCELLED = "Nothing was scanned or uploaded."
+LOGIN_CANCELLED = (
+    "Sign-in was not completed. Nothing was scanned or uploaded. "
+    "Run skylos cloud again to retry."
+)
 NO_UPLOAD_REFUSAL = "skylos cloud always uploads; run skylos . for a local-only scan."
 DONE_RUNNING = "Running skylos done first; its receipt goes with the upload…"
 DONE_NOT_SENT_DIRTY = (
@@ -85,31 +93,118 @@ def cloud_scan_argv(argv: Sequence[str]) -> list[str]:
 
 
 def _connected(cli_module: ModuleType, project_root) -> bool:
-    from skylos.api import get_project_token
+    from skylos import api
 
-    if os.getenv("SKYLOS_TOKEN"):
+    if os.getenv("SKYLOS_TOKEN", "").strip():
         return True
-    if cli_module._detect_link_file(project_root) is not None:
-        return True
-    return bool(get_project_token())
+    if cli_module._is_ci():
+        token = api.get_project_token()
+        return isinstance(token, str) and bool(token.strip())
+    repo_root = api._get_repo_root_for_link()
+    link = api._read_json(repo_root / api.LINK_FILE) or {}
+    if not isinstance(link, dict):
+        return False
+    project_id = api._linked_project_id_for_current_path(link, repo_root)
+    if not project_id:
+        return False
+    credentials = api._read_json(api.GLOBAL_CREDS_FILE) or {}
+    if not isinstance(credentials, dict):
+        return False
+    tokens = credentials.get("tokens")
+    saved = tokens.get(project_id) if isinstance(tokens, dict) else None
+    token = saved.get("token") if isinstance(saved, dict) else None
+    if not token and credentials.get("project_id") == project_id:
+        token = credentials.get("token")
+    return isinstance(token, str) and bool(token.strip())
 
 
-def _ensure_connected(cli_module: ModuleType, project_root) -> bool:
+def _ensure_connected(
+    cli_module: ModuleType, project_root, *, machine_output: bool = False
+) -> bool:
     if _connected(cli_module, project_root):
         return True
     if cli_module._is_ci():
         return True
-    console = cli_module.Console(theme=cli_module._skylos_console_theme())
-    if not cli_module._is_tty():
+    interactive = not machine_output and cli_module._is_tty()
+    console = cli_module.Console(
+        theme=cli_module._skylos_console_theme(), stderr=not interactive
+    )
+    if not interactive:
         console.print(f"[warn]{NOT_CONNECTED}[/warn]", soft_wrap=True)
         return False
     console.print(f"\n[bold yellow]{OPENING_LOGIN}[/bold yellow]", soft_wrap=True)
     from skylos.cloud.login import run_login
 
-    if run_login(console=console) is None:
-        console.print(f"[dim]{LOGIN_CANCELLED}[/dim]")
+    if (
+        run_login(
+            console=console, allow_manual=False, continue_scan=True, keep_existing=False
+        )
+        is None
+    ):
+        console.print(f"[dim]{LOGIN_CANCELLED}[/dim]", soft_wrap=True)
         return False
     return True
+
+
+def _machine_output(argv: Sequence[str]) -> bool:
+    if {"--json", "--llm", "--github", "--concise"}.intersection(argv):
+        return True
+    output_format = "rich"
+    for index, arg in enumerate(argv):
+        if arg.startswith("--format="):
+            output_format = arg.partition("=")[2]
+        elif arg == "--format" and index + 1 < len(argv):
+            output_format = argv[index + 1]
+    return output_format in {
+        "json",
+        "json-ci",
+        "report-md",
+        "report-html",
+        "llm",
+        "github",
+        "gitlab",
+        "concise",
+    }
+
+
+def _caller_file_args(argv: Sequence[str], caller_root: Path) -> list[str]:
+    """Keep explicit file flags relative to the caller when entering the target."""
+    file_flags = {
+        "--output",
+        "-o",
+        "--config-file",
+        "--done-receipt",
+        "--profile-output",
+    }
+
+    def absolute(value: str) -> str:
+        # Preserve symlinks for each file reader/writer's existing safety checks.
+        return value if value == "-" else str(caller_root / Path(value).expanduser())
+
+    prepared = list(argv)
+    index = 0
+    while index < len(prepared) and not prepared[index].startswith("-"):
+        prepared[index] = str((caller_root / prepared[index]).resolve())
+        index += 1
+    while index < len(prepared):
+        arg = prepared[index]
+        if arg == "--":
+            break
+        flag, equals, value = arg.partition("=")
+        if flag in file_flags or flag == "--sarif":
+            if equals:
+                prepared[index] = f"{flag}={absolute(value)}"
+            elif index + 1 < len(prepared) and (
+                prepared[index + 1] == "-" or not prepared[index + 1].startswith("-")
+            ):
+                prepared[index + 1] = absolute(prepared[index + 1])
+                index += 1
+            elif flag == "--sarif":
+                prepared[index] = f"--sarif={absolute('skylos.sarif.json')}"
+        elif arg.startswith("-o") and len(arg) > 2:
+            prepared[index] = f"-o{absolute(arg[2:])}"
+        index += 1
+    return prepared
 
 
 def _receipt_flag_given(argv: Sequence[str]) -> bool:
@@ -206,15 +301,34 @@ def run_cloud_command(argv: Sequence[str], *, cli_module: ModuleType) -> int:
     if "--no-upload" in argv:
         print(f"skylos: error: {NO_UPLOAD_REFUSAL}", file=sys.stderr)
         return 2
-    scan_argv = cloud_scan_argv(argv)
-    project_root = cli_module._resolve_main_project_root([scan_argv[0]])
-    if not _ensure_connected(cli_module, project_root):
+    scan_argv = _caller_file_args(cloud_scan_argv(argv), Path.cwd())
+    paths = []
+    for arg in scan_argv:
+        if arg.startswith("-"):
+            break
+        paths.append(arg)
+    project_root = cli_module._resolve_main_project_root(paths)
+    if not project_root.is_dir():
+        print(
+            f"skylos: error: scan path does not exist: {scan_argv[0]}",
+            file=sys.stderr,
+        )
+        return 2
+    with command_project_context(project_root):
+        return _run_connected_cloud_command(argv, scan_argv, project_root, cli_module)
+
+
+def _run_connected_cloud_command(argv, scan_argv, project_root, cli_module) -> int:
+    machine_output = _machine_output([*cli_module._load_addopts(), *scan_argv])
+    if not _ensure_connected(cli_module, project_root, machine_output=machine_output):
         return 1
     from skylos.commands.scan_cmd import run_scan_command
 
     done_note = None
     if not _receipt_flag_given(scan_argv) and not cli_module._is_ci():
-        console = cli_module.Console(theme=cli_module._skylos_console_theme())
+        console = cli_module.Console(
+            theme=cli_module._skylos_console_theme(), stderr=machine_output
+        )
         done_flags, done_note = done_receipt_argv(project_root, console)
         scan_argv = scan_argv + done_flags
     run_scan_command(

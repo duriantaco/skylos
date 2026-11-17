@@ -10,7 +10,10 @@ import skylos.cli as cli
 from skylos.commands.scan_cmd import _build_ci_json_payload
 from skylos.core.gate_incomplete import analysis_coverage, coverage_record
 from skylos.core.safe_cache_io import write_text_no_symlink
-from skylos.reporting.finding_types import annotate_finding_types, summarize_finding_types
+from skylos.reporting.finding_types import (
+    annotate_finding_types,
+    summarize_finding_types,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -56,6 +59,8 @@ def _report():
 
 def _configure(monkeypatch, tmp_path, output_format, *, upload=False):
     monkeypatch.chdir(tmp_path)
+    if upload:
+        monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     assert write_text_no_symlink(
         tmp_path / "app.py", "def unused():\n    return 1\n", encoding="utf-8"
@@ -128,7 +133,8 @@ def test_json_bytes_normalization_and_upload_isolation(
     }
     expected["provenance"] = None
     expected["analysis_summary"]["custom_rules_coverage"] = {
-        "status": "complete", "rule_count": 0
+        "status": "complete",
+        "rule_count": 0,
     }
     expected["analysis_summary"]["analysis_coverage"] = coverage_record(
         analysis_coverage(expected)
@@ -138,7 +144,9 @@ def test_json_bytes_normalization_and_upload_isolation(
         "reason": "skipped with --no-provenance",
     }
     annotate_finding_types(expected)
-    expected["analysis_summary"]["finding_type_counts"] = summarize_finding_types(expected)
+    expected["analysis_summary"]["finding_type_counts"] = summarize_finding_types(
+        expected
+    )
     original_expected = copy.deepcopy(expected)
 
     def enrich(result, *_args, **_kwargs):
@@ -175,7 +183,14 @@ def test_json_bytes_normalization_and_upload_isolation(
     add_report_guidance(normalized, config={})
     if output_format == "json-ci":
         normalized = _build_ci_json_payload(normalized)
-    normalized["upload"] = {"status": "uploaded"}
+    normalized["upload"] = {
+        "status": "uploaded",
+        "upload_trust": "unknown",
+        "verification": {
+            "status": "unknown",
+            "message": "Your scan is saved. Cloud did not report its upload verification status.",
+        },
+    }
     expected_bytes = json.dumps(normalized) + "\n"
 
     cli.main()

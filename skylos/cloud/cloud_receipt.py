@@ -4,9 +4,7 @@ from urllib.parse import quote
 
 from skylos.cloud.upload_destination import (
     UploadDestination,
-    _branch_query,
     _printable,
-    receipt_note,
     with_cloud_destination,
 )
 
@@ -21,8 +19,8 @@ LOCAL_NEXT_STEPS = (
 FAILED_NEXT_STEP = (
     "  Next: fix the issues behind the failed gate, then run skylos cloud again."
 )
-CI_NEXT_STEP = "  Next: skylos cicd init — adds a Skylos check to every pull request."
-UNVERIFIED_STANDING = "laptop upload, unverified until CI runs the workflow"
+CI_NEXT_STEP = "  Next: finish CI setup from the scan above to verify future uploads."
+UNVERIFIED_STANDING = "developer upload · CI verification needed"
 VERIFIED_STANDING = "verified CI upload"
 RECEIPT_VERDICTS = {"pass": "pass", "fail": "fail", "incomplete": "unfinished"}
 
@@ -57,8 +55,21 @@ def _failed_detail(upload_resp: dict) -> str:
 
 def _gate_line(upload_resp: dict, base_url: str) -> str:
     from skylos.cloud.gate_status import gate_context
+    from skylos.cloud.upload_status import (
+        TRUSTED_UPLOADS,
+        upload_trust,
+        verification_heading,
+    )
 
     passed = upload_resp.get("quality_gate_passed")
+    reported = upload_resp.get("quality_gate_reported") is not False and isinstance(
+        passed, bool
+    )
+    if upload_trust(upload_resp) not in TRUSTED_UPLOADS:
+        line = f"✓ {verification_heading(upload_resp)}"
+        if reported:
+            line += f" · policy preview: {'pass' if passed else 'fail'}"
+        return line
     if upload_resp.get("quality_gate_reported") is False or not isinstance(
         passed, bool
     ):
@@ -79,10 +90,13 @@ def _open_url(dest: UploadDestination, upload_resp: dict, base_url: str) -> str 
     from skylos.cloud.gate_status import details_url
 
     base = base_url.rstrip("/")
+    scan_url = details_url(base, dest.project_id, upload_resp.get("scan_id"))
+    if scan_url:
+        return scan_url
     if dest.project_id:
         project_path = f"{base}/dashboard/projects/{quote(dest.project_id, safe='')}"
-        return f"{project_path}{_branch_query(dest)}"
-    return details_url(base, None, upload_resp.get("scan_id"))
+        return project_path
+    return None
 
 
 def _standing(upload_trust) -> str | None:
@@ -90,6 +104,8 @@ def _standing(upload_trust) -> str | None:
         return UNVERIFIED_STANDING
     if upload_trust == "verified_ci":
         return VERIFIED_STANDING
+    if upload_trust == "trusted_api_key":
+        return "trusted CI project token"
     return None
 
 
@@ -102,9 +118,12 @@ def sent_line(done_receipt, upload_resp: dict, done_note: str | None) -> str:
         verdict = RECEIPT_VERDICTS.get(done_receipt.get("verdict"), "unfinished")
         what = f"findings and the Done receipt ({verdict})"
     parts = [what]
-    note = done_note or _standing(upload_resp.get("upload_trust"))
-    if note:
-        parts.append(note)
+    standing = _standing(upload_resp.get("upload_trust"))
+    if standing:
+        parts.append(standing)
+    # Optional Done configuration should not obscure the upload's standing.
+    if done_note and not done_note.startswith(("no Done table", "the Done table")):
+        parts.append(done_note)
     return "Sent: " + " · ".join(parts)
 
 
@@ -123,18 +142,22 @@ def cloud_receipt_lines(
     url = _open_url(dest, upload_resp, base_url)
     if url:
         lines.append(f"  Open: {url}")
-    upload_trust = upload_resp.get("upload_trust")
-    if dest.on_default_branch is True and upload_trust == "unverified":
-        note = receipt_note(dest, upload_trust)
-        if note:
-            lines.append(f"  {note}")
+    from skylos.cloud.upload_status import (
+        TRUSTED_UPLOADS,
+        upload_trust,
+        verification_receipt,
+    )
+
+    trust = upload_trust(upload_resp)
+    if trust not in TRUSTED_UPLOADS:
+        lines.append(f"  {verification_receipt(upload_resp, base_url)['message']}")
     if sent:
         lines.append(f"  {sent}")
     passed = upload_resp.get("quality_gate_passed")
+    if trust == "unverified":
+        lines.append(CI_NEXT_STEP)
     if upload_resp.get("quality_gate_reported") is False:
         return [_printable(line) for line in lines]
     if passed is False:
         lines.append(FAILED_NEXT_STEP)
-    elif passed is True and not ci_configured:
-        lines.append(CI_NEXT_STEP)
     return [_printable(line) for line in lines]

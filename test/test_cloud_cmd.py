@@ -1,6 +1,7 @@
 """`skylos cloud`: one command that scans with every check, uploads and shows the gate."""
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -40,6 +41,7 @@ def _response(passed, *, branch="feat/add-endpoint", default="main", **extra):
         message = "Quality Gate Failed! 1 critical security issue."
     response = {
         "success": True,
+        "upload_trust": "verified_ci",
         "scan_id": "scan-1",
         "quality_gate_passed": passed,
         "quality_gate_reported": True,
@@ -90,12 +92,12 @@ def test_failed_gate_receipt_is_the_gate_one_link_and_the_next_step():
     assert lines == [
         "✗ Quality gate on feat/add-endpoint: FAILED (same as last run on "
         "24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue",
-        "  Open: https://skylos.dev/dashboard/projects/proj-1?branch=feat%2Fadd-endpoint",
+        "  Open: https://skylos.dev/dashboard/projects/proj-1/scans/scan-1",
         FAILED_NEXT_STEP,
     ]
 
 
-def test_passed_gate_on_main_points_to_ci_setup_until_a_workflow_exists():
+def test_verified_pass_does_not_suggest_more_setup():
     response = _response(True, branch="main")
 
     without_ci = cloud_receipt_lines(_dest(), response, BASE, ci_configured=False)
@@ -103,10 +105,9 @@ def test_passed_gate_on_main_points_to_ci_setup_until_a_workflow_exists():
 
     assert without_ci == [
         "✓ Quality gate on main: PASSED (was FAILED on 24 Oct 15:38 UTC, 1ba9895)",
-        "  Open: https://skylos.dev/dashboard/projects/proj-1",
-        CI_NEXT_STEP,
+        "  Open: https://skylos.dev/dashboard/projects/proj-1/scans/scan-1",
     ]
-    assert with_ci == without_ci[:2]
+    assert with_ci == without_ci
 
 
 def test_unverified_default_branch_upload_says_it_does_not_mark_issues_fixed():
@@ -116,11 +117,11 @@ def test_unverified_default_branch_upload_says_it_does_not_mark_issues_fixed():
         _dest(key_source="saved"), response, BASE, ci_configured=True
     )
 
-    assert lines[2] == (
-        "  This is main, but a login-token upload is unverified: it does not "
-        "set the project verdict or mark issues fixed."
-    )
-    assert len(lines) == 3
+    assert lines[0] == "✓ Scan uploaded — CI verification needed · policy preview: pass"
+    assert "saved and ready to review" in lines[2]
+    assert "project verdict" in lines[2]
+    assert lines[3] == CI_NEXT_STEP
+    assert not any("Quality gate" in line for line in lines)
 
 
 def test_feature_branch_and_assumed_default_add_no_extra_notes():
@@ -152,7 +153,7 @@ def test_server_without_a_gate_result_still_gives_the_link():
 
     assert lines == [
         "✓ Uploaded to Skylos Cloud (no quality gate result was reported)",
-        "  Open: https://skylos.dev/dashboard/projects/proj-1?branch=feat%2Fadd-endpoint",
+        "  Open: https://skylos.dev/dashboard/projects/proj-1/scans/scan-1",
     ]
 
 
@@ -234,7 +235,9 @@ def test_not_connected_without_a_terminal_stops_before_scanning(
     monkeypatch.setattr("skylos.cloud.login.run_login", _no_scan)
 
     assert run_cloud_command([str(tmp_path)], cli_module=cli) == 1
-    assert cloud_cmd.NOT_CONNECTED in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert cloud_cmd.NOT_CONNECTED in captured.err
 
 
 def test_not_connected_in_a_terminal_logs_in_first(monkeypatch, capsys, tmp_path):
@@ -242,14 +245,19 @@ def test_not_connected_in_a_terminal_logs_in_first(monkeypatch, capsys, tmp_path
     calls = []
     monkeypatch.setattr(
         "skylos.cloud.login.run_login",
-        lambda console=None: calls.append("login") or None,
+        lambda console=None, **kwargs: calls.append(("login", kwargs)) or None,
     )
     monkeypatch.setattr("skylos.commands.scan_cmd.run_scan_command", _no_scan)
 
     assert run_cloud_command([str(tmp_path)], cli_module=cli) == 1
 
     out = capsys.readouterr().out
-    assert calls == ["login"]
+    assert calls == [
+        (
+            "login",
+            {"allow_manual": False, "continue_scan": True, "keep_existing": False},
+        )
+    ]
     assert cloud_cmd.OPENING_LOGIN in out
     assert cloud_cmd.LOGIN_CANCELLED in out
 
@@ -286,7 +294,9 @@ def test_connected_runs_the_scan_in_cloud_mode(monkeypatch, tmp_path):
 
 # --- the Done receipt rides on the upload ---------------------------------
 
-DONE_TABLE = '[project]\nname = "shop"\n\n[tool.skylos.done]\ntest_budget_seconds = 300\n'
+DONE_TABLE = (
+    '[project]\nname = "shop"\n\n[tool.skylos.done]\ntest_budget_seconds = 300\n'
+)
 
 
 def _git(root, *args):
@@ -456,9 +466,22 @@ def test_a_receipt_passed_by_hand_is_not_run_again(repo, monkeypatch):
     seen = _scan_spy(monkeypatch)
     monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
 
-    assert run_cloud_command([str(repo), "--done-receipt", "r.json"], cli_module=cli) == 0
+    assert (
+        run_cloud_command([str(repo), "--done-receipt", "r.json"], cli_module=cli) == 0
+    )
 
-    assert seen == [([str(repo), "--done-receipt", "r.json", "-a", "--upload"], None)]
+    assert seen == [
+        (
+            [
+                str(repo),
+                "--done-receipt",
+                str(Path("r.json").resolve()),
+                "-a",
+                "--upload",
+            ],
+            None,
+        )
+    ]
 
 
 def test_a_failed_done_still_uploads_with_its_fail_receipt(repo, monkeypatch, capsys):
@@ -482,7 +505,10 @@ def test_done_that_could_not_run_leaves_the_upload_without_a_receipt(
     assert run_cloud_command([str(repo)], cli_module=cli) == 0
 
     assert seen == [([str(repo), "-a", "--upload"], None)]
-    assert "Done receipt not sent: skylos done could not run (see above)" in capsys.readouterr().out
+    assert (
+        "Done receipt not sent: skylos done could not run (see above)"
+        in capsys.readouterr().out
+    )
 
 
 def test_in_ci_the_workflow_owns_done(repo, monkeypatch):
@@ -502,13 +528,13 @@ def test_in_ci_the_workflow_owns_done(repo, monkeypatch):
             {"verdict": "fail"},
             {"upload_trust": "unverified"},
             None,
-            "Sent: findings and the Done receipt (fail) · laptop upload, unverified until CI runs the workflow",
+            "Sent: findings and the Done receipt (fail) · developer upload · CI verification needed",
         ),
         (
             None,
             {"upload_trust": "unverified"},
             cloud_cmd.NO_DONE_TABLE,
-            "Sent: findings · no Done table in this repo (skylos setup adds one)",
+            "Sent: findings · developer upload · CI verification needed",
         ),
         (
             {"verdict": "pass"},
@@ -517,7 +543,12 @@ def test_in_ci_the_workflow_owns_done(repo, monkeypatch):
             "Sent: findings and the Done receipt (pass) · verified CI upload",
         ),
         (None, {}, None, "Sent: findings"),
-        ({"verdict": "incomplete"}, {}, None, "Sent: findings and the Done receipt (unfinished)"),
+        (
+            {"verdict": "incomplete"},
+            {},
+            None,
+            "Sent: findings and the Done receipt (unfinished)",
+        ),
     ],
 )
 def test_sent_line_names_what_reached_cloud_and_its_standing(
@@ -528,10 +559,14 @@ def test_sent_line_names_what_reached_cloud_and_its_standing(
 
 def test_sent_line_sits_between_the_link_and_the_next_step():
     sent = "Sent: findings"
-    failed = cloud_receipt_lines(_dest(), _response(False), BASE, ci_configured=False, sent=sent)
+    failed = cloud_receipt_lines(
+        _dest(), _response(False), BASE, ci_configured=False, sent=sent
+    )
     unreported = _response(True)
     unreported["quality_gate_reported"] = False
-    plain = cloud_receipt_lines(_dest(), unreported, BASE, ci_configured=False, sent=sent)
+    plain = cloud_receipt_lines(
+        _dest(), unreported, BASE, ci_configured=False, sent=sent
+    )
 
     assert failed[1].startswith("  Open: ") and failed[2] == "  Sent: findings"
     assert failed[3] == FAILED_NEXT_STEP
@@ -574,10 +609,7 @@ def test_cloud_scan_prints_the_short_receipt_only(monkeypatch, capsys, tmp_path)
     assert calls and calls[0]["quiet"] is True
     assert "Uploading findings to Skylos Cloud" in out
     assert "✗ Quality gate on feat/add-endpoint: FAILED" in out
-    assert (
-        "Open: https://skylos.dev/dashboard/projects/proj-1?branch=feat%2Fadd-endpoint"
-        in out
-    )
+    assert "Open: https://skylos.dev/dashboard/projects/proj-1/scans/scan-1" in out
     assert FAILED_NEXT_STEP.strip() in out
     assert "· Overview:" not in out
     assert "View details" not in out
@@ -595,9 +627,10 @@ def test_cloud_scan_ends_with_what_was_sent(monkeypatch, capsys, tmp_path):
     assert _main_exit() == 0
 
     lines = capsys.readouterr().out.splitlines()
-    sent = lines.index("  Sent: findings · no Done table in this repo (skylos setup adds one)")
-    assert lines[sent - 1].startswith("  Open: https://skylos.dev/dashboard/projects/proj-1")
-    assert lines[sent + 1] == FAILED_NEXT_STEP
+    sent = lines.index("  Sent: findings · developer upload · CI verification needed")
+    assert "saved and ready to review" in lines[sent - 1]
+    assert lines[sent + 1] == CI_NEXT_STEP
+    assert lines[sent + 2] == FAILED_NEXT_STEP
 
 
 def test_cloud_scan_sends_the_receipt_of_this_commit(monkeypatch, capsys, tmp_path):
@@ -611,7 +644,9 @@ def test_cloud_scan_sends_the_receipt_of_this_commit(monkeypatch, capsys, tmp_pa
     assert write_receipt(tmp_path, _receipt_for(tmp_path)) is not None
     uploaded = []
     monkeypatch.setattr(
-        cli, "upload_report", lambda result, **kwargs: uploaded.append(result) or response
+        cli,
+        "upload_report",
+        lambda result, **kwargs: uploaded.append(result) or response,
     )
     monkeypatch.setattr(done_cmd, "run_done_command", _no_scan)
 
@@ -619,7 +654,7 @@ def test_cloud_scan_sends_the_receipt_of_this_commit(monkeypatch, capsys, tmp_pa
 
     assert uploaded[0]["done_receipt"]["verdict"] == "pass"
     assert (
-        "  Sent: findings and the Done receipt (pass) · laptop upload, unverified until CI runs the workflow"
+        "  Sent: findings and the Done receipt (pass) · developer upload · CI verification needed"
         in capsys.readouterr().out.splitlines()
     )
 

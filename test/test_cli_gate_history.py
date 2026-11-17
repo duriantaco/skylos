@@ -63,7 +63,13 @@ def _previous(passed, overridden=False, created_at=PREVIOUS_TIME, commit=COMMIT)
 
 
 def _body(gate, **extra):
-    return {"scanId": "scan-1", "plan": "pro", "quality_gate": gate, **extra}
+    return {
+        "scanId": "scan-1",
+        "plan": "pro",
+        "quality_gate": gate,
+        "upload_trust": "verified_ci",
+        **extra,
+    }
 
 
 def _finalize(capsys, body, **kwargs):
@@ -141,24 +147,35 @@ def test_failed_gate_keeps_its_reason_bullets(capsys, machine_zone_not_utc):
 
 
 @pytest.mark.parametrize(
-    "extra",
+    "extra, expected_url",
     [
-        {},
-        {"destination": DESTINATION},
-        {"destination": "bad", "url": "https://untrusted.example/x"},
+        ({}, f"{BASE}/dashboard/scans/scan-1"),
+        ({"destination": DESTINATION}, PROJECT_SCAN_URL),
+        (
+            {"destination": "bad", "url": "https://untrusted.example/x"},
+            f"{BASE}/dashboard/scans/scan-1",
+        ),
     ],
 )
-def test_old_cloud_without_previous_gate_prints_exactly_todays_lines(capsys, extra):
-    _result, out = _finalize(capsys, _body(PASS, **extra))
-    assert "✅ PASS Quality gate: PASSED\n" in out
-    assert f"🔗 View the scan: {BASE}/dashboard/scans/scan-1\n" in out
+def test_old_cloud_without_trust_or_history_reports_a_policy_preview(
+    capsys, extra, expected_url
+):
+    result, out = _finalize(capsys, _body(PASS, upload_trust=None, **extra))
+    assert "Policy preview" in out
+    assert "pass · upload verification not reported\n" in out
+    assert f"🔗 View details: {expected_url}\n" in out
+    assert "✅ PASS" not in out and "PASSED" not in out
     assert "was " not in out and "first result" not in out
-    assert "View details" not in out and "untrusted.example" not in out
+    assert "untrusted.example" not in out
+    assert "upload_trust" not in result
 
 
-def test_old_cloud_failed_gate_lines_are_unchanged(capsys):
-    _result, out = _finalize(capsys, _body({"passed": False, "new_violations": 2}))
-    assert "❌ FAIL Quality gate: FAILED (2 new issues)\n" in out
+def test_old_cloud_failed_policy_is_a_preview_when_trust_is_not_reported(capsys):
+    _result, out = _finalize(
+        capsys, _body({"passed": False, "new_violations": 2}, upload_trust=None)
+    )
+    assert "Policy preview: fail · upload verification not reported\n" in out
+    assert "❌ FAIL Quality gate" not in out
 
 
 def test_missing_branch_keeps_todays_gate_line_with_a_workspace_link(
@@ -313,12 +330,15 @@ def test_details_link_uses_validated_ids_only():
     assert details_url(BASE, None, None) is None
 
 
-def test_formatted_line_needs_a_reported_gate_and_previous_gate(machine_zone_not_utc):
+def test_formatted_line_needs_a_reported_gate_but_not_previous_history(
+    machine_zone_not_utc,
+):
     result = {
         "success": True,
         "scan_id": "scan-1",
         "quality_gate_passed": False,
         "quality_gate_reported": True,
+        "upload_trust": "verified_ci",
         "destination": DESTINATION,
         "previous_gate": _previous(True),
     }
@@ -330,8 +350,38 @@ def test_formatted_line_needs_a_reported_gate_and_previous_gate(machine_zone_not
     assert formatted_gate_line({**result, "quality_gate_passed": None}, BASE) is None
     without = dict(result)
     without.pop("previous_gate")
-    assert formatted_gate_line(without, BASE) is None
-    assert gate_context(without, BASE) is None
+    assert formatted_gate_line(without, BASE) == (
+        f"Quality gate on main: FAILED — View details: {PROJECT_SCAN_URL}"
+    )
+    context = gate_context(without, BASE)
+    assert context is not None
+    assert context.history is None
+    assert context.upload_trust == "verified_ci"
+
+
+@pytest.mark.parametrize(
+    "trust, heading",
+    [
+        (None, "Scan uploaded — verification status not reported"),
+        ("unverified", "Scan uploaded — CI verification needed"),
+    ],
+)
+def test_formatted_policy_preview_without_history_does_not_claim_a_pass(trust, heading):
+    response = {
+        "success": True,
+        "scan_id": "scan-1",
+        "quality_gate_passed": True,
+        "quality_gate_reported": True,
+        "destination": DESTINATION,
+    }
+    if trust is not None:
+        response["upload_trust"] = trust
+
+    line = formatted_gate_line(response, BASE)
+
+    assert line == f"{heading} · policy preview: pass — Results: {PROJECT_SCAN_URL}"
+    assert "PASSED" not in line
+    assert gate_context(response, BASE).upload_trust == (trust or "unknown")
 
 
 def test_public_receipt_copies_a_clean_previous_gate_only_when_sent():
@@ -381,6 +431,7 @@ def test_json_upload_prints_gate_history_on_stderr_and_keeps_stdout_json(
         "scan_id": "scan-1",
         "quality_gate_passed": passed,
         "quality_gate_reported": True,
+        "upload_trust": "verified_ci",
         "quality_gate": {"passed": passed},
         "destination": DESTINATION,
         "previous_gate": _previous(not passed),
@@ -409,7 +460,7 @@ def test_json_upload_prints_gate_history_on_stderr_and_keeps_stdout_json(
         assert "Quality Gate: FAILED\n" in captured.err
 
 
-def test_json_upload_from_old_cloud_keeps_the_existing_link_line(
+def test_json_upload_from_old_cloud_reports_unknown_verification_with_a_results_link(
     monkeypatch, capsys, tmp_path
 ):
     _formatted_gate_scan(monkeypatch, tmp_path, gate=False)
@@ -419,10 +470,15 @@ def test_json_upload_from_old_cloud_keeps_the_existing_link_line(
     assert _run_exit() == 0
     captured = capsys.readouterr()
     assert captured.err.splitlines()[0] == (
-        f"View Cloud gate and results: {BASE}/dashboard/scans/scan-1"
+        "Scan uploaded — verification status not reported · policy preview: pass"
+        f" — Results: {BASE}/dashboard/scans/scan-1"
     )
-    assert "previous_gate" not in json.loads(captured.out)["upload"]
+    receipt = json.loads(captured.out)["upload"]
+    assert "previous_gate" not in receipt
+    assert receipt["verification"]["status"] == "unknown"
+    assert receipt["quality_gate_status"] == "preview"
     assert "Quality gate on" not in captured.err
+    assert "PASSED" not in captured.err
 
 
 @pytest.mark.parametrize(
