@@ -76,7 +76,7 @@ def test_method_names_built_in_a_method_and_dispatched_by_getattr_are_used(tmp_p
         def run(channel, target):
             for action in channel.actions:
                 for label, method_name in action.backends:
-                    return getattr(channel, method_name)(target=target)
+                    getattr(channel, method_name)(target=target)
 
 
         run(Chan(), "x")

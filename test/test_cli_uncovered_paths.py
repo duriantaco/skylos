@@ -45,6 +45,16 @@ def _progress_ctx():
     return cm
 
 
+@pytest.fixture
+def connected_upload(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
+    monkeypatch.setattr(
+        "skylos.cloud.sync.load_custom_rules",
+        lambda: {"rules": [], "status": "complete"},
+    )
+
+
 def test_shorten_path_none():
     assert cli._shorten_path(None) == "?"
 
@@ -1029,7 +1039,7 @@ def test_main_gate_does_not_upload_without_upload_flag(monkeypatch):
     gate.assert_called_once()
 
 
-def test_main_gate_uploads_when_upload_flag_is_set(monkeypatch):
+def test_main_gate_uploads_when_upload_flag_is_set(monkeypatch, connected_upload):
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [],
@@ -1067,7 +1077,9 @@ def test_main_gate_uploads_when_upload_flag_is_set(monkeypatch):
     gate.assert_called_once()
 
 
-def test_main_gate_honors_cloud_rejection_before_local_projection(monkeypatch):
+def test_main_gate_honors_cloud_rejection_before_local_projection(
+    monkeypatch, connected_upload
+):
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [],
@@ -1091,7 +1103,7 @@ def test_main_gate_honors_cloud_rejection_before_local_projection(monkeypatch):
         patch(
             "skylos.cli.upload_report",
             return_value={"success": True, "quality_gate_passed": False},
-        ),
+        ) as upload,
         patch("skylos.cli.run_gate_interaction", return_value=0) as local_gate,
         patch("builtins.print"),
     ):
@@ -1099,6 +1111,7 @@ def test_main_gate_honors_cloud_rejection_before_local_projection(monkeypatch):
             cli.main()
 
     assert error.value.code == 1
+    upload.assert_called_once()
     local_gate.assert_not_called()
 
 
@@ -1107,7 +1120,9 @@ def test_main_gate_honors_cloud_rejection_before_local_projection(monkeypatch):
     (["--format", "concise"], ["--llm"], ["--github"]),
     ids=("concise", "llm", "github"),
 )
-def test_formatted_upload_modes_honor_cloud_gate_rejection(monkeypatch, output_args):
+def test_formatted_upload_modes_honor_cloud_gate_rejection(
+    monkeypatch, output_args, connected_upload
+):
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [],

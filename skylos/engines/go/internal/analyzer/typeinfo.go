@@ -45,6 +45,8 @@ var scalarTypes = map[string]bool{
 
 // pkgFacts are the declarations of one package directory.
 type pkgFacts struct {
+	aliases       map[string]typeRef
+	valueNames    map[string]bool
 	fields        map[string]map[string]typeRef
 	embeds        map[string][]typeRef
 	ifaces        map[string]map[string]int
@@ -56,6 +58,8 @@ type pkgFacts struct {
 
 func newPkgFacts() *pkgFacts {
 	return &pkgFacts{
+		aliases:       map[string]typeRef{},
+		valueNames:    map[string]bool{},
 		fields:        map[string]map[string]typeRef{},
 		embeds:        map[string][]typeRef{},
 		ifaces:        map[string]map[string]int{},
@@ -126,6 +130,9 @@ func (f *pkgFacts) addGenDecl(d *ast.GenDecl, imports map[string]string) {
 	for _, spec := range d.Specs {
 		switch s := spec.(type) {
 		case *ast.TypeSpec:
+			if s.Assign.IsValid() {
+				f.aliases[s.Name.Name] = typeOfExpr(s.Type, imports)
+			}
 			switch t := s.Type.(type) {
 			case *ast.StructType:
 				fields := map[string]typeRef{}
@@ -162,6 +169,7 @@ func (f *pkgFacts) addGenDecl(d *ast.GenDecl, imports map[string]string) {
 			}
 		case *ast.ValueSpec:
 			for i, name := range s.Names {
+				f.valueNames[name.Name] = true
 				var ref typeRef
 				if s.Type != nil {
 					ref = typeOfExpr(s.Type, imports)
@@ -489,14 +497,14 @@ func (a *Analyzer) resolveType(expr ast.Expr, ft *funcTaint, depth int) typeRef 
 			}
 		}
 	case *ast.CompositeLit:
-		return typeOfExpr(e.Type, a.imports)
+		return a.sourceTypeRef(e.Type)
 	case *ast.TypeAssertExpr:
 		if e.Type != nil {
-			return typeOfExpr(e.Type, a.imports)
+			return a.sourceTypeRef(e.Type)
 		}
 	case *ast.Ident:
 		if t, ok := ft.declTypes[e.Name]; ok {
-			return typeOfExpr(t, a.imports)
+			return a.sourceTypeRef(t)
 		}
 		for _, value := range ft.defs[e.Name] {
 			if value == nil {

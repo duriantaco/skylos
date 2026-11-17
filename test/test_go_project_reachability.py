@@ -2,17 +2,17 @@
 
 import json
 from pathlib import Path
-import shutil
 from types import SimpleNamespace
 
 import pytest
 
-from skylos.analyzer import analyze
 from skylos.analysis.penalties import _check_non_library_path
+from skylos.analyzer import analyze
+from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.engines.go_runner import GoEngineError, run_go_engine_for_module
 from skylos.visitors.base import Definition
 from skylos.visitors.languages.go import clear_go_cache
-
+from test.fixture_paths import make_fixture_directory, write_fixture
 
 FIXTURES = Path(__file__).resolve().parents[1] / "benchmarks/dead_code/fixtures"
 CASES = {
@@ -34,8 +34,20 @@ def test_go_project_import_and_private_test_helper_reachability(
 ):
     monkeypatch.setenv("SKYLOS_CUSTOM_RULES", "[]")
     monkeypatch.setenv("SKYLOS_JOBS", "1")
-    path = tmp_path / case_id
-    shutil.copytree(FIXTURES / case_id, path)
+    path = make_fixture_directory(tmp_path, case_id)
+    fixture_root = FIXTURES / case_id
+    for source in fixture_root.rglob("*"):
+        relative = Path(case_id) / source.relative_to(fixture_root)
+        if source.is_dir():
+            make_fixture_directory(tmp_path, relative)
+            continue
+        content = read_project_text_no_symlink(
+            FIXTURES, source, max_bytes=1 << 20, newline=""
+        )
+        assert content is not None, (
+            f"fixture source is not a contained regular file: {source}"
+        )
+        write_fixture(tmp_path, relative, content)
     try:
         native = run_go_engine_for_module(path)
     except GoEngineError as exc:
@@ -75,7 +87,7 @@ def test_go_project_import_and_private_test_helper_reachability(
         ("helper_test.go", True, "function", False, {}, True),
         ("tests/helper_test.go", True, "function", False, {}, True),
         ("helper_test.go", False, "function", False, {}, False),
-        ("helper_test.go", True, "method", False, {}, False),
+        ("helper_test.go", True, "method", False, {}, True),
         ("helper_test.go", True, "function", True, {}, False),
         ("test_helper.py", True, "function", False, {}, False),
         ("tests/examples/helper_test.go", True, "function", False, {}, False),

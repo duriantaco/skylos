@@ -85,9 +85,7 @@ SCANNER_LANGUAGE_SUPPORT = {
 }
 
 _BANDIT_TO_SKYLOS_RULE = {
-    "B301": "SKY-D204",
-    "B302": "SKY-D205",
-    "B403": "SKY-D204",
+    "B307": "SKY-D201",
     "B506": "SKY-D206",
     "B602": "SKY-D209",
     "B604": "SKY-D209",
@@ -103,6 +101,55 @@ _BANDIT_TO_SKYLOS_RULE = {
 
 def _bandit_rule_id(finding: Mapping[str, Any]) -> str:
     test_id = finding["test_id"]
+    if test_id == "B301":
+        # B301 covers loads, load, Unpickler construction, shelve and other
+        # APIs. An import warning (B403) or marshal warning (B302) likewise
+        # cannot stand in for a native pickle sink. Distinguish only a call
+        # proven by Bandit's numbered source excerpt at its reported line.
+        import ast
+        import re
+        import textwrap
+
+        code = finding.get("code")
+        line = finding.get("line_number")
+        column = finding.get("col_offset")
+        if (
+            not isinstance(code, str)
+            or not isinstance(line, int)
+            or not isinstance(column, int)
+        ):
+            return test_id
+        rows = []
+        numbers = []
+        for row in code.splitlines():
+            match = re.fullmatch(r"(\d+) (.*)", row)
+            if match is None:
+                return test_id
+            numbers.append(int(match[1]))
+            rows.append(match[2])
+        if not numbers or numbers != list(range(numbers[0], numbers[0] + len(numbers))):
+            return test_id
+        source = textwrap.dedent("\n".join(rows))
+        try:
+            tree = ast.parse(source)
+        except (SyntaxError, ValueError):
+            return test_id
+        rules = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or node.lineno + numbers[0] - 1 != line:
+                continue
+            removed_indent = len(rows[node.lineno - 1].encode()) - len(
+                source.splitlines()[node.lineno - 1].encode()
+            )
+            if node.col_offset + removed_indent != column:
+                continue
+            if not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr == "loads":
+                rules.add("SKY-D205")
+            elif node.func.attr in {"load", "read_pickle"}:
+                rules.add("SKY-D204")
+        return next(iter(rules)) if len(rules) == 1 else test_id
     if test_id == "B324":
         # B324 also covers MD4/SHA and crypt methods. Only the exact generated
         # hashlib message identifies one of the native MD5/SHA1 rule families.
@@ -124,7 +171,7 @@ class SecurityBenchmarkFailure:
     failure_type: str
     category: str
     mode: str
-    expected: str
+    expected: str | dict[str, Any]
     found: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -253,6 +300,41 @@ def validate_manifest(
                     )
                 total_expectations += len(expected_values)
                 for expected in expected_values:
+                    if isinstance(expected, dict):
+                        file = expected.get("file")
+                        start = expected.get("start_line")
+                        end = expected.get("end_line")
+                        if (
+                            set(expected)
+                            != {"rule_id", "file", "start_line", "end_line"}
+                            or not isinstance(expected.get("rule_id"), str)
+                            or not expected["rule_id"].startswith("SKY-")
+                            or not isinstance(file, str)
+                            or not file.strip()
+                            or Path(file).is_absolute()
+                            or ".." in Path(file).parts
+                            or type(start) is not int
+                            or type(end) is not int
+                            or not 1 <= start <= end
+                        ):
+                            raise ValueError(
+                                f"security benchmark case {case_id} has an invalid location expectation"
+                            )
+                        source_root = (
+                            case_path if case_path.is_dir() else case_path.parent
+                        )
+                        source_file = (source_root / file).resolve()
+                        if (
+                            not source_file.is_relative_to(source_root.resolve())
+                            or not source_file.is_file()
+                            or (case_path.is_file() and source_file != case_path)
+                            or end
+                            > len(source_file.read_text(encoding="utf-8").splitlines())
+                        ):
+                            raise ValueError(
+                                f"security benchmark case {case_id} location does not identify source lines"
+                            )
+                        continue
                     if not isinstance(expected, str) or not expected.strip():
                         raise ValueError(
                             f"security benchmark case {case_id} {mode_name}.{category} has an invalid expected value"
@@ -361,7 +443,32 @@ def _scan_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str,
             )
         finally:
             analyzer_logger.setLevel(prev_level)
-    return json.loads(raw)
+    result = json.loads(raw)
+    _relative_finding_paths(
+        result, isolated_path if case_path.is_dir() else isolated_path.parent
+    )
+    return result
+
+
+def _relative_finding_paths(result: dict[str, Any], root: Path) -> None:
+    """Use exact snapshot-relative paths for location labels, without basename matches."""
+    if not isinstance(result, dict):
+        return  # Preserve malformed reports for the completeness validator.
+    root = root.resolve()
+    for findings in result.values():
+        if not isinstance(findings, list):
+            continue
+        for finding in findings:
+            if not isinstance(finding, dict) or not isinstance(
+                finding.get("file"), str
+            ):
+                continue
+            try:
+                path = Path(finding["file"])
+                if path.is_absolute():
+                    finding["file"] = path.resolve().relative_to(root).as_posix()
+            except ValueError:
+                pass
 
 
 def _scan_bandit_case(
@@ -424,7 +531,11 @@ def _scan_bandit_case(
                 "severity": finding.get("issue_severity", ""),
             }
         )
-    return {"danger": danger}
+    result = {"danger": danger}
+    _relative_finding_paths(
+        result, case_path if case_path.is_dir() else case_path.parent
+    )
+    return result
 
 
 def _scan_case_with_scanner(
@@ -441,7 +552,7 @@ def _scan_case_with_scanner(
     raise ValueError(f"unsupported security benchmark scanner '{scanner}': {allowed}")
 
 
-def _count_expectations(expectations: dict[str, list[str]]) -> int:
+def _count_expectations(expectations: dict[str, list[Any]]) -> int:
     return sum(len(items) for items in expectations.values())
 
 
@@ -464,15 +575,29 @@ def _evaluate_expectations(
             finding_tokens = [_finding_tokens(finding) for finding in findings]
 
             for expected in expected_values:
-                matched = sorted(
-                    {
-                        token
-                        for tokens in finding_tokens
-                        if expected in tokens
-                        for token in tokens
-                    }
-                )
-                if expected.startswith("SKY-"):
+                if isinstance(expected, dict):
+                    matched = sorted(
+                        {
+                            f"{finding['rule_id']}:{finding.get('file')}:{finding.get('line')}"
+                            for finding in findings
+                            if finding.get("rule_id") == expected["rule_id"]
+                            and finding.get("file") == expected["file"]
+                            and type(finding.get("line")) is int
+                            and expected["start_line"]
+                            <= finding["line"]
+                            <= expected["end_line"]
+                        }
+                    )
+                else:
+                    matched = sorted(
+                        {
+                            token
+                            for tokens in finding_tokens
+                            if expected in tokens
+                            for token in tokens
+                        }
+                    )
+                if isinstance(expected, str) and expected.startswith("SKY-"):
                     matched = sorted(
                         {
                             finding["rule_id"]
@@ -532,7 +657,7 @@ def _score_counts(
     )
     recall = 1.0 if recall_denominator == 0 else true_positives / recall_denominator
     f1 = (
-        1.0
+        0.0
         if precision + recall == 0
         else 2 * precision * recall / (precision + recall)
     )

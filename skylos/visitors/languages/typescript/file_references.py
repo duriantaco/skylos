@@ -404,8 +404,22 @@ def _command_paths(command):
         position += 1
         if not isinstance(token, str):
             return
+        if runner in {"node", "nodejs"} and token == "--":
+            if position < len(tokens) and isinstance(tokens[position], str):
+                yield tokens[position]
+            return
         if token in {"-e", "--eval", "-p", "--print"}:
             return
+        if runner in {"node", "nodejs"} and token.startswith(
+            ("--require=", "--import=")
+        ):
+            # Node accepts attached values as well as separate arguments.
+            # Only these preload flags load code; --title=path and operands
+            # after the entry script are ordinary data, not source consumers.
+            preload = token.partition("=")[2]
+            if preload:
+                yield preload
+            continue
         if token in {
             "-r",
             "--require",
@@ -911,7 +925,7 @@ def _node_text(source: bytes, node) -> str:
 
 
 def _static_string(source: bytes, node) -> str | None:
-    if node.type not in _JS_STRING_NODE_TYPES:
+    if node is None or node.type not in _JS_STRING_NODE_TYPES:
         return None
     if any(child.type == "template_substitution" for child in node.children):
         return None
@@ -1106,7 +1120,9 @@ def _under_non_loading_key(source: bytes, node) -> bool:
     return False
 
 
-def _js_path_references(path: str, source: bytes, *, tool_config: bool):
+def _js_path_references(
+    path: str, source: bytes, *, tool_config: bool, project_root=None, project_files=()
+):
     """``(kind, text)`` path references outside import specifiers.
 
     ``exact`` is an absolute path, ``relative`` a literal tail that holds a
@@ -1118,6 +1134,9 @@ def _js_path_references(path: str, source: bytes, *, tool_config: bool):
         return
     root = tree.root_node
     namespaces, functions = path_module_bindings(source, root)
+    from .path_values import DiscardedPathValues
+
+    discarded = None
     directory = os.path.dirname(path)
     stack = [root]
     while stack:
@@ -1128,6 +1147,12 @@ def _js_path_references(path: str, source: bytes, *, tool_config: bool):
         if namespaces or functions:
             joined = static_path_join(source, node, namespaces, functions)
         if joined is not None:
+            if discarded is None:
+                discarded = DiscardedPathValues(
+                    path, source, root, project_root=project_root, project_files=project_files
+                )
+            if discarded.discards(node, namespaces, functions):
+                continue
             anchored, segments = joined
             if anchored and segments:
                 yield (
@@ -1305,7 +1330,8 @@ def collect_ts_path_references(
                 if target is not None and target != js_file:
                     edges[target].add(js_file)
         for kind, text in _js_path_references(
-            js_file, source_bytes, tool_config=_is_tool_configuration(js_file)
+            js_file, source_bytes, tool_config=_is_tool_configuration(js_file),
+            project_root=root, project_files=js_files,
         ):
             if kind == "exact":
                 target = os.path.realpath(text)

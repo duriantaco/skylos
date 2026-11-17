@@ -41,6 +41,7 @@ def test_formatted_gate_upload_prints_exact_saved_scan_on_stderr(
     _gate_scan(monkeypatch, tmp_path, output_format, forced=gate == "forced")
     response = {
         "success": True,
+        "upload_trust": "verified_ci",
         "scan_id": SCAN_ID,
         "quality_gate_passed": gate == "passed",
         "quality_gate": {"passed": gate == "passed"},
@@ -55,7 +56,7 @@ def test_formatted_gate_upload_prints_exact_saved_scan_on_stderr(
     captured = capsys.readouterr()
     url = f"{api.BASE_URL.rstrip('/')}/dashboard/scans/{SCAN_ID}"
     assert captured.err.count(url) == 1
-    assert "View Cloud gate and results:" in captured.err
+    assert "View details:" in captured.err
     assert "untrusted.example" not in captured.out + captured.err
     if output_format in ("json", "json-ci"):
         assert json.loads(captured.out)["upload"]["url"] == url

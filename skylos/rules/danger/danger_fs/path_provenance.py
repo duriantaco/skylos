@@ -102,6 +102,9 @@ INCOMPLETE_NOTE = (
     "caller analysis stopped at a limit before every chain was followed; the "
     "finding is kept because an exhausted analysis is not proof of safety"
 )
+FILENAME_UNVERIFIED = (
+    "filename check body is present; native-string/runtime assumptions remain unverified"
+)
 
 _MAX_CHAINS = 4
 _MAX_STEPS = 32
@@ -1072,6 +1075,7 @@ class _Project:
         self.class_info = {}
         self.calls_by_name = {}
         self.dynamic_calls = []
+        self._dynamic_call_targets = {}
         self.computed_calls = []
         self.loads_by_name = {}
         self.attr_stores = {}
@@ -1299,10 +1303,6 @@ class _Project:
                     key = base.attr
                 if key is not None:
                     self.subscript_stores_by_name.setdefault(key, []).append((unit, target, value, statement, scope))
-        for unit in self.units:
-            for call, scope in unit.calls:
-                if isinstance(call.func, (ast.Call, ast.Subscript)):
-                    self.dynamic_calls.append((unit, call, scope))
 
     def import_map(self, unit):
         cached = self._import_maps.get(id(unit))
@@ -2387,10 +2387,21 @@ class _Project:
                 seen_refs.add(id(ref))
                 self._classify_ref(ref_unit, scope, ref, fn, owner, sites, keys)
         for call_unit, call, scope in self.dynamic_calls:
-            self._charge_resolution()
             if id(call) in seen_calls:
                 continue
+            targets = self._dynamic_call_targets.get(id(call))
+            if targets is not None and id(fn) not in targets:
+                continue
+            self._charge_resolution()
             values = self.values(call_unit, scope, call.func)
+            # values() already memoizes completed depth-zero resolutions. Reuse
+            # their function identities too: unrelated caller queries should
+            # not spend the shared work budget on the same dynamic call again.
+            # An active recursive value has no completed cache entry and must
+            # remain eligible for a later query.
+            value_key = (id(call.func), id(scope))
+            if values is not None or value_key in self._value_cache:
+                self._dynamic_call_targets[id(call)] = self._call_target_ids(values)
             if values and self._targets(values, fn, owner):
                 seen_calls.add(id(call))
                 self._classify_call(call_unit, scope, call, fn, owner, sites)
@@ -2405,6 +2416,21 @@ class _Project:
                 sites.escapes.append(step)
                 sites.computed.append((step, call_unit))
         return sites
+
+    def _call_target_ids(self, values):
+        targets = set()
+        for value in values or ():
+            if value.kind == "fn":
+                targets.add(id(value.node))
+            elif value.kind == "partial":
+                targets.update(
+                    id(target.node) for target in value.extra[0] if target.kind == "fn"
+                )
+            elif value.kind == "cls":
+                initializer = self.init_of(value.node)
+                if initializer is not None:
+                    targets.add(id(initializer))
+        return frozenset(targets)
 
     def _computed_call_reaches(self, unit, scope, call, fn_unit, fn, definer):
         func = call.func
@@ -3574,6 +3600,10 @@ class _Tracer:
             facts.add(self._local_writes(unit, owner, node.id, binds))
         if facts.empty():
             return _Facts.leaf(UNKNOWN, _step(unit, node, f"no binding of `{node.id}` reaches here"))
+        if self.filename_proofs:
+            note = self._filename_guard_uncertainty(unit, scope, node, binds)
+            if note is not None:
+                return facts.then(note)
         return facts
 
     def _bind_facts(self, unit, owner, bind, name, env):
@@ -5201,7 +5231,38 @@ class _Tracer:
             for item in tail:
                 passed = passed.then(item)
             facts.add(passed)
+        if self.filename_proofs and self._filename_body(info[0], fn) is not None:
+            # The body match alone is not a runtime safety proof. Retain the
+            # original facts and describe the unverified assumption on this
+            # exact data-flow chain, without changing its classification.
+            facts = facts.then(_step(unit, call, FILENAME_UNVERIFIED))
         return facts
+
+    def _filename_guard_uncertainty(self, unit, scope, use, binds):
+        """A preceding reject-on-change check whose helper body is known.
+        This is diagnostic evidence only; it never establishes safety."""
+        if scope.kind != "function":
+            return None
+        for statement in scope.node.body:
+            if getattr(statement, "lineno", 0) >= use.lineno:
+                break
+            if not isinstance(statement, ast.If) or not self._guard_terminates(unit, scope, statement.body):
+                continue
+            test = statement.test
+            if not isinstance(test, ast.Compare) or len(test.ops) != 1 or not isinstance(test.ops[0], ast.NotEq):
+                continue
+            if any(bind.kind != "param" and statement.lineno <= getattr(bind.node, "lineno", 0) <= use.lineno for bind in binds):
+                continue
+            for candidate, original in ((test.left, test.comparators[0]), (test.comparators[0], test.left)):
+                if not isinstance(original, ast.Name) or original.id != use.id:
+                    continue
+                call = self._single_assigned_value(unit, scope, candidate, statement) if isinstance(candidate, ast.Name) else candidate
+                if not isinstance(call, ast.Call):
+                    continue
+                values = self.project.values(unit, scope, call.func)
+                if values and all(value.kind == "fn" and self._filename_body(value.unit, value.node) is not None for value in values):
+                    return _step(unit, statement, FILENAME_UNVERIFIED)
+        return None
 
     @staticmethod
     def _filename_literal(node):
@@ -7192,6 +7253,14 @@ def _untrusted_message(finding, source):
         where = "this filesystem path"
         if served:
             where = f"the path {served.group(1)}() serves"
+        provenance = (finding.get("metadata") or {}).get("path_provenance") or {}
+        if provenance.get("validation_uncertainty"):
+            return (
+                f"Possible path traversal needs review: {source} reaches {where} "
+                "through project callers. A filename check body is present, but "
+                "its native-string/runtime assumptions could not be verified; "
+                "review the existing validation and containment."
+            )
         return (
             f"Possible path traversal: {source} reaches {where} through project "
             "callers with no containment check; resolve it and check it stays "
@@ -7200,16 +7269,24 @@ def _untrusted_message(finding, source):
     if rule == "SKY-D324":
         return (
             f"Possible symlink-following write: {source} reaches this path through "
-            "project callers; reject symlinks or open with O_NOFOLLOW and check containment."
+            "project callers. Redirecting this write through a symlink requires "
+            "an attacker to create or replace a path entry; that filesystem access "
+            "is not established by this source trace. Reject symlinks or open "
+            "with O_NOFOLLOW and check containment."
         )
     if "unbounded" in message:
         return (
             f"Possible symlink-following or unbounded read: {source} reaches this "
-            "path through project callers; require a regular in-root file and a size cap."
+            "path through project callers. Symlink redirection requires an "
+            "attacker to create or replace a path entry; that access is not "
+            "established by this source trace. Require a regular in-root file "
+            "and a size cap."
         )
     return (
         f"Possible symlink-following read: {source} reaches this path through "
-        "project callers; require a regular in-root file."
+        "project callers. Symlink redirection requires an attacker to create "
+        "or replace a path entry; that access is not established by this source "
+        "trace. Require a regular in-root file."
     )
 
 
@@ -7241,6 +7318,14 @@ def _provenance_record(status, function, facts, project, limits):
             record[kind] = [list(chain) for chain in chains]
     if limits:
         record["limits"] = list(limits)
+    unverified = list(dict.fromkeys(
+        step for chain in facts.chains[UNTRUSTED][:1] for step in chain
+        if FILENAME_UNVERIFIED in step
+    ))
+    if unverified:
+        record["validation_uncertainty"] = {
+            "status": "unverified", "check": "filename_filter_body", "steps": unverified,
+        }
     return record
 
 
@@ -7253,14 +7338,18 @@ def _evidence(chain, finding):
     }.get(rule, "filesystem path")
     steps = [_strip_location(step) for step in chain]
     source = steps[0]
+    unverified = any(FILENAME_UNVERIFIED in step for step in steps)
     return {
         "evidence_kind": "python_path_taint",
         "source": source,
         "sources": [source],
         "sink": sink,
         "path": [f"untrusted input from {source}", *steps[1:]],
-        "guards_seen": [],
-        "guards_missing": ["resolved-path containment check against a fixed base"],
+        "guards_seen": [FILENAME_UNVERIFIED] if unverified else [],
+        "guards_missing": [
+            "proof of effective filename validation or resolved-path containment"
+            if unverified else "resolved-path containment check against a fixed base"
+        ],
         "analysis_complete": False,
     }
 
@@ -7399,7 +7488,7 @@ def _resolve(findings, root, files, complete, suppressed):
             evidence = _evidence(chain, finding)
             metadata["path_source"] = RESOLVED_CALLER_SOURCE
             metadata["security_evidence"] = evidence
-            updated["message"] = _untrusted_message(finding, evidence["source"])
+            updated["message"] = _untrusted_message(updated, evidence["source"])
             kept.append(updated)
             continue
         if status == INCOMPLETE:

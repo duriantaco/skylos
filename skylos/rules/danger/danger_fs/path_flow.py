@@ -1093,22 +1093,31 @@ class _PathFlowChecker(TaintVisitor):
         """(file, def) for a call to a unique module-level function of this
         module or of a project module it imports."""
         module = getattr(self.untrusted_sources, "module", None)
+        dotted = _qualified_name(node)
+        if not dotted or not _helper_namespace_is_stable(module, dotted, self.file_path):
+            return None
+        head = dotted.split(".", 1)[0]
+        # A module definition does not identify a caller's local parameter,
+        # assignment or enclosing closure binding with the same spelling.
+        if any(head in scope_bindings(scope) for scope in self._function_stack):
+            return None
         if isinstance(node.func, ast.Name) and module is not None:
-            local = _unique_module_function(module, node.func.id)
+            local = _unique_module_function(module, node.func.id, self.file_path)
             if local is not None:
                 return self.file_path, local
-        dotted = _qualified_name(node)
         if not dotted or not self._import_names_are_stable(dotted):
             return None
         resolved = self.untrusted_sources.resolved_import(self._current_function(), dotted)
         if not resolved or "." not in resolved:
+            return None
+        if not _helper_namespace_is_stable(module, resolved, self.file_path):
             return None
         module_name, _, function_name = resolved.rpartition(".")
         file_path = _module_file(getattr(self, "project_root", None), module_name)
         if file_path is None:
             return None
         tree = _parsed_module(file_path, getattr(self, "project_root", None))
-        target = _unique_module_function(tree, function_name) if tree is not None else None
+        target = _unique_module_function(tree, function_name, file_path) if tree is not None else None
         return (file_path, target) if target is not None else None
 
     def is_tainted(self, node):
@@ -1697,6 +1706,41 @@ class _PathFlowChecker(TaintVisitor):
             return self._get_os_open_write_flags(flags.id)
         return False
 
+    def _os_open_is_directory_read(self, node):
+        """A proven O_DIRECTORY descriptor cannot consume file contents.
+
+        This restricts the opened object type, not the path: traversal checks
+        still apply. Unknown flags and getattr(..., 0) fallbacks establish no
+        directory guarantee, and spelling a flag never proves its provider.
+        """
+        flags = _bound_argument(node, 1, "flags")
+        leaves = _bit_or_leaves(flags)
+        if not leaves:
+            return False
+        resolved = {self._os_flag(leaf) for leaf in leaves}
+        if not {"O_DIRECTORY", "O_RDONLY"} <= resolved:
+            return False
+        if not resolved <= {"O_DIRECTORY", "O_RDONLY", "O_CLOEXEC"}:
+            return False
+        names = [(node.func, "os.open")]
+        names.extend((leaf, f"os.{self._os_flag(leaf)}") for leaf in leaves)
+        for expression, qualified in names:
+            name = _expr_name(expression)
+            if not name or not self._import_names_are_stable(name):
+                return False
+            if self.untrusted_sources.resolved_import(
+                self._current_function(), name
+            ) != qualified:
+                return False
+            if not provider_binding_is_stable(
+                qualified,
+                self.untrusted_sources.module,
+                self.file_path,
+                getattr(self, "project_root", None),
+            ):
+                return False
+        return True
+
     def _add_finding(self, node, rule_id, severity, message, evidence=None, path_expr=None):
         key = (rule_id, getattr(node, "lineno", 0), getattr(node, "col_offset", 0))
         if key in self._emitted:
@@ -2179,7 +2223,7 @@ class _PathFlowChecker(TaintVisitor):
             ):
                 if self._os_open_uses_write_flags(node):
                     self._flag_symlink_write_if_unsafe(node, first_path)
-                else:
+                elif not self._os_open_is_directory_read(node):
                     self._flag_symlink_read_if_unsafe(node, first_path)
 
         if (
@@ -2258,6 +2302,7 @@ def reset_containment_proofs() -> None:
     _CONTAINMENT_ACTIVE.clear()
     _PARSED_HELPER_MODULES.clear()
     _UNIQUE_FUNCTIONS.clear()
+    _HELPER_NAMESPACES.clear()
 
 
 def _bounded(cache):
@@ -2308,9 +2353,44 @@ def _parsed_module(path, project_root):
 
 
 _UNIQUE_FUNCTIONS: dict = {}
+_HELPER_NAMESPACES: dict = {}
+_CALLABLE_REPLACEMENT_ATTRIBUTES = frozenset(
+    {"__code__", "__defaults__", "__kwdefaults__", "__call__"}
+)
 
 
-def _unique_module_function(tree, name):
+def _helper_namespace_is_stable(tree, dotted, file_path=None):
+    """Source-visible namespace or callable mutation invalidates body proofs.
+
+    Attribute writes are checked independent of receiver spelling, so an
+    alias to a function or project module cannot hide its replacement.
+    """
+    if not isinstance(tree, ast.Module):
+        return False
+    cache_key = (id(tree), str(file_path))
+    entry = _HELPER_NAMESPACES.get(cache_key)
+    if entry is None or entry[0] is not tree:
+        dynamic, rebound = module_rebinding(tree, module_name_for(file_path) if file_path else None)
+        attributes, computed = attribute_write_names(tree)
+        global_names = {
+            name for node in ast.walk(tree) if isinstance(node, ast.Global)
+            for name in node.names
+        }
+        entry = (
+            tree,
+            dynamic or computed or has_mock_api_patching(tree),
+            rebound | attributes | global_names,
+            attributes,
+        )
+        _bounded(_HELPER_NAMESPACES)[cache_key] = entry
+    return (
+        not entry[1]
+        and not set(dotted.split(".")) & entry[2]
+        and not _CALLABLE_REPLACEMENT_ATTRIBUTES & entry[3]
+    )
+
+
+def _unique_module_function(tree, name, file_path=None):
     """The one module-level ``def name`` that nothing else in the module
     rebinds; None for anything ambiguous."""
     index = _UNIQUE_FUNCTIONS.get(id(tree))
@@ -2324,6 +2404,8 @@ def _unique_module_function(tree, name):
             key: nodes[0]
             for key, nodes in defs.items()
             if len(nodes) == 1 and len(bindings.get(key, ())) == 1
+            and not nodes[0].decorator_list
+            and _helper_namespace_is_stable(tree, key, file_path)
         }
         index = (tree, unique)
         _bounded(_UNIQUE_FUNCTIONS)[id(tree)] = index
@@ -2397,28 +2479,35 @@ def _module_import_aliases(tree, file_path, project_root):
     return aliases
 
 
-def _resolve_helper_call(call, tree, file_path, project_root):
+def _resolve_helper_call(call, tree, file_path, project_root, scope=None):
     """(file, def) for ``f(...)``, ``mod.f(...)`` or ``pkg.mod.f(...)`` that
     names a unique module-level project function."""
     func = call.func
+    dotted = _qualified_name(call)
+    if not dotted or not _helper_namespace_is_stable(tree, dotted, file_path):
+        return None
+    head = dotted.split(".", 1)[0]
+    if scope is not None and head in scope_bindings(scope):
+        return None
     if isinstance(func, ast.Name):
-        local = _unique_module_function(tree, func.id)
+        local = _unique_module_function(tree, func.id, file_path)
         if local is not None:
             return str(file_path), local
-    dotted = _qualified_name(call)
-    if not dotted:
-        return None
     head, _, rest = dotted.partition(".")
+    if len(scope_bindings(tree).get(head, ())) != 1:
+        return None
     target = _module_import_aliases(tree, file_path, project_root).get(head)
     if target is None:
         return None
     resolved = f"{target}.{rest}" if rest else target
+    if not _helper_namespace_is_stable(tree, resolved, file_path):
+        return None
     module_name, _, function_name = resolved.rpartition(".")
     helper_file = _module_file(project_root, module_name)
     if helper_file is None:
         return None
     helper_tree = _parsed_module(helper_file, project_root)
-    helper = _unique_module_function(helper_tree, function_name) if helper_tree else None
+    helper = _unique_module_function(helper_tree, function_name, helper_file) if helper_tree else None
     return (helper_file, helper) if helper is not None else None
 
 
@@ -2445,7 +2534,7 @@ def _prove_wrapper(file_path, tree, function, tainted, project_root):
                 return False
             if isinstance(value, ast.Name) and len(scope_bindings(function).get(value.id, ())) != 1:
                 return False
-        located = _resolve_helper_call(call, tree, file_path, project_root)
+        located = _resolve_helper_call(call, tree, file_path, project_root, function)
         if located is None:
             return False
         helper_file, helper = located
@@ -2482,7 +2571,7 @@ def _prove_containment(file_path, name, tainted, project_root):
     # Fewer tainted parameters cannot taint a return more, so a proof with
     # every parameter tainted holds for each subset.
     tree = _parsed_module(file_path, project_root)
-    target = _unique_module_function(tree, name) if tree is not None else None
+    target = _unique_module_function(tree, name, file_path) if tree is not None else None
     if target is None:
         _CONTAINMENT_PROOFS[key] = False
         return False

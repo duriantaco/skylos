@@ -41,6 +41,7 @@ from skylos.deadcode.logging_config_liveness import find_logging_config_targets
 from skylos.deadcode.property_descriptor_liveness import classify_property_descriptors
 from skylos.deadcode.public_api import find_declared_public_api_targets
 from skylos.deadcode.finite_dispatch import record_finite_dispatch_references
+from skylos.deadcode.future_callbacks import find_future_callback_targets
 
 
 SENTINEL_CALLER = "<skylos.deadcode.liveness>"
@@ -205,6 +206,8 @@ def apply_dead_code_liveness(
     ):
         _mark(target, "registered_by_decorator", report)
     for target in find_method_registered_targets(definitions, parsed_files):
+        _mark(target, "registered_by_decorator", report)
+    for target in find_future_callback_targets(definitions, parsed_files):
         _mark(target, "registered_by_decorator", report)
     for target in find_patched_instance_methods(definitions, parsed_files):
         _mark(target, "patched_into_external_module", report)

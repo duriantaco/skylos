@@ -50,6 +50,9 @@ _READ_BUILTINS = {
 }
 _IMMUTABLE_VALUES = {
     "os.name",
+    "os.O_RDONLY",
+    "os.O_DIRECTORY",
+    "os.O_CLOEXEC",
     "ssl.CERT_NONE",
     "ssl.CERT_OPTIONAL",
     "ssl.CERT_REQUIRED",

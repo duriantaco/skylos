@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "purpose": "Index retained immutable five-repository labels and original source-only peer review; duplicate drafts are archived, not rewritten.",
+  "source_commit": "ca17bb2e12248bc02893ead2dc957f19cb25baff",
+  "labels": [
+    {
+      "language": "PYTHON",
+      "retained_final": {
+        "path": "benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_PYTHON.json",
+        "sha256": "ca17aba6211170f0c95cf48a674b87a1a5d09a5db474d8dbd37350ce087e8ce6",
+        "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_PYTHON.json"
+      },
+      "archived_draft": {
+        "path": "benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_PYTHON_DRAFT.json",
+        "sha256": "8d42f17d8d7ebde3d6bce53b8e002c007265e0f804a6a58a4c686e78d556dd63",
+        "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_PYTHON_DRAFT.json"
+      },
+      "changed_top_level_keys": [
+        "frozen_at",
+        "independent_review",
+        "matching_policy",
+        "phase"
+      ],
+      "source_hashes_and_labels_unchanged": true
+    },
+    {
+      "language": "TYPESCRIPT",
+      "retained_final": {
+        "path": "benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_TYPESCRIPT.json",
+        "sha256": "98aca5cf07106c98276d48b0575027f1c056dce2836c2545c495bb466ac20cf7",
+        "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_TYPESCRIPT.json"
+      },
+      "archived_draft": {
+        "path": "benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_TYPESCRIPT_DRAFT.json",
+        "sha256": "98aca5cf07106c98276d48b0575027f1c056dce2836c2545c495bb466ac20cf7",
+        "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_TYPESCRIPT_DRAFT.json"
+      },
+      "changed_top_level_keys": [],
+      "source_hashes_and_labels_unchanged": true
+    },
+    {
+      "language": "GOJI",
+      "retained_final": {
+        "path": "benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_GOJI.json",
+        "sha256": "fdd9850dd09eb0f3f54c320132ac59fc5690d3575022591bebaf4a14e3b3828c",
+        "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_GOJI.json"
+      },
+      "archived_draft": {
+        "path": "benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_GOJI_DRAFT.json",
+        "sha256": "fdd9850dd09eb0f3f54c320132ac59fc5690d3575022591bebaf4a14e3b3828c",
+        "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_GOJI_DRAFT.json"
+      },
+      "changed_top_level_keys": [],
+      "source_hashes_and_labels_unchanged": true
+    }
+  ],
+  "retained_review_receipts": [
+    {
+      "path": "benchmarks/review_2026_11_17/ground_truth_audit/PARENT_SOURCE_REVIEW.json",
+      "sha256": "7c0741cef7a7d9e02087eae9ecd1d3bbb8cb09d285fa9d2ab6b4f18268b615be",
+      "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/PARENT_SOURCE_REVIEW.json"
+    },
+    {
+      "path": "benchmarks/review_2026_11_17/ground_truth_audit/TYPESCRIPT_FREEZE_RECEIPT.json",
+      "sha256": "ee7ba3122e63270cfcd5baa753b2e6fdc90fef3c50a25450d4b9e3503abc4220",
+      "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/TYPESCRIPT_FREEZE_RECEIPT.json"
+    },
+    {
+      "path": "benchmarks/review_2026_11_17/ground_truth_audit/GOJI_FREEZE_RECEIPT.json",
+      "sha256": "a511b3c52682d3da5c5f3422252a0ce1e36d0635cca6cb0ffa4fcc5494bc8639",
+      "url": "https://github.com/duriantaco/skylos/blob/ca17bb2e12248bc02893ead2dc957f19cb25baff/benchmarks/review_2026_11_17/ground_truth_audit/GOJI_FREEZE_RECEIPT.json"
+    }
+  ],
+  "archive_policy": "../ARTIFACTS.md",
+  "limitations": [
+    "Agent source review is not exhaustive semantic ground truth or independent human adjudication.",
+    "The older sealed study used by run_reviewed_ground_truth.py is archived as a complete manifest/review/draft chain; supply its extracted --freeze explicitly.",
+    "Five repository after-fix measurements are development evidence, not another blind study."
+  ]
+}

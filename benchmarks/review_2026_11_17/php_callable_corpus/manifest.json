@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "php-private-callable-helper",
+      "path": "fixtures/private_helper",
+      "description": "Literal callbacks passed through same-class private callable helper remain used; dead caller chains, other-owner methods, unused siblings and2unused imports remain findings.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "php",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic contract derived after source review of Slim CallableResolver at revision8d872ae0a146bba4ce750094b21754f9c9f21d00. This is development regression data, not blind evidence; no target source execution."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "symbol_identity": "qualified",
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "Review.Resolver.run"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "Review.Resolver.dispatch"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "Review.Resolver.isRoute"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "Review.Resolver.isMiddleware"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "Review.Resolver.dormant"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "Review.Resolver.deadCallback"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "Review.Resolver.unusedSibling"
+          },
+          {
+            "kind": "function",
+            "file": "app.php",
+            "symbol": "Review.Other.isRoute"
+          },
+          {
+            "kind": "import",
+            "file": "app.php",
+            "symbol": "RuntimeException"
+          },
+          {
+            "kind": "import",
+            "file": "app.php",
+            "symbol": "htmlentities"
+          }
+        ]
+      }
+    }
+  ]
+}

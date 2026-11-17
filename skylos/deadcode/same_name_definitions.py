@@ -1,4 +1,4 @@
-"""Same-named definitions in Java, Kotlin, Rust and Dart.
+"""Same-named definitions in Java, Kotlin, Rust, Dart and Go.
 
 These visitors name a definition by its simple or class-qualified name
 (``Util``, ``Util.clean``, ``count``), so two files, packages or crates can
@@ -21,7 +21,7 @@ from pathlib import Path
 from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.visitors.languages.kotlin._lex import mask_comments_and_strings
 
-NAME_RESOLVED_FAMILIES = frozenset({"jvm", "rust", "dart"})
+NAME_RESOLVED_FAMILIES = frozenset({"jvm", "rust", "dart", "go"})
 _JVM_PACKAGE = re.compile(r"^\s*package\s+([A-Za-z_][\w.]*)", re.MULTILINE)
 _JVM_IMPORT = re.compile(
     r"^\s*import\s+(?:static\s+)?([A-Za-z_][\w.]*(?:\.\*)?)", re.MULTILINE

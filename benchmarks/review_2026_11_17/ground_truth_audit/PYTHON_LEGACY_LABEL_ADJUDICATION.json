@@ -1,0 +1,920 @@
+{
+  "reviewer": "python_truth",
+  "scope": "All 44 legacy Vulture used-label mismatches in 27-case Python default suite; source/config files in each affected case read in full. This does not audit all positive/negative labels, so no revised precision/recall is claimed.",
+  "findings": [
+    {
+      "case_id": "fastapi-route-used",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "read_profile"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "source_supported_framework_entrypoint",
+      "evidence": "app.py:11 FastAPI route decorator stores read_profile; Depends receives get_current_user. Framework API contract is explicit; no HTTP server executed.",
+      "source_files_read": [
+        {
+          "file": "fixtures/fastapi_route_used/app.py",
+          "sha256": "92539f741abeac6f8085ba6af9b86733da34647d43b6e8ca302d535648bc1e1e"
+        }
+      ]
+    },
+    {
+      "case_id": "dynamic-registry-used",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "handle_create"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "retention_policy_without_reachable_dispatch",
+      "evidence": "app.py:6 stores callbacks, but dispatch at22 has no caller and no entrypoint invokes REGISTRY values. Registration storage supports retention, not execution reachability.",
+      "source_files_read": [
+        {
+          "file": "fixtures/dynamic_registry_used/app.py",
+          "sha256": "fa8a84343c463064d4f6ad0da58346ceae314b5b441acd4bc45881772f1bc7c1"
+        }
+      ]
+    },
+    {
+      "case_id": "dynamic-registry-used",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "handle_update"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "retention_policy_without_reachable_dispatch",
+      "evidence": "app.py:6 stores callbacks, but dispatch at22 has no caller and no entrypoint invokes REGISTRY values. Registration storage supports retention, not execution reachability.",
+      "source_files_read": [
+        {
+          "file": "fixtures/dynamic_registry_used/app.py",
+          "sha256": "fa8a84343c463064d4f6ad0da58346ceae314b5b441acd4bc45881772f1bc7c1"
+        }
+      ]
+    },
+    {
+      "case_id": "local-registration-decorator-entrypoints",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "resize_image"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "retention_policy_without_reachable_dispatch",
+      "evidence": "app.py:7 and14 store callbacks. ACTIONS dispatcher at33 has no caller; STARTUP_CALLBACKS is never drained. No callback body is reachable from shown module execution.",
+      "source_files_read": [
+        {
+          "file": "fixtures/local_registration_decorator/app.py",
+          "sha256": "ff603802fd88e51a10a96b25e99430bcbb854a7f766bcfe2d307c3bc776a6b9f"
+        }
+      ]
+    },
+    {
+      "case_id": "local-registration-decorator-entrypoints",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "archive_image"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "retention_policy_without_reachable_dispatch",
+      "evidence": "app.py:7 and14 store callbacks. ACTIONS dispatcher at33 has no caller; STARTUP_CALLBACKS is never drained. No callback body is reachable from shown module execution.",
+      "source_files_read": [
+        {
+          "file": "fixtures/local_registration_decorator/app.py",
+          "sha256": "ff603802fd88e51a10a96b25e99430bcbb854a7f766bcfe2d307c3bc776a6b9f"
+        }
+      ]
+    },
+    {
+      "case_id": "local-registration-decorator-entrypoints",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "warm_cache"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "retention_policy_without_reachable_dispatch",
+      "evidence": "app.py:7 and14 store callbacks. ACTIONS dispatcher at33 has no caller; STARTUP_CALLBACKS is never drained. No callback body is reachable from shown module execution.",
+      "source_files_read": [
+        {
+          "file": "fixtures/local_registration_decorator/app.py",
+          "sha256": "ff603802fd88e51a10a96b25e99430bcbb854a7f766bcfe2d307c3bc776a6b9f"
+        }
+      ]
+    },
+    {
+      "case_id": "sqlalchemy-mixed-models",
+      "legacy_label": {
+        "kind": "variable",
+        "file": "models.py",
+        "symbol": "id"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "ambiguous_symbol_identity",
+      "evidence": "models.py has id at12 Note,20 AuditLog,27 Tag. Bare variable:file:id collapses distinct declarations; Tag is separately labelled unused. Cannot score all these warnings as one confirmed FP. ORM mapping is a framework-consumption contract, not owner identity.",
+      "source_files_read": [
+        {
+          "file": "fixtures/sqlalchemy_mixed_models/models.py",
+          "sha256": "8db2f669708170e2322fe88cb8d117a2d6dd0f2ab71be2adde25d5fda49cfcda"
+        },
+        {
+          "file": "fixtures/sqlalchemy_mixed_models/app.py",
+          "sha256": "aa75c16dc2c8c0db56dc25975d4affc01bb3867652de32b082876ace77833a93"
+        },
+        {
+          "file": "fixtures/sqlalchemy_mixed_models/repository.py",
+          "sha256": "402dea7fd78c888c93a518a1b20fbb49db31e2e499aebb3e1963c8e29ef8345d"
+        }
+      ]
+    },
+    {
+      "case_id": "sqlalchemy-mixed-models",
+      "legacy_label": {
+        "kind": "variable",
+        "file": "models.py",
+        "symbol": "name"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "retention_policy_on_unused_owner",
+      "evidence": "models.py:28 name belongs only to Tag, whose class is labelled unused. mapped_column is processed by ORM metaclass, but no instance/query/schema create uses Tag. Preservation of unused-owner schema declaration is not proof of reachable use.",
+      "source_files_read": [
+        {
+          "file": "fixtures/sqlalchemy_mixed_models/models.py",
+          "sha256": "8db2f669708170e2322fe88cb8d117a2d6dd0f2ab71be2adde25d5fda49cfcda"
+        },
+        {
+          "file": "fixtures/sqlalchemy_mixed_models/app.py",
+          "sha256": "aa75c16dc2c8c0db56dc25975d4affc01bb3867652de32b082876ace77833a93"
+        },
+        {
+          "file": "fixtures/sqlalchemy_mixed_models/repository.py",
+          "sha256": "402dea7fd78c888c93a518a1b20fbb49db31e2e499aebb3e1963c8e29ef8345d"
+        }
+      ]
+    },
+    {
+      "case_id": "flask-cli-blueprint",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "show_order"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "source_supported_framework_entrypoint",
+      "evidence": "app.py:8 route is on blueprint registered at27; app.py:13 registers CLI command directly. No request/CLI executed, but exact Flask registration is present.",
+      "source_files_read": [
+        {
+          "file": "fixtures/flask_cli_blueprint/app.py",
+          "sha256": "e05f3bbc60a508983a7dddfd8e6f65402e4b45bfc509c8cb9d0719fc0daca259"
+        }
+      ]
+    },
+    {
+      "case_id": "flask-cli-blueprint",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "reindex_orders"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "source_supported_framework_entrypoint",
+      "evidence": "app.py:8 route is on blueprint registered at27; app.py:13 registers CLI command directly. No request/CLI executed, but exact Flask registration is present.",
+      "source_files_read": [
+        {
+          "file": "fixtures/flask_cli_blueprint/app.py",
+          "sha256": "e05f3bbc60a508983a7dddfd8e6f65402e4b45bfc509c8cb9d0719fc0daca259"
+        }
+      ]
+    },
+    {
+      "case_id": "django-management-command",
+      "legacy_label": {
+        "kind": "class",
+        "file": "shop/management/commands/rebuild_index.py",
+        "symbol": "Command"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "conditional_framework_contract",
+      "evidence": "Conventional shop/management/commands/rebuild_index.py Command subclass at4, add_arguments7, handle10 and help5 are Django discovery contracts. This fixture lacks INSTALLED_APPS/manage.py registration, so runtime discovery is conditional, not proved.",
+      "source_files_read": [
+        {
+          "file": "fixtures/django_management_command/shop/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/commands/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/commands/rebuild_index.py",
+          "sha256": "4707f61ff82ddb9cdb3efba48147332f5a87d4dad55deab72b7ebdb3d0c2c722"
+        }
+      ]
+    },
+    {
+      "case_id": "django-management-command",
+      "legacy_label": {
+        "kind": "function",
+        "file": "shop/management/commands/rebuild_index.py",
+        "symbol": "add_arguments"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "conditional_framework_contract",
+      "evidence": "Conventional shop/management/commands/rebuild_index.py Command subclass at4, add_arguments7, handle10 and help5 are Django discovery contracts. This fixture lacks INSTALLED_APPS/manage.py registration, so runtime discovery is conditional, not proved.",
+      "source_files_read": [
+        {
+          "file": "fixtures/django_management_command/shop/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/commands/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/commands/rebuild_index.py",
+          "sha256": "4707f61ff82ddb9cdb3efba48147332f5a87d4dad55deab72b7ebdb3d0c2c722"
+        }
+      ]
+    },
+    {
+      "case_id": "django-management-command",
+      "legacy_label": {
+        "kind": "function",
+        "file": "shop/management/commands/rebuild_index.py",
+        "symbol": "handle"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "conditional_framework_contract",
+      "evidence": "Conventional shop/management/commands/rebuild_index.py Command subclass at4, add_arguments7, handle10 and help5 are Django discovery contracts. This fixture lacks INSTALLED_APPS/manage.py registration, so runtime discovery is conditional, not proved.",
+      "source_files_read": [
+        {
+          "file": "fixtures/django_management_command/shop/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/commands/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/commands/rebuild_index.py",
+          "sha256": "4707f61ff82ddb9cdb3efba48147332f5a87d4dad55deab72b7ebdb3d0c2c722"
+        }
+      ]
+    },
+    {
+      "case_id": "django-management-command",
+      "legacy_label": {
+        "kind": "variable",
+        "file": "shop/management/commands/rebuild_index.py",
+        "symbol": "args"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "required_signature_retention",
+      "evidence": "handle(self,*args,**options) at10 does not read args. It intentionally matches framework callback signature; used-label overstates a semantic read. Removal compatibility and unusedness are different.",
+      "source_files_read": [
+        {
+          "file": "fixtures/django_management_command/shop/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/commands/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/commands/rebuild_index.py",
+          "sha256": "4707f61ff82ddb9cdb3efba48147332f5a87d4dad55deab72b7ebdb3d0c2c722"
+        }
+      ]
+    },
+    {
+      "case_id": "django-management-command",
+      "legacy_label": {
+        "kind": "variable",
+        "file": "shop/management/commands/rebuild_index.py",
+        "symbol": "help"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "conditional_framework_contract",
+      "evidence": "Conventional shop/management/commands/rebuild_index.py Command subclass at4, add_arguments7, handle10 and help5 are Django discovery contracts. This fixture lacks INSTALLED_APPS/manage.py registration, so runtime discovery is conditional, not proved.",
+      "source_files_read": [
+        {
+          "file": "fixtures/django_management_command/shop/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/commands/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/django_management_command/shop/management/commands/rebuild_index.py",
+          "sha256": "4707f61ff82ddb9cdb3efba48147332f5a87d4dad55deab72b7ebdb3d0c2c722"
+        }
+      ]
+    },
+    {
+      "case_id": "celery-task-entrypoints",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "send_receipt"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "source_supported_framework_entrypoint",
+      "evidence": "app.py:7 celery_app.task and12 shared_task explicitly register tasks. No worker invocation occurs; framework entrypoint retention is supported.",
+      "source_files_read": [
+        {
+          "file": "fixtures/celery_tasks/app.py",
+          "sha256": "dd701550e062002635e8b3ab1d240f2777fe6da5ecfa253e5d3c91aff4b68ff8"
+        }
+      ]
+    },
+    {
+      "case_id": "celery-task-entrypoints",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "rebuild_rollups"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "source_supported_framework_entrypoint",
+      "evidence": "app.py:7 celery_app.task and12 shared_task explicitly register tasks. No worker invocation occurs; framework entrypoint retention is supported.",
+      "source_files_read": [
+        {
+          "file": "fixtures/celery_tasks/app.py",
+          "sha256": "dd701550e062002635e8b3ab1d240f2777fe6da5ecfa253e5d3c91aff4b68ff8"
+        }
+      ]
+    },
+    {
+      "case_id": "pytest-fixture-entrypoints",
+      "legacy_label": {
+        "kind": "function",
+        "file": "tests/test_orders.py",
+        "symbol": "payload_fixture"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "tests/test_orders.py:9 fixture named order_payload is consumed by test_create_order parameter at14 and read at16. Pytest name-resolution contract is explicit.",
+      "source_files_read": [
+        {
+          "file": "fixtures/pytest_fixtures/tests/test_orders.py",
+          "sha256": "6867a144e2f1dc7de13ff15538be7d60236caed4483cab75a313e9b8ecdba9ac"
+        }
+      ]
+    },
+    {
+      "case_id": "pydantic-validator-entrypoints",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "normalize_email"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "UserInput(email=...) at22 is reached by RESULT=build_user()29. field_validator at7 and model_validator at12 register methods on constructed model; email annotated field5 participates in actual construction.",
+      "source_files_read": [
+        {
+          "file": "fixtures/pydantic_validators/app.py",
+          "sha256": "3d58d1364055a245ae7bed92e55a4cabec030127bda96d51590012863dcc9b5e"
+        }
+      ]
+    },
+    {
+      "case_id": "pydantic-validator-entrypoints",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "ensure_domain"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "UserInput(email=...) at22 is reached by RESULT=build_user()29. field_validator at7 and model_validator at12 register methods on constructed model; email annotated field5 participates in actual construction.",
+      "source_files_read": [
+        {
+          "file": "fixtures/pydantic_validators/app.py",
+          "sha256": "3d58d1364055a245ae7bed92e55a4cabec030127bda96d51590012863dcc9b5e"
+        }
+      ]
+    },
+    {
+      "case_id": "pydantic-validator-entrypoints",
+      "legacy_label": {
+        "kind": "variable",
+        "file": "app.py",
+        "symbol": "cls"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "required_signature_retention",
+      "evidence": "normalize_email(cls,value) at9 never reads cls. Classmethod/Pydantic signature compatibility requires retention, not semantic liveness of this parameter binding.",
+      "source_files_read": [
+        {
+          "file": "fixtures/pydantic_validators/app.py",
+          "sha256": "3d58d1364055a245ae7bed92e55a4cabec030127bda96d51590012863dcc9b5e"
+        }
+      ]
+    },
+    {
+      "case_id": "pydantic-validator-entrypoints",
+      "legacy_label": {
+        "kind": "variable",
+        "file": "app.py",
+        "symbol": "email"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "UserInput(email=...) at22 is reached by RESULT=build_user()29. field_validator at7 and model_validator at12 register methods on constructed model; email annotated field5 participates in actual construction.",
+      "source_files_read": [
+        {
+          "file": "fixtures/pydantic_validators/app.py",
+          "sha256": "3d58d1364055a245ae7bed92e55a4cabec030127bda96d51590012863dcc9b5e"
+        }
+      ]
+    },
+    {
+      "case_id": "pydantic-validator-entrypoints",
+      "legacy_label": {
+        "kind": "variable",
+        "file": "app.py",
+        "symbol": "name"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "retention_policy_on_unused_owner",
+      "evidence": "name at18 belongs to UnusedSchema at17, labelled unused itself and never constructed. Framework field processing alone does not establish application use of the schema or field.",
+      "source_files_read": [
+        {
+          "file": "fixtures/pydantic_validators/app.py",
+          "sha256": "3d58d1364055a245ae7bed92e55a4cabec030127bda96d51590012863dcc9b5e"
+        }
+      ]
+    },
+    {
+      "case_id": "alembic-migration-entrypoints",
+      "legacy_label": {
+        "kind": "function",
+        "file": "versions/20260425_add_orders.py",
+        "symbol": "upgrade"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "conditional_framework_contract",
+      "evidence": "revision5/down_revision6 and upgrade9/downgrade17 are migration-loader contracts. No env.py/alembic.ini/migration invocation is present; this is a framework retention fixture, not proved application reachability.",
+      "source_files_read": [
+        {
+          "file": "fixtures/alembic_migration/versions/20260425_add_orders.py",
+          "sha256": "b54fafff7c752e8c7b2caa7d58c9ba7c2bfe26dd17cfde3704f49238fa8ec45f"
+        }
+      ]
+    },
+    {
+      "case_id": "alembic-migration-entrypoints",
+      "legacy_label": {
+        "kind": "function",
+        "file": "versions/20260425_add_orders.py",
+        "symbol": "downgrade"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "conditional_framework_contract",
+      "evidence": "revision5/down_revision6 and upgrade9/downgrade17 are migration-loader contracts. No env.py/alembic.ini/migration invocation is present; this is a framework retention fixture, not proved application reachability.",
+      "source_files_read": [
+        {
+          "file": "fixtures/alembic_migration/versions/20260425_add_orders.py",
+          "sha256": "b54fafff7c752e8c7b2caa7d58c9ba7c2bfe26dd17cfde3704f49238fa8ec45f"
+        }
+      ]
+    },
+    {
+      "case_id": "alembic-migration-entrypoints",
+      "legacy_label": {
+        "kind": "variable",
+        "file": "versions/20260425_add_orders.py",
+        "symbol": "revision"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "conditional_framework_contract",
+      "evidence": "revision5/down_revision6 and upgrade9/downgrade17 are migration-loader contracts. No env.py/alembic.ini/migration invocation is present; this is a framework retention fixture, not proved application reachability.",
+      "source_files_read": [
+        {
+          "file": "fixtures/alembic_migration/versions/20260425_add_orders.py",
+          "sha256": "b54fafff7c752e8c7b2caa7d58c9ba7c2bfe26dd17cfde3704f49238fa8ec45f"
+        }
+      ]
+    },
+    {
+      "case_id": "alembic-migration-entrypoints",
+      "legacy_label": {
+        "kind": "variable",
+        "file": "versions/20260425_add_orders.py",
+        "symbol": "down_revision"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "conditional_framework_contract",
+      "evidence": "revision5/down_revision6 and upgrade9/downgrade17 are migration-loader contracts. No env.py/alembic.ini/migration invocation is present; this is a framework retention fixture, not proved application reachability.",
+      "source_files_read": [
+        {
+          "file": "fixtures/alembic_migration/versions/20260425_add_orders.py",
+          "sha256": "b54fafff7c752e8c7b2caa7d58c9ba7c2bfe26dd17cfde3704f49238fa8ec45f"
+        }
+      ]
+    },
+    {
+      "case_id": "package-entrypoints",
+      "legacy_label": {
+        "kind": "function",
+        "file": "bench/cli.py",
+        "symbol": "main"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "pyproject.toml:6 explicitly registers bench-cli=bench.cli:main. Declared package script is an external entrypoint contract.",
+      "source_files_read": [
+        {
+          "file": "fixtures/package_entrypoints/pyproject.toml",
+          "sha256": "7fa5f2607906a710efb56a64914dd822285e3f7ab5fa7ebb3225d361e154373b"
+        },
+        {
+          "file": "fixtures/package_entrypoints/bench/__init__.py",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "file": "fixtures/package_entrypoints/bench/cli.py",
+          "sha256": "9e0ed7cc77e6162e930ae9d4ed718a0c67a6fb28798d9140129fb5adb37cdbde"
+        }
+      ]
+    },
+    {
+      "case_id": "robot-programmatic-library",
+      "legacy_label": {
+        "kind": "function",
+        "file": "keywords.py",
+        "symbol": "measure"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "suite.robot:2 loads keywords.py; :6 invokes Measure. keywords.py:10 applies library(auto_keywords=True) to class containing measure:4.",
+      "source_files_read": [
+        {
+          "file": "fixtures/robot_programmatic_library/keywords.py",
+          "sha256": "87b71312c7713cdb6f6a9d6d047ca8bcaf8b98bb161bb250a3c2dcdeec702cc1"
+        },
+        {
+          "file": "fixtures/robot_programmatic_library/suite.robot",
+          "sha256": "2f239458917b32e4debd6719b486d961f1cd8cf33fc0524646db4cc31dcb0db8"
+        }
+      ]
+    },
+    {
+      "case_id": "robot-variable-object-methods",
+      "legacy_label": {
+        "kind": "function",
+        "file": "values.py",
+        "symbol": "render"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "suite.robot:2 loads values.py; :6 explicitly calls ${OBJ.render()}; values.py:10 constructs Values and :4 defines rendered method.",
+      "source_files_read": [
+        {
+          "file": "fixtures/robot_variable_methods/values.py",
+          "sha256": "63072a66179c43a6b09c494fed6047dbe890bb1c7e26229369719e9f1175db60"
+        },
+        {
+          "file": "fixtures/robot_variable_methods/other.py",
+          "sha256": "e75ab3449d1d06c58d19fe86b24a9884fafa6d86a452d6d8077c619e6bf1cdf5"
+        },
+        {
+          "file": "fixtures/robot_variable_methods/suite.robot",
+          "sha256": "3895d6687b046f14d04124fd2d6d799382268f3e51e047ac507531ae620cf038"
+        }
+      ]
+    },
+    {
+      "case_id": "finite-globals-dispatch",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "scale_a"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "app.py:14 executes transform(2,\"scale_a\"); :10 indexes globals by name and :11 invokes selected function.",
+      "source_files_read": [
+        {
+          "file": "fixtures/finite_globals_dispatch/app.py",
+          "sha256": "c396383487f1a881116bd820d1e77ca7fddd8aba261103338c91093510bbec74"
+        }
+      ]
+    },
+    {
+      "case_id": "finite-inherited-method-registry",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "render_a"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "app.py:35 invokes Formatter.render with input-derived mode. MODES:19-22 maps a/b to render_a/render_b; :28-31 selects and invokes exactly these methods.",
+      "source_files_read": [
+        {
+          "file": "fixtures/finite_method_registry/peers.py",
+          "sha256": "15cf04f4f471b0af1414dae9c26ecf41fa6583305c32dfeaad61e4fd082c4aa1"
+        },
+        {
+          "file": "fixtures/finite_method_registry/app.py",
+          "sha256": "d2f2a1adabbb8e9c12b35fa9cb29f463c1755d050573b29272e8094306c38666"
+        }
+      ]
+    },
+    {
+      "case_id": "finite-inherited-method-registry",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "render_b"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "app.py:35 invokes Formatter.render with input-derived mode. MODES:19-22 maps a/b to render_a/render_b; :28-31 selects and invokes exactly these methods.",
+      "source_files_read": [
+        {
+          "file": "fixtures/finite_method_registry/peers.py",
+          "sha256": "15cf04f4f471b0af1414dae9c26ecf41fa6583305c32dfeaad61e4fd082c4aa1"
+        },
+        {
+          "file": "fixtures/finite_method_registry/app.py",
+          "sha256": "d2f2a1adabbb8e9c12b35fa9cb29f463c1755d050573b29272e8094306c38666"
+        }
+      ]
+    },
+    {
+      "case_id": "python-unnamed-receiver-methods",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "handle_open"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "app.py:102 calls run; :94 dispatch(cache,\"open\",\"table\") reaches :85 handle_open and :86 TABLE[table]=_named_in_table. :96 replaces stdout with FileSink; outer print102 invokes its write method.",
+      "source_files_read": [
+        {
+          "file": "fixtures/python_unnamed_receiver_methods/app.py",
+          "sha256": "aebdfaa7707101af09f5bb919ec27f473915868a33cde5a248ebcc1308cbf78c"
+        }
+      ]
+    },
+    {
+      "case_id": "python-unnamed-receiver-methods",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "_named_in_table"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "app.py:102 calls run; :94 dispatch(cache,\"open\",\"table\") reaches :85 handle_open and :86 TABLE[table]=_named_in_table. :96 replaces stdout with FileSink; outer print102 invokes its write method.",
+      "source_files_read": [
+        {
+          "file": "fixtures/python_unnamed_receiver_methods/app.py",
+          "sha256": "aebdfaa7707101af09f5bb919ec27f473915868a33cde5a248ebcc1308cbf78c"
+        }
+      ]
+    },
+    {
+      "case_id": "python-unnamed-receiver-methods",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "_flush"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "invalid_used_label_no_consumer",
+      "evidence": "_flush appears only in unused Sink Protocol:54-55 and FileSink declaration59; no ._flush call, structural annotation or actual sink protocol consumer. FileSink._flush is not stdout.flush.",
+      "source_files_read": [
+        {
+          "file": "fixtures/python_unnamed_receiver_methods/app.py",
+          "sha256": "aebdfaa7707101af09f5bb919ec27f473915868a33cde5a248ebcc1308cbf78c"
+        }
+      ]
+    },
+    {
+      "case_id": "python-unnamed-receiver-methods",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "write"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "app.py:102 calls run; :94 dispatch(cache,\"open\",\"table\") reaches :85 handle_open and :86 TABLE[table]=_named_in_table. :96 replaces stdout with FileSink; outer print102 invokes its write method.",
+      "source_files_read": [
+        {
+          "file": "fixtures/python_unnamed_receiver_methods/app.py",
+          "sha256": "aebdfaa7707101af09f5bb919ec27f473915868a33cde5a248ebcc1308cbf78c"
+        }
+      ]
+    },
+    {
+      "case_id": "python-unnamed-receiver-methods",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "launch"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "invalid_used_label_no_consumer",
+      "evidence": "launch at67/72 is never invoked. First()/Second() instances are appended to local registry at97; caller passes temporary [] at102, run returns holder.use not registry. Constructor retention does not prove method use.",
+      "source_files_read": [
+        {
+          "file": "fixtures/python_unnamed_receiver_methods/app.py",
+          "sha256": "aebdfaa7707101af09f5bb919ec27f473915868a33cde5a248ebcc1308cbf78c"
+        }
+      ]
+    },
+    {
+      "case_id": "python-unnamed-receiver-methods",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "describe"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "retention_policy_without_reachable_dispatch",
+      "evidence": "Shipped.describe77 is exposed by register_instance98, but temporary SimpleXMLRPCServer has no retained binding or serve loop; registration contract supports keeping RPC method, not actual reachable request handling.",
+      "source_files_read": [
+        {
+          "file": "fixtures/python_unnamed_receiver_methods/app.py",
+          "sha256": "aebdfaa7707101af09f5bb919ec27f473915868a33cde5a248ebcc1308cbf78c"
+        }
+      ]
+    },
+    {
+      "case_id": "string-named-backend-dispatch",
+      "legacy_label": {
+        "kind": "function",
+        "file": "channels/video.py",
+        "symbol": "_cli_read"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "dispatch.py:15 calls run with argv action; run iterates action names and invokes first backend at11. read reaches _cli_read16, hot reaches _cli_hot22.",
+      "source_files_read": [
+        {
+          "file": "fixtures/string_named_backend_dispatch/channels/dispatch.py",
+          "sha256": "a54fb1973183cc4a1891ab133a613542316e06831cdcf8c55904acbbf01880fd"
+        },
+        {
+          "file": "fixtures/string_named_backend_dispatch/channels/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "file": "fixtures/string_named_backend_dispatch/channels/video.py",
+          "sha256": "8e30a85b8e00086bf5c08a6e765f9bc7c6dfbd7edb8cda87d0c16164ab486f69"
+        },
+        {
+          "file": "fixtures/string_named_backend_dispatch/channels/base.py",
+          "sha256": "d8e251fccf2bc439ff24d9aa32608c0acddebf94e50d975f9fe0faa6bc17e80b"
+        }
+      ]
+    },
+    {
+      "case_id": "string-named-backend-dispatch",
+      "legacy_label": {
+        "kind": "function",
+        "file": "channels/video.py",
+        "symbol": "_api_read"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "invalid_used_label_unreachable_backend",
+      "evidence": "video.py:12 lists cli then api, but dispatch.py:10-11 unconditionally returns while handling first backend. _api_read19 is never chosen by this dispatcher; string-table membership alone is not execution.",
+      "source_files_read": [
+        {
+          "file": "fixtures/string_named_backend_dispatch/channels/dispatch.py",
+          "sha256": "a54fb1973183cc4a1891ab133a613542316e06831cdcf8c55904acbbf01880fd"
+        },
+        {
+          "file": "fixtures/string_named_backend_dispatch/channels/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "file": "fixtures/string_named_backend_dispatch/channels/video.py",
+          "sha256": "8e30a85b8e00086bf5c08a6e765f9bc7c6dfbd7edb8cda87d0c16164ab486f69"
+        },
+        {
+          "file": "fixtures/string_named_backend_dispatch/channels/base.py",
+          "sha256": "d8e251fccf2bc439ff24d9aa32608c0acddebf94e50d975f9fe0faa6bc17e80b"
+        }
+      ]
+    },
+    {
+      "case_id": "string-named-backend-dispatch",
+      "legacy_label": {
+        "kind": "function",
+        "file": "channels/video.py",
+        "symbol": "_cli_hot"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "dispatch.py:15 calls run with argv action; run iterates action names and invokes first backend at11. read reaches _cli_read16, hot reaches _cli_hot22.",
+      "source_files_read": [
+        {
+          "file": "fixtures/string_named_backend_dispatch/channels/dispatch.py",
+          "sha256": "a54fb1973183cc4a1891ab133a613542316e06831cdcf8c55904acbbf01880fd"
+        },
+        {
+          "file": "fixtures/string_named_backend_dispatch/channels/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "file": "fixtures/string_named_backend_dispatch/channels/video.py",
+          "sha256": "8e30a85b8e00086bf5c08a6e765f9bc7c6dfbd7edb8cda87d0c16164ab486f69"
+        },
+        {
+          "file": "fixtures/string_named_backend_dispatch/channels/base.py",
+          "sha256": "d8e251fccf2bc439ff24d9aa32608c0acddebf94e50d975f9fe0faa6bc17e80b"
+        }
+      ]
+    },
+    {
+      "case_id": "decorator-factory-registry",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "_encode_upper"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "app.py:9/14 decorators register callbacks via routes.py:7 entries store. app.py:28 invokes table.convert(argv category); routes.py:13-14 fetches and invokes matching registered function.",
+      "source_files_read": [
+        {
+          "file": "fixtures/decorator_factory_registry/app.py",
+          "sha256": "da792561461808bebc51b85440af59d3ff4f67bcbfda8aba644e9f93fce98f44"
+        },
+        {
+          "file": "fixtures/decorator_factory_registry/routes.py",
+          "sha256": "1648beca63b650494c9a7ba7eb97778b48df3298458a2ce5754d93eb1819a699"
+        }
+      ]
+    },
+    {
+      "case_id": "decorator-factory-registry",
+      "legacy_label": {
+        "kind": "function",
+        "file": "app.py",
+        "symbol": "_encode_hex"
+      },
+      "legacy_outcome": "false_positive",
+      "source_adjudication": "confirmed_false_positive",
+      "evidence": "app.py:9/14 decorators register callbacks via routes.py:7 entries store. app.py:28 invokes table.convert(argv category); routes.py:13-14 fetches and invokes matching registered function.",
+      "source_files_read": [
+        {
+          "file": "fixtures/decorator_factory_registry/app.py",
+          "sha256": "da792561461808bebc51b85440af59d3ff4f67bcbfda8aba644e9f93fce98f44"
+        },
+        {
+          "file": "fixtures/decorator_factory_registry/routes.py",
+          "sha256": "1648beca63b650494c9a7ba7eb97778b48df3298458a2ce5754d93eb1819a699"
+        }
+      ]
+    }
+  ],
+  "counts": {
+    "source_supported_framework_entrypoint": 5,
+    "retention_policy_without_reachable_dispatch": 6,
+    "ambiguous_symbol_identity": 1,
+    "retention_policy_on_unused_owner": 2,
+    "conditional_framework_contract": 8,
+    "required_signature_retention": 2,
+    "confirmed_false_positive": 17,
+    "invalid_used_label_no_consumer": 2,
+    "invalid_used_label_unreachable_backend": 1
+  },
+  "strict_source_confirmed_fp_count": 17,
+  "limitations": [
+    "Framework entrypoints can be supported contracts without an actual invocation. Conditional missing-loader fixtures are separate.",
+    "Stored functions can be uncalled: storing a callable is not automatically proof of its body reachability.",
+    "Preserving callback signatures or fields of unused owners is a retention policy, not a semantic used label.",
+    "No target code was executed."
+  ]
+}

@@ -1297,45 +1297,55 @@ the recorded agent counts.
 --upload` (or only the checks you name, such as `--danger`), prints the
 findings tables like a local scan, and a short receipt instead of the full
 upload output.
-Without a token it opens the browser login before scanning in an interactive
-terminal; without a terminal (outside CI) it stops before scanning with
-`Not connected to Skylos Cloud. Run skylos login in a terminal, or set
-SKYLOS_TOKEN to a project token.` and exit `1`. `--no-upload` is refused with
-exit `2`.
+On first use in a terminal, it opens browser sign-in, lets you choose this
+repository's project, and continues the scan and upload automatically. There
+is no token to find or copy. A stale repository link without saved credentials
+starts sign-in again. Credentials and Git metadata come from PATH, even when
+you run the command from another repository. Explicit output paths stay
+relative to your working directory.
 
-With a committed `[tool.skylos.done]` table and a clean working tree, it first
-takes this commit's Done receipt along: an existing `.skylos/receipts/latest.json`
-for this commit, or it prints `Running skylos done first; its receipt goes with
-the upload…`, runs Done against the branch pull requests merge into and prints
-Done's `Verdict:` line. With uncommitted changes it prints `Done receipt not
-sent: commit your changes first (the receipt must name a clean commit)` and
-uploads without it. Not in CI, and not with `--done-receipt`.
+Without a terminal (outside CI), missing credentials stop `skylos cloud`
+before scanning. Sign in once with `skylos cloud PATH` in a terminal and retry.
+CI uses GitHub Actions/GitLab OIDC or an explicit `SKYLOS_TOKEN` secret.
+`--no-upload` is refused with exit `2`; use `skylos PATH -a` for a local scan.
 
-After the destination lines, `skylos cloud` prints
-`Uploading findings to Skylos Cloud…` and then:
+The receipt separates a successful upload from CI verification:
 
 ```text
-✗ Quality gate on feat/login: FAILED (was PASSED on 24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue
-  Open: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Flogin
-  Sent: findings and the Done receipt (fail) · laptop upload, unverified until CI runs the workflow
-  Next: fix the issues behind the failed gate, then run skylos cloud again.
+✓ Scan uploaded — CI verification needed · policy preview: pass
+  Open: https://skylos.dev/dashboard/projects/<project>/scans/<scan>
+  Your scan is saved and ready to review. A verified CI scan is needed to set the project verdict and publish repository checks.
+  Sent: findings · developer upload · CI verification needed
+  Next: finish CI setup from the scan above to verify future uploads.
 ```
 
-| Line | When |
-|---|---|
-| `✓ Quality gate on <branch>: PASSED (<history>)` or `✗ … FAILED (<history>) · <reasons>` | Skylos Cloud reported a gate result; history is as in [Cloud gate result after an upload](#cloud-gate-result-after-an-upload); without reasons the new-issue count follows the `·` |
-| `✓ Uploaded to Skylos Cloud (no quality gate result was reported)` | Skylos Cloud reported no gate result |
-| `  Open: <url>` | Always: the project Overview, with `?branch=` for a branch that is not the default branch; the scan page when no project ID is known |
-| `  This is main, but a login-token upload is unverified: …` | Default branch, login-token upload |
-| `  Sent: findings[ and the Done receipt (pass|fail|unfinished)] · <note>` | Always: what reached Skylos Cloud; the note is `no Done table in this repo (skylos setup adds one)`, `the Done table in <file> is not committed yet`, else the standing Skylos Cloud reported (`laptop upload, unverified until CI runs the workflow` or `verified CI upload`) |
-| `  Next: fix the issues behind the failed gate, then run skylos cloud again.` | The gate failed |
-| `  Next: skylos cicd init — adds a Skylos check to every pull request.` | The gate passed, this is not a CI run, and `.github/workflows/skylos.yml` does not exist |
+The link opens the exact saved result. It includes the same guided setup as
+`/dashboard/projects/<project>/setup`: connect GitHub, add or update the
+workflow on the default branch, then check for its verified upload. Existing
+workflows link to GitHub Actions instead of asking you to add them again.
+Connecting GitHub from this flow does not create a workflow pull request.
 
-`skylos cloud` exits `0` on a failed gate. `--gate` or `--strict` exits `1` and
-adds `Exiting with code 1 because the Skylos Cloud quality gate failed (--gate).`
-(or `(--strict)`). Its `--gate` is the Skylos Cloud gate only: the local
-`[tool.skylos.gate]` limits are not evaluated and the scan output is the same
-as without `--gate`. Machine formats behave exactly as with `--upload`.
+Browser sign-in saves developer reports. Their policy conditions are a
+preview: they do not set the project verdict, publish repository checks,
+resolve existing issues, or become a CI baseline. Authenticated CI uploads
+show the official gate result and history. A failed gate does not mean its
+upload identity is unverified. Missing server verification metadata is shown
+as unknown; a missing gate result never becomes a confirmed pass.
+
+JSON and JSON-CI retain `upload.upload_trust`, `upload.verification` (status,
+message, and an optional setup URL), and `upload.quality_gate_status`
+(`reported`, `preview`, or `not_reported`). Progress and results links stay on
+stderr so stdout remains machine-readable.
+
+With a committed `[tool.skylos.done]` table and a clean working tree,
+`skylos cloud` also sends this commit's Done receipt, running Done first if
+needed. Dirty trees upload without it. CI and explicit `--done-receipt`
+retain their existing behavior. An absent Done table does not obscure the
+upload's verification status.
+
+`skylos cloud` exits `0` on a failed gate. `--gate` or `--strict` exits `1`
+unless `--force` is used. Its `--gate` evaluates the Cloud policy only; local
+`[tool.skylos.gate]` limits are used by `skylos PATH --gate`.
 
 `skylos . --upload` (and `skylos debt . --upload`) sends the scan to Skylos
 Cloud. The upload follows a versioned contract shared with the server

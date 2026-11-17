@@ -66,11 +66,12 @@ var defaultSkipDirs = map[string]bool{
 }
 
 type Analyzer struct {
-	fset      *token.FileSet
-	findings  []output.Finding
-	imports   map[string]string
-	seen      map[string]bool
-	callTaint map[*ast.CallExpr]*funcTaint
+	fset        *token.FileSet
+	findings    []output.Finding
+	imports     map[string]string
+	seen        map[string]bool
+	callTaint   map[*ast.CallExpr]*funcTaint
+	assignTaint map[*ast.AssignStmt]*funcTaint
 	// the current file is test-support code (see isTestSupportFile)
 	testSupport bool
 	// declarations of the current file's package directory
@@ -203,6 +204,7 @@ func (a *Analyzer) analyzeFile(path string) {
 		case *ast.BasicLit:
 			a.checkHardcodedSecret(node, path)
 		case *ast.AssignStmt:
+			a.checkTLSFieldAssignment(node, path)
 			if len(node.Lhs) == len(node.Rhs) {
 				for i, lhs := range node.Lhs {
 					a.checkCredentialAssignment(credentialName(lhs), node.Rhs[i], path)
@@ -222,10 +224,16 @@ func (a *Analyzer) analyzeFile(path string) {
 }
 
 func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
-	pkg, funcName := a.getFuncInfo(call.Fun)
 	ft := a.taintFor(call)
 	a.scope = ft
 	defer func() { a.scope = nil }()
+	fun := a.capturedCallable(call.Fun, ft, 0)
+	pkg, funcName := a.getFuncInfo(fun)
+	if sel, ok := fun.(*ast.SelectorExpr); ok {
+		if id, ok := sel.X.(*ast.Ident); ok && localDecl(id.Name, ft) {
+			pkg = ""
+		}
+	}
 
 	if queryArg, stringOnly, ok := a.sqlQueryArg(call, ft); ok && len(call.Args) > queryArg {
 		if severity, detail := a.sqlQuerySeverity(call.Args[queryArg], ft, stringOnly); severity != "" {
@@ -296,7 +304,7 @@ func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 			"Reverse proxy target comes from request or network input and can choose the host. Proxy only to fixed or allowlisted upstreams.")
 	}
 
-	if sel, ok := call.Fun.(*ast.SelectorExpr); ok && a.resolveType(sel.X, ft, 0).is("net/http", "Client") {
+	if sel, ok := fun.(*ast.SelectorExpr); ok && a.resolveType(sel.X, ft, 0).is("net/http", "Client") {
 		switch funcName {
 		case "Get", "Head", "Post", "PostForm":
 			if len(call.Args) > 0 && a.isSSRFURL(call.Args[0], ft) {

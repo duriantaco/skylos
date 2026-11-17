@@ -147,6 +147,13 @@ how_skylos_decides:
     ("{{P_NOFLAG}}", skipping security or review, "{{P_APPROVE}}", marking
     code safe, "{{P_SAFE}}").
   - >-
+    Generic instructions not to report, flag, detect, scan, warn or alert
+    need a security/code-review subject in the same bounded clause or an
+    explicit reviewer/scanner context. Ordinary application output limits
+    are not reviewer suppression. Agent and reviewer instruction files
+    retain bare-directive handling. Each match and decoded payload is
+    checked separately; a benign instruction does not exempt a later one.
+  - >-
     Raises a phrase one level in README, CONTRIBUTING and SECURITY files and
     one more inside an HTML comment, up to CRITICAL. Keeps one finding per
     line, the most severe.

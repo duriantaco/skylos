@@ -810,6 +810,16 @@ class KotlinSecurityScanner:
             or "ProcessBuilder(" in call.receiver.replace(" ", "")
         )
         if (builder or command) and self._any_arg_tainted(call.args, "cmd", state):
+            argv = self._flatten_args(call.args)
+            if (
+                len(argv) >= 3
+                and self._literal_value(*argv[0])
+                in {"printf", "/usr/bin/printf", "/bin/printf"}
+                and self._literal_value(*argv[1]) == "%s"
+            ):
+                # printf's fixed %s treats every following argv element as
+                # data; no shell, dynamic program or dynamic format is used.
+                return
             shell = any(
                 self._literal_value(s, e)
                 in {"sh", "bash", "/bin/sh", "/bin/bash", "cmd", "cmd.exe", "-c", "/c"}

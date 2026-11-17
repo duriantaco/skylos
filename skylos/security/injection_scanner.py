@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import bisect
+import json
 import re
 import unicodedata
 from collections import Counter
@@ -54,6 +55,35 @@ _CLAUSE_START = (
 )
 _SKIP_DIRECTIVE_RE = re.compile(
     r"skip\s+(security|analysis|review|scanning|checks?)\b", re.I
+)
+_REPORT_SUPPRESSION_RE = re.compile(
+    r"do\s+not\s+(flag|report|detect|scan|warn|alert)\b", re.I
+)
+_REVIEW_REPORT_OBJECT_RE = re.compile(
+    r"\b(?:security|vulnerabilit(?:y|ies)|bugs?|defects?|flaws?|findings?|issues?"
+    r"|risks?|warnings?|alerts?|checks?|reviews?|reviewers?|audits?|scanners?"
+    r"|analysis|scanning|SAST|DAST|code|source|files?|commits?|tests?"
+    r"|docstrings?|validation|SQL|injections?|traversal|symlinks?|credentials?"
+    r"|secrets?|passwords?|leaks?|CWE(?:-\d+)?|CVE(?:-\d+-\d+)?"
+    r"|XSS|SSRF|CSRF|XXE|RCE|IDOR|LFI|RFI|DoS|DDoS|CORS|PII"
+    r"|authentication|authorization|access\s+control|privilege\s+escalation"
+    r"|(?:buffer|heap|stack|integer)\s+(?:overflows?|underflows?)"
+    r"|memory\s+corruption|out[- ]of[- ]bounds|use[- ]after[- ]free|double[- ]free"
+    r"|prototype\s+pollution|race\s+conditions?|data\s+races?|deadlocks?"
+    r"|(?:command|code|arbitrary)\s+execution"
+    r"|(?:builtins\s*\.\s*)?(?:eval|exec)|subprocess|Popen"
+    r"|os\s*\.\s*(?:system|popen|exec\w*)"
+    r"|(?:pickle|marshal)\s*\.\s*loads?|yaml\s*\.\s*(?:unsafe_)?load)\b",
+    re.I,
+)
+_REVIEW_ROLE_CONTEXT_RE = re.compile(
+    r"\b(?:reviewers?|auditors?|linters?|scanners?"
+    r"|(?:security|code|source|pull\s+request)\s+(?:review|audit|analysis|scan))\b",
+    re.I,
+)
+# A sentence period ends the subject; a dot inside a qualified API does not.
+_REPORT_CLAUSE_BOUNDARY_RE = re.compile(
+    r"(?<!\w)\.|\.(?!\w)|[!?;]|\b(?:but|however|instead)\b", re.I
 )
 _COMPOUND_CHECK_SUBJECT_RE = re.compile(
     r"(?:^|[.!?\n\"'])[ \t]*(?:[-*+][ \t]+)?"
@@ -115,7 +145,7 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"(?:^|\.\s+)act\s+as\s+(a|an|the)\b", re.I), "HIGH"),
     (re.compile(r"pretend\s+(you\s+are|to\s+be)\b", re.I), "HIGH"),
     (_NEW_INSTRUCTION_RE, "HIGH"),
-    (re.compile(r"do\s+not\s+(flag|report|detect|scan|warn|alert)\b", re.I), "MEDIUM"),
+    (_REPORT_SUPPRESSION_RE, "MEDIUM"),
     (_SKIP_DIRECTIVE_RE, "MEDIUM"),
     (re.compile(r"approve\s+all\s+(changes?|code|commits?)\b", re.I), "MEDIUM"),
     (re.compile(r"mark\s+(this|all|everything)\s+(as\s+)?safe\b", re.I), "MEDIUM"),
@@ -201,7 +231,11 @@ def _names_a_control(text: str, match: re.Match) -> bool:
 
 
 def _pattern_matches(
-    pattern: re.Pattern, text: str, *, placeholder_description: bool = False
+    pattern: re.Pattern,
+    text: str,
+    *,
+    placeholder_description: bool = False,
+    reviewer_context: bool = False,
 ):
     """Keep individual directives, excluding narrow non-directive shapes.
 
@@ -213,6 +247,30 @@ def _pattern_matches(
             continue
         if _names_a_control(text, match):
             continue
+        if pattern is _REPORT_SUPPRESSION_RE and not reviewer_context:
+            # A domain instruction such as limiting image classifications is
+            # not a request to suppress a code review. Require an applicable
+            # object in this clause, or an explicit reviewer/scanner context.
+            # Each match is checked independently: a benign sentence cannot
+            # exempt a later security directive in the same prompt.
+            tail = text[match.end() : match.end() + 512]
+            boundary = _REPORT_CLAUSE_BOUNDARY_RE.search(tail)
+            subject = _REVIEW_REPORT_OBJECT_RE.search(tail)
+            has_subject = subject is not None and (
+                boundary is None or subject.start() < boundary.start()
+            )
+            # A dotted API name can itself span punctuation (``os . system``).
+            # A later sentence's security vocabulary cannot supply the object.
+            truncated_clause = (
+                match.end() + len(tail) < len(text) and boundary is None
+            )
+            prefix = text[max(0, match.start() - 192) : match.start()]
+            if not (
+                has_subject
+                or _REVIEW_ROLE_CONTEXT_RE.search(prefix)
+                or truncated_clause
+            ):
+                continue
         if pattern is _SKIP_DIRECTIVE_RE:
             predicate = _CHECK_VERIFICATION_RE.get(match.group(1).lower())
             if (
@@ -477,6 +535,7 @@ def _instruction_pattern_evidence(
     primary: re.Pattern,
     *,
     placeholder_description: bool = False,
+    reviewer_context: bool = False,
 ) -> dict:
     """Describe the matched instructions without treating their context as safe.
 
@@ -488,7 +547,10 @@ def _instruction_pattern_evidence(
     patterns = sorted(_PATTERNS, key=lambda item: item[0] is not primary)
     for pattern, severity in patterns:
         for match in _pattern_matches(
-            pattern, text, placeholder_description=placeholder_description
+            pattern,
+            text,
+            placeholder_description=placeholder_description,
+            reviewer_context=reviewer_context,
         ):
             if len(signals) >= MAX_PATTERN_EVIDENCE:
                 complete = False
@@ -550,6 +612,7 @@ def scan_file(
     is_reviewer_config = not is_agent_instruction and is_ai_reviewer_config_path(
         display_path
     )
+    reviewer_context = is_agent_instruction or is_reviewer_config
     if not is_scannable_path(filepath, display_path):
         return []
 
@@ -595,6 +658,14 @@ def scan_file(
         if index == 0 and leading_bom:
             continue
         if ext in _PYTHON_SOURCE_SUFFIXES and char_hex in _TROJAN_SOURCE_CONTROLS:
+            continue
+        if (
+            basename == "package.json"
+            and not is_agent_instruction
+            and not is_reviewer_config
+            and char_hex == "U+200D"
+            and _terminal_description_joiners(source_lines, line_no)
+        ):
             continue
         if (
             not is_agent_instruction
@@ -693,6 +764,7 @@ def scan_file(
                     pattern,
                     normalized,
                     placeholder_description=placeholder_description,
+                    reviewer_context=reviewer_context,
                 ),
                 None,
             )
@@ -708,6 +780,7 @@ def scan_file(
                         pattern,
                         normalized,
                         placeholder_description=placeholder_description,
+                        reviewer_context=reviewer_context,
                     ),
                     None,
                 )
@@ -746,6 +819,7 @@ def scan_file(
                     line_no,
                     pattern,
                     placeholder_description=placeholder_description,
+                    reviewer_context=reviewer_context,
                 )
                 matched_context = pattern_evidence["signals"][0]["context"]
                 snippet = matched_context[:100]
@@ -777,7 +851,12 @@ def scan_file(
     for decoded_text, line_no in decoded_blobs:
         normalized = normalize(decoded_text)
         for pattern, base_severity in _PATTERNS:
-            if next(_pattern_matches(pattern, normalized), None) is not None:
+            if next(
+                _pattern_matches(
+                    pattern, normalized, reviewer_context=reviewer_context
+                ),
+                None,
+            ) is not None:
                 snippet = decoded_text.strip()[:80]
                 payload_severity, payload_rule = high_signal("HIGH")
                 findings.append(
@@ -943,6 +1022,41 @@ def _is_pictographic(char: str) -> bool:
         or code in (0xFE0F, 0x2640, 0x2642, 0x2695, 0x2696, 0x2708, 0x2764)
         or 0x1F3FB <= code <= 0x1F3FF
     )
+
+
+def _terminal_description_joiners(lines: list[str], line_no: int) -> bool:
+    """A dangling emoji joiner at the end of package prose joins no text.
+
+    Require a single JSON description field on this line. Other fields,
+    instruction files and joiners inside words keep their normal checks.
+    Literal instruction detection still scans the complete source.
+    """
+    if not 1 <= line_no <= len(lines):
+        return False
+    try:
+        fields = json.loads(
+            "{" + lines[line_no - 1].strip().removesuffix(",") + "}",
+            object_pairs_hook=list,
+        )
+    except (ValueError, TypeError):
+        return False
+    if (
+        len(fields) != 1
+        or fields[0][0] != "description"
+        or not isinstance(fields[0][1], str)
+    ):
+        return False
+    value = fields[0][1]
+    found = False
+    for index, char in enumerate(value):
+        if char != "\u200d":
+            continue
+        found = True
+        if index == 0 or not _is_pictographic(value[index - 1]):
+            return False
+        if index + 1 < len(value) and not _is_pictographic(value[index + 1]):
+            return False
+    return found
 
 
 def _only_emoji_joiners(lines: list[str], line_no: int) -> bool:

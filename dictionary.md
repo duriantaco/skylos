@@ -399,12 +399,24 @@ and every caller passes literals, the module's location, clock or numeric
 values, temporary paths, test values or operator input) or `unknown` (a
 caller, receiver, callback, decorator, external base class or public package
 API that cannot be resolved); unknown is neither proof of an attack nor of
-safety. A path whose only proven source is the program operator (a CLI
+safety. When a filename-filter body is recognized but its native-string or
+runtime assumptions remain unverified, D215 keeps the warning and describes
+that validation uncertainty instead of claiming that no check exists. The
+local provenance record includes `validation_uncertainty`; this does not
+change severity, source evidence or gate behavior.
+A path whose only proven source is the program operator (a CLI
 argument or environment variable) is suppressed, unless a project process
 launch passes untrusted arguments. An exclusive create (`open(p, "x")`,
 `os.open` with the `os` module's `O_CREAT | O_EXCL`) cannot follow a final
-symlink, so D324/D325 skip it while D215 still checks it. D326 needs an
-`extract` call that can pass a member (BeautifulSoup's `tag.extract()`
+symlink, so D324/D325 skip it while D215 still checks it.
+An `os.open` call proven to include the native `O_DIRECTORY` flag and only
+read access opens a directory descriptor, so it is not a D325 file-content
+read. D215 still checks its path; unknown flags and a fallback such as
+`getattr(os, "O_DIRECTORY", 0)` do not establish this exception.
+Caller provenance establishes which inputs reach a path, not whether an
+attacker can create or replace filesystem entries. Symlink findings state
+that additional prerequisite; a filename filter alone does not reject links.
+D326 needs an `extract` call that can pass a member (BeautifulSoup's `tag.extract()`
 cannot) and reports `shutil.unpack_archive` without `filter="data"`. Test
 files are scanned too; the literal pytest parameter proof below still applies.
 
@@ -739,6 +751,12 @@ require review; their names or message roles do not establish safety.
 | D265 | HIGH-CRITICAL | Unsafe ML model deserialization | Python | Pickle-backed model/checkpoint loading such as `torch.load`, `joblib.load`, or `numpy.load(..., allow_pickle=True)` |
 | D266 | CRITICAL | AI config instruction injection | Agent config and instruction files, AI code reviewer config files | D260-style hidden, obfuscated, or instruction-override payloads in AI assistant rule/config files. In AI code reviewers' own files (the SKY-A122 list, apart from `.github/copilot-instructions.md`, which stays a full agent instruction file), only HIGH signals become D266: instruction overrides, role changes, requests to reveal or send data, encoded payloads and invisible characters (an emoji joiner is not one). Reviewing vocabulary such as "do not flag" or "skip review" is what those files say, so it stays D260 at its usual severity, and a full scan that reaches a reviewer file inside a tool folder (`.gemini/`, `.cursor/`, `.github/`, `.greptile/`, `.macroscope/`), which it did not read before, reports only the HIGH signals there; a diff scan of a changed file reads it in full as before |
 | D267 | MEDIUM | Unbounded LLM consumption | Python | LLM calls or agent executors lack token, timeout, iteration, or obvious loop bounds. Keys of a local dict unpacked into the call (`completion(**params)`) count as keywords when the dict is built and changed only where the checker can read it (a literal, `dict(...)`, `params["k"] = v`, `del`, `pop`, `setdefault`, `update`, `clear`, `|=`). A key counts only if it holds a value other than `None`/`False` on every path (`if`, loops, `try`, `match`); setting it under `if max_tokens:` or `if max_tokens is not None:` counts like passing `max_tokens=max_tokens`. When the mapping cannot be read (a parameter, an attribute, a call's result, a dict passed to another function, aliased or used by a nested function) a missing limit is not claimed |
+
+For D260, a generic instruction not to report, flag, detect, scan, warn or
+alert needs a security/code-review subject in the same bounded clause or an
+explicit reviewer/scanner context. Domain output restrictions alone do not
+establish reviewer suppression. Agent and reviewer instruction files still
+check bare directives, and each match and decoded payload is checked separately.
 
 ### MCP Server Security
 

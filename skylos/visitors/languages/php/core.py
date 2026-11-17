@@ -254,6 +254,8 @@ class PhpCore:
         self._trait_precedence: dict[str, dict[str, str]] = {}
         self._trait_dispatch_refs: set[int] = set()
         self._trait_dispatch_calls: set[tuple[str, str]] = set()
+        self._private_local_methods: dict[str, set[str]] = {}
+        self._private_callable_parameters: dict[tuple[str, str], tuple[int, ...]] = {}
         # Methods whose first parameter declares a class type, e.g. a Laravel
         # listener's ``handle(OrderShipped $event)``.
         self.class_typed_first_parameter_methods: set[str] = set()
@@ -685,6 +687,25 @@ class PhpCore:
         class_bases: list[str],
         aliases: dict[tuple[str, str], str],
     ) -> None:
+        # Index before walking bodies: the private dispatcher may be declared
+        # after its caller. Traits have overridable consumer dispatch and are
+        # deliberately outside this exact same-class proof.
+        if declaration_list.parent.type == "class_declaration":
+            methods = {
+                self._node_name_text(child.child_by_field_name("name")): child
+                for child in declaration_list.named_children
+                if child.type == "method_declaration"
+            }
+            self._private_local_methods[current_class] = {
+                name
+                for name, method in methods.items()
+                if self._visibility(method) == "private"
+            }
+            for name, method in methods.items():
+                positions = self._invoked_callable_parameters(method, aliases)
+                if positions:
+                    self._private_callable_parameters[(current_class, name)] = positions
+
         for child in declaration_list.children:
             if child.type == "use_declaration":
                 self._scan_trait_use(
@@ -726,6 +747,330 @@ class PhpCore:
                 current_callable=None,
                 class_bases=class_bases,
                 aliases=aliases,
+            )
+
+    def _callable_literal_truth(self, node):
+        while node is not None and node.type == "parenthesized_expression":
+            values = [child for child in node.named_children if child.type != "comment"]
+            node = values[0] if len(values) == 1 else None
+        if node is not None and node.type == "boolean":
+            return self._get_text(node).casefold() == "true"
+        return None
+
+    def _callable_branch_bodies(self, node):
+        """Bodies that may execute, preserving unknown condition alternatives."""
+        clauses = [node] + [
+            child
+            for child in node.named_children
+            if child.type in {"else_if_clause", "else_clause"}
+        ]
+        for clause in clauses:
+            condition = clause.child_by_field_name("condition")
+            truth = self._callable_literal_truth(condition)
+            body = clause.child_by_field_name("body")
+            if truth is not False and body is not None:
+                yield body
+            if condition is None or truth is True:
+                break
+
+    def _callable_statement_stops(self, node):
+        if node.type in {
+            "return_statement",
+            "throw_expression",
+            "exit_statement",
+            "break_statement",
+            "continue_statement",
+        }:
+            return True
+        if node.type in {"while_statement", "for_statement", "do_statement"}:
+            condition = node.child_by_field_name("condition")
+            infinite = self._callable_literal_truth(condition) is True or (
+                node.type == "for_statement" and condition is None
+            )
+            body = node.child_by_field_name("body")
+            if infinite and body is not None:
+                stack = [body]
+                while stack:
+                    child = stack.pop()
+                    if child.type == "break_statement":
+                        return False
+                    stack.extend(child.named_children)
+                return True
+        if node.type == "expression_statement":
+            return any(
+                child.type == "throw_expression" for child in node.named_children
+            )
+        if node.type == "compound_statement":
+            return any(
+                self._callable_statement_stops(child) for child in node.named_children
+            )
+        if node.type == "if_statement":
+            bodies = list(self._callable_branch_bodies(node))
+            clauses = [node] + [
+                child
+                for child in node.named_children
+                if child.type in {"else_if_clause", "else_clause"}
+            ]
+            complete = any(
+                child.type == "else_clause"
+                or self._callable_literal_truth(child.child_by_field_name("condition"))
+                is True
+                for child in clauses
+            )
+            return (
+                bool(bodies)
+                and complete
+                and all(self._callable_statement_stops(body) for body in bodies)
+            )
+        return False
+
+    def _callable_reachable_nodes(self, node):
+        yield node
+        if node.type == "compound_statement":
+            for child in node.named_children:
+                yield from self._callable_reachable_nodes(child)
+                if self._callable_statement_stops(child):
+                    break
+        elif node.type == "if_statement":
+            # Conditions themselves may invoke the callback.
+            for child in [node] + list(node.named_children):
+                if child is node or child.type == "else_if_clause":
+                    condition = child.child_by_field_name("condition")
+                    if condition is not None:
+                        yield from self._callable_reachable_nodes(condition)
+                    if (
+                        condition is None
+                        or self._callable_literal_truth(condition) is True
+                    ):
+                        break
+            for body in self._callable_branch_bodies(node):
+                yield from self._callable_reachable_nodes(body)
+        elif (
+            node.type in {"while_statement", "for_statement"}
+            and self._callable_literal_truth(node.child_by_field_name("condition"))
+            is False
+        ):
+            initializer = node.child_by_field_name("initialize")
+            if initializer is not None:
+                yield from self._callable_reachable_nodes(initializer)
+            condition = node.child_by_field_name("condition")
+            if condition is not None:
+                yield from self._callable_reachable_nodes(condition)
+        elif node.type == "binary_expression":
+            left = node.child_by_field_name("left")
+            right = node.child_by_field_name("right")
+            operator = node.child_by_field_name("operator")
+            truth = self._callable_literal_truth(left)
+            op = self._get_text(operator).casefold() if operator is not None else ""
+            if left is not None:
+                yield from self._callable_reachable_nodes(left)
+            if right is not None and not (
+                op in {"&&", "and"}
+                and truth is False
+                or op in {"||", "or"}
+                and truth is True
+            ):
+                yield from self._callable_reachable_nodes(right)
+        elif node.type == "conditional_expression":
+            condition = node.child_by_field_name("condition")
+            if condition is not None:
+                yield from self._callable_reachable_nodes(condition)
+            truth = self._callable_literal_truth(condition)
+            for field, possible in (
+                ("body", truth is not False),
+                ("alternative", truth is not True),
+            ):
+                branch = node.child_by_field_name(field)
+                if possible and branch is not None:
+                    yield from self._callable_reachable_nodes(branch)
+        else:
+            for child in node.named_children:
+                yield from self._callable_reachable_nodes(child)
+
+    def _invoked_callable_parameters(self, method, aliases) -> tuple[int, ...]:
+        """Plain callable parameters used only as direct calls in a private body."""
+        if self._visibility(method) != "private" or any(
+            child.type == "static_modifier" for child in method.children
+        ):
+            return ()
+        parameters = method.child_by_field_name("parameters")
+        body = method.child_by_field_name("body")
+        if parameters is None or body is None or body.has_error:
+            return ()
+        candidates = {}
+        for index, parameter in enumerate(
+            child for child in parameters.named_children if child.type != "comment"
+        ):
+            type_node = parameter.child_by_field_name("type")
+            name = parameter.child_by_field_name("name")
+            if (
+                parameter.type == "simple_parameter"
+                and parameter.child_by_field_name("reference_modifier") is None
+                and type_node is not None
+                and type_node.type == "primitive_type"
+                and self._get_text(type_node).casefold() == "callable"
+                and name is not None
+            ):
+                candidates[self._get_text(name)] = index
+        if not candidates:
+            return ()
+        function_aliases = {
+            alias.casefold(): target.casefold()
+            for (kind, alias), target in aliases.items()
+            if kind == "function"
+        }
+        try:
+            reachable_offsets = {
+                node.start_byte for node in self._callable_reachable_nodes(body)
+            }
+        except RecursionError:
+            return ()
+        invoked = set()
+        rejected = set()
+        stack = [body]
+        while stack:
+            node = stack.pop()
+            if (
+                node.type
+                in {
+                    "anonymous_function",
+                    "arrow_function",
+                    "function_definition",
+                    "class_declaration",
+                    "anonymous_class",
+                    "dynamic_variable_name",
+                    "goto_statement",
+                    "try_statement",
+                    "switch_statement",
+                    "match_expression",
+                    "yield_expression",
+                    "yield_from_expression",
+                }
+                or node.type in _IMPORT_EXPR_TYPES
+            ):
+                return ()
+            if node.type == "function_call_expression":
+                function = node.child_by_field_name("function")
+                if function is None:
+                    return ()
+                name = self._get_text(function).lstrip("\\").casefold()
+                resolved = function_aliases.get(name, name)
+                if resolved in {"extract", "parse_str", "eval", "assert"}:
+                    # These can mutate locals without an assignment to the
+                    # parameter; aliases and variable-variable writes count too.
+                    return ()
+                if function.type not in _CLASS_NAME_NODE_TYPES and (
+                    function.type != "variable_name"
+                    or self._get_text(function) not in candidates
+                ):
+                    return ()
+            if node.type == "variable_name":
+                name = self._get_text(node)
+                if name in candidates:
+                    parent = node.parent
+                    arguments = parent.child_by_field_name("arguments")
+                    if (
+                        parent.type == "function_call_expression"
+                        and parent.child_by_field_name("function") == node
+                        and arguments is not None
+                        and not any(
+                            child.type == "variadic_placeholder"
+                            for child in arguments.named_children
+                        )
+                    ):
+                        if node.start_byte in reachable_offsets:
+                            invoked.add(name)
+                    else:
+                        # Rebinding, aliasing, passing by reference or merely
+                        # storing the parameter does not prove this callback.
+                        rejected.add(name)
+            stack.extend(node.named_children)
+        return tuple(sorted(candidates[name] for name in invoked - rejected))
+
+    def _scan_private_callable_arguments(
+        self, node, *, current_class: str | None, current_callable: str | None
+    ) -> None:
+        """Resolve literal [$this, 'method'] through one private local helper."""
+        if current_class is None or current_callable is None:
+            return
+        receiver = node.child_by_field_name("object")
+        member = node.child_by_field_name("name")
+        if (
+            receiver is None
+            or self._get_text(receiver) != "$this"
+            or member is None
+            or member.type != "name"
+        ):
+            return
+        positions = self._private_callable_parameters.get(
+            (current_class, self._get_text(member)), ()
+        )
+        if not positions:
+            return
+        # Closures may be created without being called. Do not turn their
+        # callback arrays into edges from the enclosing method.
+        ancestor = node.parent
+        while ancestor is not None and ancestor.type != "method_declaration":
+            if ancestor.type in {
+                "anonymous_function",
+                "arrow_function",
+                "function_definition",
+                "anonymous_class",
+            }:
+                return
+            ancestor = ancestor.parent
+        if ancestor is None:
+            return
+        arguments = node.child_by_field_name("arguments")
+        if arguments is None:
+            return
+        values = []
+        for argument in arguments.named_children:
+            if argument.type == "comment":
+                continue
+            children = [
+                child for child in argument.named_children if child.type != "comment"
+            ]
+            if (
+                argument.type != "argument"
+                or argument.child_by_field_name("name") is not None
+                or len(children) != 1
+                or children[0].type == "variadic_unpacking"
+            ):
+                return
+            values.append(children[0])
+        for index in positions:
+            if (
+                index >= len(values)
+                or values[index].type != "array_creation_expression"
+            ):
+                continue
+            elements = [
+                child
+                for child in values[index].named_children
+                if child.type != "comment"
+            ]
+            if len(elements) != 2 or any(
+                element.type != "array_element_initializer"
+                or len(element.named_children) != 1
+                for element in elements
+            ):
+                continue
+            owner, target = (element.named_children[0] for element in elements)
+            if self._get_text(owner) != "$this" or target.type not in {
+                "string",
+                "encapsed_string",
+            }:
+                continue
+            literal = re.fullmatch(r"(['\"])([A-Za-z_]\w*)\1", self._get_text(target))
+            if literal is None or literal[2] not in self._private_local_methods.get(
+                current_class, ()
+            ):
+                continue
+            self._add_ref(
+                f"{current_class}.{literal[2]}",
+                target.start_byte,
+                current_callable=current_callable,
             )
 
     def _scan_trait_use(
@@ -1254,6 +1599,12 @@ class PhpCore:
                 trait_dispatch=current_class in self._trait_names
                 and owner == current_class,
             )
+            if node.type == "member_call_expression" and owner == current_class:
+                self._scan_private_callable_arguments(
+                    node,
+                    current_class=current_class,
+                    current_callable=current_callable,
+                )
             return
 
         if node.type == "object_creation_expression":

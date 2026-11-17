@@ -197,6 +197,41 @@ class PythonReachabilityReport:
             - self.proven_reachable_keys
         )
         self.unreachable_keys = set(candidates) - reached if self.complete else set()
+        if self.complete:
+            explicit_roots = {
+                "package_entrypoint",
+                "test_entrypoint",
+                "trace_hit",
+                "coverage_hit",
+            }
+            if any(
+                explicit_roots.intersection(getattr(d, "heuristic_refs", {}))
+                for d in self._definitions.values()
+            ):
+                for key in getattr(self, "_closed_type_registry_unused", ()):
+                    definition = self._definitions.get(key)
+                    if definition is not None:
+                        definition.heuristic_refs.pop(
+                            "closed_type_registry_unused", None
+                        )
+                        definition.heuristic_refs.pop("unreachable_group", None)
+                        definition.heuristic_refs["unresolved_callback"] = 1.0
+                        definition.references = max(1, definition.references)
+                self._closed_type_registry_unused = set()
+            if not hasattr(self, "_closed_type_registry_unused"):
+                from skylos.deadcode.closed_type_registries import (
+                    closed_type_registry_unused,
+                )
+
+                self._closed_type_registry_unused = closed_type_registry_unused(
+                    self._definitions, list(self.index.modules), self.project_root
+                )
+            closed_unused = self._closed_type_registry_unused
+            self.reachable_keys.difference_update(closed_unused)
+            self.proven_reachable_keys.difference_update(closed_unused)
+            self.protected_keys.difference_update(closed_unused)
+            self.protected_callback_keys.difference_update(closed_unused)
+            self.unreachable_keys.update(closed_unused)
         opaque = self._has_opaque_lookup(reached | protected)
         self.opaque_lookup = opaque
         self.dynamic_lookup_keys = set()
@@ -270,7 +305,10 @@ class PythonReachabilityReport:
                         bare.add(node.id)
                 elif call is None or _unpacks_arguments(call):
                     unknown.add(node.attr)
-                elif isinstance(node.value, ast.Name) and node.value.id in ("self", "cls"):
+                elif isinstance(node.value, ast.Name) and node.value.id in (
+                    "self",
+                    "cls",
+                ):
                     on_self.add(node.attr)
                 else:
                     unknown.add(node.attr)
@@ -302,7 +340,9 @@ class PythonReachabilityReport:
         if not patterns:
             return set()
         matcher = re.compile(
-            "|".join(f"(?:{fnmatch.translate(pattern)})" for pattern in sorted(patterns))
+            "|".join(
+                f"(?:{fnmatch.translate(pattern)})" for pattern in sorted(patterns)
+            )
         )
         return {
             key
@@ -388,7 +428,8 @@ class PythonReachabilityReport:
             for attr in _EXTERNAL_EVIDENCE
             if key not in self.index.nested_parents
             or attr not in {"is_closure", "decorators"}
-            if attr != "decorators" or not getattr(definition, "_fastapi_inactive", False)
+            if attr != "decorators"
+            or not getattr(definition, "_fastapi_inactive", False)
         )
         class_key = self.index.method_classes.get(key)
         if class_key is not None:
@@ -671,7 +712,10 @@ def analyze_python_reachability(
     identities = {id(definition): key for key, definition in definitions.items()}
     for target, caller in dispatch_edges:
         target_key, caller_key = identities[id(target)], identities[id(caller)]
-        if target_key in report.index.candidates and caller_key in report.index.candidates:
+        if (
+            target_key in report.index.candidates
+            and caller_key in report.index.candidates
+        ):
             report.graph.edges[caller_key].add(target_key)
             report.graph.observed[target_key] += 1
     return report.refresh()
@@ -680,7 +724,10 @@ def analyze_python_reachability(
 def _imports_pytest(tree: ast.Module) -> bool:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            if any(alias.name.split(".", 1)[0] in ("pytest", "_pytest") for alias in node.names):
+            if any(
+                alias.name.split(".", 1)[0] in ("pytest", "_pytest")
+                for alias in node.names
+            ):
                 return True
         elif isinstance(node, ast.ImportFrom) and node.module:
             if node.module.split(".", 1)[0] in ("pytest", "_pytest"):
@@ -688,7 +735,18 @@ def _imports_pytest(tree: ast.Module) -> bool:
     return False
 
 
-_COG_SUFFIXES = (".rst", ".md", ".txt", ".html", ".py", ".cfg", ".toml", ".yml", ".yaml", ".in")
+_COG_SUFFIXES = (
+    ".rst",
+    ".md",
+    ".txt",
+    ".html",
+    ".py",
+    ".cfg",
+    ".toml",
+    ".yml",
+    ".yaml",
+    ".in",
+)
 
 
 def _cog_block_imports(root: Path) -> frozenset[tuple[str, str]]:
@@ -730,7 +788,7 @@ def _cog_blocks(text: str) -> list[str]:
         while index < len(lines) and "]]]" not in lines[index]:
             line = lines[index]
             if prefix.strip() and line.startswith(prefix):
-                line = line[len(prefix):]
+                line = line[len(prefix) :]
             body.append(line)
             index += 1
         blocks.append(textwrap.dedent("\n".join(body)))

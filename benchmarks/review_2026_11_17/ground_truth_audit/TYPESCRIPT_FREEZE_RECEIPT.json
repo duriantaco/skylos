@@ -1,0 +1,7 @@
+{
+  "draft_sha256": "98aca5cf07106c98276d48b0575027f1c056dce2836c2545c495bb466ac20cf7",
+  "reviewer": "/root",
+  "review_evidence": "Parent independently read both production source implementations and registration/public export evidence; approved exact frozen draft over agent message before first scanner execution.",
+  "frozen_at_utc": "2026-11-17T00:21:49.908718+00:00",
+  "limitations": "Security regex control qualified on external dependency API contract; uninstalled dependency not dynamically validated."
+}

@@ -9,6 +9,21 @@ import pytest
 from rich.console import Console
 
 import skylos.cli as cli
+from test.fixture_paths import write_fixture
+
+
+@pytest.fixture(autouse=True)
+def connected_upload(monkeypatch):
+    # Exercise analysis/upload readiness after the explicit upload preflight.
+    # The real destination resolver stays active, with a local whoami response.
+    monkeypatch.setenv("SKYLOS_TOKEN", "test-upload-token")
+    monkeypatch.setattr(
+        "skylos.api.get_project_info",
+        lambda _token: {
+            "ok": True,
+            "project": {"id": "test-project", "name": "Test project", "repo_url": None},
+        },
+    )
 
 
 def test_rich_upload_explains_missing_ripgrep_and_still_uploads(tmp_path, monkeypatch):
@@ -17,8 +32,11 @@ def test_rich_upload_explains_missing_ripgrep_and_still_uploads(tmp_path, monkey
     if not _python_grep_secure_reads_available():
         pytest.skip("secure in-process grep requires POSIX dirfd reads")
 
-    (tmp_path / "app.py").write_text(
-        "def orphan():\n    return 1\n", encoding="utf-8"
+    write_fixture(
+        tmp_path,
+        (tmp_path / "app.py").relative_to(tmp_path),
+        "def orphan():\n    return 1\n",
+        overwrite=True,
     )
     monkeypatch.setattr(
         cli.sys,
@@ -61,16 +79,19 @@ def test_rich_upload_explains_missing_ripgrep_and_still_uploads(tmp_path, monkey
     upload.assert_called_once()
 
 
-@pytest.mark.parametrize("source,expected_exit,should_upload,cloud_gate_passed", [
-    ("def broken(:\n    pass\n", 2, False, True),
-    ("def working():\n    return 1\n", 0, True, True),
-    ("def working():\n    return 1\n", 0, True, False),
-])
+@pytest.mark.parametrize(
+    "source,expected_exit,should_upload,cloud_gate_passed",
+    [
+        ("def broken(:\n    pass\n", 2, False, True),
+        ("def working():\n    return 1\n", 0, True, True),
+        ("def working():\n    return 1\n", 0, True, False),
+    ],
+)
 def test_rich_upload_waits_for_complete_analysis(
     tmp_path, monkeypatch, source, expected_exit, should_upload, cloud_gate_passed
 ):
     source_path = tmp_path / "app.py"
-    source_path.write_text(source, encoding="utf-8")
+    write_fixture(tmp_path, (source_path).relative_to(tmp_path), source, overwrite=True)
     monkeypatch.setattr(
         cli.sys,
         "argv",
@@ -113,7 +134,9 @@ def test_rich_upload_waits_for_complete_analysis(
         else:
             cli.main()
     rendered = output.getvalue()
-    assert "Analyzing locally; Cloud upload starts after the scan completes." in rendered
+    assert (
+        "Analyzing locally; Cloud upload starts after the scan completes." in rendered
+    )
     if should_upload:
         assert "Source analysis complete; preparing Cloud upload." in rendered
         assert "Scan incomplete" not in rendered
@@ -126,7 +149,9 @@ def test_rich_upload_waits_for_complete_analysis(
         upload.assert_not_called()
 
 
-def test_rich_upload_shows_grep_budget_failure_without_cloud_call(tmp_path, monkeypatch):
+def test_rich_upload_shows_grep_budget_failure_without_cloud_call(
+    tmp_path, monkeypatch
+):
     # --strict: the grep shortfall blocks, so nothing is uploaded.
     output, logger = _grep_budget_project(tmp_path, monkeypatch, "--strict")
 
@@ -176,12 +201,17 @@ def test_rich_upload_reports_grep_budget_gap_and_still_uploads(tmp_path, monkeyp
 
 
 def _grep_budget_project(tmp_path, monkeypatch, *extra_args):
-    (tmp_path / "app.py").write_text(
+    write_fixture(
+        tmp_path,
+        (tmp_path / "app.py").relative_to(tmp_path),
         "import os\n\ndef orphan(unused_arg):\n    return 1\n",
-        encoding="utf-8",
+        overwrite=True,
     )
-    (tmp_path / "utils.py").write_text(
-        "def another_orphan():\n    return 2\n", encoding="utf-8"
+    write_fixture(
+        tmp_path,
+        (tmp_path / "utils.py").relative_to(tmp_path),
+        "def another_orphan():\n    return 2\n",
+        overwrite=True,
     )
     monkeypatch.setenv("SKYLOS_GREP_BUDGET", "0")
     monkeypatch.setattr(
@@ -214,9 +244,14 @@ def _grep_budget_project(tmp_path, monkeypatch, *extra_args):
 
 
 @pytest.mark.parametrize("output_format", ["json", "json-ci"])
-def test_formatted_upload_keeps_advisory_cloud_gate(tmp_path, monkeypatch, capsys, output_format):
-    (tmp_path / "app.py").write_text(
-        "def working():\n    return 1\n", encoding="utf-8"
+def test_formatted_upload_keeps_advisory_cloud_gate(
+    tmp_path, monkeypatch, capsys, output_format
+):
+    write_fixture(
+        tmp_path,
+        (tmp_path / "app.py").relative_to(tmp_path),
+        "def working():\n    return 1\n",
+        overwrite=True,
     )
     monkeypatch.setattr(
         cli.sys,

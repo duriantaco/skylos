@@ -9,9 +9,13 @@ synthetic fixture scores below.
 
 The benchmark framework lives in the Skylos repo because it must version with analyzer output and CI. Larger realistic targets, such as `/Users/oha/skylos-demo`, stay external and are referenced by config.
 
-The default manifest contains **151 cases and 769 symbol labels**: 297 unused and
-472 used. All earlier labels retain their expected outcomes. Source-reviewed label
-completions are recorded in `source_label_review_2026_11_16.json`; those are
+The default manifest contains **151 cases and 769 symbol labels**: 300 unused and
+469 used. The November 17 source audit corrects three mistaken used labels: two
+unloaded JS files and an unreachable Python backend. The
+[final results](../review_2026_11_17/ground_truth_audit/confirmed_results.md)
+record the repairs; historical manifests and detailed source reports are
+[archived](../review_2026_11_17/ARTIFACTS.md).
+Source-reviewed label completions are recorded in `source_label_review_2026_11_16.json`; those are
 corrections to regression coverage and do not establish independent accuracy.
 Twenty-two cases (92 labels: 47 unused, 45 used) are paired TS/JS liveness
 contracts for reads and loads that no import statement spells out:
@@ -207,15 +211,15 @@ python scripts/dead_code_benchmark.py \
   --case corpus-type-registry-private --strict-labels
 ```
 
-These cases include known false positives and false negatives in the current
-scanner. A nonzero exit reports the remaining coverage gaps. Keep their semantic
-labels fixed when improving the analyzer, including controls the scanner
-currently misses. The original 27 default cases and their 141 labels retain
-their expectations; two PHP cases add seven labels to the default suite.
-Some misses reflect conservative retention or uncertainty policies; investigate
-their evidence before treating a benchmark miss as a detector bug. The original
-two adversarial cases also retain their existing unlabeled findings, which
-`--strict-labels` reports separately. The 14 added cases have closed labels.
+The November 17 repairs add a bounded source-owned registry proof with explicit
+abstention for unknown consumers, escapes, unsupported language effects and
+resource limits. Keep semantic labels fixed when improving these detectors.
+The original two challenge cases now have six additional source-reviewed
+labels, so strict scoring no longer treats their valid extra diagnostics as
+unlabelled false positives. Five describe unread parameter bindings required
+by existing caller/protocol signatures; a finding does not authorize removing
+those argument slots without updating consumers. The earlier labels remain
+unchanged. Full outcomes and regression controls are in the linked repair report.
 The new cases are development coverage, not an unseen holdout or evidence that
 the analyzer handles every implementation of these patterns.
 

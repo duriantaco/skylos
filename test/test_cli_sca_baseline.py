@@ -811,6 +811,11 @@ def test_cli_strict_keeps_known_dependency_findings(project, monkeypatch, osv):
 def test_cli_explicit_upload_receives_all_dependency_findings(
     project, monkeypatch, osv
 ):
+    monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
+    monkeypatch.setattr(
+        "skylos.cloud.sync.load_custom_rules",
+        lambda: {"rules": [], "status": "complete"},
+    )
     _write_lockfile(project, "npm")
     _capture_baseline(project, monkeypatch)
     uploads = []

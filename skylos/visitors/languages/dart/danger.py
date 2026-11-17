@@ -16,7 +16,6 @@ _SOURCE_HINTS = {
 }
 
 _SANITIZER_HINTS = {
-    "canonicalize",
     "basename(",
     "path.basename",
     "Uri.https(",

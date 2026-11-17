@@ -1,0 +1,569 @@
+{
+  "phase": "Independent post-scan source adjudication v1; legacy labels and raw results preserved",
+  "reviewer": "/root/ts_truth",
+  "scope": "All28 normal-profile false-positive label mismatches and its1 false-negative label. All relevant fixture implementations/configs/consumers read. This is a mismatch-selected nine-label semantic subset, not population accuracy or a replacement full-corpus score. Remaining TP/TN legacy outcomes were not all independently relabelled here.",
+  "summary": {
+    "unknown_generated_mapping": 1,
+    "different_diagnostic_unit": 1,
+    "unknown_dynamic_escape": 2,
+    "unknown_framework_version_contract": 2,
+    "false_negative": 1,
+    "unknown_configuration_retention": 6,
+    "compilation_retention_only": 1,
+    "false_positive": 6,
+    "incorrect_ground_truth": 2,
+    "unknown_command_consumer": 2,
+    "packaging_or_custom_metadata_retention": 3,
+    "unknown_web_resolver_contract": 2
+  },
+  "corrected_mismatch_subset_counts": {
+    "knip": {
+      "TP": 2,
+      "FP": 6,
+      "FN": 1,
+      "TN": 0
+    },
+    "skylos": {
+      "TP": 1,
+      "FP": 0,
+      "FN": 2,
+      "TN": 6
+    }
+  },
+  "corrected_scored_label_count": 9,
+  "excluded_mismatch_count": 20,
+  "rows": [
+    {
+      "case_id": "typescript-vscode-pseudoterminal-callbacks",
+      "label": {
+        "kind": "function",
+        "file": "src/extension.ts",
+        "symbol": "activate",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_generated_mapping",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "activate is the standard extension lifecycle name, but package.json main names ./out/extension.js, which is absent. Fixture has no build/tsconfig tying src/extension.ts to that generated entry. This is a conservative framework source-mapping contract, not fully demonstrated runtime reachability.",
+      "source_sha256": "6349c6e4411b9be35a2f58776f669e70bc93777f720b2c1d5515f43cf1261f5c",
+      "references": []
+    },
+    {
+      "case_id": "typescript-loaded-import-consumers",
+      "label": {
+        "kind": "function",
+        "file": "consumer.ts",
+        "symbol": "prepare",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "different_diagnostic_unit",
+      "corrected_ground_truth": "function_used_export_unused",
+      "source_reason": "consumer.ts:3 calls prepare locally. No file imports its named export: index.ts imports ./consumer only for side effects. Knip warns about an unused export, which is correct without claiming the local function is uncalled. Comparing this to whole-function deadness creates a spurious false-positive label.",
+      "source_sha256": "fa62e695ceb8b1ef7eec8bc80b915799e1d81462c0e7063669ec3d8a7f40d7aa",
+      "references": [
+        "https://knip.dev/reference/configuration#ignoreexportsusedinfile"
+      ]
+    },
+    {
+      "case_id": "typescript-namespace-export-public-and-opaque",
+      "label": {
+        "kind": "function",
+        "file": "service.ts",
+        "symbol": "dispatch",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_dynamic_escape",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "index.ts passes the namespace to external(tools), but external is undefined and has no implementation/import in the fixture. Retaining dispatch/cancel is conservative under unknown consumers. Neither function has a demonstrated invocation, and unusedness cannot be proven under assumed external consumption.",
+      "source_sha256": "7e8144e89a220db1d4614453e1289f9f0a6737b21b95d322e0286d6a63a00fe2",
+      "references": []
+    },
+    {
+      "case_id": "typescript-namespace-export-public-and-opaque",
+      "label": {
+        "kind": "function",
+        "file": "service.ts",
+        "symbol": "cancel",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_dynamic_escape",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "index.ts passes the namespace to external(tools), but external is undefined and has no implementation/import in the fixture. Retaining dispatch/cancel is conservative under unknown consumers. Neither function has a demonstrated invocation, and unusedness cannot be proven under assumed external consumption.",
+      "source_sha256": "7e8144e89a220db1d4614453e1289f9f0a6737b21b95d322e0286d6a63a00fe2",
+      "references": []
+    },
+    {
+      "case_id": "javascript-storybook-config-files",
+      "label": {
+        "kind": "file",
+        "file": ".storybook/addons.js",
+        "symbol": ".storybook/addons.js",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_framework_version_contract",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "Package names Storybook6.4; fixture uses legacy .storybook/config.js and addons.js without main.js. Need version-specific loader proof that these exact files remain recognized. Current installed Knip plugin recognizes main/preview/manager patterns. Missing framework dependency source means legacy convention alone is insufficient to call this a confirmed FP.",
+      "source_sha256": "ff951a8d2a3f48705b96fcb522ae9826833520f93471cfd3c7aaf366f6b4630b",
+      "references": [
+        "https://storybook.js.org/blog/storybook-6-migration-guide"
+      ]
+    },
+    {
+      "case_id": "javascript-storybook-config-files",
+      "label": {
+        "kind": "file",
+        "file": ".storybook/config.js",
+        "symbol": ".storybook/config.js",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_framework_version_contract",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "Package names Storybook6.4; fixture uses legacy .storybook/config.js and addons.js without main.js. Need version-specific loader proof that these exact files remain recognized. Current installed Knip plugin recognizes main/preview/manager patterns. Missing framework dependency source means legacy convention alone is insufficient to call this a confirmed FP.",
+      "source_sha256": "aafd4875cb182f958bb9d0c8e2ca7ed410ff49bcd930e398cb39dd2cc305f852",
+      "references": [
+        "https://storybook.js.org/blog/storybook-6-migration-guide"
+      ]
+    },
+    {
+      "case_id": "typescript-runner-conf-files",
+      "label": {
+        "kind": "variable",
+        "file": "wdio.conf.ts",
+        "symbol": "leftover",
+        "expected": "unused",
+        "capability_eligible": true,
+        "detected": false,
+        "outcome": "FN"
+      },
+      "legacy_outcome": "FN",
+      "verdict": "false_negative",
+      "corrected_ground_truth": "unused",
+      "source_reason": "wdio.conf.ts:1 exports config (framework entry contract), while leftover at line5 is an unrelated exported constant initialized to 1. Full fixture search finds no imports/reads of leftover; WebdriverIO reads named config, not arbitrary exports. Entry-file export exemption hides the unused binding.",
+      "source_sha256": "2b9d794be41de3b44cc89774d910f6aa058a7128bcb012af04671f50209402f4",
+      "references": []
+    },
+    {
+      "case_id": "typescript-tool-config-path-strings",
+      "label": {
+        "kind": "file",
+        "file": "lib/app.ts",
+        "symbol": "lib/app.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_configuration_retention",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "Paths appear in tool configuration, but forge.config.ts uses an unnamed plugin object rather than a demonstrated installed plugin implementation; webpack.config.ts exports named mainConfig without a shown caller. extraResource is a packaging reference, not code execution. Fixture proves path-retention heuristic behavior, not execution of each named JS/TS file.",
+      "source_sha256": "ba0dae5485afa4ee54ba6f42ab34521631419319f7e673e34f7a5905b96b8397",
+      "references": []
+    },
+    {
+      "case_id": "typescript-tool-config-path-strings",
+      "label": {
+        "kind": "file",
+        "file": "lib/menu.ts",
+        "symbol": "lib/menu.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_configuration_retention",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "Paths appear in tool configuration, but forge.config.ts uses an unnamed plugin object rather than a demonstrated installed plugin implementation; webpack.config.ts exports named mainConfig without a shown caller. extraResource is a packaging reference, not code execution. Fixture proves path-retention heuristic behavior, not execution of each named JS/TS file.",
+      "source_sha256": "af0e88a354c36088a29868831dff70f03c5b3d0a2a3ab804edc68ac2b6f6e346",
+      "references": []
+    },
+    {
+      "case_id": "typescript-tool-config-path-strings",
+      "label": {
+        "kind": "file",
+        "file": "lib/renderer.ts",
+        "symbol": "lib/renderer.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_configuration_retention",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "Paths appear in tool configuration, but forge.config.ts uses an unnamed plugin object rather than a demonstrated installed plugin implementation; webpack.config.ts exports named mainConfig without a shown caller. extraResource is a packaging reference, not code execution. Fixture proves path-retention heuristic behavior, not execution of each named JS/TS file.",
+      "source_sha256": "0f2482ef7f0864c89b5669221d65d8ed6bf6c0d7f07a6f5e5902f77d0ced765a",
+      "references": []
+    },
+    {
+      "case_id": "typescript-tool-config-path-strings",
+      "label": {
+        "kind": "file",
+        "file": "lib/preload.ts",
+        "symbol": "lib/preload.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_configuration_retention",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "Paths appear in tool configuration, but forge.config.ts uses an unnamed plugin object rather than a demonstrated installed plugin implementation; webpack.config.ts exports named mainConfig without a shown caller. extraResource is a packaging reference, not code execution. Fixture proves path-retention heuristic behavior, not execution of each named JS/TS file.",
+      "source_sha256": "960666c98faf0aed7e8921e80c502a6aed04186b622128c8957b2d43289185f2",
+      "references": []
+    },
+    {
+      "case_id": "typescript-tool-config-path-strings",
+      "label": {
+        "kind": "file",
+        "file": "lib/api.ts",
+        "symbol": "lib/api.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_configuration_retention",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "Paths appear in tool configuration, but forge.config.ts uses an unnamed plugin object rather than a demonstrated installed plugin implementation; webpack.config.ts exports named mainConfig without a shown caller. extraResource is a packaging reference, not code execution. Fixture proves path-retention heuristic behavior, not execution of each named JS/TS file.",
+      "source_sha256": "387de1890483acbea7f723acae7f55531a89208892e70b787fe6b0f3f6cf3df0",
+      "references": []
+    },
+    {
+      "case_id": "typescript-tool-config-path-strings",
+      "label": {
+        "kind": "file",
+        "file": "lib/resource-en.js",
+        "symbol": "lib/resource-en.js",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_configuration_retention",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "Paths appear in tool configuration, but forge.config.ts uses an unnamed plugin object rather than a demonstrated installed plugin implementation; webpack.config.ts exports named mainConfig without a shown caller. extraResource is a packaging reference, not code execution. Fixture proves path-retention heuristic behavior, not execution of each named JS/TS file.",
+      "source_sha256": "ebc4439f23b518bb000ba7a07d7089f02709009fdeaacf530ca9e79c2c6dee53",
+      "references": []
+    },
+    {
+      "case_id": "typescript-tsconfig-include-exact-file",
+      "label": {
+        "kind": "file",
+        "file": "tools/tester.ts",
+        "symbol": "tools/tester.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "compilation_retention_only",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "tsconfig includes tools/tester.ts as a compilation root. This proves inclusion/typechecking, not that emitted code runs. File has no import or command consumer. Corpus should separate required compilation inputs from runtime liveness.",
+      "source_sha256": "27a180b5dfae32dc1de8da598efc2a7963a8cc4d351d60abe331d26692c8e8b8",
+      "references": []
+    },
+    {
+      "case_id": "javascript-path-join-literal-files",
+      "label": {
+        "kind": "file",
+        "file": "lib/shared.js",
+        "symbol": "lib/shared.js",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "false_positive",
+      "corrected_ground_truth": "used",
+      "source_reason": "package.json scripts.gen runs node tasks/gen.js. tasks/gen.js:2 requires path.join(__dirname, .., lib, shared.js) and line9 calls shared.run. Exact literal path resolution establishes this file is loaded.",
+      "source_sha256": "ca050f80934a3769bed9758c5477012767797b3de402084a8141e091f0e5d2de",
+      "references": []
+    },
+    {
+      "case_id": "javascript-path-join-literal-files",
+      "label": {
+        "kind": "file",
+        "file": "tools/input.ts",
+        "symbol": "tools/input.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "incorrect_ground_truth",
+      "corrected_ground_truth": "unused",
+      "source_reason": "tasks/gen.js constructs these paths then only passes strings to shared.run(input, entry, label, other). lib/shared.js:1 defines run() {} and never reads/evaluates arguments. Whole fixture contains no other loader or runner for either file. Their console.log statements never execute from declared entrypoints. Path construction is not execution. Legacy used labels hide two Skylos dead-file misses.",
+      "source_sha256": "75030f4abb4c125036a171a285cd144483a00293c6fe3f3e70a9402909414f22",
+      "references": []
+    },
+    {
+      "case_id": "javascript-path-join-literal-files",
+      "label": {
+        "kind": "file",
+        "file": "src/bundle.ts",
+        "symbol": "src/bundle.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "incorrect_ground_truth",
+      "corrected_ground_truth": "unused",
+      "source_reason": "tasks/gen.js constructs these paths then only passes strings to shared.run(input, entry, label, other). lib/shared.js:1 defines run() {} and never reads/evaluates arguments. Whole fixture contains no other loader or runner for either file. Their console.log statements never execute from declared entrypoints. Path construction is not execution. Legacy used labels hide two Skylos dead-file misses.",
+      "source_sha256": "4192571e1c52795d41eb8092e1c454f29466b3f19b89d527367f6ddff9f7ccbf",
+      "references": []
+    },
+    {
+      "case_id": "typescript-runtime-command-template-files",
+      "label": {
+        "kind": "file",
+        "file": "templates/hooks/session-start.js",
+        "symbol": "templates/hooks/session-start.js",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_command_consumer",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "src/index.ts register returns a command string built from caller-supplied hooksDir; no fixture caller invokes register or executes the returned command, and no caller binds hooksDir to templates/hooks. Retention is conservative; actual dynamic command execution is unproven.",
+      "source_sha256": "9e9ea2ea940b7c6f34b2cc3e51d42c977ecce7735a07fe71a77d13cd92475b46",
+      "references": []
+    },
+    {
+      "case_id": "typescript-runtime-command-template-files",
+      "label": {
+        "kind": "file",
+        "file": "templates/hooks/hook-utils.js",
+        "symbol": "templates/hooks/hook-utils.js",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_command_consumer",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "src/index.ts register returns a command string built from caller-supplied hooksDir; no fixture caller invokes register or executes the returned command, and no caller binds hooksDir to templates/hooks. Retention is conservative; actual dynamic command execution is unproven.",
+      "source_sha256": "88fd75b875f6a67e8d394f5bafb8717b9f4445e6b824f4b994c8e9f1ff741914",
+      "references": []
+    },
+    {
+      "case_id": "typescript-markdown-run-instructions",
+      "label": {
+        "kind": "file",
+        "file": "src/evals/run.ts",
+        "symbol": "src/evals/run.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "false_positive",
+      "corrected_ground_truth": "used",
+      "source_reason": "README.md provides actual shell commands: bun run src/evals/run.ts; ts-node ./tools/make.ts. These are documented intended entrypoints. tools/make.ts imports and calls tools/helper.ts. Unlike a prose mention, each file has a concrete executable/documented consumer.",
+      "source_sha256": "f8feafd57184a2ec6ab6674314750b2ff6a312099b43ecf3b83a3ea16ffd17b8",
+      "references": []
+    },
+    {
+      "case_id": "typescript-markdown-run-instructions",
+      "label": {
+        "kind": "file",
+        "file": "tools/make.ts",
+        "symbol": "tools/make.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "false_positive",
+      "corrected_ground_truth": "used",
+      "source_reason": "README.md provides actual shell commands: bun run src/evals/run.ts; ts-node ./tools/make.ts. These are documented intended entrypoints. tools/make.ts imports and calls tools/helper.ts. Unlike a prose mention, each file has a concrete executable/documented consumer.",
+      "source_sha256": "f9ccb23ab4a8a7db5c4da63550ab79b846a6191dea3769b83f1a9911584ae108",
+      "references": []
+    },
+    {
+      "case_id": "typescript-markdown-run-instructions",
+      "label": {
+        "kind": "file",
+        "file": "tools/helper.ts",
+        "symbol": "tools/helper.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "false_positive",
+      "corrected_ground_truth": "used",
+      "source_reason": "README.md provides actual shell commands: bun run src/evals/run.ts; ts-node ./tools/make.ts. These are documented intended entrypoints. tools/make.ts imports and calls tools/helper.ts. Unlike a prose mention, each file has a concrete executable/documented consumer.",
+      "source_sha256": "d2ab462fc7f45c3fb7dc5dfacee8897a7e1cbb555c84b2a5a32c06df211ba161",
+      "references": []
+    },
+    {
+      "case_id": "typescript-package-manifest-named-files",
+      "label": {
+        "kind": "file",
+        "file": "src/ext/plugin.ts",
+        "symbol": "src/ext/plugin.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "packaging_or_custom_metadata_retention",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "package.json files names templates/run_tool.js for publication; no code runs it. host.extensions names plugin.ts but no actual host/consumer is specified or implemented. Shipping and metadata references are retention policies, not source proof that the export is invoked.",
+      "source_sha256": "c79ed116fe44384d1318e419b30a779991e0f6c3b1aab6cbd158e2be439cc911",
+      "references": []
+    },
+    {
+      "case_id": "typescript-package-manifest-named-files",
+      "label": {
+        "kind": "function",
+        "file": "src/ext/plugin.ts",
+        "symbol": "plugin",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "packaging_or_custom_metadata_retention",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "package.json files names templates/run_tool.js for publication; no code runs it. host.extensions names plugin.ts but no actual host/consumer is specified or implemented. Shipping and metadata references are retention policies, not source proof that the export is invoked.",
+      "source_sha256": "c79ed116fe44384d1318e419b30a779991e0f6c3b1aab6cbd158e2be439cc911",
+      "references": []
+    },
+    {
+      "case_id": "typescript-package-manifest-named-files",
+      "label": {
+        "kind": "file",
+        "file": "templates/run_tool.js",
+        "symbol": "templates/run_tool.js",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "packaging_or_custom_metadata_retention",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "package.json files names templates/run_tool.js for publication; no code runs it. host.extensions names plugin.ts but no actual host/consumer is specified or implemented. Shipping and metadata references are retention policies, not source proof that the export is invoked.",
+      "source_sha256": "b8ff7eb2a7c67b749144cc7f275f97b10558665acf5c6a9ff79137df22240c9e",
+      "references": []
+    },
+    {
+      "case_id": "typescript-react-native-platform-extensions",
+      "label": {
+        "kind": "file",
+        "file": "hooks/useScale.web.ts",
+        "symbol": "hooks/useScale.web.ts",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_web_resolver_contract",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "React Native documents native .ios/.android resolution. The fixture also depends on react-native-web but does not supply a web bundler/resolver configuration or command. That dependency alone does not prove .web.ts wins over base useScale.ts in a web build.",
+      "source_sha256": "a6173c446f885cc7822a3356282398ab234fb68fab6f05c276daa74822148a33",
+      "references": []
+    },
+    {
+      "case_id": "typescript-react-native-platform-extensions",
+      "label": {
+        "kind": "function",
+        "file": "hooks/useScale.web.ts",
+        "symbol": "useScale",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "unknown_web_resolver_contract",
+      "corrected_ground_truth": "unverified",
+      "source_reason": "React Native documents native .ios/.android resolution. The fixture also depends on react-native-web but does not supply a web bundler/resolver configuration or command. That dependency alone does not prove .web.ts wins over base useScale.ts in a web build.",
+      "source_sha256": "a6173c446f885cc7822a3356282398ab234fb68fab6f05c276daa74822148a33",
+      "references": []
+    },
+    {
+      "case_id": "typescript-react-native-platform-extensions",
+      "label": {
+        "kind": "file",
+        "file": "ui/Button.ios.tsx",
+        "symbol": "ui/Button.ios.tsx",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "false_positive",
+      "corrected_ground_truth": "used",
+      "source_reason": "App.tsx:2 imports ./ui/Button and line5 calls Button(useScale()). package.json declares react-native; .ios and .android siblings are standard platform-selected implementations. Both are intended supported build variants, not orphan files.",
+      "source_sha256": "17712ecd7717d0906694adcba5911b334d8ae8cb77ec38d107fa5745382fd469",
+      "references": [
+        "https://reactnative.dev/docs/platform-specific-code#platform-specific-extensions"
+      ]
+    },
+    {
+      "case_id": "typescript-react-native-platform-extensions",
+      "label": {
+        "kind": "file",
+        "file": "ui/Button.android.tsx",
+        "symbol": "ui/Button.android.tsx",
+        "expected": "used",
+        "capability_eligible": true,
+        "detected": true,
+        "outcome": "FP"
+      },
+      "legacy_outcome": "FP",
+      "verdict": "false_positive",
+      "corrected_ground_truth": "used",
+      "source_reason": "App.tsx:2 imports ./ui/Button and line5 calls Button(useScale()). package.json declares react-native; .ios and .android siblings are standard platform-selected implementations. Both are intended supported build variants, not orphan files.",
+      "source_sha256": "840d22aa5f49996f44502552baf05fb7b7f065b772ff09f33acfac79f18baa48",
+      "references": [
+        "https://reactnative.dev/docs/platform-specific-code#platform-specific-extensions"
+      ]
+    }
+  ]
+}

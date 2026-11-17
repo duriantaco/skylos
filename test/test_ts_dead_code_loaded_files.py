@@ -450,7 +450,11 @@ def test_path_calls_commands_and_run_instructions_load_scripts(tmp_path):
         shared.run(input, entry, label, fake.join(__dirname, '..', 'lib', 'fake.js'));
         """,
     )
-    _write(tmp_path, "lib/shared.js", "module.exports = { run() {} };\n")
+    _write(
+        tmp_path,
+        "lib/shared.js",
+        "module.exports = { run(input, entry) { require(input); require(entry); } };\n",
+    )
     _write(
         tmp_path,
         "hooks/session-start.js",

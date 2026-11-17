@@ -37,6 +37,16 @@ need Skylos metadata, but its explicit errors and invalid payloads also fail.
 Canonical `SKY-*` expectations match the finding's rule ID; a message or filename
 containing that text cannot impersonate a rule.
 
+For paired sinks in one file, prefer structured expectations such as
+`{"rule_id": "SKY-D211", "file": "app.py", "start_line": 10, "end_line": 10}`.
+All fields must match the same finding. Paths are relative to the fixture root
+(or the parent of a single-file fixture), and labels must identify existing
+source lines. Legacy string labels still match rule presence anywhere in the
+case. Unmatched findings remain unreviewed; selected-label precision does not
+measure all emitted warnings. The new source-reviewed pairs and competitor
+audit are in the [final November 17 results](../review_2026_11_17/ground_truth_audit/confirmed_results.md);
+detailed historical runs are [archived](../review_2026_11_17/ARTIFACTS.md).
+
 ## Run
 
 ```bash
@@ -67,9 +77,10 @@ That Kotlin stage had 84 cases; all 72 earlier cases retain their
 expectations. These are local request-source/API flow contracts, not deployed
 applications or remote exploit proofs. Fixture programs are never executed.
 
-One Kotlin case remains in `adversarial_manifest.json`: a trusted standard
+One Kotlin regression in `adversarial_manifest.json` covers a trusted standard
 `printf` executable with fixed `%s` format and request data in a separate argument
-is still reported as command injection. Its safe expectation remains unchanged.
+that is now recognized as data rather than command construction. Its original
+safe expectation remains unchanged.
 This does not claim that arbitrary arguments to every fixed executable are safe.
 The case follows the separate program/argument contract of
 [ProcessBuilder](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/ProcessBuilder.html)
@@ -81,12 +92,12 @@ python scripts/security_benchmark.py \
   --manifest benchmarks/security/adversarial_manifest.json --json
 ```
 
-The optional manifest also preserves six Go misses involving function values,
-an HTTP request type alias and a TLS field assignment, plus two Dart misses
-where a local identity helper named `canonicalize` hides unsafe input.
-It currently exits nonzero to expose these known failures. Their labels must
-not be changed just to obtain a passing score. They are outside the passing
-default suite.
+The optional manifest also preserves six Go regressions involving captured
+function/method values, an HTTP request alias and a TLS field assignment, plus
+two Dart regressions where a local identity helper named `canonicalize` must
+not hide unsafe input. The November 17 repairs detect all eight positives and
+retain the Kotlin quiet control. Their original labels are unchanged. See the
+[final results and regression evidence](../review_2026_11_17/ground_truth_audit/confirmed_results.md).
 
 ## Adding Cases
 

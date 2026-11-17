@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "scope": "Compact preservation of selected post-scan Python source judgments and the frozen-label location correction. Not a new blind study or a replacement whole-repository truth corpus.",
+  "original_metadata": {
+    "phase": "postscan_adjudication_separate_from_frozen_ground_truth",
+    "author": "python_truth",
+    "created_at": "2026-11-17T00:24:21.781028+00:00"
+  },
+  "original_artifact": {
+    "path": "benchmarks/review_2026_11_17/ground_truth_audit/PYTHON_POSTSCAN_ADJUDICATION.json",
+    "sha256": "994ba63a9411b6febf45101437ec1d119334cb0db1ecd26c834a3b657ab11b61",
+    "bytes": 398331,
+    "source_commit": "ca17bb2e12248bc02893ead2dc957f19cb25baff",
+    "git_object": "ca17bb2e12248bc02893ead2dc957f19cb25baff:benchmarks/review_2026_11_17/ground_truth_audit/PYTHON_POSTSCAN_ADJUDICATION.json"
+  },
+  "full_original_archive": {
+    "directory": "~/Desktop/skylos-benchmark-2026-11-14/pr1251-cleanup-ca17bb2e/",
+    "archive": "tracked-evidence.tar.gz",
+    "archive_sha256": "d8cd23c931eb28906b65791368afe20914df98357c8bd5d8ac69409a3bb24f18",
+    "index": "INDEX.json",
+    "member": "benchmarks/review_2026_11_17/ground_truth_audit/PYTHON_POSTSCAN_ADJUDICATION.json",
+    "member_bytes_verified_identical": true
+  },
+  "frozen_source_labels": {
+    "path": "SOURCE_LABELS_PYTHON.json",
+    "sha256": "ca17aba6211170f0c95cf48a674b87a1a5d09a5db474d8dbd37350ce087e8ce6",
+    "modified": false
+  },
+  "original_finding_inventory": {
+    "count": 312,
+    "status_counts": {
+      "accurate_empty_file_policy": 1,
+      "assertion_policy_warning": 235,
+      "bounded_true_positive": 2,
+      "confirmed_false_positive": 44,
+      "policy_observation": 17,
+      "retained_test_control": 4,
+      "safe_data_policy_warning": 1,
+      "safe_roundtrip_policy_warning": 6,
+      "unknown_external_api": 2
+    },
+    "scope_note": "Counts inventory adjudication records, including repeated assertions and two scanners reporting the same site; these are not independent accuracy denominators."
+  },
+  "label_corrections": [
+    {
+      "repository": "jfhbrook--pyee",
+      "original_label": {
+        "kind": "security_absent",
+        "file": "tests/test_sync.py",
+        "symbol": "test_if_serializable",
+        "line": 369,
+        "evidence": "loads receives only bytes from immediately nested dumps of locally constructed EventEmitter at :368; no attacker bytes cross this test boundary.",
+        "property": "untrusted_deserialization",
+        "start_line": 369,
+        "end_line": 369
+      },
+      "corrected_line": 370,
+      "evidence": "Original frozen pyee line369 constructs ee; actual loads(dumps(ee)) sink at370. Frozen result not scored as TN; correction preserved separately after scan.",
+      "revision": "be2025fc579a033326157dd41b5ad1f319d7d827",
+      "source_sha256": "159e52c0587219d26e71b721dac144782d8f0e22f65fa070a7acb1aa81469b9f",
+      "frozen_labels_modified": false,
+      "scoring_effect": "The frozen location remains incomplete and unscored; this post-scan correction earns no true-negative credit."
+    }
+  ],
+  "selected_verdicts": [
+    {
+      "repository": "jfhbrook--pyee",
+      "scanner": "skylos",
+      "category": "dead_code",
+      "file": "pyee/cls.py",
+      "line": 36,
+      "symbol": "reset",
+      "status": "unknown_external_api",
+      "evidence": "No internal caller; public importable class method, no complete downstream usage evidence.",
+      "original_finding_index": 0,
+      "revision": "be2025fc579a033326157dd41b5ad1f319d7d827",
+      "source_sha256": "1fc147645bbc3b92a6a0ce8fda9c7151ab89f409248562f98875503ddf99dcd6"
+    },
+    {
+      "repository": "jfhbrook--pyee",
+      "scanner": "skylos",
+      "category": "dead_code",
+      "file": "pyee/executor.py",
+      "line": 66,
+      "symbol": "_callback",
+      "status": "confirmed_false_positive",
+      "evidence": "Frozen source-first used label matched; registration/consumer evidence in label.",
+      "original_finding_index": 1,
+      "revision": "be2025fc579a033326157dd41b5ad1f319d7d827",
+      "source_sha256": "cb9afd2822f5a83b109ac74ef7142671c7c9f19192858e3f39e6840de209c8ed"
+    },
+    {
+      "repository": "jfhbrook--pyee",
+      "scanner": "skylos",
+      "category": "dead_code",
+      "file": "tests/conftest.py",
+      "line": 1,
+      "symbol": "",
+      "status": "accurate_empty_file_policy",
+      "evidence": "Tracked conftest.py is zero bytes; SKY-E002 describes empty source, not a removable live callable.",
+      "original_finding_index": 2,
+      "revision": "be2025fc579a033326157dd41b5ad1f319d7d827",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "repository": "jfhbrook--pyee",
+      "scanner": "skylos",
+      "category": "security",
+      "file": "tests/test_sync.py",
+      "line": 370,
+      "rule_id": "SKY-D205",
+      "status": "safe_roundtrip_policy_warning",
+      "evidence": "loads receives only immediately nested dumps of locally constructed object; no untrusted deserialization, but risky API review-policy warning accurately identifies use.",
+      "original_finding_index": 32,
+      "revision": "be2025fc579a033326157dd41b5ad1f319d7d827",
+      "source_sha256": "159e52c0587219d26e71b721dac144782d8f0e22f65fa070a7acb1aa81469b9f"
+    },
+    {
+      "repository": "pallets-eco--blinker",
+      "scanner": "skylos",
+      "category": "dead_code",
+      "file": "src/blinker/base.py",
+      "line": 456,
+      "symbol": "_clear_state",
+      "status": "bounded_true_positive",
+      "evidence": "Private _clear_state has no references or string dispatch in pinned repository. External private API calls not proven absent.",
+      "original_finding_index": 188,
+      "revision": "c3364059663df1ddce32799d6b1922af89a345f6",
+      "source_sha256": "4290eebd75dcc09178f65501707e418924f8e91cfdc121bb556fe9ecdff4dbb3"
+    },
+    {
+      "repository": "pallets-eco--blinker",
+      "scanner": "skylos",
+      "category": "security",
+      "file": "tests/test_symbol.py",
+      "line": 25,
+      "rule_id": "SKY-D205",
+      "status": "safe_roundtrip_policy_warning",
+      "evidence": "loads receives only immediately nested dumps of locally constructed object; no untrusted deserialization, but risky API review-policy warning accurately identifies use.",
+      "original_finding_index": 208,
+      "revision": "c3364059663df1ddce32799d6b1922af89a345f6",
+      "source_sha256": "04812ff1549cd4ddf54437608bf09ca23b14c79d4185a1faffd5df450e7b29db"
+    },
+    {
+      "repository": "pallets-eco--blinker",
+      "scanner": "skylos",
+      "category": "security",
+      "file": ".github/workflows/publish.yaml",
+      "line": 17,
+      "rule_id": "SKY-D300",
+      "status": "safe_data_policy_warning",
+      "evidence": "publish.yaml writes SOURCE_DATE_EPOCH from git log --pretty=%ct, a numeric commit timestamp; no arbitrary newline-bearing text. Command-derived-data policy warning, no demonstrated env-file injection.",
+      "original_finding_index": 212,
+      "revision": "c3364059663df1ddce32799d6b1922af89a345f6",
+      "source_sha256": "48678e7700eb15e337f1c664d5ea497081985fd0055fe9dd80e094c3960c993e"
+    },
+    {
+      "repository": "pallets-eco--blinker",
+      "scanner": "skylos",
+      "category": "security",
+      "file": ".github/workflows/tests.yaml",
+      "line": 11,
+      "rule_id": "SKY-D295",
+      "status": "confirmed_false_positive",
+      "evidence": "tests.yaml finite matrix include entries only define python; matrix.os is absent in all entries, so fallback ubuntu-latest is selected for every instance. No self-hosted runner.",
+      "original_finding_index": 215,
+      "revision": "c3364059663df1ddce32799d6b1922af89a345f6",
+      "source_sha256": "1f6171bc33c14b80395977a21fafaa8473d92bce91ca65de8c6a5585a1b9e609"
+    }
+  ],
+  "omitted_content": "Repeated raw scanner payloads, full competitor finding inventories and routine policy observations are preserved byte-for-byte in the archive and source Git object. The selected verdicts above preserve the actionable Python callback/runner findings, bounded dead-code positive, public-API uncertainty and narrow security-policy distinctions.",
+  "limitations": [
+    "Original source judgments are preserved without rescanning or upgrading their certainty.",
+    "Risky-API and CI policy observations do not establish vulnerabilities or real-repository security recall.",
+    "The original Pyee deserialization line typo remains visible; immutable source-first labels were not rewritten."
+  ]
+}

@@ -23,15 +23,22 @@ def test_json_contains_confirmed_upload_and_cloud_gate(
     if output_file:
         argv.extend(["--output", str(path)])
     monkeypatch.setattr(cli.sys, "argv", argv)
-    monkeypatch.setattr(cli, "load_config", lambda *_a, **_k: {"gate": {"max_dead_code": 10}})
+    monkeypatch.setattr(
+        cli, "load_config", lambda *_a, **_k: {"gate": {"max_dead_code": 10}}
+    )
     response = {
         "success": True,
+        "upload_trust": "verified_ci",
         "scan_id": "fixture-scan",
         "quality_gate_passed": not failed_gate,
         "quality_gate": {
             "passed": not failed_gate,
             "reasons": ["required coverage missing"] if failed_gate else [],
-            "coverage_failures": ["Required dependency scan has no SCA coverage receipt"] if failed_gate else [],
+            "coverage_failures": [
+                "Required dependency scan has no SCA coverage receipt"
+            ]
+            if failed_gate
+            else [],
         },
         "authorization": "must-not-appear",
         "transport": {"token": "must-not-appear"},
@@ -53,6 +60,12 @@ def test_json_contains_confirmed_upload_and_cloud_gate(
         "scan_id": "fixture-scan",
         "url": f"{api.BASE_URL.rstrip('/')}/dashboard/scans/fixture-scan",
         "quality_gate": response["quality_gate"],
+        "quality_gate_status": "reported",
+        "upload_trust": "verified_ci",
+        "verification": {
+            "status": "verified",
+            "message": "Cloud verified this upload's CI identity.",
+        },
     }
     assert "must-not-appear" not in raw
     upload.assert_called_once()
@@ -74,7 +87,13 @@ def test_failed_upload_keeps_parseable_scan_and_receipt(
     if failure == "exception":
         upload = Mock(side_effect=ConnectionError("Authorization: private-value"))
     else:
-        upload = Mock(return_value={"success": False, "code": "UPLOAD_REJECTED", "error": "upload rejected"})
+        upload = Mock(
+            return_value={
+                "success": False,
+                "code": "UPLOAD_REJECTED",
+                "error": "upload rejected",
+            }
+        )
     monkeypatch.setattr(cli, "upload_report", upload)
     with pytest.raises(SystemExit) as exc:
         cli.main()
@@ -83,7 +102,9 @@ def test_failed_upload_keeps_parseable_scan_and_receipt(
     report = json.loads(raw)
     assert report["unused_functions"]
     assert report["upload"]["status"] == "failed"
-    assert report["upload"]["code"] == ("UPLOAD_UNAVAILABLE" if failure == "exception" else "UPLOAD_REJECTED")
+    assert report["upload"]["code"] == (
+        "UPLOAD_UNAVAILABLE" if failure == "exception" else "UPLOAD_REJECTED"
+    )
     assert "private-value" not in raw
 
 
@@ -93,7 +114,9 @@ def test_incomplete_analysis_has_skipped_upload_receipt(
 ):
     _configure(monkeypatch, tmp_path, output_format, upload=True)
     result = _report()
-    result["analysis_errors"] = [{"rule_id": "SKY-ANALYSIS-INCOMPLETE", "file": "bad.py", "kind": "parse_error"}]
+    result["analysis_errors"] = [
+        {"rule_id": "SKY-ANALYSIS-INCOMPLETE", "file": "bad.py", "kind": "parse_error"}
+    ]
     monkeypatch.setattr(cli, "run_analyze", lambda *_a, **_k: json.dumps(result))
     upload = Mock()
     monkeypatch.setattr(cli, "upload_report", upload)
@@ -110,14 +133,18 @@ def test_json_preserves_saved_scan_when_gitlab_delivery_is_unconfirmed(
     monkeypatch, capsys, tmp_path
 ):
     _configure(monkeypatch, tmp_path, "json", upload=True)
-    monkeypatch.setattr(cli, "upload_report", lambda *_a, **_k: {
-        "success": True,
-        "scan_id": "saved-scan",
-        "quality_gate_passed": True,
-        "gitlab_delivery": {"status": "failed", "reason": "delivery_unconfirmed"},
-        "gitlab_delivery_exit_code": 2,
-        "gitlab_delivery_message": "Scan saved. GitLab comment delivery was not confirmed.",
-    })
+    monkeypatch.setattr(
+        cli,
+        "upload_report",
+        lambda *_a, **_k: {
+            "success": True,
+            "scan_id": "saved-scan",
+            "quality_gate_passed": True,
+            "gitlab_delivery": {"status": "failed", "reason": "delivery_unconfirmed"},
+            "gitlab_delivery_exit_code": 2,
+            "gitlab_delivery_message": "Scan saved. GitLab comment delivery was not confirmed.",
+        },
+    )
     with pytest.raises(SystemExit) as exc:
         cli.main()
     assert exc.value.code == 2
@@ -125,7 +152,11 @@ def test_json_preserves_saved_scan_when_gitlab_delivery_is_unconfirmed(
     receipt = json.loads(captured.out)["upload"]
     assert receipt["status"] == "uploaded"
     assert receipt["scan_id"] == "saved-scan"
-    assert receipt["delivery"] == {"status": "failed", "reason": "delivery_unconfirmed", "exit_code": 2}
+    assert receipt["delivery"] == {
+        "status": "failed",
+        "reason": "delivery_unconfirmed",
+        "exit_code": 2,
+    }
     assert "Scan saved" in captured.err
 
 
@@ -134,9 +165,16 @@ def test_complete_strict_failure_uploads_in_every_format(
     monkeypatch, capsys, tmp_path, output_format
 ):
     _configure(monkeypatch, tmp_path, output_format, upload=True)
+    monkeypatch.setenv("SKYLOS_TOKEN", "fixture-project-token")
     monkeypatch.setattr(cli.sys, "argv", [*cli.sys.argv, "--strict"])
     monkeypatch.setattr(cli, "_print_upload_destination", lambda *_a: (True, False))
-    upload = Mock(return_value={"success": True, "scan_id": "saved-scan", "quality_gate_passed": True})
+    upload = Mock(
+        return_value={
+            "success": True,
+            "scan_id": "saved-scan",
+            "quality_gate_passed": True,
+        }
+    )
     monkeypatch.setattr(cli, "upload_report", upload)
     with pytest.raises(SystemExit) as exc:
         cli.main()
@@ -154,7 +192,11 @@ def test_api_keeps_coverage_receipts_in_all_report_transports(monkeypatch, tmp_p
     result = _report()
     result["provenance"] = None
     coverage = {
-        "sca_coverage": {"status": "complete_with_unresolved_versions", "complete": True, "unresolved_dependency_count": 1},
+        "sca_coverage": {
+            "status": "complete_with_unresolved_versions",
+            "complete": True,
+            "unresolved_dependency_count": 1,
+        },
         "custom_rules_coverage": {"status": "complete", "rule_count": 1},
     }
     result["analysis_summary"].update(copy.deepcopy(coverage))
@@ -169,8 +211,16 @@ def test_api_keeps_coverage_receipts_in_all_report_transports(monkeypatch, tmp_p
 
 
 def test_api_success_receipt_retains_cloud_gate_reasons():
-    gate = {"passed": False, "reasons": ["required SCA missing"], "message": "required SCA missing", "new_violations": 0, "coverage_failures": ["Required dependency scan has no SCA coverage receipt"]}
-    result = api._report_upload_success_result({"quality_gate": gate}, "saved-scan", False, "free")
+    gate = {
+        "passed": False,
+        "reasons": ["required SCA missing"],
+        "message": "required SCA missing",
+        "new_violations": 0,
+        "coverage_failures": ["Required dependency scan has no SCA coverage receipt"],
+    }
+    result = api._report_upload_success_result(
+        {"quality_gate": gate}, "saved-scan", False, "free"
+    )
     assert result["quality_gate"] == gate
     assert result["quality_gate_reported"] is True
     assert result["url"].endswith("/dashboard/scans/saved-scan")
@@ -192,7 +242,10 @@ def test_report_only_dependency_coverage_warning_is_visible(
 ):
     _configure(monkeypatch, tmp_path, output_format)
     result = _report()
-    result["analysis_summary"]["sca_coverage"] = {"status": "no_supported_manifests", "complete": False}
+    result["analysis_summary"]["sca_coverage"] = {
+        "status": "no_supported_manifests",
+        "complete": False,
+    }
     monkeypatch.setattr(cli, "run_analyze", lambda *_a, **_k: json.dumps(result))
     try:
         cli.main()
