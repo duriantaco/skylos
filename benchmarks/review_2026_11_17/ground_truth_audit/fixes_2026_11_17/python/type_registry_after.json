@@ -1,0 +1,328 @@
+{
+  "manifest": "/Users/oha/skylos/benchmarks/dead_code/adversarial_manifest.json",
+  "scanner": "skylos",
+  "strict_labels": false,
+  "case_count": 7,
+  "scored_case_count": 7,
+  "unscored_case_count": 0,
+  "analysis_status": "complete",
+  "metrics_scoped_to_scored_cases": true,
+  "skipped_case_count": 0,
+  "skipped_cases": [],
+  "pass_count": 7,
+  "failure_count": 0,
+  "total_elapsed_seconds": 2.7528,
+  "counts": {
+    "true_positives": 18,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "true_negatives": 57
+  },
+  "scores": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "absence_guard": 1.0,
+    "latency_score": 1.0,
+    "overall_score": 100.0
+  },
+  "taxonomy": {
+    "dynamic_dispatch": {
+      "description": "Registries, decorators, getattr, and runtime dispatch patterns.",
+      "case_count": 7,
+      "scored_case_count": 7,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 18,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 57
+    },
+    "multi_file": {
+      "description": "Cross-file package and service-layer liveness patterns.",
+      "case_count": 7,
+      "scored_case_count": 7,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 18,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 57
+    },
+    "precision_guard": {
+      "description": "Known-used symbols that should stay quiet.",
+      "case_count": 7,
+      "scored_case_count": 7,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 18,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 57
+    }
+  },
+  "cases": [
+    {
+      "id": "corpus-type-registry-owner",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/corpus_type_registry_owner",
+      "description": "An exact-type callback is selected from one registry instance; another type, another instance and an unregistered function stay uncalled.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.4072,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 3
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 8,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "corpus-type-registry-mismatch",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/corpus_type_registry_mismatch",
+      "description": "Registering a string callback does not call its body when the only message has integer type.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.3323,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 7,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "corpus-type-registry-rebound",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/corpus_type_registry_rebound",
+      "description": "Replacing a decorator method with an identity decorator leaves the original registry empty and its callback uncalled.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.3478,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 4
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 7,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "corpus-type-registry-snapshot",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/corpus_type_registry_snapshot",
+      "description": "A copied callback table preserves its earlier function after the original registry replaces the same type key.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.3856,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 9,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "corpus-type-registry-closure",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/corpus_type_registry_closure",
+      "description": "A closure-owned type registry returns its decorator and sender; only the callback for the supplied integer is called.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.4187,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 7,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "corpus-type-registry-hierarchy",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/corpus_type_registry_hierarchy",
+      "description": "An MRO-based type registry selects the base-class callback for a concrete subclass while another owner remains separate.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.4972,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 12,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "corpus-type-registry-private",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/corpus_type_registry_private",
+      "description": "A module-private registry selects a typed callback by MRO and channel while another type, another owner and an unregistered callback remain separate.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.364,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 3
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 7,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    }
+  ]
+}

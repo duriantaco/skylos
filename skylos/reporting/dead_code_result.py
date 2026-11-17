@@ -345,7 +345,10 @@ def definition_context(analyzer, thr, dead_code_evidence_payload):
     evidence_by_name = _evidence_by_name(dead_code_evidence_payload)
     context = {}
     for name, definition in analyzer.defs.items():
-        if definition.type not in ("class", "function", "method"):
+        module_value = definition.type in {"variable", "constant"} and Path(
+            definition.filename
+        ).suffix.lower() in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"}
+        if definition.type not in ("class", "function", "method") and not module_value:
             continue
         if name.startswith("_"):
             continue

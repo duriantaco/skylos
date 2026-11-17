@@ -1,0 +1,1542 @@
+{
+  "reviewer": "/root/other_truth",
+  "at_utc": "2026-11-17T00:29:20.742768+00:00",
+  "status": "POSTSCAN independent source adjudication of mismatches; original benchmark labels and raw scores preserved",
+  "method": "Read every source file under each of the 39 mismatching Python fixture cases, local helpers/callers included. Reviewed raw Bandit output and exact crosswalk. No target execution or exploit payloads. One isolated standard-library-only SSL property check, no target imported. These are authored development fixtures, not independent deployments.",
+  "inputs": {
+    "existing_python_corrected/security-bandit-summary.json": "ad2234b07b8b9a017b9b7c2d344246ec8d43e22de441971b445ee6b9cb4ce49f",
+    "existing_python_corrected/security-bandit-raw.json": "d8dd4d1ee5f8c8c3ec23a72d5c25297c9b6241a6bdafa3edded23f9c80e492df"
+  },
+  "legacy_totals": {
+    "false_negatives": 32,
+    "false_positives": 7,
+    "mismatch_cases": 39
+  },
+  "adjudication_counts": {
+    "source_confirmed_missed_operation": 18,
+    "confirmed_false_positive": 5,
+    "detected_but_crosswalk_missing": 4,
+    "policy_fact_not_confirmed_vulnerability": 3,
+    "conditional_import_path_configuration": 1,
+    "legacy_positive_not_valid_at_final_sink": 1,
+    "nonsecurity_use_policy_warning": 2,
+    "detected_under_related_rule": 2,
+    "platform_or_routing_boundary_unresolved": 2,
+    "related_policy_detection_not_full_auth_claim": 1
+  },
+  "source_files_reviewed": 43,
+  "rows": [
+    {
+      "case_id": "sql-tainted-param",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "sql-tainted-param",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D211",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe",
+        "rationale": "Flask request.args[sql] reaches app.run_query then cursor.execute query text unchanged. ID binding does not constrain SQL text. All caller/helper source read.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/sql_tainted_param/app.py",
+          "sha256": "68f036f64d537642ee18b583dabfd2f6973ea264df8bb8657189268252600bea",
+          "lines": 2,
+          "review": "Entire source read including all local helper/caller files present in case"
+        },
+        {
+          "file": "benchmarks/security/fixtures/sql_tainted_param/web.py",
+          "sha256": "2eb4d242e69098db39eabaab785070b11f1b4a28c3c58c5f73723d714c10869b",
+          "lines": 13,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "sql-constant-format",
+      "legacy_false_negatives": 0,
+      "legacy_false_positives": 1,
+      "legacy_failures": [
+        {
+          "case_id": "sql-constant-format",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "absent",
+          "expected": "SKY-D211",
+          "found": [
+            "SKY-D211"
+          ]
+        }
+      ],
+      "source_adjudication": {
+        "classification": "confirmed_false_positive",
+        "source_truth": "safe_for_SQL_injection",
+        "rationale": "SQL string is composed entirely of literal users table name and constant syntax; no external value reaches execute. B608 is scanner noise for this property.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "SKY-D211",
+          "bandit_rule_id": "B608",
+          "message": "Possible SQL injection vector through string-based query construction.",
+          "file": "./app.py",
+          "line": 2,
+          "severity": "MEDIUM"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/sql_constant_format/app.py",
+          "sha256": "606ec5ef3ac6f87f5e18a4d79564204f09f2b85c1747bf3acb95fa2b75983aa0",
+          "lines": 3,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "ssrf-tainted-host",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "ssrf-tainted-host",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D216",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe",
+        "rationale": "Request-controlled host directly selects requests.get destination, with no allowlist.",
+        "assumptions": [
+          "Endpoint deployed with network access."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/ssrf_tainted_host/app.py",
+          "sha256": "e986b76ad4f2ebeac368d65019b08499d86a2a4093f6ebca43e9a2220e706cd4",
+          "lines": 10,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "path-traversal-tainted-join",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "path-traversal-tainted-join",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D215",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe",
+        "rationale": "Query parameter reaches os.path.join then file read; join does not enforce root containment.",
+        "assumptions": [
+          "Endpoint deployed with relevant filesystem access."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/path_traversal_tainted_join/app.py",
+          "sha256": "81aae6e37baab37be7fa0e7c99530e3ebfa1f7da562053c138e126ae768ca540",
+          "lines": 15,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "xss-mark-safe",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "xss-mark-safe",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D226",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "detected_but_crosswalk_missing",
+        "source_truth": "unsafe_operation_if_untrusted",
+        "rationale": "Bandit B704 reports the exact Markup interpolation at app.py:5; raw rule is not mapped to SKY-D226. No scanner miss for this operation.",
+        "assumptions": [
+          "Caller supplies untrusted name and output is used in HTML; no caller present in fixture."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "B704",
+          "bandit_rule_id": "B704",
+          "message": "Potential XSS with ``markupsafe.Markup`` detected. Do not use ``Markup`` on untrusted data.",
+          "file": "./app.py",
+          "line": 5,
+          "severity": "MEDIUM"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/xss_mark_safe/app.py",
+          "sha256": "16f23287981a90fe7f6b8792a01aec2603e1c689faa9bdad57321cd39cee34f0",
+          "lines": 5,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "open-redirect-tainted",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "open-redirect-tainted",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D230",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe_operation_if_invoked",
+        "rationale": "Request next argument flows directly to Flask redirect; no origin/path validation.",
+        "assumptions": [
+          "Function invoked in request context."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/open_redirect_tainted/app.py",
+          "sha256": "e13dd40a53b1aa7675cc48f9bc638195ad313537acc937c31aa1832988b00709",
+          "lines": 5,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "open-redirect-local-guard",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "open-redirect-local-guard",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D230",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe_operation_if_invoked",
+        "rationale": "A single leading-slash check does not establish a local URL origin; redirect receives remaining request value.",
+        "assumptions": [
+          "Function invoked in request context."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/open_redirect_local_guard/app.py",
+          "sha256": "a56c715576f33c74a1495e4cf297340536d797e41c2c72c4fc7cc9018e87df1d",
+          "lines": 8,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "jwt-verify-disabled",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "jwt-verify-disabled",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D232",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe_verification_configuration",
+        "rationale": "jwt.decode explicitly disables signature verification. No Bandit warning; lack of authenticated-use caller means label is unsafe operation/configuration, not a proven authentication bypass.",
+        "assumptions": [
+          "PyJWT API and result used as trusted authenticated claims."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/jwt_verify_disabled/app.py",
+          "sha256": "44e010e1d94497f190cf60fbcdcd45ade1932c5fc33dc5dc7369f2ec708024b7",
+          "lines": 5,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "cors-wildcard",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "cors-wildcard",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D231",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "policy_fact_not_confirmed_vulnerability",
+        "source_truth": "unknown",
+        "rationale": "Fixture only assigns CORS_ALLOW_ALL_ORIGINS=True. No Django settings loader, middleware, endpoint, sensitive response or credentials policy is present. This supports a config-policy expectation, not a demonstrated exploitable CORS flaw.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/cors_wildcard/app.py",
+          "sha256": "d683c3bc267c4cd25394143a2071cf5fc8dbeb7eb01341c8385039f21248c20b",
+          "lines": 1,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "tls-corpus-context-alias-disabled",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "tls-corpus-context-alias-disabled",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D210",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe_hostname_verification_configuration",
+        "rationale": "Native PROTOCOL_TLS_CLIENT context is aliased; alias.check_hostname=False disables hostname checking even though chain validation remains. The returned HTTPSHandler retains altered context.",
+        "assumptions": [
+          "Returned handler performs a TLS connection."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/tls_corpus_context_alias_disabled/client.py",
+          "sha256": "7499eb097407ed697343deffb14460bd958cda70247a5654f6ac79df63efb75b",
+          "lines": 8,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "tls-corpus-imported-helper-patch",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "tls-corpus-imported-helper-patch",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D210",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "conditional_import_path_configuration",
+        "source_truth": "conditional",
+        "rationale": "client imports mutator; mutator imports client and assigns client.render=BrowserConfig. Importing client as a module supports insecure config construction; running client.py as __main__ produces a separate module identity and does not patch the original function. No browser connection is shown.",
+        "assumptions": [
+          "Fixture is imported as module client and BrowserConfig ignore_https_errors has normal provider semantics."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/tls_corpus_imported_helper_patch/client.py",
+          "sha256": "5991277093e3e06104ec04ceeff5ba3cba9a56e250c0502251c1bba14703e079",
+          "lines": 5,
+          "review": "Entire source read including all local helper/caller files present in case"
+        },
+        {
+          "file": "benchmarks/security/fixtures/tls_corpus_imported_helper_patch/mutator.py",
+          "sha256": "3d21216754d9fabb2ab28123ce56c7d5ae043860e9e7088473cbee1562a93dec",
+          "lines": 4,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "tls-corpus-context-required-tampered",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "tls-corpus-context-required-tampered",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D210",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "legacy_positive_not_valid_at_final_sink",
+        "source_truth": "safe_for_claimed_final_verification_disable",
+        "rationale": "Assigning ssl.CERT_REQUIRED=ssl.CERT_NONE makes the intermediate verify_mode assignment non-verifying, but the subsequent context.check_hostname=True automatically resets CERT_NONE to native CERT_REQUIRED. Final HTTPSHandler context verifies certificates and hostnames. No request/connection executes in fixture.",
+        "assumptions": [
+          "Standard CPython ssl implementation, Python >=3.7."
+        ],
+        "primary_references": [
+          "https://docs.python.org/3/library/ssl.html#ssl.SSLContext.check_hostname"
+        ]
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/tls_corpus_context_required_tampered/client.py",
+          "sha256": "457f144b7bbb1f6f36b4ab126e79b44ecf1ef7f286acf5d8053827468cb676f1",
+          "lines": 8,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "crypto-corpus-retry-jitter",
+      "legacy_false_negatives": 0,
+      "legacy_false_positives": 1,
+      "legacy_failures": [
+        {
+          "case_id": "crypto-corpus-retry-jitter",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "absent",
+          "expected": "SKY-D250",
+          "found": [
+            "SKY-D250"
+          ]
+        }
+      ],
+      "source_adjudication": {
+        "classification": "nonsecurity_use_policy_warning",
+        "source_truth": "safe_for_credential_predictability",
+        "rationale": "random.uniform only computes retry delay; no credential or authentication sink. B311 is a broad weak-RNG API warning, useful to distinguish from a claimed real crypto weakness.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "SKY-D250",
+          "bandit_rule_id": "B311",
+          "message": "Standard pseudo-random generators are not suitable for security/cryptographic purposes.",
+          "file": "./app.py",
+          "line": 4,
+          "severity": "LOW"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/crypto_corpus_retry_jitter/app.py",
+          "sha256": "732059497c86c6d9d50e4e85ea937a86db8ad2ebc031542bbb70370b9f9fe3f6",
+          "lines": 4,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "crypto-corpus-reassigned-strong",
+      "legacy_false_negatives": 0,
+      "legacy_false_positives": 1,
+      "legacy_failures": [
+        {
+          "case_id": "crypto-corpus-reassigned-strong",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "absent",
+          "expected": "SKY-D250",
+          "found": [
+            "SKY-D250"
+          ]
+        }
+      ],
+      "source_adjudication": {
+        "classification": "nonsecurity_use_policy_warning",
+        "source_truth": "safe_for_credential_predictability",
+        "rationale": "Weak random value is overwritten by secrets.token_urlsafe before sole set_cookie sink. B311 still warns on the discarded weak-RNG operation; no weak value reaches security sink.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "SKY-D250",
+          "bandit_rule_id": "B311",
+          "message": "Standard pseudo-random generators are not suitable for security/cryptographic purposes.",
+          "file": "./app.py",
+          "line": 5,
+          "severity": "LOW"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/crypto_corpus_reassigned_strong/app.py",
+          "sha256": "6602a8fe7b6c6d11c543b6981e4e1ac02286351e8ed0b8fd3959f406f28583dc",
+          "lines": 7,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "logging-corpus-env-token",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "logging-corpus-env-token",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D251",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe_if_secret_present",
+        "rationale": "SERVICE_API_TOKEN environment value reaches logger.warning unchanged.",
+        "assumptions": [
+          "Environment contains a credential and logs are observable."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/logging_corpus_env_token/app.py",
+          "sha256": "a980c4365d8dd75a99617ad84b598c853528bf21829f66733dfbdaf4a3dfb47b",
+          "lines": 5,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "logging-corpus-partial-redaction",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "logging-corpus-partial-redaction",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D251",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe_on_unredacted_branch",
+        "rationale": "Declining redaction leaves environment credential unchanged before logging.info.",
+        "assumptions": [
+          "Credential populated and INFO logging enabled."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/logging_corpus_partial_redaction/app.py",
+          "sha256": "2c50f3b6a63ed98f7472595a80a3364d1c63259e3e1df52f678ce8ee045b39e1",
+          "lines": 6,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "logging-corpus-http-request-url",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "logging-corpus-http-request-url",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D251",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe_on_successful_unredirected_request",
+        "rationale": "Credential query parameter is included in request; requests response.url retains it for a successful unredirected response and is logged.",
+        "assumptions": [
+          "Credential populated, request succeeds without redirect dropping query, INFO logging enabled."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/logging_corpus_http_request_url/app.py",
+          "sha256": "37b0661c73f47f86f430c7da6c2bb403b19573f0d41d014652a7bb3f547e7c2d",
+          "lines": 6,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "logging-corpus-redact-identity",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "logging-corpus-redact-identity",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D251",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe_if_secret_present",
+        "rationale": "Local redact explicitly returns input; environment credential reaches logging.info unchanged.",
+        "assumptions": [
+          "Credential populated and INFO logging enabled."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/logging_corpus_redact_identity/app.py",
+          "sha256": "74724b0f5744b6ed4f4fa0f3306539900354a66827f1657431bcc4b74477adc0",
+          "lines": 5,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "logging-corpus-alias-rebind",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "logging-corpus-alias-rebind",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D251",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe_if_secret_present",
+        "rationale": "Rebinding alias does not mutate original payload list; credential-bearing original is logged.",
+        "assumptions": [
+          "Credential populated and INFO logging enabled."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/logging_corpus_alias_rebind/app.py",
+          "sha256": "3db30e2866eeb85fcbe3e9f05f41a0b162b76736f9d77b24316f3c600c116e69",
+          "lines": 6,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "crypto-corpus-alias-rebound-strong",
+      "legacy_false_negatives": 0,
+      "legacy_false_positives": 1,
+      "legacy_failures": [
+        {
+          "case_id": "crypto-corpus-alias-rebound-strong",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "absent",
+          "expected": "SKY-D250",
+          "found": [
+            "SKY-D250"
+          ]
+        }
+      ],
+      "source_adjudication": {
+        "classification": "confirmed_false_positive",
+        "source_truth": "safe_for_credential_predictability",
+        "rationale": "rng is explicitly replaced with secrets.SystemRandom before function invocation. Bandit resolves imported random alias despite replacement and misidentifies secure provider as weak RNG.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "SKY-D250",
+          "bandit_rule_id": "B311",
+          "message": "Standard pseudo-random generators are not suitable for security/cryptographic purposes.",
+          "file": "./app.py",
+          "line": 7,
+          "severity": "LOW"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/crypto_corpus_alias_rebound_strong/app.py",
+          "sha256": "7e55f60e1e4085eeb404415af7df95f1df3aa9bd667e5b826b91cf137b552006",
+          "lines": 7,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-pickle-capture-unsafe",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-pickle-capture-unsafe",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D205",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe",
+        "rationale": "Flask request bytes reach captured native pickle.loads. B403 import-only warning does not detect or locate dangerous invocation.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "B403",
+          "bandit_rule_id": "B403",
+          "message": "Consider possible security implications associated with pickle module.",
+          "file": "./app.py",
+          "line": 1,
+          "severity": "LOW"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/security_depth_python_pickle_capture_unsafe/app.py",
+          "sha256": "939169531dabb499d67db97bfd8764168a8b546de8174411e8d8e9c01e59b633",
+          "lines": 7,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-pickle-capture-rebind-unsafe",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-pickle-capture-rebind-unsafe",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D205",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe",
+        "rationale": "Native pickle.loads is captured before module-name rebinding to json. Request bytes still reach captured unpickler; B403 import-only warning is not sink evidence.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "B403",
+          "bandit_rule_id": "B403",
+          "message": "Consider possible security implications associated with pickle module.",
+          "file": "./app.py",
+          "line": 1,
+          "severity": "LOW"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/security_depth_python_pickle_capture_rebind_unsafe/app.py",
+          "sha256": "82cb5f5a233c5a4d56e9ce48b41669e019c0a3c74778165e114b927678662962",
+          "lines": 9,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-pickle-json-rebind-safe",
+      "legacy_false_negatives": 0,
+      "legacy_false_positives": 1,
+      "legacy_failures": [
+        {
+          "case_id": "python-pickle-json-rebind-safe",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "absent",
+          "expected": "SKY-D205",
+          "found": [
+            "SKY-D205"
+          ]
+        }
+      ],
+      "source_adjudication": {
+        "classification": "confirmed_false_positive",
+        "source_truth": "safe_for_native_unpickling",
+        "rationale": "pickle module name is replaced by json before attribute lookup, so loads resolves to JSON parser. B301 at that call falsely claims pickle-like deserialization. B403 import warning is separate policy noise.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "B403",
+          "bandit_rule_id": "B403",
+          "message": "Consider possible security implications associated with pickle module.",
+          "file": "./app.py",
+          "line": 1,
+          "severity": "LOW"
+        },
+        {
+          "rule_id": "SKY-D205",
+          "bandit_rule_id": "B301",
+          "message": "Pickle and modules that wrap it can be unsafe when used to deserialize untrusted data, possible security issue.",
+          "file": "./app.py",
+          "line": 8,
+          "severity": "MEDIUM"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/security_depth_python_pickle_json_rebind_safe/app.py",
+          "sha256": "95b6ce80c458bc098908bc89f908229cda41db0c529fca566849444091070f7a",
+          "lines": 8,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-pickle-custom-local-safe",
+      "legacy_false_negatives": 0,
+      "legacy_false_positives": 1,
+      "legacy_failures": [
+        {
+          "case_id": "python-pickle-custom-local-safe",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "absent",
+          "expected": "SKY-D205",
+          "found": [
+            "SKY-D205"
+          ]
+        }
+      ],
+      "source_adjudication": {
+        "classification": "confirmed_false_positive",
+        "source_truth": "safe_for_native_unpickling",
+        "rationale": "Function-local pickle variable is a DataParser instance whose loads only UTF-8 decodes. Bandit B301 misidentifies it as native pickle. B403 import warning does not change runtime provider.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "B403",
+          "bandit_rule_id": "B403",
+          "message": "Consider possible security implications associated with pickle module.",
+          "file": "./app.py",
+          "line": 1,
+          "severity": "LOW"
+        },
+        {
+          "rule_id": "SKY-D205",
+          "bandit_rule_id": "B301",
+          "message": "Pickle and modules that wrap it can be unsafe when used to deserialize untrusted data, possible security issue.",
+          "file": "./app.py",
+          "line": 10,
+          "severity": "MEDIUM"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/security_depth_python_pickle_custom_local_safe/app.py",
+          "sha256": "9f447166223f7386ee6d0c527b11e805cd245340935e7b4d6b55e38fee4c32d1",
+          "lines": 10,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-eval-direct-unsafe",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-eval-direct-unsafe",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D201",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "detected_but_crosswalk_missing",
+        "source_truth": "unsafe",
+        "rationale": "B307 reports exact built-in eval request-data sink. Mapping does not include B307 -> SKY-D201; reported benchmark FN is not a detector miss.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "B307",
+          "bandit_rule_id": "B307",
+          "message": "Use of possibly insecure function - consider using safer ast.literal_eval.",
+          "file": "./app.py",
+          "line": 5,
+          "severity": "MEDIUM"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/security_depth_python_eval_direct_unsafe/app.py",
+          "sha256": "74d677775fa498f1b61d29c19b7ec87bfcaee5b614014e75513e6fef626acb5c",
+          "lines": 5,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-eval-capture-unsafe",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-eval-capture-unsafe",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D201",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe",
+        "rationale": "Built-in eval captured as calculate_expression receives Flask request text; no Bandit warning.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/security_depth_python_eval_capture_unsafe/app.py",
+          "sha256": "2e9069d2b8e7442add320218637626d4db21a65d4b1cebede109a5ecc3a63417",
+          "lines": 6,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-command-direct-unsafe",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-command-direct-unsafe",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D212",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "detected_under_related_rule",
+        "source_truth": "unsafe",
+        "rationale": "B602 reports exact subprocess.run shell=True request-data sink, mapped SKY-D209. Fixture separately requires SKY-D212 tainted-command rule, creating additional FN despite an emitted warning at same sink. Detection is present; Bandit warning is not a full taint explanation.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "B404",
+          "bandit_rule_id": "B404",
+          "message": "Consider possible security implications associated with the subprocess module.",
+          "file": "./app.py",
+          "line": 1,
+          "severity": "LOW"
+        },
+        {
+          "rule_id": "SKY-D209",
+          "bandit_rule_id": "B602",
+          "message": "subprocess call with shell=True identified, security issue.",
+          "file": "./app.py",
+          "line": 6,
+          "severity": "HIGH"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/security_depth_python_command_direct_unsafe/app.py",
+          "sha256": "02b87faee6eae296fb550190c1e10c5f94ceb7e5ad301d49f901116b7e7ee5b9",
+          "lines": 6,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-command-capture-unsafe",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-command-capture-unsafe",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D212",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "detected_under_related_rule",
+        "source_truth": "unsafe",
+        "rationale": "B604 reports captured subprocess.run call with shell=True at exact sink, mapped SKY-D209. Source proves alias is native subprocess. Missing SKY-D212 expectation duplicates a detected operation under stronger/different rule semantics.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "B404",
+          "bandit_rule_id": "B404",
+          "message": "Consider possible security implications associated with the subprocess module.",
+          "file": "./app.py",
+          "line": 1,
+          "severity": "LOW"
+        },
+        {
+          "rule_id": "SKY-D209",
+          "bandit_rule_id": "B604",
+          "message": "Function call with shell=True parameter identified, possible security issue.",
+          "file": "./app.py",
+          "line": 7,
+          "severity": "MEDIUM"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/security_depth_python_command_capture_unsafe/app.py",
+          "sha256": "f8eba873926dae5f3bb9ef03a2b811aeb39334e8f53b41f2e093fc7a6345bbec",
+          "lines": 7,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-command-custom-local-safe",
+      "legacy_false_negatives": 0,
+      "legacy_false_positives": 1,
+      "legacy_failures": [
+        {
+          "case_id": "python-command-custom-local-safe",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "absent",
+          "expected": "SKY-D209",
+          "found": [
+            "SKY-D209"
+          ]
+        }
+      ],
+      "source_adjudication": {
+        "classification": "confirmed_false_positive",
+        "source_truth": "safe_for_process_execution",
+        "rationale": "Local subprocess variable is DataSink instance; run returns text and ignores shell flag. B602 falsely identifies this source-owned method as native subprocess execution.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "B404",
+          "bandit_rule_id": "B404",
+          "message": "Consider possible security implications associated with the subprocess module.",
+          "file": "./app.py",
+          "line": 1,
+          "severity": "LOW"
+        },
+        {
+          "rule_id": "SKY-D209",
+          "bandit_rule_id": "B602",
+          "message": "subprocess call with shell=True identified, security issue.",
+          "file": "./app.py",
+          "line": 10,
+          "severity": "HIGH"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/security_depth_python_command_custom_local_safe/app.py",
+          "sha256": "689f57f396f923b407ebb74f38f75321aecaa06466e4bb63d4bd8314560a15a1",
+          "lines": 10,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "prompt-homoglyph-and-split-keyword",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "prompt-homoglyph-and-split-keyword",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D260",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "policy_fact_not_confirmed_vulnerability",
+        "source_truth": "suspicious_source_policy_only",
+        "rationale": "Unicode-confusable identifier and instruction-like Markdown are present, but there is no LLM ingestion/control boundary or security consequence established. Bandit Python security contract does not establish prompt-injection detection. Do not call this a proven missed exploit.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/prompt_homoglyph_and_split_keyword/admin.py",
+          "sha256": "2b17cdc3f8ef2f493fd8fc12d3536915b2b6ac148a3fae068113a8ecc09609da",
+          "lines": 2,
+          "review": "Entire source read including all local helper/caller files present in case"
+        },
+        {
+          "file": "benchmarks/security/fixtures/prompt_homoglyph_and_split_keyword/locales/ru.json",
+          "sha256": "0ee3d307bf334e4ae534404ef2a501c3d75ac1cabb3731c35e790fa4cc5d8a0c",
+          "lines": 4,
+          "review": "Entire source read including all local helper/caller files present in case"
+        },
+        {
+          "file": "benchmarks/security/fixtures/prompt_homoglyph_and_split_keyword/notes.md",
+          "sha256": "f81f473c0a336be933360ebaf3c60939f4b99a758510741385c2f17c09d9e20f",
+          "lines": 3,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-ssrf-mapping-or-client",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-ssrf-mapping-or-client",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D216",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe",
+        "rationale": "Relay(True) installs actual httpx.Client; route sends request target through its get method. Initial empty dictionary assignment does not prove later mapping-only behavior.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/noise_python_ssrf_mapping_or_client/app.py",
+          "sha256": "e59dc58506979c3421c14b0c38331c73937510afb2cd526edc8c94748ff54928",
+          "lines": 23,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-secret-log-raw-beside-mask",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-secret-log-raw-beside-mask",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D251",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe_if_called",
+        "rationale": "getpass secret input is printed in full beside a partially masked representation.",
+        "assumptions": [
+          "store() invoked with a credential and stdout observable."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/noise_python_secret_log_raw_beside_mask/keys.py",
+          "sha256": "93c50f67ab9438d88124af7b0ae895c8e1e79c78873f6369a50011e09daccf0c",
+          "lines": 10,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-secret-log-helper-named-redact",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-secret-log-helper-named-redact",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D251",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "source_confirmed_missed_operation",
+        "source_truth": "unsafe_if_called",
+        "rationale": "redact only removes hyphens and print exposes remaining secret characters. Helper name does not prove confidentiality.",
+        "assumptions": [
+          "store() invoked with a credential; transformed value remains sensitive."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/noise_python_secret_log_helper_named_redact/keys.py",
+          "sha256": "84cd3d9edb7efff3a1043ff7d046d2e85021915bf308f38cfee68ce2df96b6f1",
+          "lines": 10,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-dynamic-import-alias-fallback",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-dynamic-import-alias-fallback",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D357",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "policy_fact_not_confirmed_vulnerability",
+        "source_truth": "unconstrained_import_policy_only",
+        "rationale": "sys.argv chooses importlib.import_module via raw fallback; bounded aliases are not enforced. This is a module-selection policy risk, but operator-controlled CLI argument is not by itself a demonstrated cross-trust-boundary exploit.",
+        "assumptions": [
+          "Elevated/delegated caller or less-trusted argument source would be needed for a privilege/security consequence."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/noise_python_dynamic_import_alias_fallback/cli.py",
+          "sha256": "639a761c2772efd6e536d5e51ce5b1e372e72cecfc7b422b82a6d93fed0ac584",
+          "lines": 9,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-hf-local-checkpoint-path",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-hf-local-checkpoint-path",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D345",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "detected_but_crosswalk_missing",
+        "source_truth": "unpinned_remote_artifact_possible",
+        "rationale": "B615 reports exact from_pretrained call at load.py:7; missing SKY-D345 crosswalk creates FN. Path annotation/str conversion does not prove local source, but no actual remote caller exists. Extra B615 at line11 incorrectly flags explicit local_files_only=True and is unscored by legacy absence labels.",
+        "assumptions": [
+          "Input resolves to remote Hub reference for positive policy claim."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "B615",
+          "bandit_rule_id": "B615",
+          "message": "Unsafe Hugging Face Hub download without revision pinning in from_pretrained()",
+          "file": "./load.py",
+          "line": 7,
+          "severity": "MEDIUM"
+        },
+        {
+          "rule_id": "B615",
+          "bandit_rule_id": "B615",
+          "message": "Unsafe Hugging Face Hub download without revision pinning in from_pretrained()",
+          "file": "./load.py",
+          "line": 11,
+          "severity": "MEDIUM"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/noise_python_hf_local_checkpoint_path/load.py",
+          "sha256": "39b7cffb3b9fbbebc2e017ed07aa8c5dad34df3dc379d32821589766e3ae83c9",
+          "lines": 15,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-hf-string-reference",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-hf-string-reference",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D345",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "detected_but_crosswalk_missing",
+        "source_truth": "unpinned_remote_artifact_possible",
+        "rationale": "B615 reports exact AutoModel.from_pretrained(model_dir) call with no revision. Missing SKY-D345 crosswalk creates benchmark FN; actual remote reference is conditional on caller value.",
+        "assumptions": [
+          "model_dir is remote Hub ID for positive policy claim."
+        ],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "B615",
+          "bandit_rule_id": "B615",
+          "message": "Unsafe Hugging Face Hub download without revision pinning in from_pretrained()",
+          "file": "./load.py",
+          "line": 5,
+          "severity": "MEDIUM"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/noise_python_hf_string_reference/load.py",
+          "sha256": "2f9f78a21b53e78d9496d957a6dfe43d84751531c81085b31e0dc47206d5005f",
+          "lines": 5,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-path-prefix-match-name",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-path-prefix-match-name",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D215",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "platform_or_routing_boundary_unresolved",
+        "source_truth": "conditional",
+        "rationale": "Regex match validates only prefix, so direct function calls with arbitrary paths or Windows backslash paths can be unsafe. Declared FastAPI route uses {name}, whose default converter excludes slash-separated paths; fixture does not establish the claimed POSIX request-to-traversal path.",
+        "assumptions": [
+          "Windows filesystem separators, altered router/proxy decoding, or alternate function caller needed for demonstrated escape."
+        ],
+        "primary_references": [
+          "https://fastapi.tiangolo.com/tutorial/path-params/#path-parameters-containing-paths"
+        ]
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/noise_python_path_prefix_match_name/app.py",
+          "sha256": "616591a38360fecc6d8a6ea212a8bce87b25b9bf34990b3d0d17001e79646c54",
+          "lines": 15,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-path-search-checked-name",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-path-search-checked-name",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D215",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "platform_or_routing_boundary_unresolved",
+        "source_truth": "conditional",
+        "rationale": "Regex search is not full validation, but ordinary FastAPI {name} excludes slash paths. POSIX endpoint traversal not established from provided source; Windows backslash or alternate caller changes boundary.",
+        "assumptions": [
+          "Windows filesystem separators, altered route decoding or alternate caller needed."
+        ],
+        "primary_references": [
+          "https://fastapi.tiangolo.com/tutorial/path-params/#path-parameters-containing-paths"
+        ]
+      },
+      "scanner_findings": [],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/noise_python_path_search_checked_name/app.py",
+          "sha256": "2f5b22e25e8b68bb6ee94b2c3aa3c475826241f393ab46b58624398eceee15b9",
+          "lines": 14,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    },
+    {
+      "case_id": "python-mcp-constructor-bind-all",
+      "legacy_false_negatives": 1,
+      "legacy_false_positives": 0,
+      "legacy_failures": [
+        {
+          "case_id": "python-mcp-constructor-bind-all",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D243",
+          "found": []
+        }
+      ],
+      "source_adjudication": {
+        "classification": "related_policy_detection_not_full_auth_claim",
+        "source_truth": "network_exposure_policy_only",
+        "rationale": "B104 already warns on host=0.0.0.0. Fixture starts streamable-http without auth configuration but tool is only ping returning pong. Binding exposure alone does not establish unauthorized sensitive action. B104 is not equivalent to stronger unauthenticated MCP rule SKY-D243.",
+        "assumptions": [],
+        "primary_references": []
+      },
+      "scanner_findings": [
+        {
+          "rule_id": "B104",
+          "bandit_rule_id": "B104",
+          "message": "Possible binding to all interfaces.",
+          "file": "./server.py",
+          "line": 3,
+          "severity": "MEDIUM"
+        }
+      ],
+      "source_files": [
+        {
+          "file": "benchmarks/security/fixtures/noise_python_mcp_constructor_bind_all/server.py",
+          "sha256": "ff60a7c44934599acacba8b56d5b0411a1e2168e46b53b3747f023e52d9028ea",
+          "lines": 12,
+          "review": "Entire source read including all local helper/caller files present in case"
+        }
+      ]
+    }
+  ],
+  "additional_unscored_finding": {
+    "case_id": "python-hf-local-checkpoint-path",
+    "file": "load.py",
+    "line": 11,
+    "bandit_rule": "B615",
+    "verdict": "false_positive_for_remote_unpinned_download",
+    "reason": "local_files_only=True forbids remote artifact fetch; legacy manifest has no exact-location absence guard, so this extra FP is invisible to rule-presence score."
+  },
+  "stdlib_only_validation": {
+    "command_description": "Construct native SSLContext(PROTOCOL_TLS), set verify_mode=CERT_NONE, then set check_hostname=True; no fixture imported and no network",
+    "before": {
+      "verify_mode": 0,
+      "check_hostname": false
+    },
+    "after": {
+      "verify_mode": 2,
+      "check_hostname": true
+    },
+    "native_CERT_REQUIRED": 2
+  },
+  "limits": [
+    "Classification counts are not a revised aggregate score; different policy/taint/detection contracts must be matched before computing fair metrics.",
+    "Source-confirmed missed operations include unsupported Bandit rule families; report capability gaps separately from matched-rule recall.",
+    "Incomplete endpoint/platform/caller boundaries remain conditional, not automatically true or false positives."
+  ]
+}

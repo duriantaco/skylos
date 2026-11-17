@@ -1,0 +1,14 @@
+{
+  "normal_discovery_binary": "/Users/oha/skylos/skylos/engines/go/skylos-go",
+  "sha256": "3865e4716c344400c8b1d1e37fe8464d89de6084c70b16cbfd335e525dbdc907",
+  "tracked_binary_updated": true,
+  "platform": "Mach-O arm64; same platform as tracked original",
+  "source_engine": "/tmp/skylos-review-fixes-20261117-go",
+  "original_engine_preserved": "/tmp/skylos-review-20261117-go",
+  "packaging_evidence": [
+    ".github/workflows/tests.yaml builds skylos/engines/go/skylos-go",
+    ".github/workflows/corpus.yml builds same bundled binary",
+    ".github/workflows/publish.yml builds platform wheels including Go engine"
+  ],
+  "version": "skylos-go dev (standalone engine; normally invoked by skylos CLI)"
+}

@@ -31,7 +31,7 @@
       {
         "id": "go-ssrf-function-alias",
         "path": "fixtures/security_depth_go_ssrf_function_alias",
-        "description": "Same get function invoked via local value; known unresolved native detector miss.",
+        "description": "Same get function invoked via local value; source-bound provider regression.",
         "languages": [
           "go"
         ],
@@ -57,7 +57,7 @@
       {
         "id": "go-ssrf-method-alias",
         "path": "fixtures/security_depth_go_ssrf_method_alias",
-        "description": "Bound http client method value; known unresolved native detector miss.",
+        "description": "Bound http client method value; source-bound provider regression.",
         "languages": [
           "go"
         ],
@@ -83,7 +83,7 @@
       {
         "id": "go-command-function-alias",
         "path": "fixtures/security_depth_go_command_function_alias",
-        "description": "Same command function via local value; known unresolved native detector miss.",
+        "description": "Same command function via local value; source-bound provider regression.",
         "languages": [
           "go"
         ],
@@ -109,7 +109,7 @@
       {
         "id": "go-path-function-alias",
         "path": "fixtures/security_depth_go_path_function_alias",
-        "description": "Same filesystem sink via value; known unresolved native detector miss.",
+        "description": "Same filesystem sink via value; source-bound provider regression.",
         "languages": [
           "go"
         ],
@@ -135,7 +135,7 @@
       {
         "id": "go-ssrf-request-alias",
         "path": "fixtures/security_depth_go_ssrf_request_alias",
-        "description": "Go type alias preserves exact http.request identity; known unresolved native detector miss.",
+        "description": "Go type alias preserves exact http.request identity; source-bound provider regression.",
         "languages": [
           "go"
         ],
@@ -161,7 +161,7 @@
       {
         "id": "go-tls-field-assignment",
         "path": "fixtures/security_depth_go_tls_field_assignment",
-        "description": "Typed tls config field assignment disables validation; known unresolved native detector miss.",
+        "description": "Typed tls config field assignment disables validation; source-bound provider regression.",
         "languages": [
           "go"
         ],

@@ -1,0 +1,12 @@
+{
+  "skylos/visitors/languages/typescript/core.py": "30b0beb7a256a9bf1c01d2b70dcb84185c8238e2a7049eaa6f5db4d068b8366b",
+  "skylos/visitors/languages/typescript/file_references.py": "a6f681cad526e35b92ba091c807cf6d6739352ee756978c600a3177d07d38bf5",
+  "skylos/visitors/languages/typescript/path_values.py": "2f8bdb5cb850023a1e3ed429aa3816eb5ec9af0b232fe75a1785caf3a253f56a",
+  "skylos/deadcode/typescript_definitions.py": "ddf4633c0b09e25bda0352f1c213944e1dbb332aa7f387608453e2250f38c6d4",
+  "skylos/reporting/dead_code_result.py": "b841c99ac309c687dbc99765ae8cb07077f8fe7863b56bbfa20cf67172475782",
+  "skylos/analyzer.py": "7d3b344f0d5dcedc4948832e792ba29fd338c20416a9aa058bcfee593b9c8bb8",
+  "test/test_ts_reviewed_path_values.py": "b13f821fa653ebdd6b505d3dd6b4cc3c81a5ff4fa6c5917ca224d7a638bd29f9",
+  "test/test_ts_variable_definition_context.py": "ab3e322c0310547b2801605ef9c97f3584d6c6ad49801bac0ee0c356bdc8c41b",
+  "test/test_ts_duplicate_definition_context.py": "5e666b1e967de4f002092bc0c3e80091b7d93984670a3bfa176ec33b180df5f0",
+  "test/test_ts_dead_code_loaded_files.py": "ff64f7dee09e228efb9554a82a16a2a39ea3f715268f78ffb98871b5e8aa627d"
+}

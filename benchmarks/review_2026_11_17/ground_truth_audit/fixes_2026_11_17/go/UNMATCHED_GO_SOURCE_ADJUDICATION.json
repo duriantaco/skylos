@@ -1,0 +1,111 @@
+{
+  "reviewer": "/root/other_truth",
+  "at_utc": "2026-11-17T03:16:28.662984+00:00",
+  "goji": "Exactly three frozen dead-method true positives, no extra findings",
+  "rows": [
+    {
+      "case": "go-ssrf-function-alias",
+      "expected_security_rules": [
+        [
+          "SKY-D216",
+          4
+        ]
+      ],
+      "new_unmatched_dead_code": [],
+      "unchanged_unused_handlers": [
+        [
+          "handler",
+          3
+        ]
+      ],
+      "adjudication": "Standalone private handler is not called/registered. Same dead-code output in both arms; expected security operation detected now, conditional on invocation and request input."
+    },
+    {
+      "case": "go-ssrf-method-alias",
+      "expected_security_rules": [
+        [
+          "SKY-D216",
+          4
+        ]
+      ],
+      "new_unmatched_dead_code": [],
+      "unchanged_unused_handlers": [
+        [
+          "handler",
+          3
+        ]
+      ],
+      "adjudication": "Standalone private handler is not called/registered. Same dead-code output in both arms; expected security operation detected now, conditional on invocation and request input."
+    },
+    {
+      "case": "go-command-function-alias",
+      "expected_security_rules": [
+        [
+          "SKY-D212",
+          4
+        ]
+      ],
+      "new_unmatched_dead_code": [],
+      "unchanged_unused_handlers": [
+        [
+          "handler",
+          3
+        ]
+      ],
+      "adjudication": "Standalone private handler is not called/registered. Same dead-code output in both arms; expected security operation detected now, conditional on invocation and request input."
+    },
+    {
+      "case": "go-path-function-alias",
+      "expected_security_rules": [
+        [
+          "SKY-D215",
+          4
+        ]
+      ],
+      "new_unmatched_dead_code": [],
+      "unchanged_unused_handlers": [
+        [
+          "handler",
+          3
+        ]
+      ],
+      "adjudication": "Standalone private handler is not called/registered. Same dead-code output in both arms; expected security operation detected now, conditional on invocation and request input."
+    },
+    {
+      "case": "go-ssrf-request-alias",
+      "expected_security_rules": [
+        [
+          "SKY-D216",
+          5
+        ]
+      ],
+      "new_unmatched_dead_code": [],
+      "unchanged_unused_handlers": [
+        [
+          "handler",
+          4
+        ]
+      ],
+      "adjudication": "Standalone private handler is not called/registered. Same dead-code output in both arms; expected security operation detected now, conditional on invocation and request input."
+    },
+    {
+      "case": "go-tls-field-assignment",
+      "expected_security_rules": [
+        [
+          "SKY-D210",
+          4
+        ]
+      ],
+      "new_unmatched_dead_code": [],
+      "unchanged_unused_handlers": [
+        [
+          "handler",
+          3
+        ]
+      ],
+      "adjudication": "Standalone private handler is not called/registered. Same dead-code output in both arms; expected security operation detected now, conditional on invocation and request input."
+    }
+  ],
+  "root_summary_go_unlabeled_findings": [],
+  "source_hashes_unchanged": true
+}

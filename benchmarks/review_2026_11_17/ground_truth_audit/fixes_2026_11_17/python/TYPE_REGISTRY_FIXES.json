@@ -1,0 +1,37 @@
+{
+  "completed_at": "2026-11-17T04:03:39.644689+00:00",
+  "source_truth_unchanged": true,
+  "original_source_audit": "TYPE_REGISTRY_REMAINING_GAPS.json",
+  "resolved_frozen_miss_count": 12,
+  "case_count": 7,
+  "before_counts": {
+    "true_positives": 6,
+    "false_positives": 0,
+    "false_negatives": 12,
+    "true_negatives": 57
+  },
+  "after_counts": {
+    "true_positives": 18,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "true_negatives": 57
+  },
+  "implemented_proof": "Bounded source-only state interpretation of type-keyed registries: instance identity, primitive and simple-source type/MRO keys, flat tuple channel keys, callable identity, closures, copied dictionary snapshots and source-visible replacement.",
+  "domain_limits": [
+    "Flat standalone Python-only roots with no package metadata/non-Python context or ambiguous stdlib module names.",
+    "External modules/callers, unknown keys/values/control flow, custom class protocols, nonliteral defaults, annotations, async/generator/lambda/star calls, modeled builtin shadowing, explicit external entrypoints and later trace/coverage roots all abstain.",
+    "Integer/scalar bounds8192; table/key/argument bounds256; recursive/type depth and AST step budgets enforced before native growth.",
+    "Unambiguous class base objects captured at creation; literal identity only None comparisons."
+  ],
+  "validation": "258 shared regressions passed8.90s;20 independent semantic/resource/integration controls passed; seven frozen cases have0FP/0FN; Ruff clean.",
+  "target_execution": false,
+  "source_sha256": {
+    "skylos/deadcode/closed_type_registries.py": "6722018a45bda513991be0674f916c1978c0916d7c736db8f5f89fdd500552c9",
+    "skylos/deadcode/reachability.py": "bc21798ff342c38fbcb4212c8439bed8563ee9b2b93a3df9b3593a1eeb05d758",
+    "skylos/deadcode/evidence.py": "3292b7b9341acb43c8dd1ff5a67fd74ffa7f09aa771a3066e591450f6bbff342",
+    "skylos/analyzer.py": "3d0d484ec6a6903e4dbfc452d2258a2af79c3b6fd426a7ceaee12def961f6970",
+    "test/test_closed_type_registries.py": "bea9cfc658b3818845356d164dc637fd8b07db220043e3bb0171f9af45c6127d",
+    "test/test_closed_type_registry_independent_review.py": "f927d84ed509703d3d7669e0d51cd03dfabe6e57581d8f05aa5cde3d479a8296",
+    "test/test_closed_type_registry_proof_limits.py": "76b1ec8cae28633b27bfddaa9675c3076dcd99e99d5f7dd2beee05d19ac4d466"
+  }
+}

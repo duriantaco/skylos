@@ -1,0 +1,324 @@
+{
+  "frozen_label_sha256": "98aca5cf07106c98276d48b0575027f1c056dce2836c2545c495bb466ac20cf7",
+  "go_engine": "/tmp/skylos-review-20261117-go",
+  "targets": [
+    {
+      "id": "lukeed--regexparam",
+      "analysis_issues": [],
+      "labels": [
+        {
+          "label": {
+            "id": "regexparam.parse",
+            "kind": "used",
+            "file": "src/index.js",
+            "line": 5,
+            "symbol": "parse",
+            "reason": "Named public export; test/parse.js:3 imports ../src and line 8 calls parse. index.d.ts:1 and package.json:23-29 preserve public API.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "regexparam.inject",
+            "kind": "used",
+            "file": "src/index.js",
+            "line": 35,
+            "symbol": "inject",
+            "reason": "Named public export; test/inject.js:3 imports ../src and line 13 calls inject; index.d.ts:28 declares its contract.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "regexparam.RGX",
+            "kind": "used",
+            "file": "src/index.js",
+            "line": 32,
+            "symbol": "RGX",
+            "reason": "inject passes this local regex binding to route.replace at src/index.js:36.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "regexparam.test/parse.js.run",
+            "kind": "used",
+            "file": "test/parse.js",
+            "line": 7,
+            "symbol": "run",
+            "reason": "toExec invokes run at line 23; toLooseExec invokes it at line 29.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "regexparam.test/parse.js.raw",
+            "kind": "used",
+            "file": "test/parse.js",
+            "line": 18,
+            "symbol": "raw",
+            "reason": "(raw) exec test calls raw at line 392 and subsequent cases.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "regexparam.test/parse.js.toExec",
+            "kind": "used",
+            "file": "test/parse.js",
+            "line": 22,
+            "symbol": "toExec",
+            "reason": "Registered execs test invokes toExec at line 266 and following cases.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "regexparam.test/parse.js.toLooseExec",
+            "kind": "used",
+            "file": "test/parse.js",
+            "line": 28,
+            "symbol": "toLooseExec",
+            "reason": "Registered execs :: loose test invokes it at line 330 and following cases.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "regexparam.test/inject.js.run",
+            "kind": "used",
+            "file": "test/inject.js",
+            "line": 10,
+            "symbol": "run",
+            "reason": "Top-level line 41 and many later lines invoke run to register uvu tests.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "regexparam.regexp-exec",
+            "kind": "security_absent",
+            "file": "test/parse.js",
+            "line": 9,
+            "symbol": "result.pattern.exec",
+            "reason": "result comes from parse at line 8; src/index.js:6 and 28 return a RegExp instance. This operation is regex matching rather than OS command execution.",
+            "confidence": "source-confirmed",
+            "rule_id": "SKY-D212",
+            "start_line": 9,
+            "end_line": 9,
+            "assumptions": "Property describes command execution only; not a blanket regex complexity safety claim."
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        }
+      ],
+      "finding_counts": {
+        "unused_functions": 0,
+        "unused_imports": 0,
+        "unused_classes": 0,
+        "unused_variables": 0,
+        "unused_parameters": 0,
+        "unused_files": 0,
+        "danger": 5
+      }
+    },
+    {
+      "id": "lukeed--trouter",
+      "analysis_issues": [],
+      "labels": [
+        {
+          "label": {
+            "id": "trouter.Trouter",
+            "kind": "used",
+            "file": "index.mjs",
+            "line": 16,
+            "symbol": "Trouter",
+            "reason": "Exported by package.json:10-15; test/index.js:3 imports Trouter and line 38 constructs it; index.d.ts:9 preserves public contract.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "trouter.use",
+            "kind": "used",
+            "file": "index.mjs",
+            "line": 32,
+            "symbol": "use",
+            "reason": "test/index.js:124 calls ctx.use; public contract index.d.ts:15.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "trouter.add",
+            "kind": "used",
+            "file": "index.mjs",
+            "line": 39,
+            "symbol": "add",
+            "reason": "Constructor lines 20-29 bind this method to HTTP verb methods; test/index.js:56 calls it directly.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "trouter.find",
+            "kind": "used",
+            "file": "index.mjs",
+            "line": 46,
+            "symbol": "find",
+            "reason": "test/index.js:174, 183, 208, 240 and many more call it. Public contract index.d.ts:10.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "trouter.MAP",
+            "kind": "used",
+            "file": "index.mjs",
+            "line": 3,
+            "symbol": "MAP",
+            "reason": "Read by use at line 35, add at line 42 and find at line 47.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "trouter.bench/index.js.noop",
+            "kind": "used",
+            "file": "bench/index.js",
+            "line": 4,
+            "symbol": "noop",
+            "reason": "Routes loop registers noop at line 20 and trouter.all at line 23.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "trouter.bench/index.js.onCycle",
+            "kind": "used",
+            "file": "bench/index.js",
+            "line": 5,
+            "symbol": "onCycle",
+            "reason": "Passed as event listener at lines 30 and 36; benchmark script package.json:32 supplies entrypoint.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "trouter.test/index.js.noop",
+            "kind": "used",
+            "file": "test/index.js",
+            "line": 7,
+            "symbol": "noop",
+            "reason": "Supplied to ctx.add at line 56 and many later calls.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "trouter.test/index.js.isRoute",
+            "kind": "used",
+            "file": "test/index.js",
+            "line": 10,
+            "symbol": "isRoute",
+            "reason": "Called at lines 62,73 and throughout registered test callbacks.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "trouter.test/index.js.isEmpty",
+            "kind": "used",
+            "file": "test/index.js",
+            "line": 259,
+            "symbol": "isEmpty",
+            "reason": "Both out.params and out.handlers are passed at lines 264-265.",
+            "confidence": "source-confirmed"
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        },
+        {
+          "label": {
+            "id": "trouter.regexp-exec",
+            "kind": "security_absent",
+            "file": "index.mjs",
+            "line": 60,
+            "symbol": "tmp.pattern.exec",
+            "reason": "tmp.pattern stored by add at lines 40-42 originates from the regexparam.parse RegExp contract. No command/process module is imported anywhere in this production file.",
+            "confidence": "source-confirmed",
+            "rule_id": "SKY-D212",
+            "start_line": 55,
+            "end_line": 60,
+            "assumptions": "Dependency contract verified in separately pinned regexparam source. This is not a regex-DoS or whole-project safety label."
+          },
+          "outcome": "retained_control",
+          "issues": [],
+          "matching_findings": []
+        }
+      ],
+      "finding_counts": {
+        "unused_functions": 0,
+        "unused_imports": 0,
+        "unused_classes": 0,
+        "unused_variables": 0,
+        "unused_parameters": 0,
+        "unused_files": 0,
+        "danger": 5
+      }
+    }
+  ]
+}

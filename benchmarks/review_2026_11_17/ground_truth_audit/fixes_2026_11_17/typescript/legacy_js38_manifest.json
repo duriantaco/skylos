@@ -1,0 +1,2201 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "typescript-vscode-pseudoterminal-callbacks",
+      "path": "fixtures/typescript_vscode_pseudoterminal",
+      "description": "VS Code Pseudoterminal and provider contract methods are host-invoked callbacks, while unrelated methods on the same classes remain dead code.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/microsoft/vscode-extension-samples",
+        "license": "MIT",
+        "notes": "Distilled from the task-provider sample at pinned revision 3d8442b16c7f353779e266f16295703b2b4a6dcc."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "staleHelper"
+          },
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "staleProviderHelper"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "activate"
+          },
+          {
+            "kind": "class",
+            "file": "src/extension.ts",
+            "symbol": "BuildTerminal"
+          },
+          {
+            "kind": "class",
+            "file": "src/extension.ts",
+            "symbol": "InternalTaskProvider"
+          },
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "open"
+          },
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "close"
+          },
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "provideTasks"
+          },
+          {
+            "kind": "function",
+            "file": "src/extension.ts",
+            "symbol": "resolveTask"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ts-js-package-reachability",
+      "path": "fixtures/ts_js_package",
+      "description": "TypeScript package entrypoints and imports should keep live exports reachable while stale TS and JS exports are reported.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "package_entrypoint",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/microsoft/TypeScript",
+        "license": "Apache-2.0",
+        "notes": "Distilled from package.json main entrypoints and mixed TS/JS module graphs."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "src/service.ts",
+            "symbol": "unusedTransform"
+          },
+          {
+            "kind": "function",
+            "file": "src/legacy.js",
+            "symbol": "legacySync"
+          },
+          {
+            "kind": "file",
+            "file": "src/legacy.js",
+            "symbol": "src/legacy.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "src/service.ts",
+            "symbol": "runJob"
+          },
+          {
+            "kind": "function",
+            "file": "src/service.ts",
+            "symbol": "formatJob"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-javascript-namespace-members",
+      "path": "fixtures/typescript_namespace_members",
+      "description": "Static namespace member reads and stable aliases retain selected exports without crediting unrelated or shadowed members.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only fixture. Selective namespace/opaque-use approach studied in Knip at 2305dad9b0d76e5f603cd353a1820c24ae0e720d (ISC); no upstream code copied."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "retired"
+          },
+          {
+            "kind": "function",
+            "file": "worker.js",
+            "symbol": "legacy"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "worker.js",
+            "symbol": "run"
+          },
+          {
+            "kind": "function",
+            "file": "index.ts",
+            "symbol": "inspect"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-namespace-escape-boundaries",
+      "path": "fixtures/typescript_namespace_escape",
+      "description": "Escaped namespaces and dynamic member keys keep all their exports while an unrelated internal helper remains unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "dynamic_dispatch",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only namespace escape and dynamic-key controls; target code is never executed."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "index.ts",
+            "symbol": "staleHelper"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "retired"
+          },
+          {
+            "kind": "function",
+            "file": "dynamic.ts",
+            "symbol": "first"
+          },
+          {
+            "kind": "function",
+            "file": "dynamic.ts",
+            "symbol": "second"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-lexical-value-identity",
+      "path": "fixtures/typescript_lexical_value_identity",
+      "description": "Lexical value and selected-program module reachability with used and unused controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source. Derived from manually confirmed language gaps in pinned repositories; no target execution or repository-specific exemptions."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "measure"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "callback"
+          },
+          {
+            "kind": "function",
+            "file": "index.ts",
+            "symbol": "start"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-dead-import-consumers",
+      "path": "fixtures/typescript_dead_import_consumers",
+      "description": "Lexical value and selected-program module reachability with used and unused controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source. Derived from manually confirmed language gaps in pinned repositories; no target execution or repository-specific exemptions."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "calculate"
+          },
+          {
+            "kind": "variable",
+            "file": "helpers.ts",
+            "symbol": "modes"
+          },
+          {
+            "kind": "function",
+            "file": "orphan.ts",
+            "symbol": "prepare"
+          },
+          {
+            "kind": "file",
+            "file": "orphan.ts",
+            "symbol": "orphan.ts"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "import",
+            "file": "index.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "import",
+            "file": "orphan.ts",
+            "symbol": "calculate"
+          },
+          {
+            "kind": "import",
+            "file": "orphan.ts",
+            "symbol": "modes"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-loaded-import-consumers",
+      "path": "fixtures/typescript_loaded_import_consumers",
+      "description": "Lexical value and selected-program module reachability with used and unused controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static-only source. Derived from manually confirmed language gaps in pinned repositories; no target execution or repository-specific exemptions."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "helpers.ts",
+            "symbol": "calculate"
+          },
+          {
+            "kind": "variable",
+            "file": "helpers.ts",
+            "symbol": "modes"
+          },
+          {
+            "kind": "function",
+            "file": "consumer.ts",
+            "symbol": "prepare"
+          },
+          {
+            "kind": "import",
+            "file": "consumer.ts",
+            "symbol": "calculate"
+          },
+          {
+            "kind": "import",
+            "file": "consumer.ts",
+            "symbol": "modes"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-reexport-demand-chain",
+      "path": "fixtures/typescript_reexport_demand_chain",
+      "description": "Resolved named and wildcard export forwarding with exact unused and used source controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static source contracts for per-export forwarding; labels fixed from source before analysis. No upstream implementation copied."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "obsolete"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "validate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-reexport-public-and-escape",
+      "path": "fixtures/typescript_reexport_public_and_escape",
+      "description": "Resolved named and wildcard export forwarding with exact unused and used source controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static source contracts for per-export forwarding; labels fixed from source before analysis. No upstream implementation copied."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "retiredPrivate"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "announce"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "prepare"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "cancel"
+          },
+          {
+            "kind": "function",
+            "file": "dynamic_service.ts",
+            "symbol": "action"
+          },
+          {
+            "kind": "function",
+            "file": "dynamic_service.ts",
+            "symbol": "alternative"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-reexport-enumerated-aliases",
+      "path": "fixtures/typescript_reexport_enumerated_aliases",
+      "description": "Literal module namespace key enumeration follows resolved wildcard bindings even when generated package outputs are unavailable; private helpers remain unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract distilled from native source snapshot evidence; no upstream code copied. Key enumeration reads exported compatibility binding identities."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "bindings.ts",
+            "symbol": "privateOld"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "bindings.ts",
+            "symbol": "build"
+          },
+          {
+            "kind": "variable",
+            "file": "bindings.ts",
+            "symbol": "legacy"
+          },
+          {
+            "kind": "variable",
+            "file": "bindings.ts",
+            "symbol": "compatibility"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-nested-namespace-export",
+      "path": "fixtures/typescript_nested_namespace_export",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "format.ts",
+            "symbol": "expanded"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "format.ts",
+            "symbol": "compact"
+          }
+        ]
+      },
+      "description": "A closed application reads compact through two namespace exports; expanded has no consumer. A native-valid tagged template must not make the source scope incomplete or disable exact export demand.",
+      "importance": "high",
+      "symbol_identity": "simple",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract. Literal namespace forwarding and native-valid TypeScript grammar are verified with independent compiler/source controls."
+      }
+    },
+    {
+      "id": "typescript-namespace-export-public-and-opaque",
+      "path": "fixtures/typescript_namespace_export_public_and_opaque",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "helper"
+          },
+          {
+            "kind": "function",
+            "file": "renderer.ts",
+            "symbol": "inspect"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "dispatch"
+          },
+          {
+            "kind": "function",
+            "file": "service.ts",
+            "symbol": "cancel"
+          },
+          {
+            "kind": "function",
+            "file": "renderer.ts",
+            "symbol": "render"
+          },
+          {
+            "kind": "function",
+            "file": "renderer.ts",
+            "symbol": "prepare"
+          }
+        ]
+      },
+      "description": "Escaping namespace preserves exported service functions; declared package API preserves renderer functions; private uncalled helpers remain dead in both providers.",
+      "importance": "high",
+      "symbol_identity": "simple",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original source contract. Literal namespace forwarding and native-valid TypeScript grammar are verified with independent compiler/source controls."
+      }
+    },
+    {
+      "id": "typescript-jsx-classic-runtime",
+      "path": "fixtures/tsjs_jsx_classic",
+      "description": "With tsconfig jsx: react, JSX reads the React binding; a React import in a file without JSX is still unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/plain.tsx",
+            "symbol": "React"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/index.tsx",
+            "symbol": "React"
+          },
+          {
+            "kind": "import",
+            "file": "src/Badge.tsx",
+            "symbol": "React"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-jsx-automatic-runtime",
+      "path": "fixtures/tsjs_jsx_automatic",
+      "description": "With tsconfig jsx: react-jsx the compiler imports the runtime itself, so an unread React import is unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/index.tsx",
+            "symbol": "React"
+          }
+        ],
+        "used": []
+      }
+    },
+    {
+      "id": "typescript-jsx-pragma-factory",
+      "path": "fixtures/tsjs_jsx_pragma",
+      "description": "A @jsx pragma makes JSX read the named factory in that file only.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/other.tsx",
+            "symbol": "h"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/index.tsx",
+            "symbol": "h"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-jsx-configured-factory",
+      "path": "fixtures/tsjs_jsx_factory",
+      "description": "tsconfig jsxFactory names the binding JSX reads; React is unused under a custom factory.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/other.tsx",
+            "symbol": "React"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/index.tsx",
+            "symbol": "h"
+          },
+          {
+            "kind": "import",
+            "file": "src/other.tsx",
+            "symbol": "h"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-qualified-type-import-use",
+      "path": "fixtures/tsjs_type_use",
+      "description": "A type namespace import used as the root of a qualified type name is read; unnamed type imports are unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/runner.ts",
+            "symbol": "spareNs"
+          },
+          {
+            "kind": "import",
+            "file": "src/runner.ts",
+            "symbol": "Gone"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/runner.ts",
+            "symbol": "sdk"
+          },
+          {
+            "kind": "import",
+            "file": "src/runner.ts",
+            "symbol": "Kept"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-destructuring-default-reads",
+      "path": "fixtures/tsjs_default_value",
+      "description": "Default values of destructured bindings and parameters read the import or constant they name.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/panel.ts",
+            "symbol": "spare"
+          },
+          {
+            "kind": "variable",
+            "file": "src/panel.ts",
+            "symbol": "DEFAULT_MAX"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/panel.ts",
+            "symbol": "noop"
+          },
+          {
+            "kind": "variable",
+            "file": "src/panel.ts",
+            "symbol": "DEFAULT_MIN"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-dependency-base-overrides",
+      "path": "fixtures/tsjs_override",
+      "description": "Methods of a class that extends a dependency's class can be overrides the dependency calls; methods of base-less and project-base classes are judged normally.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "src/index.ts",
+            "symbol": "Plain.eq"
+          },
+          {
+            "kind": "function",
+            "file": "src/index.ts",
+            "symbol": "Local.matches"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "src/index.ts",
+            "symbol": "Label.eq"
+          },
+          {
+            "kind": "function",
+            "file": "src/index.ts",
+            "symbol": "Label.toDOM"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
+      "id": "typescript-member-call-same-name-local",
+      "path": "fixtures/tsjs_member_same_name",
+      "description": "A method called through an instance inside a declaration of the same name is used; a local variable that only shares a method's name is not a call.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "src/service.ts",
+            "symbol": "format"
+          },
+          {
+            "kind": "function",
+            "file": "src/service.ts",
+            "symbol": "stale"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "src/service.ts",
+            "symbol": "isNewer"
+          }
+        ]
+      }
+    },
+    {
+      "id": "javascript-storybook-config-files",
+      "path": "fixtures/tsjs_storybook",
+      "description": "Storybook loads its named .storybook config files; other files there and orphans need an importer.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": ".storybook/leftover.js",
+            "symbol": ".storybook/leftover.js"
+          },
+          {
+            "kind": "file",
+            "file": "src/orphan.js",
+            "symbol": "src/orphan.js"
+          },
+          {
+            "kind": "variable",
+            "file": ".storybook/leftover.js",
+            "symbol": "leftover"
+          },
+          {
+            "kind": "variable",
+            "file": "src/orphan.js",
+            "symbol": "orphan"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": ".storybook/addons.js",
+            "symbol": ".storybook/addons.js"
+          },
+          {
+            "kind": "file",
+            "file": ".storybook/config.js",
+            "symbol": ".storybook/config.js"
+          },
+          {
+            "kind": "file",
+            "file": ".storybook/main.js",
+            "symbol": ".storybook/main.js"
+          },
+          {
+            "kind": "variable",
+            "file": "src/index.js",
+            "symbol": "value"
+          }
+        ]
+      }
+    },
+    {
+      "id": "javascript-storybook-config-without-storybook",
+      "path": "fixtures/tsjs_storybook_nodep",
+      "description": "Without a Storybook dependency or script, a .storybook file is an ordinary unused file.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": ".storybook/config.js",
+            "symbol": ".storybook/config.js"
+          },
+          {
+            "kind": "variable",
+            "file": ".storybook/config.js",
+            "symbol": "stale"
+          }
+        ],
+        "used": [
+          {
+            "kind": "variable",
+            "file": "src/index.js",
+            "symbol": "value"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-runner-conf-files",
+      "path": "fixtures/tsjs_conf_files",
+      "description": "karma.conf and wdio.conf in a package that uses the runner are loaded by it; WebdriverIO reads only the exported config.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "variable",
+            "file": "wdio.conf.ts",
+            "symbol": "leftover"
+          },
+          {
+            "kind": "file",
+            "file": "src/settings.conf.ts",
+            "symbol": "src/settings.conf.ts"
+          },
+          {
+            "kind": "variable",
+            "file": "src/settings.conf.ts",
+            "symbol": "settings"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "karma.conf.ts",
+            "symbol": "karma.conf.ts"
+          },
+          {
+            "kind": "file",
+            "file": "wdio.conf.ts",
+            "symbol": "wdio.conf.ts"
+          },
+          {
+            "kind": "variable",
+            "file": "wdio.conf.ts",
+            "symbol": "config"
+          }
+        ]
+      }
+    },
+    {
+      "id": "javascript-runner-conf-without-runner",
+      "path": "fixtures/tsjs_conf_nodep",
+      "description": "A karma.conf.js in a package that neither depends on nor runs Karma is unused.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "karma.conf.js",
+            "symbol": "karma.conf.js"
+          }
+        ],
+        "used": []
+      }
+    },
+    {
+      "id": "typescript-tool-config-path-strings",
+      "path": "fixtures/tsjs_tool_config_paths",
+      "description": "Path strings in a tool configuration file load the files they name; comments, prose and path strings in ordinary modules do not.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "lib/mentioned.ts",
+            "symbol": "lib/mentioned.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/prose.ts",
+            "symbol": "lib/prose.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/stale.ts",
+            "symbol": "lib/stale.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/excluded.ts",
+            "symbol": "lib/excluded.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/orphan.ts",
+            "symbol": "lib/orphan.ts"
+          },
+          {
+            "kind": "variable",
+            "file": "lib/excluded.ts",
+            "symbol": "excluded"
+          },
+          {
+            "kind": "variable",
+            "file": "lib/mentioned.ts",
+            "symbol": "mentioned"
+          },
+          {
+            "kind": "variable",
+            "file": "lib/notes.ts",
+            "symbol": "stalePath"
+          },
+          {
+            "kind": "variable",
+            "file": "lib/orphan.ts",
+            "symbol": "orphan"
+          },
+          {
+            "kind": "variable",
+            "file": "lib/prose.ts",
+            "symbol": "prose"
+          },
+          {
+            "kind": "variable",
+            "file": "lib/stale.ts",
+            "symbol": "stale"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "lib/app.ts",
+            "symbol": "lib/app.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/menu.ts",
+            "symbol": "lib/menu.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/renderer.ts",
+            "symbol": "lib/renderer.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/preload.ts",
+            "symbol": "lib/preload.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/api.ts",
+            "symbol": "lib/api.ts"
+          },
+          {
+            "kind": "file",
+            "file": "lib/resource-en.js",
+            "symbol": "lib/resource-en.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-tsconfig-include-exact-file",
+      "path": "fixtures/tsjs_tsconfig_include",
+      "description": "A tsconfig include entry that names one file is a compilation root; globs, excludes and unlisted files are not.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "tools/other.ts",
+            "symbol": "tools/other.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/excluded.ts",
+            "symbol": "tools/excluded.ts"
+          },
+          {
+            "kind": "file",
+            "file": "extra/glob_only.ts",
+            "symbol": "extra/glob_only.ts"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "tools/tester.ts",
+            "symbol": "tools/tester.ts"
+          }
+        ]
+      }
+    },
+    {
+      "id": "javascript-path-join-literal-files",
+      "path": "fixtures/tsjs_path_join",
+      "description": "path.join/path.resolve from node:path with literal segments name the file they build; comments, Array.join and local lookalikes do not.",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "typescript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "lib/commented.js",
+            "symbol": "lib/commented.js"
+          },
+          {
+            "kind": "file",
+            "file": "lib/joined.js",
+            "symbol": "lib/joined.js"
+          },
+          {
+            "kind": "file",
+            "file": "lib/fake.js",
+            "symbol": "lib/fake.js"
+          },
+          {
+            "kind": "file",
+            "file": "lib/orphan.js",
+            "symbol": "lib/orphan.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "lib/shared.js",
+            "symbol": "lib/shared.js"
+          },
+          {
+            "kind": "file",
+            "file": "tools/input.ts",
+            "symbol": "tools/input.ts"
+          },
+          {
+            "kind": "file",
+            "file": "src/bundle.ts",
+            "symbol": "src/bundle.ts"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-runtime-command-template-files",
+      "path": "fixtures/tsjs_command_template",
+      "description": "A runtime command built in a template literal runs the script it names; prose and non-command joins do not.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "templates/hooks/archived-hook.js",
+            "symbol": "templates/hooks/archived-hook.js"
+          },
+          {
+            "kind": "file",
+            "file": "templates/hooks/unregistered.js",
+            "symbol": "templates/hooks/unregistered.js"
+          },
+          {
+            "kind": "file",
+            "file": "templates/report.js",
+            "symbol": "templates/report.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "templates/hooks/session-start.js",
+            "symbol": "templates/hooks/session-start.js"
+          },
+          {
+            "kind": "file",
+            "file": "templates/hooks/hook-utils.js",
+            "symbol": "templates/hooks/hook-utils.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-markdown-run-instructions",
+      "path": "fixtures/tsjs_markdown_run",
+      "description": "A runtime command in a Markdown code block or code span is a run instruction; prose, links and non-runtime commands are mentions.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "multi_file",
+        "cli_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "tools/inline.ts",
+            "symbol": "tools/inline.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/legacy.ts",
+            "symbol": "tools/legacy.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/linked.ts",
+            "symbol": "tools/linked.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/catted.ts",
+            "symbol": "tools/catted.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/snippet.ts",
+            "symbol": "tools/snippet.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/orphan.ts",
+            "symbol": "tools/orphan.ts"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "src/evals/run.ts",
+            "symbol": "src/evals/run.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/make.ts",
+            "symbol": "tools/make.ts"
+          },
+          {
+            "kind": "file",
+            "file": "tools/helper.ts",
+            "symbol": "tools/helper.ts"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-package-manifest-named-files",
+      "path": "fixtures/tsjs_package_keys",
+      "description": "package.json files entries that name one file and path values of custom keys load that file; folder entries, descriptions and ignore lists do not.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "package_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "templates/shipped/inner.js",
+            "symbol": "templates/shipped/inner.js"
+          },
+          {
+            "kind": "file",
+            "file": "src/described.ts",
+            "symbol": "src/described.ts"
+          },
+          {
+            "kind": "file",
+            "file": "src/ignored.ts",
+            "symbol": "src/ignored.ts"
+          },
+          {
+            "kind": "variable",
+            "file": "src/described.ts",
+            "symbol": "described"
+          },
+          {
+            "kind": "variable",
+            "file": "src/ignored.ts",
+            "symbol": "ignored"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "src/ext/plugin.ts",
+            "symbol": "src/ext/plugin.ts"
+          },
+          {
+            "kind": "function",
+            "file": "src/ext/plugin.ts",
+            "symbol": "plugin"
+          },
+          {
+            "kind": "file",
+            "file": "templates/run_tool.js",
+            "symbol": "templates/run_tool.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-react-native-platform-extensions",
+      "path": "fixtures/tsjs_platform_rn",
+      "description": "In a React Native project an import loads every platform sibling of its target; platform files nobody imports stay unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "hooks/lonely.web.ts",
+            "symbol": "hooks/lonely.web.ts"
+          },
+          {
+            "kind": "file",
+            "file": "hooks/useGone.ts",
+            "symbol": "hooks/useGone.ts"
+          },
+          {
+            "kind": "file",
+            "file": "hooks/useGone.ios.ts",
+            "symbol": "hooks/useGone.ios.ts"
+          },
+          {
+            "kind": "function",
+            "file": "hooks/lonely.web.ts",
+            "symbol": "lonely"
+          },
+          {
+            "kind": "function",
+            "file": "hooks/useGone.ios.ts",
+            "symbol": "useGone"
+          },
+          {
+            "kind": "function",
+            "file": "hooks/useGone.ts",
+            "symbol": "useGone"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "hooks/useScale.web.ts",
+            "symbol": "hooks/useScale.web.ts"
+          },
+          {
+            "kind": "function",
+            "file": "hooks/useScale.web.ts",
+            "symbol": "useScale"
+          },
+          {
+            "kind": "file",
+            "file": "ui/Button.ios.tsx",
+            "symbol": "ui/Button.ios.tsx"
+          },
+          {
+            "kind": "file",
+            "file": "ui/Button.android.tsx",
+            "symbol": "ui/Button.android.tsx"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-platform-suffix-without-react-native",
+      "path": "fixtures/tsjs_platform_none",
+      "description": "Without React Native or Expo, scale.web.ts is an ordinary module that needs its own importer.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "src/scale.web.ts",
+            "symbol": "src/scale.web.ts"
+          },
+          {
+            "kind": "function",
+            "file": "src/scale.web.ts",
+            "symbol": "scale"
+          }
+        ],
+        "used": []
+      }
+    },
+    {
+      "id": "typescript-source-reexport-import-binding",
+      "path": "fixtures/tsjs_reexport_import",
+      "description": "An `export { X } from` statement re-exports from the module and does not read a local import of X; a local `export { X }` does.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "import",
+            "file": "src/tools.ts",
+            "symbol": "DESCRIPTION"
+          }
+        ],
+        "used": [
+          {
+            "kind": "import",
+            "file": "src/tools.ts",
+            "symbol": "LIMIT"
+          },
+          {
+            "kind": "import",
+            "file": "src/tools.ts",
+            "symbol": "helper"
+          },
+          {
+            "kind": "variable",
+            "file": "src/constants.ts",
+            "symbol": "DESCRIPTION"
+          }
+        ]
+      }
+    },
+    {
+      "id": "typescript-default-reexport-from-entry",
+      "path": "fixtures/tsjs_reexport_default",
+      "description": "A default export re-exported by name from the package entry is public API.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "package_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture. Labels follow the language, bundler or tool semantics named in the description; no program is run."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [],
+        "used": [
+          {
+            "kind": "function",
+            "file": "src/useTimeout.ts",
+            "symbol": "useTimeout"
+          },
+          {
+            "kind": "function",
+            "file": "src/useEnsured.ts",
+            "symbol": "useEnsured"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-conditional-assets-direct",
+      "path": "fixtures/corpus_conditional_assets_direct",
+      "description": "Direct HTML script references preserve exact paths while ordinary and malformed comments do not load scripts.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "low",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic asset-loading corpus. Conditional-comment loads apply only to matching legacy Internet Explorer modes; no modern-browser execution claim."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "js/c.js",
+            "symbol": "js/c.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/d.js",
+            "symbol": "js/d.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/e.js",
+            "symbol": "js/e.js"
+          },
+          {
+            "kind": "file",
+            "file": "other/b.js",
+            "symbol": "other/b.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "js/a.js",
+            "symbol": "js/a.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/b.js",
+            "symbol": "js/b.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-conditional-assets-plain",
+      "path": "fixtures/corpus_conditional_assets_plain",
+      "description": "Legacy IE conditional HTML script references preserve the exact asset without treating ordinary or malformed comments as loads.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "low",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic asset-loading corpus. Conditional-comment loads apply only to matching legacy Internet Explorer modes; no modern-browser execution claim."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "js/c.js",
+            "symbol": "js/c.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/d.js",
+            "symbol": "js/d.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/e.js",
+            "symbol": "js/e.js"
+          },
+          {
+            "kind": "file",
+            "file": "other/b.js",
+            "symbol": "other/b.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "js/a.js",
+            "symbol": "js/a.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/b.js",
+            "symbol": "js/b.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-conditional-assets-jinja",
+      "path": "fixtures/corpus_conditional_assets_jinja",
+      "description": "Legacy IE conditional HTML script references support the native Jinja safe filter on simple literal paths while comments and wrong paths remain unused.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "low",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic asset-loading corpus. Native Jinja safe preserves these literal ASCII paths; no custom URL filter or renderer is assumed. Conditional-comment loads apply only to matching legacy Internet Explorer modes; no modern-browser execution claim."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "js/c.js",
+            "symbol": "js/c.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/d.js",
+            "symbol": "js/d.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/e.js",
+            "symbol": "js/e.js"
+          },
+          {
+            "kind": "file",
+            "file": "other/b.js",
+            "symbol": "other/b.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "js/a.js",
+            "symbol": "js/a.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/b.js",
+            "symbol": "js/b.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "private-exported-enum-members",
+      "path": "fixtures/private_exported_enum_members",
+      "description": "Imported aliases in a closed private package consume individual enum members.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original paired static source contract."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": false
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "variable",
+            "file": "status.ts",
+            "symbol": "Status.Spare"
+          }
+        ],
+        "used": [
+          {
+            "kind": "variable",
+            "file": "status.ts",
+            "symbol": "Status.Ready"
+          }
+        ]
+      }
+    }
+  ]
+}

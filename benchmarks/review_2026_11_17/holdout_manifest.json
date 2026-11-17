@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "frozen_at": "2026-11-16T23:56:33.117713+00:00",
+  "label_scope": "open",
+  "selection": "Five non-Python framework/library repositories absent from Desktop output target names, selected before scans; no tuning on these targets. Source labels authored before first scan. Not randomized or independent human adjudication.",
+  "limitations": [
+    "15 known-used labels measure selected false alarms, not dead-code recall.",
+    "Five local security negative controls do not establish security recall or whole-repository safety.",
+    "Unreviewed findings and incomplete labels earn no accuracy credit."
+  ],
+  "scan": {
+    "conf": 60,
+    "enable_danger": true,
+    "grep_verify": true,
+    "grep_cache": false
+  },
+  "targets": [
+    {
+      "id": "go-chi--chi",
+      "repo": "https://github.com/go-chi/chi",
+      "revision": "c64ed7d6635f33a8b2feaff7dcfa55677023ac7d",
+      "language": "Go",
+      "license": "MIT",
+      "scan_root": ".",
+      "source_files": {
+        "middleware/clean_path.go": "00cf47dd47cf4b6a1fa29dd3d5cdff4f7de8adbea410801128afe8aeaed35f0d",
+        "middleware/get_head.go": "76af2014d2080f597a0205f51265badcad7af64d09652a79ed1a214074f5c582",
+        "middleware/heartbeat.go": "fc242f8c645cfc7640a36bccccb490cad9136ed07a751b0998f554412c29bca4"
+      },
+      "labels": [
+        {
+          "kind": "used",
+          "file": "middleware/heartbeat.go",
+          "symbol": "Heartbeat",
+          "line": 12,
+          "reason": "middleware/heartbeat_test.go:15 calls Heartbeat and registers its returned handler."
+        },
+        {
+          "kind": "used",
+          "file": "middleware/clean_path.go",
+          "symbol": "CleanPath",
+          "line": 12,
+          "reason": "middleware/clean_path_test.go:13 passes CleanPath to router.Use."
+        },
+        {
+          "kind": "used",
+          "file": "middleware/get_head.go",
+          "symbol": "GetHead",
+          "line": 10,
+          "reason": "middleware/get_head_test.go:13 passes GetHead to router.Use."
+        },
+        {
+          "kind": "security_absent",
+          "file": "middleware/heartbeat.go",
+          "rule_id": "SKY-D226",
+          "start_line": 16,
+          "end_line": 18,
+          "reason": "Response body is a literal dot and content type is text/plain; selected response contains no request data."
+        }
+      ]
+    },
+    {
+      "id": "honojs--hono",
+      "repo": "https://github.com/honojs/hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "language": "TypeScript",
+      "license": "MIT",
+      "scan_root": ".",
+      "source_files": {
+        "src/jsx/dom/intrinsic-element/components.ts": "7eaa903b8113cdf44d0be77ac39d4168ab0a6c17edd1db03e00daa3af9b33094",
+        "src/utils/html.ts": "30bae1ec85c34f2fab823496c6159723d1ffb67b7436cb5d7819ab3b81cdcd06"
+      },
+      "labels": [
+        {
+          "kind": "used",
+          "file": "src/utils/html.ts",
+          "symbol": "raw",
+          "line": 40,
+          "reason": "src/helper/html/index.ts imports and calls raw at lines 54-55."
+        },
+        {
+          "kind": "used",
+          "file": "src/utils/html.ts",
+          "symbol": "escapeToBuffer",
+          "line": 98,
+          "reason": "Called in stringBufferToString at line 90 and imported by the HTML helper."
+        },
+        {
+          "kind": "used",
+          "file": "src/utils/html.ts",
+          "symbol": "resolveCallbackSync",
+          "line": 137,
+          "reason": "HTML helper directly calls resolveCallbackSync at line 54."
+        },
+        {
+          "kind": "security_absent",
+          "file": "src/jsx/dom/intrinsic-element/components.ts",
+          "rule_id": "SKY-D226",
+          "start_line": 194,
+          "end_line": 194,
+          "reason": "Direct innerHTML assignment of the empty string clears content; no interpolated or unknown value."
+        }
+      ]
+    },
+    {
+      "id": "slimphp--Slim",
+      "repo": "https://github.com/slimphp/Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "language": "PHP",
+      "license": "MIT",
+      "scan_root": ".",
+      "source_files": {
+        "Slim/Error/Renderers/HtmlErrorRenderer.php": "b55cc7af4923bc6062e470c330fefe7f9e729680c7f16d1fb000573429c40040"
+      },
+      "labels": [
+        {
+          "kind": "used",
+          "file": "Slim/Error/Renderers/HtmlErrorRenderer.php",
+          "symbol": "renderExceptionFragment",
+          "line": 42,
+          "reason": "__invoke calls this private method at line 33."
+        },
+        {
+          "kind": "used",
+          "file": "Slim/Error/Renderers/HtmlErrorRenderer.php",
+          "symbol": "escapeHtml",
+          "line": 55,
+          "reason": "__invoke and renderExceptionFragment repeatedly call this private helper."
+        },
+        {
+          "kind": "used",
+          "file": "Slim/Error/Renderers/HtmlErrorRenderer.php",
+          "symbol": "renderHtmlBody",
+          "line": 60,
+          "reason": "__invoke calls this method at line 39."
+        },
+        {
+          "kind": "security_absent",
+          "file": "Slim/Error/Renderers/HtmlErrorRenderer.php",
+          "rule_id": "SKY-D226",
+          "start_line": 44,
+          "end_line": 50,
+          "reason": "Each exception-derived insertion in these HTML text positions is escaped by the local helper, which calls htmlspecialchars with ENT_QUOTES and UTF-8. Does not label arbitrary renderHtmlBody html arguments safe."
+        }
+      ]
+    },
+    {
+      "id": "spring-projects--spring-petclinic",
+      "repo": "https://github.com/spring-projects/spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "language": "Java",
+      "license": "Apache-2.0",
+      "scan_root": ".",
+      "source_files": {
+        "src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java": "611115841f671065ca2796fbb096102d56ce6aafd20bfe9a264f0a6968cca3ff"
+      },
+      "labels": [
+        {
+          "kind": "used",
+          "file": "src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java",
+          "symbol": "initCreationForm",
+          "line": 73,
+          "reason": "Method carries @GetMapping(/owners/new) in a Spring @Controller."
+        },
+        {
+          "kind": "used",
+          "file": "src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java",
+          "symbol": "addPaginationModel",
+          "line": 132,
+          "reason": "processFindForm calls this private helper at line 129."
+        },
+        {
+          "kind": "used",
+          "file": "src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java",
+          "symbol": "findPaginatedForOwnersLastName",
+          "line": 141,
+          "reason": "processFindForm calls this private helper at line 107."
+        },
+        {
+          "kind": "security_absent",
+          "file": "src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java",
+          "rule_id": "SKY-D230",
+          "start_line": 113,
+          "end_line": 113,
+          "reason": "Redirect view is the fixed literal redirect:/owners; no request value controls authority or path."
+        }
+      ]
+    },
+    {
+      "id": "tiny-http--tiny-http",
+      "repo": "https://github.com/tiny-http/tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "language": "Rust",
+      "license": "MIT OR Apache-2.0",
+      "scan_root": ".",
+      "source_files": {
+        "benches/bench.rs": "803e8ac58aadee8bf3c037d622e04473b597c4c3399dfe0951065943599254ab",
+        "src/util/mod.rs": "107ceae83c9a10672be797a1805e13772f9c25e68b74e02bef6f45af85018293",
+        "src/util/task_pool.rs": "08e3cc8139d1512bb751f828e9838579d8848607e7172ae41b4033d8ecc46fdb"
+      },
+      "labels": [
+        {
+          "kind": "used",
+          "file": "src/util/task_pool.rs",
+          "symbol": "add_thread",
+          "line": 80,
+          "reason": "TaskPool::new and spawn call add_thread at lines 61 and 73."
+        },
+        {
+          "kind": "used",
+          "file": "src/util/task_pool.rs",
+          "symbol": "spawn",
+          "line": 69,
+          "reason": "Server connection handling calls tasks_pool.spawn in src/lib.rs:360."
+        },
+        {
+          "kind": "used",
+          "file": "src/util/mod.rs",
+          "symbol": "parse_header_value",
+          "line": 25,
+          "reason": "src/response.rs:144 directly calls util::parse_header_value."
+        },
+        {
+          "kind": "security_absent",
+          "file": "benches/bench.rs",
+          "rule_id": "SKY-D212",
+          "start_line": 19,
+          "end_line": 22,
+          "reason": "Command uses literal curl with separate argv; generated URL uses local numeric port and literal count, and no shell is invoked. This benchmark source is parsed, never executed."
+        }
+      ]
+    }
+  ]
+}

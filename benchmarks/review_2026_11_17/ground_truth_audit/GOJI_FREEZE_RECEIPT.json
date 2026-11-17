@@ -1,0 +1,16 @@
+{
+  "frozen_utc": "2026-11-17T00:21:43.031540+00:00",
+  "label_file": "SOURCE_LABELS_GOJI.json",
+  "sha256": "fdd9850dd09eb0f3f54c320132ac59fc5690d3575022591bebaf4a14e3b3828c",
+  "draft_preserved": true,
+  "independent_reviewer": "/root",
+  "review_basis": "Parent independently read pattern test whole-tree name references, confirmed package distinction, accepted selected facts under all-build+tests scope via message before any scanner run. Fixed regex unscored.",
+  "author": "/root/other_truth",
+  "scan_configuration": {
+    "skylos": "API analyze(conf=60, enable_danger=True, grep_verify=True, grep_cache=False, nondead/nonsecurity families disabled, trusted Go binary override)",
+    "staticcheck": "-checks=U1000 -f json -tests=true; explicit Go 1.27, default and goji_router_simple build variants; syntax/type analysis only",
+    "gosec": "-fmt=json, default and -tests, default and goji_router_simple build variants; syntax/type analysis only"
+  },
+  "scope_note": "Skylos Go extractor unconditionally excludes test methods (symbols.go:172) and security analyzer excludes _test.go (analyzer.go:123); three unused test methods are scoped-out for normal CLI, not FNs. No with-tests flag exists for Skylos; do not relabel source to gain score.",
+  "target_execution": false
+}

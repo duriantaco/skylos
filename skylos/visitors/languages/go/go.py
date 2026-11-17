@@ -126,7 +126,7 @@ def _convert_symbols(symbols_data, file_path):
         )
         defn.is_exported = d.get("is_exported", False)
         defn.go_proven_unused_test_helper = (
-            d["type"] == "function"
+            d["type"] in {"function", "method"}
             and file_str.endswith("_test.go")
             and not defn.is_exported
             and d.get("reachability") == "unreachable"
@@ -146,14 +146,15 @@ def scan_go_file(file_path, cfg, *, go_scan_scope=None):
     file_path = Path(file_path)
 
     module_root = _find_module_root(file_path)
+    legacy_project = module_root is None
 
-    if not module_root:
+    if legacy_project:
         module_root = file_path.parent
 
     source_files = None
     if go_scan_scope is not None:
         module_root, source_files = _scoped_go_context(
-            file_path, module_root, go_scan_scope
+            file_path, module_root, go_scan_scope, legacy_project=legacy_project
         )
 
     if not _is_safe_go_file(file_path, module_root):
@@ -256,7 +257,7 @@ def _find_module_root(file_path):
     return None
 
 
-def _scoped_go_context(file_path, module_root, scope):
+def _scoped_go_context(file_path, module_root, scope, *, legacy_project=False):
     """Admit workspace siblings only through the caller's source inventory."""
     from skylos.engines.go_runner import GoEngineError
 
@@ -291,8 +292,8 @@ def _scoped_go_context(file_path, module_root, scope):
             raise ValueError("file is outside admitted inventory")
 
         workspace = _scoped_workspace_root(file_path, root)
-        engine_root = workspace or Path(module_root).resolve()
-        if workspace is None:
+        engine_root = workspace or (root if legacy_project else Path(module_root).resolve())
+        if workspace is None and not legacy_project:
             # This change admits workspace context only. The ordinary module
             # scanner retains its existing invocation and discovery policy.
             return engine_root, None

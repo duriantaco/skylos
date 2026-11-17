@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import bisect
+import json
 import re
 import unicodedata
 from collections import Counter
@@ -597,6 +598,14 @@ def scan_file(
         if ext in _PYTHON_SOURCE_SUFFIXES and char_hex in _TROJAN_SOURCE_CONTROLS:
             continue
         if (
+            basename == "package.json"
+            and not is_agent_instruction
+            and not is_reviewer_config
+            and char_hex == "U+200D"
+            and _terminal_description_joiners(source_lines, line_no)
+        ):
+            continue
+        if (
             not is_agent_instruction
             and not is_reviewer_config
             and char_hex in _ORTHOGRAPHIC_JOINERS
@@ -943,6 +952,41 @@ def _is_pictographic(char: str) -> bool:
         or code in (0xFE0F, 0x2640, 0x2642, 0x2695, 0x2696, 0x2708, 0x2764)
         or 0x1F3FB <= code <= 0x1F3FF
     )
+
+
+def _terminal_description_joiners(lines: list[str], line_no: int) -> bool:
+    """A dangling emoji joiner at the end of package prose joins no text.
+
+    Require a single JSON description field on this line. Other fields,
+    instruction files and joiners inside words keep their normal checks.
+    Literal instruction detection still scans the complete source.
+    """
+    if not 1 <= line_no <= len(lines):
+        return False
+    try:
+        fields = json.loads(
+            "{" + lines[line_no - 1].strip().removesuffix(",") + "}",
+            object_pairs_hook=list,
+        )
+    except (ValueError, TypeError):
+        return False
+    if (
+        len(fields) != 1
+        or fields[0][0] != "description"
+        or not isinstance(fields[0][1], str)
+    ):
+        return False
+    value = fields[0][1]
+    found = False
+    for index, char in enumerate(value):
+        if char != "\u200d":
+            continue
+        found = True
+        if index == 0 or not _is_pictographic(value[index - 1]):
+            return False
+        if index + 1 < len(value) and not _is_pictographic(value[index + 1]):
+            return False
+    return found
 
 
 def _only_emoji_joiners(lines: list[str], line_no: int) -> bool:

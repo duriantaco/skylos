@@ -1900,9 +1900,10 @@ def _dangerous_html_requires_finding(
     key = pairs[0].child_by_field_name("key")
     if key is None or _get_text(source_bytes, key).strip("'\"") != "__html":
         return True
-    return _html_assignment_rhs_requires_finding(
-        pairs[0].child_by_field_name("value"), source_bytes, bindings
-    )
+    value = pairs[0].child_by_field_name("value")
+    if _is_null_literal_expression(value):
+        return False
+    return _html_assignment_rhs_requires_finding(value, source_bytes, bindings)
 
 
 def _assignment_rhs_for_property_capture(prop_node):
@@ -1926,6 +1927,16 @@ def _html_property_capture_requires_finding(
     prop_node, source_bytes: bytes, bindings: _JsBindings
 ) -> bool:
     rhs_node = _assignment_rhs_for_property_capture(prop_node)
+    assignment = prop_node.parent.parent if prop_node.parent is not None else None
+    # DOM innerHTML/outerHTML setters turn literal null into an empty string.
+    # Keep this proof at single-value setters: document.write is variadic, and
+    # a null first argument says nothing about its later arguments.
+    if (
+        assignment is not None
+        and assignment.type == "assignment_expression"
+        and _is_null_literal_expression(rhs_node)
+    ):
+        return False
     return _html_assignment_rhs_requires_finding(rhs_node, source_bytes, bindings)
 
 

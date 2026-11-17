@@ -75,7 +75,7 @@ def test_go_project_import_and_private_test_helper_reachability(
         ("helper_test.go", True, "function", False, {}, True),
         ("tests/helper_test.go", True, "function", False, {}, True),
         ("helper_test.go", False, "function", False, {}, False),
-        ("helper_test.go", True, "method", False, {}, False),
+        ("helper_test.go", True, "method", False, {}, True),
         ("helper_test.go", True, "function", True, {}, False),
         ("test_helper.py", True, "function", False, {}, False),
         ("tests/examples/helper_test.go", True, "function", False, {}, False),

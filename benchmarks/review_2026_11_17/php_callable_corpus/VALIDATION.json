@@ -1,0 +1,60 @@
+{
+  "recorded_at_utc": "2026-11-17T00:44:28.591513+00:00",
+  "author": "/root/corpus_inventory",
+  "source": "Recorded from actual exec tool results in this turn; no target execution.",
+  "command": [
+    "/tmp/skylos-new001-validation/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "test/test_php_private_callable_arguments.py",
+    "test/test_php_private_callable_audit.py",
+    "test/test_php.py",
+    "test/test_php_dead_code_identity.py",
+    "test/test_dead_code_benchmark_php.py"
+  ],
+  "exit_code": 0,
+  "tests_passed": 126,
+  "pytest_elapsed_seconds": 2.62,
+  "diff_check": {
+    "command": [
+      "git",
+      "diff",
+      "--check",
+      "--",
+      "skylos/visitors/languages/php/core.py"
+    ],
+    "exit_code": 0
+  },
+  "source_sha256": {
+    "skylos/visitors/languages/php/core.py": "a5de734e9ef78067c439836c8a855d18105e2443d40f0626861f35c21905b818",
+    "test/test_php_private_callable_arguments.py": "dbdbf0ff4ea2d339bf3c18a1777552b90983ff0b310068a51d4bb000be506079",
+    "test/test_php_private_callable_audit.py": "2a245940faf56e5e72496c4c1694c9f7205fba0b0c313332c76b8c2db1e94607",
+    "test/test_php.py": "28c4f1dfeaefc38ec1237c5c222da0666e28223de50b539b0ebc438480b6b77c",
+    "test/test_php_dead_code_identity.py": "891c6ba2d3b897dc49b59f636cebd4981c2fd4b3d9bff025c96073cf70f025b0",
+    "test/test_dead_code_benchmark_php.py": "098d7152944d6543d7af50ef7f695e0191c6a0bf900f8138fa4cfdcd1b804993"
+  },
+  "static_corpus": {
+    "before": "before.json",
+    "after": "after.json",
+    "same_manifest_and_fixture_hashes": true,
+    "counts_before": {
+      "TP": 6,
+      "FP": 2,
+      "FN": 0,
+      "TN": 2
+    },
+    "counts_after": {
+      "TP": 6,
+      "FP": 0,
+      "FN": 0,
+      "TN": 4
+    },
+    "both_complete": true
+  },
+  "limitations": [
+    "Synthetic development contract, not blind cohort.",
+    "Actual upstream source is not modified or executed.",
+    "Unknown/unmodeled callback shapes receive no new liveness proof."
+  ]
+}

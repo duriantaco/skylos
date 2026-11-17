@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "reviewed_at": "2026-11-16T23:58:55.720459+00:00",
+  "manifest_sha256": "f40ff39bdec8f5cd6c03fa6a9a16b83a33f53479f619a3538a60f7da26bb1b26",
+  "method": "Read-only second-agent source review of frozen labels, cited consumers, source hashes, repository identity and implemented sink scope. No target code executed and no detector tuning based on holdout results. Mux replacement reviewed separately; see blind_mux_review.md.",
+  "frozen_labels_modified": false,
+  "source_semantics_review": {
+    "used_claims_supported": 15,
+    "local_security_absence_claims_supported": 4,
+    "notes": "All selected used claims and narrow source-safe descriptions are supported. Source-level safety is distinct from an applicable scanner negative control. No unused/unsafe positives were labelled, so recall remains unmeasured."
+  },
+  "overrides": [
+    {
+      "target_id": "slimphp--Slim",
+      "kind": "security_absent",
+      "file": "Slim/Error/Renderers/HtmlErrorRenderer.php",
+      "rule_id": "SKY-D226",
+      "start_line": 44,
+      "end_line": 50,
+      "status": "not_applicable",
+      "score_eligible": false,
+      "reason": "The interpolations are source-safe HTML text through the local htmlspecialchars helper, but these sites only build sprintf strings. Native PHP SKY-D226 checks Markup::create and Blade raw-output contexts; generic sprintf construction is outside those sink contracts. Quiet output earns neither TN nor passed-label credit.",
+      "implementation_evidence": [
+        "skylos/visitors/languages/php/danger.py"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "target_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "revision_matches_manifest": true,
+      "checkout_clean": true,
+      "declared_source_hashes_match": true,
+      "consumer_evidence": [
+        {
+          "file": "src/helper/html/index.ts",
+          "sha256": "53fd1ae2adc9ff5ad80a51589b7ee5833076cb2a23af132d44240f3480d2c256",
+          "reason": "Imports raw, escapeToBuffer and resolveCallbackSync; invokes them at lines 27, 46 and 54-55."
+        }
+      ]
+    },
+    {
+      "target_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "revision_matches_manifest": true,
+      "checkout_clean": true,
+      "declared_source_hashes_match": true,
+      "consumer_evidence": [
+        {
+          "file": "tests/Error/AbstractErrorRendererTest.php",
+          "sha256": "754993ba9d9fdd85bbc6aacc1db2374e7a74634f35d7a39ae3978e44553b9c5f",
+          "reason": "Instantiates HtmlErrorRenderer and invokes it at lines 45-46, 58-59; declaration file contains calls to all three selected helpers."
+        }
+      ]
+    },
+    {
+      "target_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "revision_matches_manifest": true,
+      "checkout_clean": false,
+      "declared_source_hashes_match": true,
+      "consumer_evidence": [
+        {
+          "file": "src/main/java/org/springframework/samples/petclinic/PetClinicApplication.java",
+          "sha256": "9d99b4b59cc6e185e9a27964b24ede04180ca34211a7e19f968249ee3dac9df3",
+          "reason": "SpringBootApplication starts SpringApplication in the parent package; OwnerController has Controller and GetMapping annotations."
+        }
+      ]
+    },
+    {
+      "target_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "revision_matches_manifest": true,
+      "checkout_clean": true,
+      "declared_source_hashes_match": true,
+      "consumer_evidence": [
+        {
+          "file": "src/lib.rs",
+          "sha256": "d71fa0ed49cb2379306a4eccd22fadea07d087de376ff4822ea8873ba7cd1dfa",
+          "reason": "Server connection handling invokes tasks_pool.spawn at line 360."
+        },
+        {
+          "file": "src/response.rs",
+          "sha256": "946c4aa551b7a16cc2ea5f86f8ae2ce9b9bda3faecb2f9d1057d5bc17cb2dbdc",
+          "reason": "Response handling invokes util::parse_header_value at line 144."
+        }
+      ]
+    }
+  ],
+  "implementation_source_hashes": {
+    "skylos/engines/go/internal/analyzer/xss.go": "ce2642e267f8e9efb2f56baa36ba1224a9637f94ca638500f87dc6dcb6155da8",
+    "skylos/visitors/languages/go/go.py": "ba3d72b5025cbb59271a870c430ba72eca6656bad92982eaf7370ce7b0467ad0",
+    "skylos/visitors/languages/php/danger.py": "d0b04e12494099c5b0f5632cd6179519283b00a72fde7e68f6bc9231028ddc82"
+  },
+  "scoring_requirements": [
+    "Apply overrides by exact target/kind/file/rule/line interval before awarding label outcomes.",
+    "Not-applicable labels remain visible, are unscored, and earn no TN or pass credit.",
+    "Applicable absence controls still require complete required analysis and positive evidence that the exact source file was parsed.",
+    "Used controls additionally require extraction of the expected declaration at its source identity; missing definitions earn no TN.",
+    "Keep unknown, parser failure, excluded source and unsupported outcomes separate; whole-repository totals do not establish exact-file coverage.",
+    "Preserve the original manifest and hashes; this supplemental receipt records applicability without relabelling the source truth."
+  ]
+}

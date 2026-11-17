@@ -1,0 +1,135 @@
+{
+  "reviewer": "/root/other_truth",
+  "at_utc": "2026-11-17T00:24:37.908700+00:00",
+  "manifest_sha256": "a981766ab1d3749fa048249d578db2752c28d7af998b02869ee19d0bb8378a82",
+  "method": "Independently read fixture source + exact-line manifest only. Detector result.json not read. No target execution.",
+  "verdict": "All 9 exact-location rule-contract labels accepted with explicit environment/input assumptions. Development fixtures, not deployment vulnerabilities.",
+  "rows": [
+    {
+      "case": "location-python-deserialization",
+      "expectation": "present",
+      "rule_id": "SKY-D206",
+      "file": "fixtures/loader.py",
+      "line": 5,
+      "source_excerpt": "    return yaml.load(data, Loader=yaml.Loader)",
+      "sha256": "c2e34e61708a6cbaf24fde5f97feadc987bd7347b7a3a2a3eeb91fb1e23ec37a",
+      "verdict": "approve",
+      "reason": "yaml.Loader permits object construction; unknown function input is passed unchanged into unsafe deserialization. Positive is an unsafe-operation fixture under explicit untrusted-caller assumption, not a proven deployed endpoint.",
+      "assumptions": [
+        "PyYAML yaml module resolves to standard PyYAML; caller supplies untrusted input."
+      ]
+    },
+    {
+      "case": "location-python-deserialization",
+      "expectation": "absent",
+      "rule_id": "SKY-D206",
+      "file": "fixtures/loader.py",
+      "line": 9,
+      "source_excerpt": "    return yaml.safe_load(data)",
+      "sha256": "c2e34e61708a6cbaf24fde5f97feadc987bd7347b7a3a2a3eeb91fb1e23ec37a",
+      "verdict": "approve",
+      "reason": "yaml.safe_load uses the safe loader; absence of SKY-D206 unsafe-deserialization warning is supported for the conventional PyYAML API.",
+      "assumptions": [
+        "Standard PyYAML safe_load API, no monkey-patching."
+      ]
+    },
+    {
+      "case": "location-javascript-xss",
+      "expectation": "present",
+      "rule_id": "SKY-D226",
+      "file": "fixtures/dom.js",
+      "line": 2,
+      "source_excerpt": "  node.innerHTML = userInput;",
+      "sha256": "2418f50631ef965612fd54ab6b68e4a340f44292b719add6c9dd8b38d09fdfb2",
+      "verdict": "approve",
+      "reason": "Unknown input is assigned directly to DOM innerHTML without escaping; later clearing does not make the earlier setter safe.",
+      "assumptions": [
+        "node is an ordinary DOM element; userInput can be attacker-controlled."
+      ]
+    },
+    {
+      "case": "location-javascript-xss",
+      "expectation": "absent",
+      "rule_id": "SKY-D226",
+      "file": "fixtures/dom.js",
+      "line": 3,
+      "source_excerpt": "  node.innerHTML = '';",
+      "sha256": "2418f50631ef965612fd54ab6b68e4a340f44292b719add6c9dd8b38d09fdfb2",
+      "verdict": "approve",
+      "reason": "Fixed empty string contains no active markup; this setter has no attacker-controlled content.",
+      "assumptions": [
+        "Standard DOM innerHTML setter."
+      ]
+    },
+    {
+      "case": "location-javascript-xss",
+      "expectation": "absent",
+      "rule_id": "SKY-D226",
+      "file": "fixtures/dom.js",
+      "line": 4,
+      "source_excerpt": "  node.innerHTML = null;",
+      "sha256": "2418f50631ef965612fd54ab6b68e4a340f44292b719add6c9dd8b38d09fdfb2",
+      "verdict": "approve",
+      "reason": "Fixed null contains no attacker-controlled markup; whether empty-converted or serialized, it cannot introduce userInput at this assignment.",
+      "assumptions": [
+        "Standard DOM innerHTML setter."
+      ]
+    },
+    {
+      "case": "location-javascript-xss",
+      "expectation": "absent",
+      "rule_id": "SKY-D226",
+      "file": "fixtures/dom.js",
+      "line": 5,
+      "source_excerpt": "  node.textContent = userInput;",
+      "sha256": "2418f50631ef965612fd54ab6b68e4a340f44292b719add6c9dd8b38d09fdfb2",
+      "verdict": "approve",
+      "reason": "textContent inserts ordinary text rather than interpreting HTML markup; context is the ordinary-element XSS contract.",
+      "assumptions": [
+        "node is an ordinary non-script DOM element with standard textContent setter; not a custom setter."
+      ]
+    },
+    {
+      "case": "location-php-sql_injection",
+      "expectation": "present",
+      "rule_id": "SKY-D211",
+      "file": "fixtures/database.php",
+      "line": 3,
+      "source_excerpt": "    $pdo->query(\"SELECT * FROM users WHERE id = '\" . $_GET['id'] . \"'\");",
+      "sha256": "1576911516a05cea2dc70e7780ec4cde27e10f920d2b5243a42ea17c93068362",
+      "verdict": "approve",
+      "reason": "HTTP query parameter flows unchanged into SQL string concatenation and PDO query; no binding/escaping at this sink.",
+      "assumptions": [
+        "pdo is PDO-compatible real database API; endpoint calls lookup with request-controlled id."
+      ]
+    },
+    {
+      "case": "location-php-sql_injection",
+      "expectation": "absent",
+      "rule_id": "SKY-D211",
+      "file": "fixtures/database.php",
+      "line": 4,
+      "source_excerpt": "    $stmt = $pdo->prepare('SELECT * FROM users WHERE id = ?');",
+      "sha256": "1576911516a05cea2dc70e7780ec4cde27e10f920d2b5243a42ea17c93068362",
+      "verdict": "approve",
+      "reason": "SQL template is a fixed literal with a placeholder; no HTTP parameter changes SQL structure.",
+      "assumptions": [
+        "pdo is PDO-compatible API."
+      ]
+    },
+    {
+      "case": "location-php-sql_injection",
+      "expectation": "absent",
+      "rule_id": "SKY-D211",
+      "file": "fixtures/database.php",
+      "line": 5,
+      "source_excerpt": "    $stmt->execute([$_GET['id']]);",
+      "sha256": "1576911516a05cea2dc70e7780ec4cde27e10f920d2b5243a42ea17c93068362",
+      "verdict": "approve",
+      "reason": "Request value supplied as bound execute argument on the statement prepared at previous line; not concatenated into SQL.",
+      "assumptions": [
+        "stmt is the PDO prepared statement from line 4."
+      ]
+    }
+  ]
+}

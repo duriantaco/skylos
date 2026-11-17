@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "location-python-deserialization",
+      "path": "fixtures/loader.py",
+      "description": "Source-reviewed unsafe operation with exact-location safe siblings; static parsing only.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Authored regression pairs promoted from existing detector unit contracts. Development data; no independent deployment accuracy claim."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            {
+              "rule_id": "SKY-D206",
+              "file": "loader.py",
+              "start_line": 5,
+              "end_line": 5
+            }
+          ]
+        },
+        "absent": {
+          "danger": [
+            {
+              "rule_id": "SKY-D206",
+              "file": "loader.py",
+              "start_line": 9,
+              "end_line": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "location-javascript-xss",
+      "path": "fixtures/dom.js",
+      "description": "Source-reviewed unsafe operation with exact-location safe siblings; static parsing only.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "xss",
+        "precision_guard"
+      ],
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Authored regression pairs promoted from existing detector unit contracts. Development data; no independent deployment accuracy claim."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            {
+              "rule_id": "SKY-D226",
+              "file": "dom.js",
+              "start_line": 2,
+              "end_line": 2
+            }
+          ]
+        },
+        "absent": {
+          "danger": [
+            {
+              "rule_id": "SKY-D226",
+              "file": "dom.js",
+              "start_line": 3,
+              "end_line": 3
+            },
+            {
+              "rule_id": "SKY-D226",
+              "file": "dom.js",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "rule_id": "SKY-D226",
+              "file": "dom.js",
+              "start_line": 5,
+              "end_line": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "location-php-sql_injection",
+      "path": "fixtures/database.php",
+      "description": "Source-reviewed unsafe operation with exact-location safe siblings; static parsing only.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "sql_injection",
+        "precision_guard"
+      ],
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Authored regression pairs promoted from existing detector unit contracts. Development data; no independent deployment accuracy claim."
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            {
+              "rule_id": "SKY-D211",
+              "file": "database.php",
+              "start_line": 3,
+              "end_line": 3
+            }
+          ]
+        },
+        "absent": {
+          "danger": [
+            {
+              "rule_id": "SKY-D211",
+              "file": "database.php",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "rule_id": "SKY-D211",
+              "file": "database.php",
+              "start_line": 5,
+              "end_line": 5
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,5394 @@
+{
+  "definitions": {
+    "dispatch.ServeHTTP": {
+      "name": "dispatch.ServeHTTP",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/dispatch.go",
+      "line": 11,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "Mux.Handle": {
+      "name": "Mux.Handle",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/handle.go",
+      "line": 27,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "Mux.HandleFunc": {
+      "name": "Mux.HandleFunc",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/handle.go",
+      "line": 35,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "middleware.Pattern": {
+      "name": "middleware.Pattern",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/middleware/middleware.go",
+      "line": 22,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "middleware.SetPattern": {
+      "name": "middleware.SetPattern",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/middleware/middleware.go",
+      "line": 34,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "middleware.Handler": {
+      "name": "middleware.Handler",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/middleware/middleware.go",
+      "line": 46,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "middleware.SetHandler": {
+      "name": "middleware.SetHandler",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/middleware/middleware.go",
+      "line": 58,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "Mux.Use": {
+      "name": "Mux.Use",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/middleware.go",
+      "line": 62,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "Mux.buildChain": {
+      "name": "Mux.buildChain",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/middleware.go",
+      "line": 70,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "static_reference",
+          "role": "supports_live",
+          "reason": "referenced by static analysis",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 6
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ]
+    },
+    "expectSequence": {
+      "name": "expectSequence",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/middleware_test.go",
+      "line": 8,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "uncertain",
+      "dead_code_evidence": [
+        {
+          "kind": "uncertainty",
+          "role": "uncertainty",
+          "reason": "test-only path",
+          "source": "suppression",
+          "confidence": 1.0,
+          "details": {}
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "uncertain",
+        "primary_reason": "Uncertainty evidence present; Not exported",
+        "reason_tags": [
+          "uncertainty",
+          "not_exported"
+        ],
+        "live_evidence_count": 0,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 1,
+        "confidence": 0,
+        "threshold": 60
+      },
+      "dead_code_reason": "Uncertainty evidence present; Not exported",
+      "dead_code_reason_tags": [
+        "uncertainty",
+        "not_exported"
+      ]
+    },
+    "makeMiddleware": {
+      "name": "makeMiddleware",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/middleware_test.go",
+      "line": 46,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "uncertain",
+      "dead_code_evidence": [
+        {
+          "kind": "uncertainty",
+          "role": "uncertainty",
+          "reason": "test-only path",
+          "source": "suppression",
+          "confidence": 1.0,
+          "details": {}
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "uncertain",
+        "primary_reason": "Uncertainty evidence present; Not exported",
+        "reason_tags": [
+          "uncertainty",
+          "not_exported"
+        ],
+        "live_evidence_count": 0,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 1,
+        "confidence": 0,
+        "threshold": 60
+      },
+      "dead_code_reason": "Uncertainty evidence present; Not exported",
+      "dead_code_reason_tags": [
+        "uncertainty",
+        "not_exported"
+      ]
+    },
+    "NewMux": {
+      "name": "NewMux",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/mux.go",
+      "line": 33,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "SubMux": {
+      "name": "SubMux",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/mux.go",
+      "line": 60,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "Mux.ServeHTTP": {
+      "name": "Mux.ServeHTTP",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/mux.go",
+      "line": 67,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.match.Value": {
+      "name": "pat.match.Value",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/match.go",
+      "line": 17,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.NewWithMethods": {
+      "name": "pat.NewWithMethods",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/methods.go",
+      "line": 6,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.Delete": {
+      "name": "pat.Delete",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/methods.go",
+      "line": 21,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.Get": {
+      "name": "pat.Get",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/methods.go",
+      "line": 29,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.Head": {
+      "name": "pat.Head",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/methods.go",
+      "line": 36,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.Options": {
+      "name": "pat.Options",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/methods.go",
+      "line": 43,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.Patch": {
+      "name": "pat.Patch",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/methods.go",
+      "line": 50,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.Post": {
+      "name": "pat.Post",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/methods.go",
+      "line": 57,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.Put": {
+      "name": "pat.Put",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/methods.go",
+      "line": 64,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.patNames.Len": {
+      "name": "pat.patNames.Len",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/pat.go",
+      "line": 97,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.patNames.Less": {
+      "name": "pat.patNames.Less",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/pat.go",
+      "line": 100,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.patNames.Swap": {
+      "name": "pat.patNames.Swap",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/pat.go",
+      "line": 103,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.New": {
+      "name": "pat.New",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/pat.go",
+      "line": 139,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.Pattern.Match": {
+      "name": "pat.Pattern.Match",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/pat.go",
+      "line": 179,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.Pattern.PathPrefix": {
+      "name": "pat.Pattern.PathPrefix",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/pat.go",
+      "line": 251,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.Pattern.HTTPMethods": {
+      "name": "pat.Pattern.HTTPMethods",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/pat.go",
+      "line": 262,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.Pattern.String": {
+      "name": "pat.Pattern.String",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/pat.go",
+      "line": 269,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.Param": {
+      "name": "pat.Param",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/pat.go",
+      "line": 288,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pat.mustReq": {
+      "name": "pat.mustReq",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/pat_test.go",
+      "line": 12,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "uncertain",
+      "dead_code_evidence": [
+        {
+          "kind": "uncertainty",
+          "role": "uncertainty",
+          "reason": "test-only path",
+          "source": "suppression",
+          "confidence": 1.0,
+          "details": {}
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "uncertain",
+        "primary_reason": "Uncertainty evidence present; Not exported",
+        "reason_tags": [
+          "uncertainty",
+          "not_exported"
+        ],
+        "live_evidence_count": 0,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 1,
+        "confidence": 0,
+        "threshold": 60
+      },
+      "dead_code_reason": "Uncertainty evidence present; Not exported",
+      "dead_code_reason_tags": [
+        "uncertainty",
+        "not_exported"
+      ]
+    },
+    "pat.ishex": {
+      "name": "pat.ishex",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/url.go",
+      "line": 7,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "static_reference",
+          "role": "supports_live",
+          "reason": "referenced by static analysis",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 8
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ]
+    },
+    "pat.unhex": {
+      "name": "pat.unhex",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/url.go",
+      "line": 19,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "static_reference",
+          "role": "supports_live",
+          "reason": "referenced by static analysis",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 8
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ]
+    },
+    "pat.unescape": {
+      "name": "pat.unescape",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/url.go",
+      "line": 31,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "static_reference",
+          "role": "supports_live",
+          "reason": "referenced by static analysis",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 2
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ]
+    },
+    "pattern.Path": {
+      "name": "pattern.Path",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pattern/pattern.go",
+      "line": 52,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pattern.SetPath": {
+      "name": "pattern.SetPath",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pattern/pattern.go",
+      "line": 65,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "pattern.boolPattern.Match": {
+      "name": "pattern.boolPattern.Match",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pattern/pattern_test.go",
+      "line": 11,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": true,
+      "dead_code_classification": "likely_dead",
+      "dead_code_evidence": [
+        {
+          "kind": "no_static_references",
+          "role": "supports_dead",
+          "reason": "no static references were found",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 0,
+            "searched_name": "Match",
+            "files_searched": 29,
+            "same_name_definitions": [
+              "pat/pat.go:179 method pat.Pattern.Match",
+              "pattern/pattern_test.go:20 method pattern.prefixPattern.Match"
+            ],
+            "same_name_definition_count": 2
+          }
+        },
+        {
+          "kind": "not_exported",
+          "role": "supports_dead",
+          "reason": "symbol is not exported as public API",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {}
+        },
+        {
+          "kind": "no_entrypoint",
+          "role": "supports_dead",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {}
+        },
+        {
+          "kind": "confidence_gate",
+          "role": "supports_dead",
+          "reason": "confidence meets the configured reporting threshold",
+          "source": "confidence",
+          "confidence": 0.8,
+          "details": {
+            "confidence": 80,
+            "threshold": 60
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "live_evidence_count": 0,
+        "dead_evidence_count": 4,
+        "uncertainty_count": 0,
+        "confidence": 80,
+        "threshold": 60
+      },
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ]
+    },
+    "pattern.prefixPattern.Match": {
+      "name": "pattern.prefixPattern.Match",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pattern/pattern_test.go",
+      "line": 20,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": true,
+      "dead_code_classification": "likely_dead",
+      "dead_code_evidence": [
+        {
+          "kind": "no_static_references",
+          "role": "supports_dead",
+          "reason": "no static references were found",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 0,
+            "searched_name": "Match",
+            "files_searched": 29,
+            "same_name_definitions": [
+              "pat/pat.go:179 method pat.Pattern.Match",
+              "pattern/pattern_test.go:11 method pattern.boolPattern.Match"
+            ],
+            "same_name_definition_count": 2
+          }
+        },
+        {
+          "kind": "not_exported",
+          "role": "supports_dead",
+          "reason": "symbol is not exported as public API",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {}
+        },
+        {
+          "kind": "no_entrypoint",
+          "role": "supports_dead",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {}
+        },
+        {
+          "kind": "confidence_gate",
+          "role": "supports_dead",
+          "reason": "confidence meets the configured reporting threshold",
+          "source": "confidence",
+          "confidence": 0.8,
+          "details": {
+            "confidence": 80,
+            "threshold": 60
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "live_evidence_count": 0,
+        "dead_evidence_count": 4,
+        "uncertainty_count": 0,
+        "confidence": 80,
+        "threshold": 60
+      },
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ]
+    },
+    "pattern.prefixPattern.PathPrefix": {
+      "name": "pattern.prefixPattern.PathPrefix",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pattern/pattern_test.go",
+      "line": 23,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": true,
+      "dead_code_classification": "likely_dead",
+      "dead_code_evidence": [
+        {
+          "kind": "no_static_references",
+          "role": "supports_dead",
+          "reason": "no static references were found",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 0,
+            "searched_name": "PathPrefix",
+            "files_searched": 29,
+            "same_name_definitions": [
+              "pat/pat.go:251 method pat.Pattern.PathPrefix"
+            ],
+            "same_name_definition_count": 1
+          }
+        },
+        {
+          "kind": "not_exported",
+          "role": "supports_dead",
+          "reason": "symbol is not exported as public API",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {}
+        },
+        {
+          "kind": "no_entrypoint",
+          "role": "supports_dead",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {}
+        },
+        {
+          "kind": "confidence_gate",
+          "role": "supports_dead",
+          "reason": "confidence meets the configured reporting threshold",
+          "source": "confidence",
+          "confidence": 0.8,
+          "details": {
+            "confidence": 80,
+            "threshold": 60
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "live_evidence_count": 0,
+        "dead_evidence_count": 4,
+        "uncertainty_count": 0,
+        "confidence": 80,
+        "threshold": 60
+      },
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ]
+    },
+    "match.Value": {
+      "name": "match.Value",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router.go",
+      "line": 16,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "router.add": {
+      "name": "router.add",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router_simple.go",
+      "line": 18,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "static_reference",
+          "role": "supports_live",
+          "reason": "referenced by static analysis",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 2
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ]
+    },
+    "router.route": {
+      "name": "router.route",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router_simple.go",
+      "line": 22,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "static_reference",
+          "role": "supports_live",
+          "reason": "referenced by static analysis",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 2
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ]
+    },
+    "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router_trie.go:router.add": {
+      "name": "router.add",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router_trie.go",
+      "line": 34,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "static_reference",
+          "role": "supports_live",
+          "reason": "referenced by static analysis",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 2
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ]
+    },
+    "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router_trie.go:router.route": {
+      "name": "router.route",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router_trie.go",
+      "line": 66,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "static_reference",
+          "role": "supports_live",
+          "reason": "referenced by static analysis",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 2
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ]
+    },
+    "byPrefix.Len": {
+      "name": "byPrefix.Len",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router_trie.go",
+      "line": 103,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "byPrefix.Less": {
+      "name": "byPrefix.Less",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router_trie.go",
+      "line": 106,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "byPrefix.Swap": {
+      "name": "byPrefix.Swap",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router_trie.go",
+      "line": 109,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "framework_root",
+          "role": "supports_live",
+          "reason": "public export",
+          "source": "python_ast",
+          "confidence": 1.0,
+          "details": {
+            "root_kind": "public_export"
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Framework entrypoint",
+        "reason_tags": [
+          "framework_root"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Framework entrypoint",
+      "dead_code_reason_tags": [
+        "framework_root"
+      ]
+    },
+    "longestPrefix": {
+      "name": "longestPrefix",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router_trie.go",
+      "line": 113,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "static_reference",
+          "role": "supports_live",
+          "reason": "referenced by static analysis",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 1
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ]
+    },
+    "trieNode.add": {
+      "name": "trieNode.add",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router_trie.go",
+      "line": 126,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "static_reference",
+          "role": "supports_live",
+          "reason": "referenced by static analysis",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 1
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ]
+    },
+    "trieNode.clone": {
+      "name": "trieNode.clone",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/router_trie.go",
+      "line": 168,
+      "type": "method",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_evidence": [
+        {
+          "kind": "static_reference",
+          "role": "supports_live",
+          "reason": "referenced by static analysis",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 19
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "alive",
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "live_evidence_count": 1,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 0,
+        "confidence": 100,
+        "threshold": 60
+      },
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ]
+    },
+    "wr": {
+      "name": "wr",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/util_test.go",
+      "line": 64,
+      "type": "function",
+      "loc": 1,
+      "complexity": 1,
+      "calls": [],
+      "called_by": [],
+      "dead": false,
+      "dead_code_classification": "uncertain",
+      "dead_code_evidence": [
+        {
+          "kind": "uncertainty",
+          "role": "uncertainty",
+          "reason": "test-only path",
+          "source": "suppression",
+          "confidence": 1.0,
+          "details": {}
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "uncertain",
+        "primary_reason": "Uncertainty evidence present; Not exported",
+        "reason_tags": [
+          "uncertainty",
+          "not_exported"
+        ],
+        "live_evidence_count": 0,
+        "dead_evidence_count": 0,
+        "uncertainty_count": 1,
+        "confidence": 0,
+        "threshold": 60
+      },
+      "dead_code_reason": "Uncertainty evidence present; Not exported",
+      "dead_code_reason_tags": [
+        "uncertainty",
+        "not_exported"
+      ]
+    }
+  },
+  "unused_functions": [
+    {
+      "name": "boolPattern.Match",
+      "full_name": "pattern.boolPattern.Match",
+      "simple_name": "Match",
+      "type": "method",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pattern/pattern_test.go",
+      "basename": "pattern_test.go",
+      "line": 11,
+      "confidence": 80,
+      "references": 0,
+      "confidence_factors": [
+        "public_method"
+      ],
+      "dead_code_classification": "likely_dead",
+      "dead_code_evidence": [
+        {
+          "kind": "no_static_references",
+          "role": "supports_dead",
+          "reason": "no static references were found",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 0,
+            "searched_name": "Match",
+            "files_searched": 29,
+            "same_name_definitions": [
+              "pat/pat.go:179 method pat.Pattern.Match",
+              "pattern/pattern_test.go:20 method pattern.prefixPattern.Match"
+            ],
+            "same_name_definition_count": 2
+          }
+        },
+        {
+          "kind": "not_exported",
+          "role": "supports_dead",
+          "reason": "symbol is not exported as public API",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {}
+        },
+        {
+          "kind": "no_entrypoint",
+          "role": "supports_dead",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {}
+        },
+        {
+          "kind": "confidence_gate",
+          "role": "supports_dead",
+          "reason": "confidence meets the configured reporting threshold",
+          "source": "confidence",
+          "confidence": 0.8,
+          "details": {
+            "confidence": 80,
+            "threshold": 60
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "live_evidence_count": 0,
+        "dead_evidence_count": 4,
+        "uncertainty_count": 0,
+        "confidence": 80,
+        "threshold": 60
+      },
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ],
+      "dead_code_disposition": "reported",
+      "finding_type": "review",
+      "listing": {
+        "version": 1,
+        "listed": true,
+        "reason": "finding"
+      }
+    },
+    {
+      "name": "prefixPattern.Match",
+      "full_name": "pattern.prefixPattern.Match",
+      "simple_name": "Match",
+      "type": "method",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pattern/pattern_test.go",
+      "basename": "pattern_test.go",
+      "line": 20,
+      "confidence": 80,
+      "references": 0,
+      "confidence_factors": [
+        "public_method"
+      ],
+      "dead_code_classification": "likely_dead",
+      "dead_code_evidence": [
+        {
+          "kind": "no_static_references",
+          "role": "supports_dead",
+          "reason": "no static references were found",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 0,
+            "searched_name": "Match",
+            "files_searched": 29,
+            "same_name_definitions": [
+              "pat/pat.go:179 method pat.Pattern.Match",
+              "pattern/pattern_test.go:11 method pattern.boolPattern.Match"
+            ],
+            "same_name_definition_count": 2
+          }
+        },
+        {
+          "kind": "not_exported",
+          "role": "supports_dead",
+          "reason": "symbol is not exported as public API",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {}
+        },
+        {
+          "kind": "no_entrypoint",
+          "role": "supports_dead",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {}
+        },
+        {
+          "kind": "confidence_gate",
+          "role": "supports_dead",
+          "reason": "confidence meets the configured reporting threshold",
+          "source": "confidence",
+          "confidence": 0.8,
+          "details": {
+            "confidence": 80,
+            "threshold": 60
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "live_evidence_count": 0,
+        "dead_evidence_count": 4,
+        "uncertainty_count": 0,
+        "confidence": 80,
+        "threshold": 60
+      },
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ],
+      "dead_code_disposition": "reported",
+      "finding_type": "review",
+      "listing": {
+        "version": 1,
+        "listed": true,
+        "reason": "finding"
+      }
+    },
+    {
+      "name": "prefixPattern.PathPrefix",
+      "full_name": "pattern.prefixPattern.PathPrefix",
+      "simple_name": "PathPrefix",
+      "type": "method",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pattern/pattern_test.go",
+      "basename": "pattern_test.go",
+      "line": 23,
+      "confidence": 80,
+      "references": 0,
+      "confidence_factors": [
+        "public_method"
+      ],
+      "dead_code_classification": "likely_dead",
+      "dead_code_evidence": [
+        {
+          "kind": "no_static_references",
+          "role": "supports_dead",
+          "reason": "no static references were found",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {
+            "references": 0,
+            "searched_name": "PathPrefix",
+            "files_searched": 29,
+            "same_name_definitions": [
+              "pat/pat.go:251 method pat.Pattern.PathPrefix"
+            ],
+            "same_name_definition_count": 1
+          }
+        },
+        {
+          "kind": "not_exported",
+          "role": "supports_dead",
+          "reason": "symbol is not exported as public API",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {}
+        },
+        {
+          "kind": "no_entrypoint",
+          "role": "supports_dead",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "source": "analyzer",
+          "confidence": 1.0,
+          "details": {}
+        },
+        {
+          "kind": "confidence_gate",
+          "role": "supports_dead",
+          "reason": "confidence meets the configured reporting threshold",
+          "source": "confidence",
+          "confidence": 0.8,
+          "details": {
+            "confidence": 80,
+            "threshold": 60
+          }
+        }
+      ],
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "live_evidence_count": 0,
+        "dead_evidence_count": 4,
+        "uncertainty_count": 0,
+        "confidence": 80,
+        "threshold": 60
+      },
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ],
+      "dead_code_disposition": "reported",
+      "finding_type": "review",
+      "listing": {
+        "version": 1,
+        "listed": true,
+        "reason": "finding"
+      }
+    }
+  ],
+  "unused_imports": [],
+  "unused_classes": [],
+  "unused_variables": [],
+  "unused_parameters": [],
+  "unused_files": [],
+  "analysis_errors": [],
+  "whitelisted": [
+    {
+      "name": "expectSequence",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/middleware_test.go",
+      "line": 8,
+      "reason": "test-only path",
+      "category": "dead_code",
+      "suppression_code": "non_library_path",
+      "folder_role": "test"
+    },
+    {
+      "name": "makeMiddleware",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/middleware_test.go",
+      "line": 46,
+      "reason": "test-only path",
+      "category": "dead_code",
+      "suppression_code": "non_library_path",
+      "folder_role": "test"
+    },
+    {
+      "name": "mustReq",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/pat/pat_test.go",
+      "line": 12,
+      "reason": "test-only path",
+      "category": "dead_code",
+      "suppression_code": "non_library_path",
+      "folder_role": "test"
+    },
+    {
+      "name": "wr",
+      "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji/util_test.go",
+      "line": 64,
+      "reason": "test-only path",
+      "category": "dead_code",
+      "suppression_code": "non_library_path",
+      "folder_role": "test"
+    }
+  ],
+  "suppressed": [],
+  "dead_code_evidence": {
+    "classification_policy": "dead-code-evidence-v3",
+    "symbols": [
+      {
+        "file": "dispatch.go",
+        "qualified_name": "dispatch",
+        "kind": "type",
+        "line": 9,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 3
+            }
+          }
+        ]
+      },
+      {
+        "file": "dispatch.go",
+        "qualified_name": "dispatch.ServeHTTP",
+        "kind": "method",
+        "line": 11,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "goji.go",
+        "qualified_name": "Pattern",
+        "kind": "type",
+        "line": 47,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "handle.go",
+        "qualified_name": "Mux.Handle",
+        "kind": "method",
+        "line": 27,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "handle.go",
+        "qualified_name": "Mux.HandleFunc",
+        "kind": "method",
+        "line": 35,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "internal/context.go",
+        "qualified_name": "internal.ContextKey",
+        "kind": "type",
+        "line": 4,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "internal/context.go",
+        "qualified_name": "internal.Handler",
+        "kind": "variable",
+        "line": 16,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "internal/context.go",
+        "qualified_name": "internal.Path",
+        "kind": "variable",
+        "line": 9,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "internal/context.go",
+        "qualified_name": "internal.Pattern",
+        "kind": "variable",
+        "line": 12,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "middleware.go",
+        "qualified_name": "Mux.Use",
+        "kind": "method",
+        "line": 62,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "middleware.go",
+        "qualified_name": "Mux.buildChain",
+        "kind": "method",
+        "line": 70,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 6
+            }
+          }
+        ]
+      },
+      {
+        "file": "middleware/middleware.go",
+        "qualified_name": "middleware.Handler",
+        "kind": "function",
+        "line": 46,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "middleware/middleware.go",
+        "qualified_name": "middleware.Pattern",
+        "kind": "function",
+        "line": 22,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "middleware/middleware.go",
+        "qualified_name": "middleware.SetHandler",
+        "kind": "function",
+        "line": 58,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "middleware/middleware.go",
+        "qualified_name": "middleware.SetPattern",
+        "kind": "function",
+        "line": 34,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "middleware_test.go",
+        "qualified_name": "expectSequence",
+        "kind": "function",
+        "line": 8,
+        "classification": "uncertain",
+        "decision": {
+          "classification": "uncertain",
+          "primary_reason": "Uncertainty evidence present; Not exported",
+          "reason_tags": [
+            "uncertainty",
+            "not_exported"
+          ],
+          "live_evidence_count": 0,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 1,
+          "confidence": 0,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "uncertainty",
+            "role": "uncertainty",
+            "reason": "test-only path",
+            "source": "suppression",
+            "confidence": 1.0,
+            "details": {}
+          }
+        ]
+      },
+      {
+        "file": "middleware_test.go",
+        "qualified_name": "makeMiddleware",
+        "kind": "function",
+        "line": 46,
+        "classification": "uncertain",
+        "decision": {
+          "classification": "uncertain",
+          "primary_reason": "Uncertainty evidence present; Not exported",
+          "reason_tags": [
+            "uncertainty",
+            "not_exported"
+          ],
+          "live_evidence_count": 0,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 1,
+          "confidence": 0,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "uncertainty",
+            "role": "uncertainty",
+            "reason": "test-only path",
+            "source": "suppression",
+            "confidence": 1.0,
+            "details": {}
+          }
+        ]
+      },
+      {
+        "file": "mux.go",
+        "qualified_name": "Mux",
+        "kind": "type",
+        "line": 23,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "mux.go",
+        "qualified_name": "Mux.ServeHTTP",
+        "kind": "method",
+        "line": 67,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "mux.go",
+        "qualified_name": "NewMux",
+        "kind": "function",
+        "line": 33,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "mux.go",
+        "qualified_name": "SubMux",
+        "kind": "function",
+        "line": 60,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/match.go",
+        "qualified_name": "pat.match",
+        "kind": "type",
+        "line": 11,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 8
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/match.go",
+        "qualified_name": "pat.match.Value",
+        "kind": "method",
+        "line": 17,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/methods.go",
+        "qualified_name": "pat.Delete",
+        "kind": "function",
+        "line": 21,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/methods.go",
+        "qualified_name": "pat.Get",
+        "kind": "function",
+        "line": 29,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/methods.go",
+        "qualified_name": "pat.Head",
+        "kind": "function",
+        "line": 36,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/methods.go",
+        "qualified_name": "pat.NewWithMethods",
+        "kind": "function",
+        "line": 6,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/methods.go",
+        "qualified_name": "pat.Options",
+        "kind": "function",
+        "line": 43,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/methods.go",
+        "qualified_name": "pat.Patch",
+        "kind": "function",
+        "line": 50,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/methods.go",
+        "qualified_name": "pat.Post",
+        "kind": "function",
+        "line": 57,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/methods.go",
+        "qualified_name": "pat.Put",
+        "kind": "function",
+        "line": 64,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat.go",
+        "qualified_name": "pat.New",
+        "kind": "function",
+        "line": 139,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat.go",
+        "qualified_name": "pat.Param",
+        "kind": "function",
+        "line": 288,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat.go",
+        "qualified_name": "pat.Pattern",
+        "kind": "type",
+        "line": 112,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat.go",
+        "qualified_name": "pat.Pattern.HTTPMethods",
+        "kind": "method",
+        "line": 262,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat.go",
+        "qualified_name": "pat.Pattern.Match",
+        "kind": "method",
+        "line": 179,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat.go",
+        "qualified_name": "pat.Pattern.PathPrefix",
+        "kind": "method",
+        "line": 251,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat.go",
+        "qualified_name": "pat.Pattern.String",
+        "kind": "method",
+        "line": 269,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat.go",
+        "qualified_name": "pat.patNames",
+        "kind": "type",
+        "line": 92,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 2
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat.go",
+        "qualified_name": "pat.patNames.Len",
+        "kind": "method",
+        "line": 97,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat.go",
+        "qualified_name": "pat.patNames.Less",
+        "kind": "method",
+        "line": 100,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat.go",
+        "qualified_name": "pat.patNames.Swap",
+        "kind": "method",
+        "line": 103,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat.go",
+        "qualified_name": "pat.patternRe",
+        "kind": "variable",
+        "line": 132,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 2
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/pat_test.go",
+        "qualified_name": "pat.mustReq",
+        "kind": "function",
+        "line": 12,
+        "classification": "uncertain",
+        "decision": {
+          "classification": "uncertain",
+          "primary_reason": "Uncertainty evidence present; Not exported",
+          "reason_tags": [
+            "uncertainty",
+            "not_exported"
+          ],
+          "live_evidence_count": 0,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 1,
+          "confidence": 0,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "uncertainty",
+            "role": "uncertainty",
+            "reason": "test-only path",
+            "source": "suppression",
+            "confidence": 1.0,
+            "details": {}
+          }
+        ]
+      },
+      {
+        "file": "pat/url.go",
+        "qualified_name": "pat.ishex",
+        "kind": "function",
+        "line": 7,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 8
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/url.go",
+        "qualified_name": "pat.unescape",
+        "kind": "function",
+        "line": 31,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 2
+            }
+          }
+        ]
+      },
+      {
+        "file": "pat/url.go",
+        "qualified_name": "pat.unhex",
+        "kind": "function",
+        "line": 19,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 8
+            }
+          }
+        ]
+      },
+      {
+        "file": "pattern.go",
+        "qualified_name": "httpMethods",
+        "kind": "type",
+        "line": 5,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 1
+            }
+          }
+        ]
+      },
+      {
+        "file": "pattern.go",
+        "qualified_name": "pathPrefix",
+        "kind": "type",
+        "line": 11,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 1
+            }
+          }
+        ]
+      },
+      {
+        "file": "pattern/pattern.go",
+        "qualified_name": "pattern.AllVariables",
+        "kind": "variable",
+        "line": 40,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pattern/pattern.go",
+        "qualified_name": "pattern.Path",
+        "kind": "function",
+        "line": 52,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pattern/pattern.go",
+        "qualified_name": "pattern.SetPath",
+        "kind": "function",
+        "line": 65,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pattern/pattern.go",
+        "qualified_name": "pattern.Variable",
+        "kind": "type",
+        "line": 26,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "pattern/pattern.go",
+        "qualified_name": "pattern.allVariables",
+        "kind": "type",
+        "line": 28,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 1
+            }
+          }
+        ]
+      },
+      {
+        "file": "pattern/pattern_test.go",
+        "qualified_name": "pattern.boolPattern.Match",
+        "kind": "method",
+        "line": 11,
+        "classification": "likely_dead",
+        "decision": {
+          "classification": "likely_dead",
+          "primary_reason": "No static references; Not exported; No entrypoint evidence",
+          "reason_tags": [
+            "no_refs",
+            "not_exported",
+            "no_entrypoint",
+            "confidence_ge_threshold"
+          ],
+          "live_evidence_count": 0,
+          "dead_evidence_count": 4,
+          "uncertainty_count": 0,
+          "confidence": 80,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "no_static_references",
+            "role": "supports_dead",
+            "reason": "no static references were found",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 0,
+              "searched_name": "Match",
+              "files_searched": 29,
+              "same_name_definitions": [
+                "pat/pat.go:179 method pat.Pattern.Match",
+                "pattern/pattern_test.go:20 method pattern.prefixPattern.Match"
+              ],
+              "same_name_definition_count": 2
+            }
+          },
+          {
+            "kind": "not_exported",
+            "role": "supports_dead",
+            "reason": "symbol is not exported as public API",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {}
+          },
+          {
+            "kind": "no_entrypoint",
+            "role": "supports_dead",
+            "reason": "no package, framework, test, or root entrypoint evidence",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {}
+          },
+          {
+            "kind": "confidence_gate",
+            "role": "supports_dead",
+            "reason": "confidence meets the configured reporting threshold",
+            "source": "confidence",
+            "confidence": 0.8,
+            "details": {
+              "confidence": 80,
+              "threshold": 60
+            }
+          }
+        ]
+      },
+      {
+        "file": "pattern/pattern_test.go",
+        "qualified_name": "pattern.prefixPattern.Match",
+        "kind": "method",
+        "line": 20,
+        "classification": "likely_dead",
+        "decision": {
+          "classification": "likely_dead",
+          "primary_reason": "No static references; Not exported; No entrypoint evidence",
+          "reason_tags": [
+            "no_refs",
+            "not_exported",
+            "no_entrypoint",
+            "confidence_ge_threshold"
+          ],
+          "live_evidence_count": 0,
+          "dead_evidence_count": 4,
+          "uncertainty_count": 0,
+          "confidence": 80,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "no_static_references",
+            "role": "supports_dead",
+            "reason": "no static references were found",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 0,
+              "searched_name": "Match",
+              "files_searched": 29,
+              "same_name_definitions": [
+                "pat/pat.go:179 method pat.Pattern.Match",
+                "pattern/pattern_test.go:11 method pattern.boolPattern.Match"
+              ],
+              "same_name_definition_count": 2
+            }
+          },
+          {
+            "kind": "not_exported",
+            "role": "supports_dead",
+            "reason": "symbol is not exported as public API",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {}
+          },
+          {
+            "kind": "no_entrypoint",
+            "role": "supports_dead",
+            "reason": "no package, framework, test, or root entrypoint evidence",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {}
+          },
+          {
+            "kind": "confidence_gate",
+            "role": "supports_dead",
+            "reason": "confidence meets the configured reporting threshold",
+            "source": "confidence",
+            "confidence": 0.8,
+            "details": {
+              "confidence": 80,
+              "threshold": 60
+            }
+          }
+        ]
+      },
+      {
+        "file": "pattern/pattern_test.go",
+        "qualified_name": "pattern.prefixPattern.PathPrefix",
+        "kind": "method",
+        "line": 23,
+        "classification": "likely_dead",
+        "decision": {
+          "classification": "likely_dead",
+          "primary_reason": "No static references; Not exported; No entrypoint evidence",
+          "reason_tags": [
+            "no_refs",
+            "not_exported",
+            "no_entrypoint",
+            "confidence_ge_threshold"
+          ],
+          "live_evidence_count": 0,
+          "dead_evidence_count": 4,
+          "uncertainty_count": 0,
+          "confidence": 80,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "no_static_references",
+            "role": "supports_dead",
+            "reason": "no static references were found",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 0,
+              "searched_name": "PathPrefix",
+              "files_searched": 29,
+              "same_name_definitions": [
+                "pat/pat.go:251 method pat.Pattern.PathPrefix"
+              ],
+              "same_name_definition_count": 1
+            }
+          },
+          {
+            "kind": "not_exported",
+            "role": "supports_dead",
+            "reason": "symbol is not exported as public API",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {}
+          },
+          {
+            "kind": "no_entrypoint",
+            "role": "supports_dead",
+            "reason": "no package, framework, test, or root entrypoint evidence",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {}
+          },
+          {
+            "kind": "confidence_gate",
+            "role": "supports_dead",
+            "reason": "confidence meets the configured reporting threshold",
+            "source": "confidence",
+            "confidence": 0.8,
+            "details": {
+              "confidence": 80,
+              "threshold": 60
+            }
+          }
+        ]
+      },
+      {
+        "file": "router.go",
+        "qualified_name": "match",
+        "kind": "type",
+        "line": 10,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 9
+            }
+          }
+        ]
+      },
+      {
+        "file": "router.go",
+        "qualified_name": "match.Value",
+        "kind": "method",
+        "line": 16,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_simple.go",
+        "qualified_name": "route",
+        "kind": "type",
+        "line": 13,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 15
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_simple.go",
+        "qualified_name": "router",
+        "kind": "type",
+        "line": 11,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 9
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_simple.go",
+        "qualified_name": "router.add",
+        "kind": "method",
+        "line": 18,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 2
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_simple.go",
+        "qualified_name": "router.route",
+        "kind": "method",
+        "line": 22,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 2
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "byPrefix",
+        "kind": "type",
+        "line": 101,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 1
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "byPrefix.Len",
+        "kind": "method",
+        "line": 103,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "byPrefix.Less",
+        "kind": "method",
+        "line": 106,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "byPrefix.Swap",
+        "kind": "method",
+        "line": 109,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Framework entrypoint",
+          "reason_tags": [
+            "framework_root"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "framework_root",
+            "role": "supports_live",
+            "reason": "public export",
+            "source": "python_ast",
+            "confidence": 1.0,
+            "details": {
+              "root_kind": "public_export"
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "child",
+        "kind": "type",
+        "line": 24,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 5
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "longestPrefix",
+        "kind": "function",
+        "line": 113,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 1
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "route",
+        "kind": "type",
+        "line": 19,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 8
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "router",
+        "kind": "type",
+        "line": 13,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 9
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "router.add",
+        "kind": "method",
+        "line": 34,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 2
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "router.route",
+        "kind": "method",
+        "line": 66,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 2
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "trieNode",
+        "kind": "type",
+        "line": 29,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 9
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "trieNode.add",
+        "kind": "method",
+        "line": 126,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 1
+            }
+          }
+        ]
+      },
+      {
+        "file": "router_trie.go",
+        "qualified_name": "trieNode.clone",
+        "kind": "method",
+        "line": 168,
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "live_evidence_count": 1,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 0,
+          "confidence": 100,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "static_reference",
+            "role": "supports_live",
+            "reason": "referenced by static analysis",
+            "source": "analyzer",
+            "confidence": 1.0,
+            "details": {
+              "references": 19
+            }
+          }
+        ]
+      },
+      {
+        "file": "util_test.go",
+        "qualified_name": "wr",
+        "kind": "function",
+        "line": 64,
+        "classification": "uncertain",
+        "decision": {
+          "classification": "uncertain",
+          "primary_reason": "Uncertainty evidence present; Not exported",
+          "reason_tags": [
+            "uncertainty",
+            "not_exported"
+          ],
+          "live_evidence_count": 0,
+          "dead_evidence_count": 0,
+          "uncertainty_count": 1,
+          "confidence": 0,
+          "threshold": 60
+        },
+        "evidence": [
+          {
+            "kind": "uncertainty",
+            "role": "uncertainty",
+            "reason": "test-only path",
+            "source": "suppression",
+            "confidence": 1.0,
+            "details": {}
+          }
+        ]
+      }
+    ]
+  },
+  "dead_code_rescues": [],
+  "dead_code_abstentions": [],
+  "analysis_summary": {
+    "total_files": 29,
+    "excluded_folders": [],
+    "languages": {
+      "Go": 29
+    },
+    "analysis_error_count": 0,
+    "dead_code_evidence": {
+      "symbol_count": 77,
+      "classification_policy": "dead-code-evidence-v3",
+      "classifications": {
+        "alive": 70,
+        "uncertain": 4,
+        "likely_dead": 3
+      },
+      "uncertainty_reasons": {
+        "test-only path": 4
+      },
+      "candidate_decisions": {
+        "reported": 3,
+        "rescued": 0,
+        "abstained": 0
+      }
+    },
+    "comparison_scope": {
+      "kind": "repository_root",
+      "scan_path": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji",
+      "repository_root": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/fresh_checkouts/goji--goji",
+      "complete_repository": true,
+      "excluded_folders": [],
+      "changed_files_only": false
+    },
+    "dead_code_liveness": {
+      "rescued_count": 0,
+      "rescued": []
+    },
+    "grep_verify": {
+      "enabled": true,
+      "rescued_count": 0,
+      "project_cache_enabled": false,
+      "backend": "ripgrep"
+    },
+    "language_engines": {
+      "go": {
+        "status": "available",
+        "file_count": 29,
+        "engine": {
+          "status": "available",
+          "binary": "/tmp/skylos-review-fixes-20261117-go",
+          "configured_by": "SKYLOS_GO_BIN"
+        },
+        "completed_checks": [
+          "quality",
+          "dead_code",
+          "security"
+        ],
+        "skipped_checks": []
+      }
+    },
+    "monorepo_detected": false,
+    "workspace_count": 0,
+    "workspace_total_packages": 0,
+    "workspace_diagnostic_count": 0,
+    "maintainability_inventory": [],
+    "total_loc": 1656,
+    "grade_categories": [
+      "security",
+      "dead_code"
+    ],
+    "by_directory": [
+      {
+        "path": "pattern",
+        "total": 3,
+        "files": 1,
+        "dead_code": 3,
+        "rules": {
+          "unused-functions": 3
+        },
+        "severities": {
+          "LOW": 3
+        }
+      }
+    ],
+    "finding_type_counts": {
+      "defect": 0,
+      "review": 3,
+      "advice": 0,
+      "advice_groups": 0
+    },
+    "assessment_scope": "listed_findings",
+    "enum_member_analysis": {
+      "scope": "local_and_closed_private_enums",
+      "status": "complete",
+      "complete": true,
+      "analysed_files": 0,
+      "checked_enums": 0,
+      "grouped_enums": 0,
+      "abstained_enums": [],
+      "reasons": [],
+      "abstained_count": 0,
+      "report_scope": "selected_sources",
+      "outside_changed_files_count": 0,
+      "suppressed_count": 0,
+      "below_threshold_count": 0,
+      "reported_count": 0
+    },
+    "component_import_graph": {
+      "status": "not_applicable",
+      "complete": true,
+      "scope": "component_import_graph",
+      "component_count": 0,
+      "script_blocks": 0,
+      "import_edges": 0,
+      "languages": {},
+      "issues": []
+    },
+    "configuration_coverage": {
+      "terraform": {
+        "status": "not_applicable",
+        "files_discovered": 0,
+        "files_parsed": 0,
+        "resources": 0,
+        "modules": 0,
+        "resolution_attempts": 0,
+        "unresolved_resolution_attempts": 0,
+        "scope": "terraform_modules",
+        "module_calls": [],
+        "discovery_errors": [],
+        "checks": [],
+        "supported_rules": [
+          "SKY-D400",
+          "SKY-D401",
+          "SKY-D402",
+          "SKY-D403",
+          "SKY-D404",
+          "SKY-D405",
+          "SKY-D406",
+          "SKY-D407",
+          "SKY-D408"
+        ],
+        "evaluation_status": "not_applicable",
+        "evaluation_counts": {
+          "unsafe": 0,
+          "safe": 0,
+          "unknown": 0,
+          "not_applicable": 0
+        },
+        "checks_evaluated": 0,
+        "unsupported_resource_count": 0,
+        "unsupported_resources": [],
+        "unresolved_module_count": 0,
+        "policy_scope": "declaration_policy"
+      },
+      "kubernetes": {
+        "status": "complete",
+        "files_discovered": 1,
+        "files_read": 1,
+        "files_parsed": 1,
+        "documents_parsed": 1,
+        "discovery_errors": [],
+        "evaluation_status": "not_applicable",
+        "supported_rules": [
+          "SKY-D409",
+          "SKY-D410",
+          "SKY-D411"
+        ],
+        "checks": [],
+        "checks_evaluated": 0,
+        "evaluation_counts": {
+          "unsafe": 0,
+          "safe": 0,
+          "unknown": 0,
+          "not_applicable": 0
+        },
+        "resources": 0,
+        "workloads": 0,
+        "unsupported_resource_count": 0,
+        "unsupported_resources": [],
+        "policy_scope": "declaration_policy",
+        "limits": {
+          "rendering": "not_performed",
+          "custom_resources": "not_evaluated",
+          "hostpath_platform": "literal_posix_paths",
+          "runtime_state": "not_observed",
+          "yaml_aliases_and_merges": "not_evaluated"
+        }
+      }
+    },
+    "resolution_scope_limited": true,
+    "security_trace_coverage": {
+      "static_only": true,
+      "findings": 0,
+      "by_status": {
+        "source_to_sink": 0,
+        "partial": 0,
+        "unknown": 0,
+        "unavailable": 0
+      },
+      "explanation_failures": 0,
+      "scope": "Recorded explanation coverage; not proof of runtime exploitation or complete external callers."
+    },
+    "listed_finding_type_counts": {
+      "defect": 0,
+      "review": 3,
+      "advice": 0,
+      "advice_groups": 0
+    },
+    "quality_count": 0,
+    "listed_quality_count": 0
+  },
+  "workspaces": {
+    "is_monorepo": false,
+    "root_package": null,
+    "packages": [],
+    "diagnostics": [],
+    "declared_patterns": [],
+    "tsconfig_references": [],
+    "package_count": 0,
+    "total_packages": 0,
+    "diagnostic_count": 0
+  },
+  "assessment": {
+    "version": 1,
+    "scope": "all_analyzed_findings",
+    "scanned_checks": [
+      "security",
+      "dead_code"
+    ],
+    "coverage": {
+      "status": "partial",
+      "not_assessed": [
+        "quality",
+        "ai_defects",
+        "dependencies",
+        "secrets"
+      ],
+      "incomplete_checks": [],
+      "reasons": [
+        "configured_suppression"
+      ]
+    },
+    "risk": {
+      "status": "none",
+      "highest_severity": null,
+      "finding_count": 0,
+      "severity_counts": {
+        "CRITICAL": 0,
+        "HIGH": 0,
+        "MEDIUM": 0,
+        "LOW": 0,
+        "UNKNOWN": 0
+      },
+      "categories": {
+        "security": {
+          "status": "none",
+          "highest_severity": null,
+          "finding_count": 0,
+          "severity_counts": {
+            "CRITICAL": 0,
+            "HIGH": 0,
+            "MEDIUM": 0,
+            "LOW": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "secrets": {
+          "status": "not_assessed",
+          "highest_severity": null,
+          "finding_count": 0,
+          "severity_counts": {
+            "CRITICAL": 0,
+            "HIGH": 0,
+            "MEDIUM": 0,
+            "LOW": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "dependencies": {
+          "status": "not_assessed",
+          "highest_severity": null,
+          "finding_count": 0,
+          "severity_counts": {
+            "CRITICAL": 0,
+            "HIGH": 0,
+            "MEDIUM": 0,
+            "LOW": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "correctness": {
+          "status": "not_assessed",
+          "highest_severity": null,
+          "finding_count": 0,
+          "severity_counts": {
+            "CRITICAL": 0,
+            "HIGH": 0,
+            "MEDIUM": 0,
+            "LOW": 0,
+            "UNKNOWN": 0
+          }
+        }
+      }
+    },
+    "maintainability": {
+      "status": "not_assessed",
+      "advice_count": 0,
+      "rule_count": 0,
+      "affected_files": 0,
+      "affected_functions": null,
+      "checks": []
+    },
+    "dead_code": {
+      "status": "review",
+      "candidate_count": 3,
+      "confidence_range": [
+        80,
+        80
+      ]
+    },
+    "finding_counts": {
+      "defect": 0,
+      "review": 3,
+      "advice": 0,
+      "advice_groups": 0
+    }
+  },
+  "listing_policy_version": 1,
+  "advice_visibility": {
+    "total_checks": 0,
+    "omitted_checks": 0,
+    "combined_checks": 0,
+    "reasons": {},
+    "rules": {},
+    "include_with": "--all-advice"
+  }
+}

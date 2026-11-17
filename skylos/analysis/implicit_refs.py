@@ -107,7 +107,7 @@ class ImplicitRefTracker:
             return
         self._class_patterns.append(entry)
 
-    def apply_class_member_strings(self) -> None:
+    def apply_class_member_strings(self, definitions=None) -> None:
         """Turn a class's own method-name strings into class-scoped refs.
 
         ``(("cli", "_cli_read"), ("api", "_api_read"))`` stored by a class and
@@ -119,7 +119,15 @@ class ImplicitRefTracker:
         self._class_exact_allowed = {}
         if not self.opaque_member_lookup:
             return
+        excluded = set()
+        if definitions:
+            from skylos.deadcode.first_iteration_dispatch import (
+                proven_unselected_method_strings,
+            )
+            excluded = proven_unselected_method_strings(definitions)
         for owner, name in self.class_member_strings:
+            if (owner, name) in excluded:
+                continue
             self._class_exact_names.setdefault(owner, set()).add(name)
 
     def has_class_member_names(self) -> bool:

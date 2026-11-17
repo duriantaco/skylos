@@ -2875,6 +2875,10 @@ class Skylos:
 
     def _apply_python_reachability(self, report):
         self._retain_reachability_uncertainty(report)
+        from skylos.deadcode.closed_type_registries import apply_closed_registry_proof
+        apply_closed_registry_proof(
+            self.defs, getattr(report, "_closed_type_registry_unused", ())
+        )
         for key in report.proven_reachable_keys:
             defn = self.defs.get(key)
             if defn is not None and defn.references <= 0:
@@ -2920,6 +2924,10 @@ class Skylos:
         }
         report.refresh(self.defs, additional_roots=revived_roots)
         self._retain_reachability_uncertainty(report)
+        from skylos.deadcode.closed_type_registries import apply_closed_registry_proof
+        apply_closed_registry_proof(
+            self.defs, getattr(report, "_closed_type_registry_unused", ())
+        )
         self._mark_dynamic_lookup_candidates(report)
         # An external callback or a later grep rescue may establish a real
         # caller. Its callees must be restored in this same scan.
@@ -3179,6 +3187,9 @@ class Skylos:
         same_name_groups = SameNameGroups(
             self.defs, _reference_language_family, scan_root=scan_root
         )
+        from skylos.deadcode.typescript_definitions import SameFileDefinitions
+
+        ts_same_file_definitions = SameFileDefinitions(self.defs)
 
         def _resolve_import_target(import_def_key: str, import_def_obj) -> str | None:
             target_fqn = import_def_obj.name
@@ -3423,7 +3434,11 @@ class Skylos:
 
             file_key = f"{ref_file}:{ref}"
             group_targets = None
-            if same_name_groups and not (
+            if ref_family == "typescript" and not (
+                file_key in self.defs and self.defs[file_key].type == "import"
+            ):
+                group_targets = ts_same_file_definitions.targets(ref_file, ref)
+            if group_targets is None and same_name_groups and not (
                 file_key in self.defs and self.defs[file_key].type == "import"
             ):
                 group_targets = same_name_groups.targets(ref, ref_file, ref_family)
@@ -3620,7 +3635,7 @@ class Skylos:
 
         from skylos.analysis.implicit_refs import pattern_tracker as global_tracker
 
-        global_tracker.apply_class_member_strings()
+        global_tracker.apply_class_member_strings(self.defs)
         if global_tracker._class_patterns or global_tracker.has_class_member_names():
             global_tracker.set_class_hierarchy(self._python_subclass_map())
 
@@ -5356,9 +5371,11 @@ class Skylos:
                             f"{definition.filename}:{definition.name}:"
                             f"{definition.type}:{definition.line}"
                         )
-                    elif str(definition.filename).endswith(
-                        _TS_JS_SOURCE_EXTS + _CPP_SOURCE_EXTS
-                    ):
+                    elif str(definition.filename).endswith(_TS_JS_SOURCE_EXTS):
+                        from skylos.deadcode.typescript_definitions import definition_key
+
+                        key = definition_key(definition, self.defs)
+                    elif str(definition.filename).endswith(_CPP_SOURCE_EXTS):
                         key = f"{definition.filename}:{definition.name}"
                     elif (
                         _reference_language_family(definition.filename)

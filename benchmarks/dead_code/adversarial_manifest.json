@@ -5,7 +5,9 @@
       "id": "extreme-grounding-framework-dead-code",
       "path": "fixtures/extreme_grounding_framework",
       "description": "Dead-code view of framework, package-entrypoint, app-root, and CLI-root grounding.",
-      "languages": ["python"],
+      "languages": [
+        "python"
+      ],
       "taxonomy": [
         "multi_file",
         "framework_precision",
@@ -16,7 +18,7 @@
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
         "license": "test-only",
-        "notes": "Adversarial regression target for framework/package liveness. This manifest is not part of the default required gate."
+        "notes": "Adversarial regression target for framework/package liveness. This manifest is not part of the default required gate. Source review 2026-11-17: explicit extra labels cover one unreferenced helper and five unread stub/protocol parameters across these two cases. Unread parameters must retain positional/handler signature compatibility; these labels do not authorize removal."
       },
       "scan": {
         "confidence": 0,
@@ -27,20 +29,83 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "services/account.py", "symbol": "dormant_report"},
-          {"kind": "function", "file": "services/hooks.py", "symbol": "run_sample"},
-          {"kind": "function", "file": "services/network.py", "symbol": "lab_fetch"}
+          {
+            "kind": "function",
+            "file": "services/account.py",
+            "symbol": "dormant_report"
+          },
+          {
+            "kind": "function",
+            "file": "services/hooks.py",
+            "symbol": "run_sample"
+          },
+          {
+            "kind": "function",
+            "file": "services/network.py",
+            "symbol": "lab_fetch"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "preview"
+          },
+          {
+            "kind": "parameter",
+            "file": "services/db.py",
+            "symbol": "query"
+          },
+          {
+            "kind": "parameter",
+            "file": "services/db.py",
+            "symbol": "params"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "services/account.py", "symbol": "load_account"},
-          {"kind": "function", "file": "services/account.py", "symbol": "archive_account"},
-          {"kind": "function", "file": "services/hooks.py", "symbol": "run_dynamic_hook"},
-          {"kind": "function", "file": "services/hooks.py", "symbol": "run_registered_hook"},
-          {"kind": "function", "file": "services/hooks.py", "symbol": "run_mutable_runner"},
-          {"kind": "function", "file": "services/network.py", "symbol": "fetch_partner"},
-          {"kind": "function", "file": "services/network.py", "symbol": "fetch_internal_status"},
-          {"kind": "function", "file": "web/routes.py", "symbol": "admin_query_route"},
-          {"kind": "function", "file": "tools/admin.py", "symbol": "dangerous_admin"}
+          {
+            "kind": "function",
+            "file": "services/account.py",
+            "symbol": "load_account"
+          },
+          {
+            "kind": "function",
+            "file": "services/account.py",
+            "symbol": "archive_account"
+          },
+          {
+            "kind": "function",
+            "file": "services/hooks.py",
+            "symbol": "run_dynamic_hook"
+          },
+          {
+            "kind": "function",
+            "file": "services/hooks.py",
+            "symbol": "run_registered_hook"
+          },
+          {
+            "kind": "function",
+            "file": "services/hooks.py",
+            "symbol": "run_mutable_runner"
+          },
+          {
+            "kind": "function",
+            "file": "services/network.py",
+            "symbol": "fetch_partner"
+          },
+          {
+            "kind": "function",
+            "file": "services/network.py",
+            "symbol": "fetch_internal_status"
+          },
+          {
+            "kind": "function",
+            "file": "web/routes.py",
+            "symbol": "admin_query_route"
+          },
+          {
+            "kind": "function",
+            "file": "tools/admin.py",
+            "symbol": "dangerous_admin"
+          }
         ]
       }
     },
@@ -48,13 +113,19 @@
       "id": "static-blind-plugin-dispatch-dead-code",
       "path": "fixtures/static_blind_plugin_dispatch",
       "description": "Dead-code view of dynamic plugin dispatch through module:function strings and importlib.",
-      "languages": ["python"],
-      "taxonomy": ["multi_file", "dynamic_dispatch", "precision_guard"],
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
         "license": "test-only",
-        "notes": "Adversarial regression target for dynamic dispatch liveness. This manifest is not part of the default required gate."
+        "notes": "Adversarial regression target for dynamic dispatch liveness. This manifest is not part of the default required gate. Source review 2026-11-17: explicit extra labels cover one unreferenced helper and five unread stub/protocol parameters across these two cases. Unread parameters must retain positional/handler signature compatibility; these labels do not authorize removal."
       },
       "scan": {
         "confidence": 0,
@@ -65,18 +136,73 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "plugins/payments.py", "symbol": "debug_query"},
-          {"kind": "function", "file": "plugins/audit.py", "symbol": "sample_shell"},
-          {"kind": "function", "file": "plugins/network.py", "symbol": "lab_fetch"}
+          {
+            "kind": "function",
+            "file": "plugins/payments.py",
+            "symbol": "debug_query"
+          },
+          {
+            "kind": "function",
+            "file": "plugins/audit.py",
+            "symbol": "sample_shell"
+          },
+          {
+            "kind": "function",
+            "file": "plugins/network.py",
+            "symbol": "lab_fetch"
+          },
+          {
+            "kind": "parameter",
+            "file": "plugins/db.py",
+            "symbol": "query"
+          },
+          {
+            "kind": "parameter",
+            "file": "plugins/db.py",
+            "symbol": "params"
+          },
+          {
+            "kind": "parameter",
+            "file": "plugins/network.py",
+            "symbol": "payload"
+          }
         ],
         "used": [
-          {"kind": "function", "file": "plugins/payments.py", "symbol": "charge_card"},
-          {"kind": "function", "file": "plugins/payments.py", "symbol": "archived_invoice"},
-          {"kind": "function", "file": "plugins/audit.py", "symbol": "ship_audit"},
-          {"kind": "function", "file": "plugins/tools.py", "symbol": "run_mutable_registered"},
-          {"kind": "function", "file": "plugins/tools.py", "symbol": "run_safe_builtin"},
-          {"kind": "function", "file": "plugins/network.py", "symbol": "fetch_url"},
-          {"kind": "function", "file": "plugins/network.py", "symbol": "fetch_fixed_status"}
+          {
+            "kind": "function",
+            "file": "plugins/payments.py",
+            "symbol": "charge_card"
+          },
+          {
+            "kind": "function",
+            "file": "plugins/payments.py",
+            "symbol": "archived_invoice"
+          },
+          {
+            "kind": "function",
+            "file": "plugins/audit.py",
+            "symbol": "ship_audit"
+          },
+          {
+            "kind": "function",
+            "file": "plugins/tools.py",
+            "symbol": "run_mutable_registered"
+          },
+          {
+            "kind": "function",
+            "file": "plugins/tools.py",
+            "symbol": "run_safe_builtin"
+          },
+          {
+            "kind": "function",
+            "file": "plugins/network.py",
+            "symbol": "fetch_url"
+          },
+          {
+            "kind": "function",
+            "file": "plugins/network.py",
+            "symbol": "fetch_fixed_status"
+          }
         ]
       }
     },
@@ -1071,7 +1197,7 @@
     {
       "id": "csharp-owner-call-identity",
       "path": "fixtures/csharp_owner_call_identity",
-      "description": "Main constructs both namespace-specific Worker classes but only invokes Primary.Run→Primary.Process. The Secondary private method has no caller; its owner is constructed so parent grouping cannot hide it.",
+      "description": "Main constructs both namespace-specific Worker classes but only invokes Primary.Run\u2192Primary.Process. The Secondary private method has no caller; its owner is constructed so parent grouping cannot hide it.",
       "languages": [
         "csharp"
       ],

@@ -1,0 +1,161 @@
+{
+  "tool": "ESLint with eslint-plugin-security",
+  "versions": {
+    "eslint": "10.15.0",
+    "security": "4.2.1",
+    "parser": "8.73.0"
+  },
+  "scope": "All 58 TS/JS security cases scanned. Only the 16 labels for eval and Node command-execution families are compared; unrelated rule families remain unsupported. Shell-enabled spawn/execFile variants are within Node command family, and absent detections count as misses in this family-level evaluation. The installed competitor rule source only matches dynamic child_process.exec; that narrower pattern scope explains those misses.",
+  "label_matching": "Same legacy case-level rule-presence semantics as original corpus; not whole-repo exploit accuracy. Cannot count a warning elsewhere as exact-location evidence.",
+  "counts": {
+    "TP": 2,
+    "TN": 7,
+    "FN": 7
+  },
+  "cases": [
+    {
+      "id": "typescript-eval",
+      "expected": "present",
+      "rule_id": "SKY-D201",
+      "competitor_rule_id": "security/detect-eval-with-expression",
+      "detected": true,
+      "outcome": "TP"
+    },
+    {
+      "id": "typescript-eval-safe",
+      "expected": "absent",
+      "rule_id": "SKY-D201",
+      "competitor_rule_id": "security/detect-eval-with-expression",
+      "detected": false,
+      "outcome": "TN"
+    },
+    {
+      "id": "ts-exec-direct",
+      "expected": "present",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": true,
+      "outcome": "TP"
+    },
+    {
+      "id": "ts-spawn-command-shell",
+      "expected": "present",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "FN"
+    },
+    {
+      "id": "ts-spawn-arg-shell",
+      "expected": "present",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "FN"
+    },
+    {
+      "id": "ts-execfile-arg-shell",
+      "expected": "present",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "FN"
+    },
+    {
+      "id": "ts-spawn-sync-shell",
+      "expected": "present",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "FN"
+    },
+    {
+      "id": "ts-execfile-sync-shell",
+      "expected": "present",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "FN"
+    },
+    {
+      "id": "ts-spawn-default-argv",
+      "expected": "absent",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "TN"
+    },
+    {
+      "id": "ts-spawn-false-argv",
+      "expected": "absent",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "TN"
+    },
+    {
+      "id": "ts-execfile-default-argv",
+      "expected": "absent",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "TN"
+    },
+    {
+      "id": "ts-spawn-spread-unsafe",
+      "expected": "present",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "FN"
+    },
+    {
+      "id": "ts-spawn-spread-safe",
+      "expected": "absent",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "TN"
+    },
+    {
+      "id": "ts-spawn-alias-shell",
+      "expected": "present",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "FN"
+    },
+    {
+      "id": "ts-spawn-shadow-safe",
+      "expected": "absent",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "TN"
+    },
+    {
+      "id": "ts-spawn-literal-shell",
+      "expected": "absent",
+      "rule_id": "SKY-D212",
+      "competitor_rule_id": "security/detect-child-process",
+      "detected": false,
+      "outcome": "TN"
+    }
+  ],
+  "fresh_security_controls": [
+    {
+      "id": "lukeed--regexparam",
+      "rule_family": "command_execution",
+      "expected": "absent",
+      "warnings": 0,
+      "outcome": "TN"
+    },
+    {
+      "id": "lukeed--trouter",
+      "rule_family": "command_execution",
+      "expected": "absent",
+      "warnings": 0,
+      "outcome": "TN"
+    }
+  ]
+}

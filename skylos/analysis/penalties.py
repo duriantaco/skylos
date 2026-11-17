@@ -646,7 +646,7 @@ def _check_non_library_path(def_obj, analyzer, cfg):
 def _proven_go_test_helper(def_obj, analyzer, cfg):
     if (
         not getattr(def_obj, "go_proven_unused_test_helper", False)
-        or def_obj.type != "function"
+        or def_obj.type not in {"function", "method"}
         or def_obj.is_exported
         or not str(def_obj.filename).endswith("_test.go")
     ):

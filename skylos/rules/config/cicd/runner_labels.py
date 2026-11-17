@@ -36,6 +36,11 @@ _MATRIX_PROPERTY_RE = re.compile(
     r"(?P<path>[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)"
     r"\s*\}\}"
 )
+_MATRIX_FALLBACK_RE = re.compile(
+    r"\$\{\{\s*matrix\."
+    r"(?P<path>[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)"
+    r"\s*\|\|\s*'(?P<fallback>[A-Za-z0-9_-]+)'\s*\}\}"
+)
 _MAX_MATRIX_ROWS = 256
 _MAX_LITERAL_NODES = 4096
 _MAX_LITERAL_DEPTH = 16
@@ -156,6 +161,13 @@ def _is_hosted_label_value(value: Any) -> bool:
 
 def _matrix_property_is_hosted(expression: str, job: dict[str, Any]) -> bool:
     match = _MATRIX_PROPERTY_RE.fullmatch(expression.strip())
+    fallback = None
+    if match is None:
+        match = _MATRIX_FALLBACK_RE.fullmatch(expression.strip())
+        if match is not None:
+            fallback = match.group("fallback")
+            if not _is_hosted_label_value(fallback):
+                return False
     if match is None:
         return False
     rows = _literal_matrix_rows(job)
@@ -165,11 +177,25 @@ def _matrix_property_is_hosted(expression: str, job: dict[str, Any]) -> bool:
     for row in rows:
         value: Any = row
         for key in path:
-            if not isinstance(value, dict) or key not in value:
+            if not isinstance(value, dict):
+                if value is None and fallback is not None:
+                    break
                 return False
             if any(other != key and other.lower() == key.lower() for other in value):
                 return False
+            if key not in value:
+                value = None
+                break
             value = value[key]
+        # GitHub's || substitutes only false/null/zero/empty-string values.
+        # Arrays/objects and nonempty strings such as "false" stay unproven.
+        if fallback is not None and (
+            value is None
+            or value is False
+            or (type(value) in {int, float} and value == 0)
+            or (isinstance(value, str) and value == "")
+        ):
+            value = fallback
         if not _is_hosted_label_value(value):
             return False
     return True

@@ -6303,13 +6303,6 @@
             "kind": "file",
             "file": "lib/orphan.js",
             "symbol": "lib/orphan.js"
-          }
-        ],
-        "used": [
-          {
-            "kind": "file",
-            "file": "lib/shared.js",
-            "symbol": "lib/shared.js"
           },
           {
             "kind": "file",
@@ -6320,6 +6313,13 @@
             "kind": "file",
             "file": "src/bundle.ts",
             "symbol": "src/bundle.ts"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "lib/shared.js",
+            "symbol": "lib/shared.js"
           }
         ]
       }
@@ -8295,11 +8295,6 @@
           {
             "kind": "function",
             "file": "channels/video.py",
-            "symbol": "_api_read"
-          },
-          {
-            "kind": "function",
-            "file": "channels/video.py",
             "symbol": "_cli_hot"
           }
         ],
@@ -8308,6 +8303,11 @@
             "kind": "function",
             "file": "channels/video.py",
             "symbol": "_legacy_read"
+          },
+          {
+            "kind": "function",
+            "file": "channels/video.py",
+            "symbol": "_api_read"
           }
         ]
       }

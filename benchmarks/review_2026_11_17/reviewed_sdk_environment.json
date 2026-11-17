@@ -1,0 +1,21 @@
+{
+  "recorded_at": "2026-11-17T00:38:02.512837+00:00",
+  "reason": "Explicit SDK after diagnostic proved missing package/type reachability with SDK undiscoverable; not a detector change",
+  "environment": {
+    "GOROOT": "/tmp/skylos-gap-go/go",
+    "GOTOOLCHAIN": "local",
+    "GOPROXY": "off",
+    "GOSUMDB": "off",
+    "SKYLOS_GO_BIN": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/tools/skylos-go"
+  },
+  "go_version": "go1.27.4\ntime 2026-11-02T20:36:20Z\n",
+  "go_compiler_sha256": "d4f87582b3289f95d5913feeda16a0682e6ec9ac37b48a600b32b00fb58b1b81",
+  "go_engine_sha256": "c9c7d0426c22f577cc9602d9911579ef6c9b0ac88084f24514631693afc16e1a",
+  "freeze_sha256": "28a29ed81fd7978e7dd83c3c3d09fbe4ae2193c823aafc7a8b574e064233e997",
+  "runner_sha256": "982f61421202e451be08f2b0fc02e7648da8010199a7dbfec0e19828b2f6d663",
+  "source_truth_unchanged": true,
+  "prior_runs_retained": [
+    "reviewed_before",
+    "reviewed_after"
+  ]
+}

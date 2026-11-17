@@ -1,0 +1,643 @@
+{
+  "reviewer": "/root/security_precision",
+  "reviewed_at": "2026-11-17T00:34:13.544905+00:00",
+  "status": "no_remaining_blocking_issue_in_reviewed_runner_and_manifest",
+  "method": "Independent code/source review and synthetic mock tests only. Validated every assembled fact against original draft and independent verdict; called fact validation without a freeze seal, analyzer import, scan, or result read. This artifact is not a production freeze seal.",
+  "runner_sha256": "982f61421202e451be08f2b0fc02e7648da8010199a7dbfec0e19828b2f6d663",
+  "manifest_sha256": "578922e0c6c385e47f4e05d059fe73b61ea1153cb99c8803ba6498fc6819a7b1",
+  "review_artifacts": [
+    {
+      "path": "SOURCE_LABELS_MUX_TINY_REVIEW.json",
+      "sha256": "ecaef809eb5b214ef2f11aa1d0a323d93fbebd8bed6746465a15374fc732fb8a"
+    },
+    {
+      "path": "hono_source_truth_independent_review.json",
+      "sha256": "e62ea31edab0171dee182e3919433e3ddccd54272d1618c32bc094b1a59854d8"
+    },
+    {
+      "path": "slim_petclinic_source_truth_independent_review.json",
+      "sha256": "4ad9084df48eb989bc2298cac4dc9923b76a56ae3c4d55668d77e635e4d6540a"
+    }
+  ],
+  "mock_tests": {
+    "command": "/tmp/skylos-new001-validation/bin/python -m pytest -q test/test_reviewed_ground_truth_runner.py test/test_reviewed_ground_truth_audit.py",
+    "passed": 36,
+    "failed": 0,
+    "independent_audit_controls": 8
+  },
+  "resolved_audit_issues": [
+    "Review contents, not just artifact hash, bind distinct reviewer, original draft and final truth.",
+    "Repository revision and source bytes are bound to original draft and reviewer-only consumer evidence.",
+    "Approved source match spans are accepted; unreviewed changes rejected.",
+    "Wrong category, owner, file, line or rule cannot count as matching finding.",
+    "Explicit reviewer scoring exclusions and inclusions cannot be overridden in normalized manifest.",
+    "Every independently reviewed fact remains present, including unknown and intentionally kept facts.",
+    "Safe-security quiet on a different parsed file cannot earn TN; used quiet without exact extraction remains unscored.",
+    "Complete scan missing a warning for source-proven unused code counts FN, including missing extraction.",
+    "Labels and review facts are withheld from scanner arguments; optional external services/target-code execution disabled."
+  ],
+  "manifest_counts": {
+    "facts": 73,
+    "score_eligible": 57,
+    "excluded": 16,
+    "semantic_truths": {
+      "used": 47,
+      "unknown": 11,
+      "safe": 11,
+      "unused": 3,
+      "unsafe": 1
+    }
+  },
+  "facts": [
+    {
+      "id": "mux-router-use-interface",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-route-use-interface",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-dummy-handler",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-cors-method-helper",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-clean-path",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-replace-url-path",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-method-not-allowed",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-method-not-allowed-factory",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-request-with-router",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-query-key",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-match-query",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-test-methods",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-set-url-vars",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-get-route-public",
+      "category": "dead_code",
+      "truth": "unknown",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-literal-http-body",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-clean-redirect",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "mux-slash-redirect",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-registration-new",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-add-thread",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-parse-header",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-build-date",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-fused-new",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-extract-writer",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-parse-http-version",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-read-next-line",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-content-type",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-header-unit-test",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-fused-into-inner",
+      "category": "dead_code",
+      "truth": "unused",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-num-connections",
+      "category": "dead_code",
+      "truth": "unknown",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-example-file-read",
+      "category": "security",
+      "truth": "unsafe",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-php-command",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-curl-command",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "tiny-unix-cleanup",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-regexp-auth-header",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-regexp-decoded-credentials",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-literal-dom-clear",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-nonce-crypto-source",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-dom-raw-html",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-jwks-url",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-context-html",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-constant-time-helper",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-string-compare-helper",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-nonce-helper",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-redirect-helper",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-html-escaper",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "hono-public-buffer-equal",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-unused-htmlentities-import",
+      "category": "dead_code",
+      "truth": "unused",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-unused-runtimeexception-import",
+      "category": "dead_code",
+      "truth": "unused",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-used-get-class-import",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-used-sprintf-import",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-used-format-exception-fragment",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-used-is-route-callback",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-used-is-middleware-callback",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-used-private-route-context-constructor",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-used-emit-body",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-used-plain-text-renderer-class",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-used-named-args-invocation",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-unknown-response-echo-103",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-unknown-response-echo-113",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-safe-exception-message-html-construction",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "slim-unknown-xml-parser-runtime-contract",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "petclinic-used-owner-init-creation-form",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "petclinic-used-base-entity-id-getter",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "petclinic-used-vet-pagination-query-helper",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "petclinic-used-vet-pagination-view-helper",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "petclinic-used-locale-resolver-bean",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "petclinic-used-locale-interceptor-bean",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "petclinic-used-formatter-print",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "petclinic-used-formatter-parse",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "petclinic-used-derived-repository-query",
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "petclinic-safe-fixed-vet-redirect",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "petclinic-safe-numeric-owner-redirect-86",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    },
+    {
+      "id": "petclinic-safe-numeric-owner-redirect-125",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "identity_owner_category_span_verified": true,
+      "draft_and_review_hashes_bound": true
+    }
+  ],
+  "limits": [
+    "Selected source-reviewed facts only; no whole-repository recall or independence-from-earlier-exploration claim.",
+    "One unsafe security positive is an intentional tiny-http example source risk, not a deployed/core-library vulnerability claim.",
+    "No production freeze created or scan executed by this reviewer. Root must hash the final artifacts and freeze before running.",
+    "Coverage remains conditional on actual complete analysis and extraction; this pre-run audit does not award scan outcomes."
+  ]
+}

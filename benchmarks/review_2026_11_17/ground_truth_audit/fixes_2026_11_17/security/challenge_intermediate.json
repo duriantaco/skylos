@@ -1,0 +1,478 @@
+{
+  "manifest": "/Users/oha/skylos/benchmarks/security/adversarial_manifest.json",
+  "scanner": "skylos",
+  "case_count": 9,
+  "scored_case_count": 9,
+  "unscored_case_count": 0,
+  "analysis_status": "complete",
+  "metrics_scoped_to_scored_cases": true,
+  "skipped_case_count": 0,
+  "skipped_cases": [],
+  "pass_count": 3,
+  "failure_count": 6,
+  "total_elapsed_seconds": 3.0096,
+  "counts": {
+    "true_positives": 2,
+    "false_positives": 0,
+    "false_negatives": 6,
+    "true_negatives": 1
+  },
+  "scores": {
+    "precision": 1.0,
+    "recall": 0.25,
+    "f1": 0.4,
+    "absence_guard": 1.0,
+    "latency_score": 1.0,
+    "overall_score": 70.0
+  },
+  "taxonomy": {
+    "command_injection": {
+      "description": "Untrusted or unsafe command execution reaches shell/process sinks.",
+      "case_count": 3,
+      "scored_case_count": 3,
+      "unscored_case_count": 0,
+      "weighted_score": 88.57,
+      "failure_count": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 1,
+      "true_negatives": 1
+    },
+    "dart": {
+      "description": "Dart security flow and sanitizer patterns.",
+      "case_count": 2,
+      "scored_case_count": 2,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0
+    },
+    "go": {
+      "description": "Go security flow and sanitizer patterns.",
+      "case_count": 6,
+      "scored_case_count": 6,
+      "unscored_case_count": 0,
+      "weighted_score": 60.0,
+      "failure_count": 6,
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 6,
+      "true_negatives": 0
+    },
+    "kotlin": {
+      "description": "Kotlin security flow and sanitizer patterns.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1
+    },
+    "path_traversal": {
+      "description": "Untrusted path segments reach filesystem sinks.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 60.0,
+      "failure_count": 1,
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 1,
+      "true_negatives": 0
+    },
+    "precision_guard": {
+      "description": "Clean patterns that should stay free of noisy security findings.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1
+    },
+    "ssrf": {
+      "description": "Untrusted data controls outbound request destinations.",
+      "case_count": 4,
+      "scored_case_count": 4,
+      "unscored_case_count": 0,
+      "weighted_score": 70.0,
+      "failure_count": 3,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 3,
+      "true_negatives": 0
+    },
+    "tls_verification": {
+      "description": "TLS peer verification settings and provider identity controls.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 60.0,
+      "failure_count": 1,
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 1,
+      "true_negatives": 0
+    }
+  },
+  "cases": [
+    {
+      "id": "kotlin-command-argv",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/kotlin_command_argv",
+      "description": "The executable and printf format are fixed; request data occupies an argv data element and no shell runs.",
+      "languages": [
+        "kotlin"
+      ],
+      "taxonomy": [
+        "kotlin",
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.2192,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "go-ssrf-function-alias",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_go_ssrf_function_alias",
+      "description": "Same get function invoked via local value; known unresolved native detector miss.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "ssrf",
+        "go"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.6298,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 1,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 60.0
+      },
+      "failures": [
+        {
+          "case_id": "go-ssrf-function-alias",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D216",
+          "found": []
+        }
+      ]
+    },
+    {
+      "id": "go-ssrf-method-alias",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_go_ssrf_method_alias",
+      "description": "Bound http client method value; known unresolved native detector miss.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "ssrf",
+        "go"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.3942,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 1,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 60.0
+      },
+      "failures": [
+        {
+          "case_id": "go-ssrf-method-alias",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D216",
+          "found": []
+        }
+      ]
+    },
+    {
+      "id": "go-command-function-alias",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_go_command_function_alias",
+      "description": "Same command function via local value; known unresolved native detector miss.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "command_injection",
+        "go"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4417,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 1,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 60.0
+      },
+      "failures": [
+        {
+          "case_id": "go-command-function-alias",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D212",
+          "found": []
+        }
+      ]
+    },
+    {
+      "id": "go-path-function-alias",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_go_path_function_alias",
+      "description": "Same filesystem sink via value; known unresolved native detector miss.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "path_traversal",
+        "go"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.3889,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 1,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 60.0
+      },
+      "failures": [
+        {
+          "case_id": "go-path-function-alias",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D215",
+          "found": []
+        }
+      ]
+    },
+    {
+      "id": "go-ssrf-request-alias",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_go_ssrf_request_alias",
+      "description": "Go type alias preserves exact http.request identity; known unresolved native detector miss.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "ssrf",
+        "go"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.3793,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 1,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 60.0
+      },
+      "failures": [
+        {
+          "case_id": "go-ssrf-request-alias",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D216",
+          "found": []
+        }
+      ]
+    },
+    {
+      "id": "go-tls-field-assignment",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_go_tls_field_assignment",
+      "description": "Typed tls config field assignment disables validation; known unresolved native detector miss.",
+      "languages": [
+        "go"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "go"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.3847,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 1,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 60.0
+      },
+      "failures": [
+        {
+          "case_id": "go-tls-field-assignment",
+          "failure_type": "expectation",
+          "category": "danger",
+          "mode": "present",
+          "expected": "SKY-D210",
+          "found": []
+        }
+      ]
+    },
+    {
+      "id": "dart-process-fake-canonicalize",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_dart_process_fake_canonicalize",
+      "description": "A local identity helper named canonicalize does not make an environment-controlled executable safe.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "command_injection",
+        "dart"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.0898,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "dart-http-fake-canonicalize",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_dart_http_fake_canonicalize",
+      "description": "A local identity helper named canonicalize does not restrict an environment-controlled URL destination.",
+      "languages": [
+        "dart"
+      ],
+      "taxonomy": [
+        "ssrf",
+        "dart"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.082,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    }
+  ]
+}

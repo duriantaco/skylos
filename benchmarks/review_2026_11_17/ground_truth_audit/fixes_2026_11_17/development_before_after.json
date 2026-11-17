@@ -1,0 +1,484 @@
+{
+  "phase": "development_remeasurement_not_new_blind_evaluation",
+  "matching": "Same exact file/line/owner/extraction policy applied to preserved originals and current outputs. Unknown/property-policy and incorrect frozen line unscored.",
+  "analyzer_source_unchanged_after_scans": true,
+  "repositories": [
+    {
+      "id": "jfhbrook--pyee",
+      "before_report": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fresh_python/jfhbrook--pyee-skylos.stdout",
+      "before_sha256": "eeb4714a4660a49811e93f696a4d3b19d62fd24adb34d36d6849472edf5df6c2",
+      "before_counts": {
+        "retained_used_control": 73,
+        "false_positive": 1,
+        "unscored": 2,
+        "incomplete_label_location": 1
+      },
+      "after_counts": {
+        "retained_used_control": 74,
+        "unscored": 2,
+        "incomplete_label_location": 1
+      },
+      "selected_changes": [
+        {
+          "label": {
+            "kind": "used",
+            "file": "pyee/executor.py",
+            "symbol": "ExecutorEventEmitter._emit_run._callback",
+            "line": 66,
+            "evidence": "Decorator @future.add_done_callback at :65 registers callback; this registration receives callable object."
+          },
+          "before": "false_positive",
+          "after": "retained_used_control"
+        }
+      ]
+    },
+    {
+      "id": "pallets-eco--blinker",
+      "before_report": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fresh_python/pallets-eco--blinker-skylos.stdout",
+      "before_sha256": "12e89380746fa7c7a2fd18abe94c6634adcf7ea794f81b9595cf77e1d5c0a7e4",
+      "before_counts": {
+        "retained_used_control": 36,
+        "true_positive": 1,
+        "safe_property_policy_warning": 1,
+        "unscored": 1
+      },
+      "after_counts": {
+        "retained_used_control": 36,
+        "true_positive": 1,
+        "safe_property_policy_warning": 1,
+        "unscored": 1
+      },
+      "selected_changes": []
+    },
+    {
+      "id": "lukeed--regexparam",
+      "before_report": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/lukeed--regexparam.skylos.json",
+      "before_sha256": "43b4c1abce686b332dfb6d54d49c5bb4a7912ad66a25ee3903c5994f3dda1c49",
+      "before_counts": {
+        "retained_used_control": 7,
+        "incomplete_extraction": 1,
+        "retained_safe_control": 1
+      },
+      "after_counts": {
+        "retained_used_control": 8,
+        "retained_safe_control": 1
+      },
+      "selected_changes": [
+        {
+          "label": {
+            "id": "regexparam.RGX",
+            "kind": "used",
+            "file": "src/index.js",
+            "line": 32,
+            "symbol": "RGX",
+            "reason": "inject passes this local regex binding to route.replace at src/index.js:36.",
+            "confidence": "source-confirmed"
+          },
+          "before": "incomplete_extraction",
+          "after": "retained_used_control"
+        }
+      ]
+    },
+    {
+      "id": "lukeed--trouter",
+      "before_report": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/lukeed--trouter.skylos.json",
+      "before_sha256": "6345696cf295b79509348b975d3be5961360d69ba570544f0f593f15fea68852",
+      "before_counts": {
+        "retained_used_control": 9,
+        "incomplete_extraction": 1,
+        "retained_safe_control": 1
+      },
+      "after_counts": {
+        "retained_used_control": 10,
+        "retained_safe_control": 1
+      },
+      "selected_changes": [
+        {
+          "label": {
+            "id": "trouter.MAP",
+            "kind": "used",
+            "file": "index.mjs",
+            "line": 3,
+            "symbol": "MAP",
+            "reason": "Read by use at line 35, add at line 42 and find at line 47.",
+            "confidence": "source-confirmed"
+          },
+          "before": "incomplete_extraction",
+          "after": "retained_used_control"
+        }
+      ]
+    },
+    {
+      "id": "goji--goji",
+      "before_report": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/goji_raw/skylos.json",
+      "before_sha256": "44f5586f7da56202404ded7be8b3ca64f1aa654ba8de74a1ba06ffaa2040139b",
+      "before_counts": {
+        "retained_used_control": 13,
+        "incomplete_extraction": 5,
+        "unscored": 1,
+        "unsupported_test_methods": 3
+      },
+      "after_counts": {
+        "retained_used_control": 18,
+        "true_positive": 3,
+        "unscored": 1
+      },
+      "selected_changes": [
+        {
+          "label": {
+            "id": "goji-pat-value",
+            "repo_id": "goji--goji",
+            "revision": "490b001d03d16a116d7c44d95d216c69a1aae798",
+            "category": "dead_code",
+            "finding_category": "unused_functions",
+            "file": "pat/match.go",
+            "line": 17,
+            "symbol": "match.Value",
+            "truth": "used",
+            "reason": "Pattern.Match attaches match context; Param retrieves variable through Value override.",
+            "source_evidence": [
+              {
+                "file": "pat/match.go",
+                "line": 11,
+                "end_line": 19,
+                "excerpt": "type match struct {\n\tcontext.Context\n\tpat     *Pattern\n\tmatches []string\n}\n\nfunc (m match) Value(key interface{}) interface{} {\n\tswitch key {\n\tcase pattern.AllVariables:",
+                "sha256": "3e9b8fdabac603327f6a41928d4fdfddd748557eae3412e9c75efdac2cd9ab60",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/pat/match.go#L11"
+              },
+              {
+                "file": "pat/match.go",
+                "line": 41,
+                "end_line": 50,
+                "excerpt": "\tif k, ok := key.(pattern.Variable); ok {\n\t\ti := sort.Search(len(m.pat.pats), func(i int) bool {\n\t\t\treturn m.pat.pats[i].name >= k\n\t\t})\n\t\tif i < len(m.pat.pats) && m.pat.pats[i].name == k {\n\t\t\treturn m.matches[m.pat.pats[i].idx]\n\t\t}\n\t}\n\n\treturn m.Context.Value(key)",
+                "sha256": "3e9b8fdabac603327f6a41928d4fdfddd748557eae3412e9c75efdac2cd9ab60",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/pat/match.go#L41"
+              },
+              {
+                "file": "pat/pat.go",
+                "line": 242,
+                "end_line": 243,
+                "excerpt": "\treturn r.WithContext(&match{ctx, p, scratch})\n}",
+                "sha256": "7d4a64ed8fe9aed7ca2da338217da0a3ba02a42955013f9ea0cb7022dbfabced",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/pat/pat.go#L242"
+              },
+              {
+                "file": "pat/pat.go",
+                "line": 288,
+                "end_line": 290,
+                "excerpt": "func Param(r *http.Request, name string) string {\n\treturn r.Context().Value(pattern.Variable(name)).(string)\n}",
+                "sha256": "7d4a64ed8fe9aed7ca2da338217da0a3ba02a42955013f9ea0cb7022dbfabced",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/pat/pat.go#L288"
+              }
+            ],
+            "scope": "all Go source including tests and both build variants"
+          },
+          "before": "incomplete_extraction",
+          "after": "retained_used_control"
+        },
+        {
+          "label": {
+            "id": "goji-test-wrapper",
+            "repo_id": "goji--goji",
+            "revision": "490b001d03d16a116d7c44d95d216c69a1aae798",
+            "category": "dead_code",
+            "finding_category": "unused_functions",
+            "file": "middleware_test.go",
+            "line": 46,
+            "symbol": "makeMiddleware",
+            "truth": "used",
+            "reason": "TestMiddlewareReconfigure calls callback factory three times; legitimate tests count.",
+            "source_evidence": [
+              {
+                "file": "middleware_test.go",
+                "line": 46,
+                "end_line": 54,
+                "excerpt": "func makeMiddleware(ch chan string, name string) func(http.Handler) http.Handler {\n\treturn func(h http.Handler) http.Handler {\n\t\tfn := func(w http.ResponseWriter, r *http.Request) {\n\t\t\tch <- \"before \" + name\n\t\t\th.ServeHTTP(w, r)\n\t\t\tch <- \"after \" + name\n\t\t}\n\t\treturn http.HandlerFunc(fn)\n\t}",
+                "sha256": "c69c2dd8c6b4e6c5e3ad514e8fcd5ad5a4d372488ef96bf5ed51fd17b86f3775",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/middleware_test.go#L46"
+              },
+              {
+                "file": "middleware_test.go",
+                "line": 60,
+                "end_line": 64,
+                "excerpt": "\tm := NewMux()\n\tch := make(chan string, 10)\n\tm.Use(makeMiddleware(ch, \"one\"))\n\tm.Use(makeMiddleware(ch, \"two\"))\n\tm.Handle(boolPattern(true), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {",
+                "sha256": "c69c2dd8c6b4e6c5e3ad514e8fcd5ad5a4d372488ef96bf5ed51fd17b86f3775",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/middleware_test.go#L60"
+              },
+              {
+                "file": "middleware_test.go",
+                "line": 73,
+                "end_line": 74,
+                "excerpt": "\tm.Use(makeMiddleware(ch, \"three\"))\n",
+                "sha256": "c69c2dd8c6b4e6c5e3ad514e8fcd5ad5a4d372488ef96bf5ed51fd17b86f3775",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/middleware_test.go#L73"
+              }
+            ],
+            "scope": "all Go source including tests and both build variants"
+          },
+          "before": "incomplete_extraction",
+          "after": "retained_used_control"
+        },
+        {
+          "label": {
+            "id": "goji-test-request",
+            "repo_id": "goji--goji",
+            "revision": "490b001d03d16a116d7c44d95d216c69a1aae798",
+            "category": "dead_code",
+            "finding_category": "unused_functions",
+            "file": "util_test.go",
+            "line": 64,
+            "symbol": "wr",
+            "truth": "used",
+            "reason": "TestHandle calls request/recorder helper.",
+            "source_evidence": [
+              {
+                "file": "util_test.go",
+                "line": 64,
+                "end_line": 71,
+                "excerpt": "func wr() (*httptest.ResponseRecorder, *http.Request) {\n\tw := httptest.NewRecorder()\n\tr, err := http.NewRequest(\"GET\", \"/\", nil)\n\tif err != nil {\n\t\tpanic(err)\n\t}\n\treturn w, r\n}",
+                "sha256": "a2905113b1b0cdf791435fb20b7a8444ebf88661ceeb76b6c5dee0aeb384a922",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/util_test.go#L64"
+              },
+              {
+                "file": "handle_test.go",
+                "line": 18,
+                "end_line": 19,
+                "excerpt": "\tw, r := wr()\n\tm.ServeHTTP(w, r)",
+                "sha256": "5ea11801da95e51d7ce8ab8f19f641e8e746cb880fc213fb5bed8ac62bd22f82",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/handle_test.go#L18"
+              }
+            ],
+            "scope": "all Go source including tests and both build variants"
+          },
+          "before": "incomplete_extraction",
+          "after": "retained_used_control"
+        },
+        {
+          "label": {
+            "id": "goji-simple-add",
+            "repo_id": "goji--goji",
+            "revision": "490b001d03d16a116d7c44d95d216c69a1aae798",
+            "category": "dead_code",
+            "finding_category": "unused_functions",
+            "file": "router_simple.go",
+            "line": 18,
+            "symbol": "router.add",
+            "truth": "used",
+            "reason": "goji_router_simple build selects implementation; Mux.Handle invokes router.add.",
+            "source_evidence": [
+              {
+                "file": "router_simple.go",
+                "line": 1,
+                "end_line": 3,
+                "excerpt": "// +build goji_router_simple\n\npackage goji",
+                "sha256": "4a203b9733081bd4240df2b463a6e7e1210b7a577ea27829162ffae77b896525",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/router_simple.go#L1"
+              },
+              {
+                "file": "router_simple.go",
+                "line": 18,
+                "end_line": 20,
+                "excerpt": "func (rt *router) add(p Pattern, h http.Handler) {\n\t*rt = append(*rt, route{p, h})\n}",
+                "sha256": "4a203b9733081bd4240df2b463a6e7e1210b7a577ea27829162ffae77b896525",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/router_simple.go#L18"
+              },
+              {
+                "file": "handle.go",
+                "line": 27,
+                "end_line": 29,
+                "excerpt": "func (m *Mux) Handle(p Pattern, h http.Handler) {\n\tm.router.add(p, h)\n}",
+                "sha256": "4248eba5706823f4205c942e2e05c38690a8b450b58c91bb7e14a08ca8384858",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/handle.go#L27"
+              }
+            ],
+            "scope": "all Go source including tests and both build variants"
+          },
+          "before": "incomplete_extraction",
+          "after": "retained_used_control"
+        },
+        {
+          "label": {
+            "id": "goji-simple-route",
+            "repo_id": "goji--goji",
+            "revision": "490b001d03d16a116d7c44d95d216c69a1aae798",
+            "category": "dead_code",
+            "finding_category": "unused_functions",
+            "file": "router_simple.go",
+            "line": 22,
+            "symbol": "router.route",
+            "truth": "used",
+            "reason": "goji_router_simple build selects implementation; Mux.ServeHTTP invokes router.route.",
+            "source_evidence": [
+              {
+                "file": "router_simple.go",
+                "line": 1,
+                "end_line": 3,
+                "excerpt": "// +build goji_router_simple\n\npackage goji",
+                "sha256": "4a203b9733081bd4240df2b463a6e7e1210b7a577ea27829162ffae77b896525",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/router_simple.go#L1"
+              },
+              {
+                "file": "router_simple.go",
+                "line": 22,
+                "end_line": 33,
+                "excerpt": "func (rt *router) route(r *http.Request) *http.Request {\n\tfor _, route := range *rt {\n\t\tif r2 := route.Match(r); r2 != nil {\n\t\t\treturn r2.WithContext(&match{\n\t\t\t\tContext: r2.Context(),\n\t\t\t\tp:       route.Pattern,\n\t\t\t\th:       route.Handler,\n\t\t\t})\n\t\t}\n\t}\n\treturn r.WithContext(&match{Context: r.Context()})\n}",
+                "sha256": "4a203b9733081bd4240df2b463a6e7e1210b7a577ea27829162ffae77b896525",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/router_simple.go#L22"
+              },
+              {
+                "file": "mux.go",
+                "line": 67,
+                "end_line": 74,
+                "excerpt": "func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {\n\tif m.root {\n\t\tctx := r.Context()\n\t\tctx = context.WithValue(ctx, internal.Path, r.URL.EscapedPath())\n\t\tr = r.WithContext(ctx)\n\t}\n\tr = m.router.route(r)\n\tm.handler.ServeHTTP(w, r)",
+                "sha256": "6e803eeb25f02f77206fa4156834a523486156ba3afe97a2b6e8a6c460dca7a6",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/mux.go#L67"
+              }
+            ],
+            "scope": "all Go source including tests and both build variants"
+          },
+          "before": "incomplete_extraction",
+          "after": "retained_used_control"
+        },
+        {
+          "label": {
+            "id": "goji-stale-bool-match",
+            "repo_id": "goji--goji",
+            "revision": "490b001d03d16a116d7c44d95d216c69a1aae798",
+            "category": "dead_code",
+            "finding_category": "unused_functions",
+            "file": "pattern/pattern_test.go",
+            "line": 11,
+            "symbol": "boolPattern.Match",
+            "truth": "unused",
+            "reason": "Package-local receiver type has no construction, variable declaration, interface conversion or reference outside own declaration/method receiver anywhere in package pattern. Match retains older context-parameter signature. No reflection/generated files. Same-spelled types in other packages are distinct. No ignore/allow policy.",
+            "source_evidence": [
+              {
+                "file": "pattern/pattern_test.go",
+                "line": 1,
+                "end_line": 38,
+                "excerpt": "package pattern\n\nimport (\n\t\"context\"\n\t\"net/http\"\n\t\"testing\"\n)\n\ntype boolPattern bool\n\nfunc (b boolPattern) Match(ctx context.Context, r *http.Request) context.Context {\n\tif b {\n\t\treturn ctx\n\t}\n\treturn nil\n}\n\ntype prefixPattern string\n\nfunc (p prefixPattern) Match(ctx context.Context, r *http.Request) context.Context {\n\treturn ctx\n}\nfunc (p prefixPattern) PathPrefix() string {\n\treturn string(p)\n}\n\nfunc TestPathRoundTrip(t *testing.T) {\n\tt.Parallel()\n\n\tctx := SetPath(context.Background(), \"hi\")\n\tif path := Path(ctx); path != \"hi\" {\n\t\tt.Errorf(\"expected hi, got %q\", path)\n\t}\n\n\tif path := Path(context.Background()); path != \"\" {\n\t\tt.Errorf(\"expected empty path, got %q\", path)\n\t}\n}",
+                "sha256": "fd9a2f2ce7fce240b11a0c31527ebb9b195fe063ea82c80eeb197ad73dff46a0",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/pattern/pattern_test.go#L1"
+              },
+              {
+                "file": "goji.go",
+                "line": 47,
+                "end_line": 62,
+                "excerpt": "type Pattern interface {\n\t// Match examines the input Request to determine if it matches some\n\t// criteria, and if so returns a non-nil output Request. This returned\n\t// Request will be passed to the middleware stack and the final Handler.\n\t//\n\t// Patterns often extract variables from the Request, for instance from\n\t// the URL or from HTTP headers. In this case, it is common for the\n\t// Request returned from the Match function to be derived from the input\n\t// Request using the WithContext function, with a Context that contains\n\t// those variable bindings. If no variable bindings are necessary,\n\t// another common choice is to return the input Request unchanged.\n\t//\n\t// Match must not mutate the passed request if it returns nil.\n\t// Implementers are also strongly discouraged from mutating the input\n\t// Request even in the event of a match; instead, prefer making a copy.\n\tMatch(*http.Request) *http.Request",
+                "sha256": "1ff3bf18da9795a5d3299073b3b171bc333899274dddb8692e93fd77b672fb51",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/goji.go#L47"
+              }
+            ],
+            "scope": "all Go source including tests and both build variants",
+            "actionable": true,
+            "bounded_negative_evidence": {
+              "receiver_type": "boolPattern",
+              "all_package_go_files": [
+                "pattern/pattern.go",
+                "pattern/pattern_test.go"
+              ],
+              "public_receiver_type": false,
+              "dynamic_lookup_found": false
+            }
+          },
+          "before": "unsupported_test_methods",
+          "after": "true_positive",
+          "scope_evidence": "GOJI_FREEZE_RECEIPT.json documents original Go extractor excludes test methods; new extraction support expands scope, not retrospective FN credit."
+        },
+        {
+          "label": {
+            "id": "goji-stale-prefix-match",
+            "repo_id": "goji--goji",
+            "revision": "490b001d03d16a116d7c44d95d216c69a1aae798",
+            "category": "dead_code",
+            "finding_category": "unused_functions",
+            "file": "pattern/pattern_test.go",
+            "line": 20,
+            "symbol": "prefixPattern.Match",
+            "truth": "unused",
+            "reason": "Package-local receiver type has no construction, variable declaration, interface conversion or reference outside own declaration/method receiver anywhere in package pattern. Match retains older context-parameter signature. No reflection/generated files. Same-spelled types in other packages are distinct. No ignore/allow policy.",
+            "source_evidence": [
+              {
+                "file": "pattern/pattern_test.go",
+                "line": 1,
+                "end_line": 38,
+                "excerpt": "package pattern\n\nimport (\n\t\"context\"\n\t\"net/http\"\n\t\"testing\"\n)\n\ntype boolPattern bool\n\nfunc (b boolPattern) Match(ctx context.Context, r *http.Request) context.Context {\n\tif b {\n\t\treturn ctx\n\t}\n\treturn nil\n}\n\ntype prefixPattern string\n\nfunc (p prefixPattern) Match(ctx context.Context, r *http.Request) context.Context {\n\treturn ctx\n}\nfunc (p prefixPattern) PathPrefix() string {\n\treturn string(p)\n}\n\nfunc TestPathRoundTrip(t *testing.T) {\n\tt.Parallel()\n\n\tctx := SetPath(context.Background(), \"hi\")\n\tif path := Path(ctx); path != \"hi\" {\n\t\tt.Errorf(\"expected hi, got %q\", path)\n\t}\n\n\tif path := Path(context.Background()); path != \"\" {\n\t\tt.Errorf(\"expected empty path, got %q\", path)\n\t}\n}",
+                "sha256": "fd9a2f2ce7fce240b11a0c31527ebb9b195fe063ea82c80eeb197ad73dff46a0",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/pattern/pattern_test.go#L1"
+              },
+              {
+                "file": "goji.go",
+                "line": 47,
+                "end_line": 62,
+                "excerpt": "type Pattern interface {\n\t// Match examines the input Request to determine if it matches some\n\t// criteria, and if so returns a non-nil output Request. This returned\n\t// Request will be passed to the middleware stack and the final Handler.\n\t//\n\t// Patterns often extract variables from the Request, for instance from\n\t// the URL or from HTTP headers. In this case, it is common for the\n\t// Request returned from the Match function to be derived from the input\n\t// Request using the WithContext function, with a Context that contains\n\t// those variable bindings. If no variable bindings are necessary,\n\t// another common choice is to return the input Request unchanged.\n\t//\n\t// Match must not mutate the passed request if it returns nil.\n\t// Implementers are also strongly discouraged from mutating the input\n\t// Request even in the event of a match; instead, prefer making a copy.\n\tMatch(*http.Request) *http.Request",
+                "sha256": "1ff3bf18da9795a5d3299073b3b171bc333899274dddb8692e93fd77b672fb51",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/goji.go#L47"
+              }
+            ],
+            "scope": "all Go source including tests and both build variants",
+            "actionable": true,
+            "bounded_negative_evidence": {
+              "receiver_type": "prefixPattern",
+              "all_package_go_files": [
+                "pattern/pattern.go",
+                "pattern/pattern_test.go"
+              ],
+              "public_receiver_type": false,
+              "dynamic_lookup_found": false
+            }
+          },
+          "before": "unsupported_test_methods",
+          "after": "true_positive",
+          "scope_evidence": "GOJI_FREEZE_RECEIPT.json documents original Go extractor excludes test methods; new extraction support expands scope, not retrospective FN credit."
+        },
+        {
+          "label": {
+            "id": "goji-stale-prefix-method",
+            "repo_id": "goji--goji",
+            "revision": "490b001d03d16a116d7c44d95d216c69a1aae798",
+            "category": "dead_code",
+            "finding_category": "unused_functions",
+            "file": "pattern/pattern_test.go",
+            "line": 23,
+            "symbol": "prefixPattern.PathPrefix",
+            "truth": "unused",
+            "reason": "Package-local receiver type has no construction, variable declaration, interface conversion or reference outside own declaration/method receiver anywhere in package pattern. Match retains older context-parameter signature. No reflection/generated files. Same-spelled types in other packages are distinct. No ignore/allow policy.",
+            "source_evidence": [
+              {
+                "file": "pattern/pattern_test.go",
+                "line": 1,
+                "end_line": 38,
+                "excerpt": "package pattern\n\nimport (\n\t\"context\"\n\t\"net/http\"\n\t\"testing\"\n)\n\ntype boolPattern bool\n\nfunc (b boolPattern) Match(ctx context.Context, r *http.Request) context.Context {\n\tif b {\n\t\treturn ctx\n\t}\n\treturn nil\n}\n\ntype prefixPattern string\n\nfunc (p prefixPattern) Match(ctx context.Context, r *http.Request) context.Context {\n\treturn ctx\n}\nfunc (p prefixPattern) PathPrefix() string {\n\treturn string(p)\n}\n\nfunc TestPathRoundTrip(t *testing.T) {\n\tt.Parallel()\n\n\tctx := SetPath(context.Background(), \"hi\")\n\tif path := Path(ctx); path != \"hi\" {\n\t\tt.Errorf(\"expected hi, got %q\", path)\n\t}\n\n\tif path := Path(context.Background()); path != \"\" {\n\t\tt.Errorf(\"expected empty path, got %q\", path)\n\t}\n}",
+                "sha256": "fd9a2f2ce7fce240b11a0c31527ebb9b195fe063ea82c80eeb197ad73dff46a0",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/pattern/pattern_test.go#L1"
+              },
+              {
+                "file": "goji.go",
+                "line": 47,
+                "end_line": 62,
+                "excerpt": "type Pattern interface {\n\t// Match examines the input Request to determine if it matches some\n\t// criteria, and if so returns a non-nil output Request. This returned\n\t// Request will be passed to the middleware stack and the final Handler.\n\t//\n\t// Patterns often extract variables from the Request, for instance from\n\t// the URL or from HTTP headers. In this case, it is common for the\n\t// Request returned from the Match function to be derived from the input\n\t// Request using the WithContext function, with a Context that contains\n\t// those variable bindings. If no variable bindings are necessary,\n\t// another common choice is to return the input Request unchanged.\n\t//\n\t// Match must not mutate the passed request if it returns nil.\n\t// Implementers are also strongly discouraged from mutating the input\n\t// Request even in the event of a match; instead, prefer making a copy.\n\tMatch(*http.Request) *http.Request",
+                "sha256": "1ff3bf18da9795a5d3299073b3b171bc333899274dddb8692e93fd77b672fb51",
+                "url": "https://github.com/goji/goji/blob/490b001d03d16a116d7c44d95d216c69a1aae798/goji.go#L47"
+              }
+            ],
+            "scope": "all Go source including tests and both build variants",
+            "actionable": true,
+            "bounded_negative_evidence": {
+              "receiver_type": "prefixPattern",
+              "all_package_go_files": [
+                "pattern/pattern.go",
+                "pattern/pattern_test.go"
+              ],
+              "public_receiver_type": false,
+              "dynamic_lookup_found": false
+            }
+          },
+          "before": "unsupported_test_methods",
+          "after": "true_positive",
+          "scope_evidence": "GOJI_FREEZE_RECEIPT.json documents original Go extractor excludes test methods; new extraction support expands scope, not retrospective FN credit."
+        }
+      ]
+    }
+  ],
+  "source_integrity": "Frozen labels and all target Git blobs verified before/after current scans. Original source hashes in separate freeze receipts."
+}

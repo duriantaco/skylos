@@ -1,0 +1,71 @@
+{
+  "created_at": "2026-11-17T03:12:10.795432+00:00",
+  "target_execution": false,
+  "changes": [
+    {
+      "fix": "Future callback decorator registration",
+      "before": "Pinned pyee ExecutorEventEmitter._emit_run._callback at executor.py:66 reported unused",
+      "after": "Registered callback retained; Handlers.reset remains reported with unknown external API status",
+      "proof": "Canonical concurrent.futures construction / Executor submit receiver flow, no source-visible registration/member/provider replacement; unknown Future-annotated values earn no new rescue.",
+      "tests": "11 callback cases, including shadowed lookalikes and mutation/annotation helper proofs."
+    },
+    {
+      "fix": "Unreachable private backend tail",
+      "before": "_api_read listed second in record tuple incorrectly retained by global implicit method-name strings",
+      "after": "Exact unconditional first-iteration return removes only tail implicit string rescue; _api_read reported, _cli_read/_cli_hot retained.",
+      "proof": "Unique literal property, source-owned plain record constructor, sole opaque getattr, same channel/record loop, no field escape, mutation, custom lookup or aliased reflection. Actual symbol references remain active.",
+      "tests": "8 cases for early return/traversal/conditional/direct reference/escape/other lookup/alias/custom dispatch."
+    },
+    {
+      "fix": "Closed type-keyed callback registration reachability",
+      "before": "12source-confirmed body-unreachability misses across7frozen cases",
+      "after": {
+        "true_positives": 18,
+        "false_positives": 0,
+        "false_negatives": 0,
+        "true_negatives": 57
+      },
+      "proof_artifact": "TYPE_REGISTRY_FIXES.json"
+    }
+  ],
+  "source_corrected_python_after": {
+    "true_positives": 55,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "true_negatives": 97
+  },
+  "broader_validation": "207 passed in 7.51s",
+  "focused_validation": "33 passed in 1.66s",
+  "remaining_unknowns": [
+    "FileSink._flush and First/Second.launch stay uncertain on unresolved receiver escape; no unsupported claim of exact deadness.",
+    "Protocol declarations remain protected by their typing contract.",
+    "The original fresh labels/results remain immutable. After-fix real-repo scans are development evidence, not independent blind accuracy."
+  ],
+  "source_sha256": {
+    "skylos/deadcode/future_callbacks.py": "bae3102edd8ddc9a97e5fafe6092463c648ebae0bb5c6a32c6f40ae1c4cd715a",
+    "skylos/deadcode/first_iteration_dispatch.py": "5c93b03e8f96888c03e10f44a1e4776fb1fd66154ad233171681e9a2a5703ee0",
+    "skylos/analysis/implicit_refs.py": "c44ed7d0f95fc8fca1c46a04f4ac1f1e7faf3afb6bd26e602b9680c8d278c669",
+    "skylos/deadcode/liveness.py": "bbb9eaab59492eb72566a70921a6a1d1b674bf7894b37683819ac47f0e68701c",
+    "skylos/analyzer.py": "3d0d484ec6a6903e4dbfc452d2258a2af79c3b6fd426a7ceaee12def961f6970",
+    "test/test_future_callback_decorators.py": "866501d55b422dfa346fb7a4bb7b33cdfc7851e9139300defd693ff08a7b9397",
+    "test/test_first_iteration_dispatch.py": "986aac7a81c52bf54e67e1e28ac1316e639dade4cf45318cf407dd849a97606d",
+    "test/test_blind_repo_dead_code_precision.py": "b980ec03b5e48a2ccd5a0ab00d4693d7a580408401f076b43dbd978513eec9ee",
+    "skylos/deadcode/closed_type_registries.py": "6722018a45bda513991be0674f916c1978c0916d7c736db8f5f89fdd500552c9",
+    "skylos/deadcode/reachability.py": "bc21798ff342c38fbcb4212c8439bed8563ee9b2b93a3df9b3593a1eeb05d758",
+    "skylos/deadcode/evidence.py": "3292b7b9341acb43c8dd1ff5a67fd74ffa7f09aa771a3066e591450f6bbff342",
+    "test/test_closed_type_registries.py": "bea9cfc658b3818845356d164dc637fd8b07db220043e3bb0171f9af45c6127d",
+    "test/test_closed_type_registry_independent_review.py": "f927d84ed509703d3d7669e0d51cd03dfabe6e57581d8f05aa5cde3d479a8296",
+    "test/test_closed_type_registry_proof_limits.py": "76b1ec8cae28633b27bfddaa9675c3076dcd99e99d5f7dd2beee05d19ac4d466"
+  },
+  "source_corrected_python_before": {
+    "true_positives": 54,
+    "false_positives": 0,
+    "false_negatives": 1,
+    "true_negatives": 97
+  },
+  "before_artifact": "../../source_corrected_deadcode_results.json",
+  "source_corrected_python_before_semantics": "Source-corrected label manifest preserves old raw scanner results; values scoped to Python cases only.",
+  "registry_fix": "TYPE_REGISTRY_FIXES.json",
+  "broader_validation_final": "258 passed in8.90s, broader_after_registry_final.txt",
+  "final_five_repo_measurement": "../fresh_final_registry/summary.json"
+}

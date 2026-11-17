@@ -1,0 +1,4856 @@
+{
+  "generated_at": "2026-11-17T00:45:35.220825+00:00",
+  "study": "Source-only drafts, different-agent review and frozen labels before these scored scans; cohort previously explored, not a new blind study.",
+  "scope": "Selected facts only; no whole-repository precision/recall, safety or removal claim.",
+  "freeze_sha256": "28a29ed81fd7978e7dd83c3c3d09fbe4ae2193c823aafc7a8b574e064233e997",
+  "manifest_sha256": "578922e0c6c385e47f4e05d059fe73b61ea1153cb99c8803ba6498fc6819a7b1",
+  "frozen_at": "2026-11-17T00:34:46.437693+00:00",
+  "review_artifacts": [
+    {
+      "path": "SOURCE_LABELS_MUX_TINY_REVIEW.json",
+      "sha256": "ecaef809eb5b214ef2f11aa1d0a323d93fbebd8bed6746465a15374fc732fb8a"
+    },
+    {
+      "path": "hono_source_truth_independent_review.json",
+      "sha256": "e62ea31edab0171dee182e3919433e3ddccd54272d1618c32bc094b1a59854d8"
+    },
+    {
+      "path": "slim_petclinic_source_truth_independent_review.json",
+      "sha256": "4ad9084df48eb989bc2298cac4dc9923b76a56ae3c4d55668d77e635e4d6540a"
+    }
+  ],
+  "fact_count": 73,
+  "score_eligible_count": 57,
+  "truth_counts": {
+    "used": 47,
+    "unknown": 11,
+    "safe": 11,
+    "unused": 3,
+    "unsafe": 1
+  },
+  "arms": {
+    "before": {
+      "summary_path": "reviewed_sdk_before/summary.json",
+      "summary_sha256": "0d9a2601b1aea83b3b49ac2e70799d0795fea62ee14f1d7d33d3d7e3d8263396",
+      "run_started_at": "2026-11-17T00:38:03.618546+00:00",
+      "frozen_at": "2026-11-17T00:34:46.437693+00:00",
+      "analyzer_source_sha256": "62c1ad25addda1ee0a09d4d5667b358edd14f1efad4a44df62da0c80b445dc0b",
+      "go_engine_sha256": "c9c7d0426c22f577cc9602d9911579ef6c9b0ac88084f24514631693afc16e1a",
+      "raw_sha256": {
+        "gorilla--mux.json": "5ab651470c5323127c42492d670cb64817500419c0f7cd9cd81bc6036483a149",
+        "tiny-http--tiny-http.json": "e2af15967e71ea15dc25b26a8d1693fd3a1b7d6b6006c0834efdec89fce14786",
+        "honojs--hono.json": "3b470f26e8448d8961e90e553b9fafabd9eb0bb03b2168f9fdd3155a0048bfd8",
+        "slimphp--Slim.json": "31cb18ea4b97c7febffed725d527de1b14ba1aeb4ec3cc8199d20bcf1fbee506",
+        "spring-projects--spring-petclinic.json": "2182d74a09731b12d2311a67755389d94d6763a2b3a2bfaecee68f3a34468651"
+      },
+      "counts": {
+        "true_positive": 2,
+        "false_positive": 2,
+        "false_negative": 1,
+        "true_negative": 44
+      },
+      "scored_count": 49,
+      "unscored_count": 24,
+      "unscored_reasons": {
+        "unknown_truth": 8,
+        "missing_extraction": 8,
+        "intentional_keep": 1,
+        "not_applicable": 3,
+        "Unknown truth: retain observation, no TP/FP/FN/TN credit.": 3,
+        "HTML construction is outside a specific implemented sink at this site; no security metric credit.": 1
+      },
+      "by_repository": {
+        "gorilla--mux": {
+          "true_negative": 13,
+          "unscored": 4
+        },
+        "tiny-http--tiny-http": {
+          "true_negative": 12,
+          "unscored": 3,
+          "false_negative": 1
+        },
+        "honojs--hono": {
+          "unscored": 6,
+          "true_negative": 7
+        },
+        "slimphp--Slim": {
+          "true_positive": 2,
+          "unscored": 6,
+          "true_negative": 5,
+          "false_positive": 2
+        },
+        "spring-projects--spring-petclinic": {
+          "unscored": 5,
+          "true_negative": 7
+        }
+      },
+      "by_category": {
+        "dead_code": {
+          "true_negative": 38,
+          "unscored": 10,
+          "true_positive": 2,
+          "false_positive": 2
+        },
+        "security": {
+          "unscored": 14,
+          "false_negative": 1,
+          "true_negative": 6
+        }
+      }
+    },
+    "after": {
+      "summary_path": "reviewed_sdk_after/summary.json",
+      "summary_sha256": "43d3243a1fb75774baa33d1e72b519ea740c847901464051cb4cecc695e6886e",
+      "run_started_at": "2026-11-17T00:38:03.618543+00:00",
+      "frozen_at": "2026-11-17T00:34:46.437693+00:00",
+      "analyzer_source_sha256": "441e2b7c8bf9719a4f0afcdc80cb1c1033d941fded7590bbb96ddb5a19fd948d",
+      "go_engine_sha256": "c9c7d0426c22f577cc9602d9911579ef6c9b0ac88084f24514631693afc16e1a",
+      "raw_sha256": {
+        "gorilla--mux.json": "5ab651470c5323127c42492d670cb64817500419c0f7cd9cd81bc6036483a149",
+        "tiny-http--tiny-http.json": "e2af15967e71ea15dc25b26a8d1693fd3a1b7d6b6006c0834efdec89fce14786",
+        "honojs--hono.json": "b1c3f90dcdaa40816fc19bf4753a7a9da17a971eae37c404f4ae78603ee7ae9a",
+        "slimphp--Slim.json": "31cb18ea4b97c7febffed725d527de1b14ba1aeb4ec3cc8199d20bcf1fbee506",
+        "spring-projects--spring-petclinic.json": "b0c69eade01f21dc0a05f9859fe23e06abfa4e5b3f52d2e60eaa1e4504e6a0f7"
+      },
+      "counts": {
+        "true_positive": 2,
+        "false_positive": 2,
+        "false_negative": 1,
+        "true_negative": 44
+      },
+      "scored_count": 49,
+      "unscored_count": 24,
+      "unscored_reasons": {
+        "unknown_truth": 8,
+        "missing_extraction": 8,
+        "intentional_keep": 1,
+        "not_applicable": 3,
+        "Unknown truth: retain observation, no TP/FP/FN/TN credit.": 3,
+        "HTML construction is outside a specific implemented sink at this site; no security metric credit.": 1
+      },
+      "by_repository": {
+        "gorilla--mux": {
+          "true_negative": 13,
+          "unscored": 4
+        },
+        "tiny-http--tiny-http": {
+          "true_negative": 12,
+          "unscored": 3,
+          "false_negative": 1
+        },
+        "honojs--hono": {
+          "unscored": 6,
+          "true_negative": 7
+        },
+        "slimphp--Slim": {
+          "true_positive": 2,
+          "unscored": 6,
+          "true_negative": 5,
+          "false_positive": 2
+        },
+        "spring-projects--spring-petclinic": {
+          "unscored": 5,
+          "true_negative": 7
+        }
+      },
+      "by_category": {
+        "dead_code": {
+          "true_negative": 38,
+          "unscored": 10,
+          "true_positive": 2,
+          "false_positive": 2
+        },
+        "security": {
+          "unscored": 14,
+          "false_negative": 1,
+          "true_negative": 6
+        }
+      }
+    },
+    "after_php": {
+      "summary_path": "reviewed_sdk_after_php/summary.json",
+      "summary_sha256": "5539cb1d1c647d07dc7349a282ef440f976368727f9c98a353fba579971acf53",
+      "run_started_at": "2026-11-17T00:45:04.527734+00:00",
+      "frozen_at": "2026-11-17T00:34:46.437693+00:00",
+      "analyzer_source_sha256": "15089a37ed146d01004695c9273e3518325f6ee8e4ec8d0144f72f16d67c5900",
+      "go_engine_sha256": "c9c7d0426c22f577cc9602d9911579ef6c9b0ac88084f24514631693afc16e1a",
+      "raw_sha256": {
+        "gorilla--mux.json": "5ab651470c5323127c42492d670cb64817500419c0f7cd9cd81bc6036483a149",
+        "tiny-http--tiny-http.json": "e2af15967e71ea15dc25b26a8d1693fd3a1b7d6b6006c0834efdec89fce14786",
+        "honojs--hono.json": "56ef07207dc951df29d7e879886674d465a2b959a1db851847f9686a489c5e50",
+        "slimphp--Slim.json": "ea96c778500ade5a0cd518bd4da926e3b617d24d7d428be6a93f42c5742dcd19",
+        "spring-projects--spring-petclinic.json": "2f3265bab6ce5d61a2a1bc3aefc616703ef6fc5bcf6c01f9a6d15cbf20ab1aa2"
+      },
+      "counts": {
+        "true_positive": 2,
+        "false_positive": 0,
+        "false_negative": 1,
+        "true_negative": 46
+      },
+      "scored_count": 49,
+      "unscored_count": 24,
+      "unscored_reasons": {
+        "unknown_truth": 8,
+        "missing_extraction": 8,
+        "intentional_keep": 1,
+        "not_applicable": 3,
+        "Unknown truth: retain observation, no TP/FP/FN/TN credit.": 3,
+        "HTML construction is outside a specific implemented sink at this site; no security metric credit.": 1
+      },
+      "by_repository": {
+        "gorilla--mux": {
+          "true_negative": 13,
+          "unscored": 4
+        },
+        "tiny-http--tiny-http": {
+          "true_negative": 12,
+          "unscored": 3,
+          "false_negative": 1
+        },
+        "honojs--hono": {
+          "unscored": 6,
+          "true_negative": 7
+        },
+        "slimphp--Slim": {
+          "true_positive": 2,
+          "unscored": 6,
+          "true_negative": 7
+        },
+        "spring-projects--spring-petclinic": {
+          "unscored": 5,
+          "true_negative": 7
+        }
+      },
+      "by_category": {
+        "dead_code": {
+          "true_negative": 40,
+          "unscored": 10,
+          "true_positive": 2
+        },
+        "security": {
+          "unscored": 14,
+          "false_negative": 1,
+          "true_negative": 6
+        }
+      }
+    }
+  },
+  "comparisons": {
+    "before_to_after": {
+      "same_frozen_labels": true,
+      "exact_scoring_observations_equal": true,
+      "changed_fact_ids": []
+    },
+    "before_to_after_php": {
+      "same_frozen_labels": true,
+      "exact_scoring_observations_equal": false,
+      "changed_fact_ids": [
+        "slim-used-is-route-callback",
+        "slim-used-is-middleware-callback"
+      ]
+    }
+  },
+  "facts": [
+    {
+      "id": "mux-router-use-interface",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "middleware.go",
+      "line": 31,
+      "start_line": 31,
+      "end_line": 31,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/middleware.go#L31",
+      "symbol": "Router.useInterface",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-route-use-interface",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "middleware.go",
+      "line": 47,
+      "start_line": 47,
+      "end_line": 47,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/middleware.go#L47",
+      "symbol": "Route.useInterface",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-dummy-handler",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "middleware_test.go",
+      "line": 21,
+      "start_line": 21,
+      "end_line": 21,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/middleware_test.go#L21",
+      "symbol": "dummyHandler",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-cors-method-helper",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "middleware.go",
+      "line": 74,
+      "start_line": 74,
+      "end_line": 74,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/middleware.go#L74",
+      "symbol": "getAllMethodsForRoute",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-clean-path",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "mux.go",
+      "line": 524,
+      "start_line": 524,
+      "end_line": 524,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/mux.go#L524",
+      "symbol": "cleanPath",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-replace-url-path",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "mux.go",
+      "line": 542,
+      "start_line": 542,
+      "end_line": 542,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/mux.go#L542",
+      "symbol": "replaceURLPath",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-method-not-allowed",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "mux.go",
+      "line": 670,
+      "start_line": 670,
+      "end_line": 670,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/mux.go#L670",
+      "symbol": "methodNotAllowed",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-method-not-allowed-factory",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "mux.go",
+      "line": 676,
+      "start_line": 676,
+      "end_line": 676,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/mux.go#L676",
+      "symbol": "methodNotAllowedHandler",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-request-with-router",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "mux.go",
+      "line": 513,
+      "start_line": 513,
+      "end_line": 513,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/mux.go#L513",
+      "symbol": "requestWithRouter",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-query-key",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "regexp.go",
+      "line": 257,
+      "start_line": 257,
+      "end_line": 257,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/regexp.go#L257",
+      "symbol": "findFirstQueryKey",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-match-query",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "regexp.go",
+      "line": 293,
+      "start_line": 293,
+      "end_line": 293,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/regexp.go#L293",
+      "symbol": "routeRegexp.matchQueryString",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-test-methods",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "mux_test.go",
+      "line": 1978,
+      "start_line": 1978,
+      "end_line": 1978,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/mux_test.go#L1978",
+      "symbol": "testMethods",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-set-url-vars",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "test_helpers.go",
+      "line": 17,
+      "start_line": 17,
+      "end_line": 17,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/test_helpers.go#L17",
+      "symbol": "SetURLVars",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-get-route-public",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "mux.go",
+      "line": 238,
+      "start_line": 238,
+      "end_line": 238,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/mux.go#L238",
+      "symbol": "Router.GetRoute",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "unknown",
+      "score_eligible": false,
+      "unscored_reason": "unknown_truth",
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-literal-http-body",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "mux_httpserver_test.go",
+      "line": 17,
+      "start_line": 17,
+      "end_line": 17,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/mux_httpserver_test.go#L17",
+      "symbol": null,
+      "rule_id": "SKY-D228",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-clean-redirect",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "mux.go",
+      "line": 196,
+      "start_line": 196,
+      "end_line": 196,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/mux.go#L196",
+      "symbol": null,
+      "rule_id": "SKY-D230",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "unscored_reason": "unknown_truth",
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "mux-slash-redirect",
+      "repo_id": "gorilla--mux",
+      "revision": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "file": "regexp.go",
+      "line": 380,
+      "start_line": 380,
+      "end_line": 380,
+      "source_url": "https://github.com/gorilla/mux/blob/db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265/regexp.go#L380",
+      "symbol": null,
+      "rule_id": "SKY-D230",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "unscored_reason": "unknown_truth",
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-registration-new",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "src/util/task_pool.rs",
+      "line": 37,
+      "start_line": 37,
+      "end_line": 37,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/src/util/task_pool.rs#L37",
+      "symbol": "Registration.new",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-add-thread",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "src/util/task_pool.rs",
+      "line": 80,
+      "start_line": 80,
+      "end_line": 80,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/src/util/task_pool.rs#L80",
+      "symbol": "TaskPool.add_thread",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-parse-header",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "src/util/mod.rs",
+      "line": 25,
+      "start_line": 25,
+      "end_line": 25,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/src/util/mod.rs#L25",
+      "symbol": "parse_header_value",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-build-date",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "src/response.rs",
+      "line": 74,
+      "start_line": 74,
+      "end_line": 74,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/src/response.rs#L74",
+      "symbol": "build_date_header",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-fused-new",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "src/util/fused_reader.rs",
+      "line": 12,
+      "start_line": 12,
+      "end_line": 12,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/src/util/fused_reader.rs#L12",
+      "symbol": "FusedReader.new",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-extract-writer",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "src/request.rs",
+      "line": 407,
+      "start_line": 407,
+      "end_line": 407,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/src/request.rs#L407",
+      "symbol": "Request.extract_writer_impl",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-parse-http-version",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "src/client.rs",
+      "line": 269,
+      "start_line": 269,
+      "end_line": 269,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/src/client.rs#L269",
+      "symbol": "parse_http_version",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-read-next-line",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "src/client.rs",
+      "line": 80,
+      "start_line": 80,
+      "end_line": 80,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/src/client.rs#L80",
+      "symbol": "ClientConnection.read_next_line",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-content-type",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "examples/serve-root.rs",
+      "line": 8,
+      "start_line": 8,
+      "end_line": 8,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/examples/serve-root.rs#L8",
+      "symbol": "get_content_type",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-header-unit-test",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "src/util/mod.rs",
+      "line": 53,
+      "start_line": 53,
+      "end_line": 53,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/src/util/mod.rs#L53",
+      "symbol": "test_parse_header",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-fused-into-inner",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "src/util/fused_reader.rs",
+      "line": 17,
+      "start_line": 17,
+      "end_line": 17,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/src/util/fused_reader.rs#L17",
+      "symbol": "FusedReader.into_inner",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "unused",
+      "score_eligible": false,
+      "unscored_reason": "intentional_keep",
+      "intentional_keep": true,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "intentional_keep",
+          "truth": "unused",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "intentional_keep",
+          "truth": "unused",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "intentional_keep",
+          "truth": "unused",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-num-connections",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "src/lib.rs",
+      "line": 411,
+      "start_line": 411,
+      "end_line": 411,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/src/lib.rs#L411",
+      "symbol": "Server.num_connections",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "unknown",
+      "score_eligible": false,
+      "unscored_reason": "unknown_truth",
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-example-file-read",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "examples/serve-root.rs",
+      "line": 42,
+      "start_line": 42,
+      "end_line": 42,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/examples/serve-root.rs#L42",
+      "symbol": null,
+      "rule_id": "SKY-D215",
+      "category": "security",
+      "truth": "unsafe",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "false_negative",
+          "unscored_reason": null,
+          "truth": "unsafe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "false_negative",
+          "unscored_reason": null,
+          "truth": "unsafe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "false_negative",
+          "unscored_reason": null,
+          "truth": "unsafe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-php-command",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "examples/php-cgi.rs",
+      "line": 18,
+      "start_line": 18,
+      "end_line": 42,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/examples/php-cgi.rs#L18-L42",
+      "symbol": null,
+      "rule_id": "SKY-D212",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-curl-command",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "benches/bench.rs",
+      "line": 19,
+      "start_line": 19,
+      "end_line": 22,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/benches/bench.rs#L19-L22",
+      "symbol": null,
+      "rule_id": "SKY-D212",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "tiny-unix-cleanup",
+      "repo_id": "tiny-http--tiny-http",
+      "revision": "e2215636a73c7c3ac2d0a59d607454591f2cb2ac",
+      "file": "src/lib.rs",
+      "line": 478,
+      "start_line": 478,
+      "end_line": 478,
+      "source_url": "https://github.com/tiny-http/tiny-http/blob/e2215636a73c7c3ac2d0a59d607454591f2cb2ac/src/lib.rs#L478",
+      "symbol": null,
+      "rule_id": "SKY-D215",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "unscored_reason": "unknown_truth",
+      "intentional_keep": false,
+      "label_author": "/root/deadcode_precision",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-regexp-auth-header",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/utils/basic-auth.ts",
+      "line": 10,
+      "start_line": 10,
+      "end_line": 10,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/utils/basic-auth.ts#L10",
+      "symbol": "CREDENTIALS_REGEXP.exec",
+      "rule_id": "SKY-D212",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": false,
+      "unscored_reason": "not_applicable",
+      "intentional_keep": false,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "not_applicable",
+          "truth": "safe",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "not_applicable",
+          "truth": "safe",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "not_applicable",
+          "truth": "safe",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-regexp-decoded-credentials",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/utils/basic-auth.ts",
+      "line": 18,
+      "start_line": 18,
+      "end_line": 18,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/utils/basic-auth.ts#L18",
+      "symbol": "USER_PASS_REGEXP.exec",
+      "rule_id": "SKY-D212",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": false,
+      "unscored_reason": "not_applicable",
+      "intentional_keep": false,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "not_applicable",
+          "truth": "safe",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "not_applicable",
+          "truth": "safe",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "not_applicable",
+          "truth": "safe",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-literal-dom-clear",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/jsx/dom/intrinsic-element/components.ts",
+      "line": 194,
+      "start_line": 194,
+      "end_line": 194,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/jsx/dom/intrinsic-element/components.ts#L194",
+      "symbol": "e.innerHTML",
+      "rule_id": "SKY-D226",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": false,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-nonce-crypto-source",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/middleware/secure-headers/secure-headers.ts",
+      "line": 135,
+      "start_line": 135,
+      "end_line": 135,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/middleware/secure-headers/secure-headers.ts#L135",
+      "symbol": "crypto.getRandomValues",
+      "rule_id": "SKY-D250",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": false,
+      "unscored_reason": "not_applicable",
+      "intentional_keep": false,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "not_applicable",
+          "truth": "safe",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "not_applicable",
+          "truth": "safe",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "not_applicable",
+          "truth": "safe",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-dom-raw-html",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/jsx/dom/render.ts",
+      "line": 188,
+      "start_line": 188,
+      "end_line": 188,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/jsx/dom/render.ts#L188",
+      "symbol": "applyProps.innerHTML",
+      "rule_id": "SKY-D226",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "unscored_reason": "unknown_truth",
+      "intentional_keep": false,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [
+            {
+              "rule_id": "SKY-D226",
+              "severity": "HIGH",
+              "message": "Unsafe innerHTML assignment \u2014 XSS vulnerability",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/honojs--hono/src/jsx/dom/render.ts",
+              "line": 188,
+              "col": 0,
+              "metadata": {
+                "security_trace": {
+                  "version": 1,
+                  "trace_id": "82a6574f25c94af54b23bb12",
+                  "status": "unknown",
+                  "context": {
+                    "algorithm": "security-static-trace-v1",
+                    "receiver_model_version": 2,
+                    "analyzer_version": "5.6.0",
+                    "python_syntax_version": "3.13.18",
+                    "limits": {
+                      "max_discovery_entries": 50000,
+                      "max_files": 1024,
+                      "max_file_bytes": 2000000,
+                      "max_total_bytes": 32000000,
+                      "max_ast_nodes": 500000,
+                      "max_steps": 128,
+                      "max_depth": 16,
+                      "max_callers": 16
+                    },
+                    "selected_scope_sha256": "f61876f773f065d9a5d846c62400ee56a637c854fadd01a387c734001db82023",
+                    "selected_file_count": 461
+                  },
+                  "steps": [
+                    {
+                      "id": "bd4883c64c57e2206ae9773e",
+                      "kind": "sink",
+                      "message": "Static finding location: SKY-D226",
+                      "file": "src/jsx/dom/render.ts",
+                      "line": 188,
+                      "column": 0,
+                      "source_sha256": "156db46fd6896f0482f9f5a5caaa2e2e62cdd8a9a1a277c372db569b3a74a886"
+                    }
+                  ],
+                  "edges": [],
+                  "receiver": {
+                    "status": "unknown",
+                    "qualified_name": null,
+                    "limitations": [
+                      "No source-resolved Python sink call."
+                    ]
+                  },
+                  "file_digests": {
+                    "src/jsx/dom/render.ts": "156db46fd6896f0482f9f5a5caaa2e2e62cdd8a9a1a277c372db569b3a74a886"
+                  },
+                  "limitations": [
+                    "Finding source is outside the selected readable Python snapshot; config/other languages are not interpreted as Python.",
+                    "Static source/call evidence does not prove runtime reachability, guard effectiveness or complete external callers."
+                  ]
+                }
+              },
+              "compliance_tags": [
+                {
+                  "framework": "OWASP_TOP10",
+                  "requirement": "A03:2021",
+                  "title": "Injection"
+                },
+                {
+                  "framework": "PCI_DSS_4",
+                  "requirement": "6.5.7",
+                  "title": "Cross-Site Scripting"
+                }
+              ],
+              "compliance_display": [
+                "OWASP Top 10 A03:2021",
+                "PCI DSS 4.0 6.5.7"
+              ],
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [
+            {
+              "rule_id": "SKY-D226",
+              "severity": "HIGH",
+              "message": "Unsafe innerHTML assignment \u2014 XSS vulnerability",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/honojs--hono/src/jsx/dom/render.ts",
+              "line": 188,
+              "col": 0,
+              "metadata": {
+                "security_trace": {
+                  "version": 1,
+                  "trace_id": "82a6574f25c94af54b23bb12",
+                  "status": "unknown",
+                  "context": {
+                    "algorithm": "security-static-trace-v1",
+                    "receiver_model_version": 2,
+                    "analyzer_version": "5.6.0",
+                    "python_syntax_version": "3.13.18",
+                    "limits": {
+                      "max_discovery_entries": 50000,
+                      "max_files": 1024,
+                      "max_file_bytes": 2000000,
+                      "max_total_bytes": 32000000,
+                      "max_ast_nodes": 500000,
+                      "max_steps": 128,
+                      "max_depth": 16,
+                      "max_callers": 16
+                    },
+                    "selected_scope_sha256": "f61876f773f065d9a5d846c62400ee56a637c854fadd01a387c734001db82023",
+                    "selected_file_count": 461
+                  },
+                  "steps": [
+                    {
+                      "id": "bd4883c64c57e2206ae9773e",
+                      "kind": "sink",
+                      "message": "Static finding location: SKY-D226",
+                      "file": "src/jsx/dom/render.ts",
+                      "line": 188,
+                      "column": 0,
+                      "source_sha256": "156db46fd6896f0482f9f5a5caaa2e2e62cdd8a9a1a277c372db569b3a74a886"
+                    }
+                  ],
+                  "edges": [],
+                  "receiver": {
+                    "status": "unknown",
+                    "qualified_name": null,
+                    "limitations": [
+                      "No source-resolved Python sink call."
+                    ]
+                  },
+                  "file_digests": {
+                    "src/jsx/dom/render.ts": "156db46fd6896f0482f9f5a5caaa2e2e62cdd8a9a1a277c372db569b3a74a886"
+                  },
+                  "limitations": [
+                    "Finding source is outside the selected readable Python snapshot; config/other languages are not interpreted as Python.",
+                    "Static source/call evidence does not prove runtime reachability, guard effectiveness or complete external callers."
+                  ]
+                }
+              },
+              "compliance_tags": [
+                {
+                  "framework": "OWASP_TOP10",
+                  "requirement": "A03:2021",
+                  "title": "Injection"
+                },
+                {
+                  "framework": "PCI_DSS_4",
+                  "requirement": "6.5.7",
+                  "title": "Cross-Site Scripting"
+                }
+              ],
+              "compliance_display": [
+                "OWASP Top 10 A03:2021",
+                "PCI DSS 4.0 6.5.7"
+              ],
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [
+            {
+              "rule_id": "SKY-D226",
+              "severity": "HIGH",
+              "message": "Unsafe innerHTML assignment \u2014 XSS vulnerability",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/honojs--hono/src/jsx/dom/render.ts",
+              "line": 188,
+              "col": 0,
+              "metadata": {
+                "security_trace": {
+                  "version": 1,
+                  "trace_id": "82a6574f25c94af54b23bb12",
+                  "status": "unknown",
+                  "context": {
+                    "algorithm": "security-static-trace-v1",
+                    "receiver_model_version": 2,
+                    "analyzer_version": "5.6.0",
+                    "python_syntax_version": "3.13.18",
+                    "limits": {
+                      "max_discovery_entries": 50000,
+                      "max_files": 1024,
+                      "max_file_bytes": 2000000,
+                      "max_total_bytes": 32000000,
+                      "max_ast_nodes": 500000,
+                      "max_steps": 128,
+                      "max_depth": 16,
+                      "max_callers": 16
+                    },
+                    "selected_scope_sha256": "f61876f773f065d9a5d846c62400ee56a637c854fadd01a387c734001db82023",
+                    "selected_file_count": 461
+                  },
+                  "steps": [
+                    {
+                      "id": "bd4883c64c57e2206ae9773e",
+                      "kind": "sink",
+                      "message": "Static finding location: SKY-D226",
+                      "file": "src/jsx/dom/render.ts",
+                      "line": 188,
+                      "column": 0,
+                      "source_sha256": "156db46fd6896f0482f9f5a5caaa2e2e62cdd8a9a1a277c372db569b3a74a886"
+                    }
+                  ],
+                  "edges": [],
+                  "receiver": {
+                    "status": "unknown",
+                    "qualified_name": null,
+                    "limitations": [
+                      "No source-resolved Python sink call."
+                    ]
+                  },
+                  "file_digests": {
+                    "src/jsx/dom/render.ts": "156db46fd6896f0482f9f5a5caaa2e2e62cdd8a9a1a277c372db569b3a74a886"
+                  },
+                  "limitations": [
+                    "Finding source is outside the selected readable Python snapshot; config/other languages are not interpreted as Python.",
+                    "Static source/call evidence does not prove runtime reachability, guard effectiveness or complete external callers."
+                  ]
+                }
+              },
+              "compliance_tags": [
+                {
+                  "framework": "OWASP_TOP10",
+                  "requirement": "A03:2021",
+                  "title": "Injection"
+                },
+                {
+                  "framework": "PCI_DSS_4",
+                  "requirement": "6.5.7",
+                  "title": "Cross-Site Scripting"
+                }
+              ],
+              "compliance_display": [
+                "OWASP Top 10 A03:2021",
+                "PCI DSS 4.0 6.5.7"
+              ],
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-jwks-url",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/utils/jwt/jwt.ts",
+      "line": 250,
+      "start_line": 250,
+      "end_line": 250,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/utils/jwt/jwt.ts#L250",
+      "symbol": "verifyWithJwks.fetch",
+      "rule_id": "SKY-D216",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "unscored_reason": "unknown_truth",
+      "intentional_keep": false,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [
+            {
+              "rule_id": "SKY-D216",
+              "severity": "MEDIUM",
+              "message": "fetch() with variable URL \u2014 potential SSRF. Validate URL against allowlist.",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/honojs--hono/src/utils/jwt/jwt.ts",
+              "line": 250,
+              "col": 0,
+              "metadata": {
+                "security_trace": {
+                  "version": 1,
+                  "trace_id": "c9a8106f3042406e57b59a91",
+                  "status": "unknown",
+                  "context": {
+                    "algorithm": "security-static-trace-v1",
+                    "receiver_model_version": 2,
+                    "analyzer_version": "5.6.0",
+                    "python_syntax_version": "3.13.18",
+                    "limits": {
+                      "max_discovery_entries": 50000,
+                      "max_files": 1024,
+                      "max_file_bytes": 2000000,
+                      "max_total_bytes": 32000000,
+                      "max_ast_nodes": 500000,
+                      "max_steps": 128,
+                      "max_depth": 16,
+                      "max_callers": 16
+                    },
+                    "selected_scope_sha256": "f61876f773f065d9a5d846c62400ee56a637c854fadd01a387c734001db82023",
+                    "selected_file_count": 461
+                  },
+                  "steps": [
+                    {
+                      "id": "3ae2a62637781d5c73cc6ea4",
+                      "kind": "sink",
+                      "message": "Static finding location: SKY-D216",
+                      "file": "src/utils/jwt/jwt.ts",
+                      "line": 250,
+                      "column": 0,
+                      "source_sha256": "f0548f2d0b0b362fd8f762fd679696173f6f940a63381f00374beacc5747f47b"
+                    }
+                  ],
+                  "edges": [],
+                  "receiver": {
+                    "status": "unknown",
+                    "qualified_name": null,
+                    "limitations": [
+                      "No source-resolved Python sink call."
+                    ]
+                  },
+                  "file_digests": {
+                    "src/utils/jwt/jwt.ts": "f0548f2d0b0b362fd8f762fd679696173f6f940a63381f00374beacc5747f47b"
+                  },
+                  "limitations": [
+                    "Finding source is outside the selected readable Python snapshot; config/other languages are not interpreted as Python.",
+                    "Static source/call evidence does not prove runtime reachability, guard effectiveness or complete external callers."
+                  ]
+                }
+              },
+              "compliance_tags": [
+                {
+                  "framework": "OWASP_TOP10",
+                  "requirement": "A10:2021",
+                  "title": "SSRF"
+                },
+                {
+                  "framework": "PCI_DSS_4",
+                  "requirement": "6.2.4",
+                  "title": "Security Flaws"
+                }
+              ],
+              "compliance_display": [
+                "OWASP Top 10 A10:2021",
+                "PCI DSS 4.0 6.2.4"
+              ],
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [
+            {
+              "rule_id": "SKY-D216",
+              "severity": "MEDIUM",
+              "message": "fetch() with variable URL \u2014 potential SSRF. Validate URL against allowlist.",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/honojs--hono/src/utils/jwt/jwt.ts",
+              "line": 250,
+              "col": 0,
+              "metadata": {
+                "security_trace": {
+                  "version": 1,
+                  "trace_id": "c9a8106f3042406e57b59a91",
+                  "status": "unknown",
+                  "context": {
+                    "algorithm": "security-static-trace-v1",
+                    "receiver_model_version": 2,
+                    "analyzer_version": "5.6.0",
+                    "python_syntax_version": "3.13.18",
+                    "limits": {
+                      "max_discovery_entries": 50000,
+                      "max_files": 1024,
+                      "max_file_bytes": 2000000,
+                      "max_total_bytes": 32000000,
+                      "max_ast_nodes": 500000,
+                      "max_steps": 128,
+                      "max_depth": 16,
+                      "max_callers": 16
+                    },
+                    "selected_scope_sha256": "f61876f773f065d9a5d846c62400ee56a637c854fadd01a387c734001db82023",
+                    "selected_file_count": 461
+                  },
+                  "steps": [
+                    {
+                      "id": "3ae2a62637781d5c73cc6ea4",
+                      "kind": "sink",
+                      "message": "Static finding location: SKY-D216",
+                      "file": "src/utils/jwt/jwt.ts",
+                      "line": 250,
+                      "column": 0,
+                      "source_sha256": "f0548f2d0b0b362fd8f762fd679696173f6f940a63381f00374beacc5747f47b"
+                    }
+                  ],
+                  "edges": [],
+                  "receiver": {
+                    "status": "unknown",
+                    "qualified_name": null,
+                    "limitations": [
+                      "No source-resolved Python sink call."
+                    ]
+                  },
+                  "file_digests": {
+                    "src/utils/jwt/jwt.ts": "f0548f2d0b0b362fd8f762fd679696173f6f940a63381f00374beacc5747f47b"
+                  },
+                  "limitations": [
+                    "Finding source is outside the selected readable Python snapshot; config/other languages are not interpreted as Python.",
+                    "Static source/call evidence does not prove runtime reachability, guard effectiveness or complete external callers."
+                  ]
+                }
+              },
+              "compliance_tags": [
+                {
+                  "framework": "OWASP_TOP10",
+                  "requirement": "A10:2021",
+                  "title": "SSRF"
+                },
+                {
+                  "framework": "PCI_DSS_4",
+                  "requirement": "6.2.4",
+                  "title": "Security Flaws"
+                }
+              ],
+              "compliance_display": [
+                "OWASP Top 10 A10:2021",
+                "PCI DSS 4.0 6.2.4"
+              ],
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [
+            {
+              "rule_id": "SKY-D216",
+              "severity": "MEDIUM",
+              "message": "fetch() with variable URL \u2014 potential SSRF. Validate URL against allowlist.",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/honojs--hono/src/utils/jwt/jwt.ts",
+              "line": 250,
+              "col": 0,
+              "metadata": {
+                "security_trace": {
+                  "version": 1,
+                  "trace_id": "c9a8106f3042406e57b59a91",
+                  "status": "unknown",
+                  "context": {
+                    "algorithm": "security-static-trace-v1",
+                    "receiver_model_version": 2,
+                    "analyzer_version": "5.6.0",
+                    "python_syntax_version": "3.13.18",
+                    "limits": {
+                      "max_discovery_entries": 50000,
+                      "max_files": 1024,
+                      "max_file_bytes": 2000000,
+                      "max_total_bytes": 32000000,
+                      "max_ast_nodes": 500000,
+                      "max_steps": 128,
+                      "max_depth": 16,
+                      "max_callers": 16
+                    },
+                    "selected_scope_sha256": "f61876f773f065d9a5d846c62400ee56a637c854fadd01a387c734001db82023",
+                    "selected_file_count": 461
+                  },
+                  "steps": [
+                    {
+                      "id": "3ae2a62637781d5c73cc6ea4",
+                      "kind": "sink",
+                      "message": "Static finding location: SKY-D216",
+                      "file": "src/utils/jwt/jwt.ts",
+                      "line": 250,
+                      "column": 0,
+                      "source_sha256": "f0548f2d0b0b362fd8f762fd679696173f6f940a63381f00374beacc5747f47b"
+                    }
+                  ],
+                  "edges": [],
+                  "receiver": {
+                    "status": "unknown",
+                    "qualified_name": null,
+                    "limitations": [
+                      "No source-resolved Python sink call."
+                    ]
+                  },
+                  "file_digests": {
+                    "src/utils/jwt/jwt.ts": "f0548f2d0b0b362fd8f762fd679696173f6f940a63381f00374beacc5747f47b"
+                  },
+                  "limitations": [
+                    "Finding source is outside the selected readable Python snapshot; config/other languages are not interpreted as Python.",
+                    "Static source/call evidence does not prove runtime reachability, guard effectiveness or complete external callers."
+                  ]
+                }
+              },
+              "compliance_tags": [
+                {
+                  "framework": "OWASP_TOP10",
+                  "requirement": "A10:2021",
+                  "title": "SSRF"
+                },
+                {
+                  "framework": "PCI_DSS_4",
+                  "requirement": "6.2.4",
+                  "title": "Security Flaws"
+                }
+              ],
+              "compliance_display": [
+                "OWASP Top 10 A10:2021",
+                "PCI DSS 4.0 6.2.4"
+              ],
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-context-html",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/context.ts",
+      "line": 747,
+      "start_line": 747,
+      "end_line": 747,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/context.ts#L747",
+      "symbol": "Context.html",
+      "rule_id": "SKY-D228",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "unscored_reason": "unknown_truth",
+      "intentional_keep": false,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "unknown_truth",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-constant-time-helper",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/utils/buffer.ts",
+      "line": 29,
+      "start_line": 29,
+      "end_line": 29,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/utils/buffer.ts#L29",
+      "symbol": "constantTimeEqualString",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": true,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-string-compare-helper",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/utils/buffer.ts",
+      "line": 44,
+      "start_line": 44,
+      "end_line": 44,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/utils/buffer.ts#L44",
+      "symbol": "timingSafeEqualString",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": true,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-nonce-helper",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/middleware/secure-headers/secure-headers.ts",
+      "line": 133,
+      "start_line": 133,
+      "end_line": 133,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/middleware/secure-headers/secure-headers.ts#L133",
+      "symbol": "generateNonce",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": true,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-redirect-helper",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/helper/ssg/plugins.ts",
+      "line": 24,
+      "start_line": 24,
+      "end_line": 24,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/helper/ssg/plugins.ts#L24",
+      "symbol": "generateRedirectHtml",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": true,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-html-escaper",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/utils/html.ts",
+      "line": 98,
+      "start_line": 98,
+      "end_line": 98,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/utils/html.ts#L98",
+      "symbol": "escapeToBuffer",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": true,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "hono-public-buffer-equal",
+      "repo_id": "honojs--hono",
+      "revision": "676c8f80fcafc49e6e74c847a8f0d9c44cc7faee",
+      "file": "src/utils/buffer.ts",
+      "line": 8,
+      "start_line": 8,
+      "end_line": 8,
+      "source_url": "https://github.com/honojs/hono/blob/676c8f80fcafc49e6e74c847a8f0d9c44cc7faee/src/utils/buffer.ts#L8",
+      "symbol": "equal",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": true,
+      "label_author": "/root/security_precision",
+      "independent_reviewer": "/root/corpus_inventory",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-unused-htmlentities-import",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/Error/Renderers/PlainTextErrorRenderer.php",
+      "line": 17,
+      "start_line": 17,
+      "end_line": 17,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/Error/Renderers/PlainTextErrorRenderer.php#L17",
+      "symbol": "htmlentities",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "unused",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_positive",
+          "unscored_reason": null,
+          "truth": "unused",
+          "score_eligible": true,
+          "matching_findings": [
+            {
+              "name": "htmlentities",
+              "full_name": "htmlentities",
+              "simple_name": "htmlentities",
+              "type": "import",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/slimphp--Slim/Slim/Error/Renderers/PlainTextErrorRenderer.php",
+              "basename": "PlainTextErrorRenderer.php",
+              "line": 17,
+              "confidence": 100,
+              "references": 0,
+              "dead_code_classification": "likely_dead",
+              "dead_code_evidence": [
+                {
+                  "kind": "no_static_references",
+                  "role": "supports_dead",
+                  "reason": "no read of the imported name `htmlentities` resolved to this import",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "references": 0,
+                    "searched_name": "htmlentities",
+                    "files_searched": 125,
+                    "imported_target": "htmlentities",
+                    "in_package_init": false
+                  }
+                },
+                {
+                  "kind": "not_exported",
+                  "role": "supports_dead",
+                  "reason": "the module declares no `__all__` and the import is not treated as a re-export",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "module_declares_all": false
+                  }
+                },
+                {
+                  "kind": "confidence_gate",
+                  "role": "supports_dead",
+                  "reason": "confidence meets the configured reporting threshold",
+                  "source": "confidence",
+                  "confidence": 1.0,
+                  "details": {
+                    "confidence": 100,
+                    "threshold": 60
+                  }
+                }
+              ],
+              "dead_code_decision": {
+                "classification": "likely_dead",
+                "primary_reason": "No static references; Not exported; Confidence meets threshold",
+                "reason_tags": [
+                  "no_refs",
+                  "not_exported",
+                  "confidence_ge_threshold"
+                ],
+                "live_evidence_count": 0,
+                "dead_evidence_count": 3,
+                "uncertainty_count": 0,
+                "confidence": 100,
+                "threshold": 60
+              },
+              "dead_code_reason": "No static references; Not exported; Confidence meets threshold",
+              "dead_code_reason_tags": [
+                "no_refs",
+                "not_exported",
+                "confidence_ge_threshold"
+              ],
+              "dead_code_disposition": "reported",
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_positive",
+          "unscored_reason": null,
+          "truth": "unused",
+          "score_eligible": true,
+          "matching_findings": [
+            {
+              "name": "htmlentities",
+              "full_name": "htmlentities",
+              "simple_name": "htmlentities",
+              "type": "import",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/slimphp--Slim/Slim/Error/Renderers/PlainTextErrorRenderer.php",
+              "basename": "PlainTextErrorRenderer.php",
+              "line": 17,
+              "confidence": 100,
+              "references": 0,
+              "dead_code_classification": "likely_dead",
+              "dead_code_evidence": [
+                {
+                  "kind": "no_static_references",
+                  "role": "supports_dead",
+                  "reason": "no read of the imported name `htmlentities` resolved to this import",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "references": 0,
+                    "searched_name": "htmlentities",
+                    "files_searched": 125,
+                    "imported_target": "htmlentities",
+                    "in_package_init": false
+                  }
+                },
+                {
+                  "kind": "not_exported",
+                  "role": "supports_dead",
+                  "reason": "the module declares no `__all__` and the import is not treated as a re-export",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "module_declares_all": false
+                  }
+                },
+                {
+                  "kind": "confidence_gate",
+                  "role": "supports_dead",
+                  "reason": "confidence meets the configured reporting threshold",
+                  "source": "confidence",
+                  "confidence": 1.0,
+                  "details": {
+                    "confidence": 100,
+                    "threshold": 60
+                  }
+                }
+              ],
+              "dead_code_decision": {
+                "classification": "likely_dead",
+                "primary_reason": "No static references; Not exported; Confidence meets threshold",
+                "reason_tags": [
+                  "no_refs",
+                  "not_exported",
+                  "confidence_ge_threshold"
+                ],
+                "live_evidence_count": 0,
+                "dead_evidence_count": 3,
+                "uncertainty_count": 0,
+                "confidence": 100,
+                "threshold": 60
+              },
+              "dead_code_reason": "No static references; Not exported; Confidence meets threshold",
+              "dead_code_reason_tags": [
+                "no_refs",
+                "not_exported",
+                "confidence_ge_threshold"
+              ],
+              "dead_code_disposition": "reported",
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_positive",
+          "unscored_reason": null,
+          "truth": "unused",
+          "score_eligible": true,
+          "matching_findings": [
+            {
+              "name": "htmlentities",
+              "full_name": "htmlentities",
+              "simple_name": "htmlentities",
+              "type": "import",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/slimphp--Slim/Slim/Error/Renderers/PlainTextErrorRenderer.php",
+              "basename": "PlainTextErrorRenderer.php",
+              "line": 17,
+              "confidence": 100,
+              "references": 0,
+              "dead_code_classification": "likely_dead",
+              "dead_code_evidence": [
+                {
+                  "kind": "no_static_references",
+                  "role": "supports_dead",
+                  "reason": "no read of the imported name `htmlentities` resolved to this import",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "references": 0,
+                    "searched_name": "htmlentities",
+                    "files_searched": 125,
+                    "imported_target": "htmlentities",
+                    "in_package_init": false
+                  }
+                },
+                {
+                  "kind": "not_exported",
+                  "role": "supports_dead",
+                  "reason": "the module declares no `__all__` and the import is not treated as a re-export",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "module_declares_all": false
+                  }
+                },
+                {
+                  "kind": "confidence_gate",
+                  "role": "supports_dead",
+                  "reason": "confidence meets the configured reporting threshold",
+                  "source": "confidence",
+                  "confidence": 1.0,
+                  "details": {
+                    "confidence": 100,
+                    "threshold": 60
+                  }
+                }
+              ],
+              "dead_code_decision": {
+                "classification": "likely_dead",
+                "primary_reason": "No static references; Not exported; Confidence meets threshold",
+                "reason_tags": [
+                  "no_refs",
+                  "not_exported",
+                  "confidence_ge_threshold"
+                ],
+                "live_evidence_count": 0,
+                "dead_evidence_count": 3,
+                "uncertainty_count": 0,
+                "confidence": 100,
+                "threshold": 60
+              },
+              "dead_code_reason": "No static references; Not exported; Confidence meets threshold",
+              "dead_code_reason_tags": [
+                "no_refs",
+                "not_exported",
+                "confidence_ge_threshold"
+              ],
+              "dead_code_disposition": "reported",
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-unused-runtimeexception-import",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/Handlers/Strategies/RequestResponseNamedArgs.php",
+      "line": 16,
+      "start_line": 16,
+      "end_line": 16,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/Handlers/Strategies/RequestResponseNamedArgs.php#L16",
+      "symbol": "RuntimeException",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "unused",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_positive",
+          "unscored_reason": null,
+          "truth": "unused",
+          "score_eligible": true,
+          "matching_findings": [
+            {
+              "name": "RuntimeException",
+              "full_name": "RuntimeException",
+              "simple_name": "RuntimeException",
+              "type": "import",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/slimphp--Slim/Slim/Handlers/Strategies/RequestResponseNamedArgs.php",
+              "basename": "RequestResponseNamedArgs.php",
+              "line": 16,
+              "confidence": 100,
+              "references": 0,
+              "dead_code_classification": "likely_dead",
+              "dead_code_evidence": [
+                {
+                  "kind": "no_static_references",
+                  "role": "supports_dead",
+                  "reason": "no read of the imported name `RuntimeException` resolved to this import",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "references": 0,
+                    "searched_name": "RuntimeException",
+                    "files_searched": 125,
+                    "same_name_definitions": [
+                      "Slim/CallableResolver.php:17 import RuntimeException",
+                      "Slim/Exception/HttpException.php:14 import RuntimeException",
+                      "Slim/Factory/AppFactory.php:16 import RuntimeException"
+                    ],
+                    "same_name_definition_count": 34,
+                    "imported_target": "RuntimeException",
+                    "in_package_init": false
+                  }
+                },
+                {
+                  "kind": "not_exported",
+                  "role": "supports_dead",
+                  "reason": "the module declares no `__all__` and the import is not treated as a re-export",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "module_declares_all": false
+                  }
+                },
+                {
+                  "kind": "confidence_gate",
+                  "role": "supports_dead",
+                  "reason": "confidence meets the configured reporting threshold",
+                  "source": "confidence",
+                  "confidence": 1.0,
+                  "details": {
+                    "confidence": 100,
+                    "threshold": 60
+                  }
+                }
+              ],
+              "dead_code_decision": {
+                "classification": "likely_dead",
+                "primary_reason": "No static references; Not exported; Confidence meets threshold",
+                "reason_tags": [
+                  "no_refs",
+                  "not_exported",
+                  "confidence_ge_threshold"
+                ],
+                "live_evidence_count": 0,
+                "dead_evidence_count": 3,
+                "uncertainty_count": 0,
+                "confidence": 100,
+                "threshold": 60
+              },
+              "dead_code_reason": "No static references; Not exported; Confidence meets threshold",
+              "dead_code_reason_tags": [
+                "no_refs",
+                "not_exported",
+                "confidence_ge_threshold"
+              ],
+              "dead_code_disposition": "reported",
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_positive",
+          "unscored_reason": null,
+          "truth": "unused",
+          "score_eligible": true,
+          "matching_findings": [
+            {
+              "name": "RuntimeException",
+              "full_name": "RuntimeException",
+              "simple_name": "RuntimeException",
+              "type": "import",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/slimphp--Slim/Slim/Handlers/Strategies/RequestResponseNamedArgs.php",
+              "basename": "RequestResponseNamedArgs.php",
+              "line": 16,
+              "confidence": 100,
+              "references": 0,
+              "dead_code_classification": "likely_dead",
+              "dead_code_evidence": [
+                {
+                  "kind": "no_static_references",
+                  "role": "supports_dead",
+                  "reason": "no read of the imported name `RuntimeException` resolved to this import",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "references": 0,
+                    "searched_name": "RuntimeException",
+                    "files_searched": 125,
+                    "same_name_definitions": [
+                      "Slim/CallableResolver.php:17 import RuntimeException",
+                      "Slim/Exception/HttpException.php:14 import RuntimeException",
+                      "Slim/Factory/AppFactory.php:16 import RuntimeException"
+                    ],
+                    "same_name_definition_count": 34,
+                    "imported_target": "RuntimeException",
+                    "in_package_init": false
+                  }
+                },
+                {
+                  "kind": "not_exported",
+                  "role": "supports_dead",
+                  "reason": "the module declares no `__all__` and the import is not treated as a re-export",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "module_declares_all": false
+                  }
+                },
+                {
+                  "kind": "confidence_gate",
+                  "role": "supports_dead",
+                  "reason": "confidence meets the configured reporting threshold",
+                  "source": "confidence",
+                  "confidence": 1.0,
+                  "details": {
+                    "confidence": 100,
+                    "threshold": 60
+                  }
+                }
+              ],
+              "dead_code_decision": {
+                "classification": "likely_dead",
+                "primary_reason": "No static references; Not exported; Confidence meets threshold",
+                "reason_tags": [
+                  "no_refs",
+                  "not_exported",
+                  "confidence_ge_threshold"
+                ],
+                "live_evidence_count": 0,
+                "dead_evidence_count": 3,
+                "uncertainty_count": 0,
+                "confidence": 100,
+                "threshold": 60
+              },
+              "dead_code_reason": "No static references; Not exported; Confidence meets threshold",
+              "dead_code_reason_tags": [
+                "no_refs",
+                "not_exported",
+                "confidence_ge_threshold"
+              ],
+              "dead_code_disposition": "reported",
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_positive",
+          "unscored_reason": null,
+          "truth": "unused",
+          "score_eligible": true,
+          "matching_findings": [
+            {
+              "name": "RuntimeException",
+              "full_name": "RuntimeException",
+              "simple_name": "RuntimeException",
+              "type": "import",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/slimphp--Slim/Slim/Handlers/Strategies/RequestResponseNamedArgs.php",
+              "basename": "RequestResponseNamedArgs.php",
+              "line": 16,
+              "confidence": 100,
+              "references": 0,
+              "dead_code_classification": "likely_dead",
+              "dead_code_evidence": [
+                {
+                  "kind": "no_static_references",
+                  "role": "supports_dead",
+                  "reason": "no read of the imported name `RuntimeException` resolved to this import",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "references": 0,
+                    "searched_name": "RuntimeException",
+                    "files_searched": 125,
+                    "same_name_definitions": [
+                      "Slim/CallableResolver.php:17 import RuntimeException",
+                      "Slim/Exception/HttpException.php:14 import RuntimeException",
+                      "Slim/Factory/AppFactory.php:16 import RuntimeException"
+                    ],
+                    "same_name_definition_count": 34,
+                    "imported_target": "RuntimeException",
+                    "in_package_init": false
+                  }
+                },
+                {
+                  "kind": "not_exported",
+                  "role": "supports_dead",
+                  "reason": "the module declares no `__all__` and the import is not treated as a re-export",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "module_declares_all": false
+                  }
+                },
+                {
+                  "kind": "confidence_gate",
+                  "role": "supports_dead",
+                  "reason": "confidence meets the configured reporting threshold",
+                  "source": "confidence",
+                  "confidence": 1.0,
+                  "details": {
+                    "confidence": 100,
+                    "threshold": 60
+                  }
+                }
+              ],
+              "dead_code_decision": {
+                "classification": "likely_dead",
+                "primary_reason": "No static references; Not exported; Confidence meets threshold",
+                "reason_tags": [
+                  "no_refs",
+                  "not_exported",
+                  "confidence_ge_threshold"
+                ],
+                "live_evidence_count": 0,
+                "dead_evidence_count": 3,
+                "uncertainty_count": 0,
+                "confidence": 100,
+                "threshold": 60
+              },
+              "dead_code_reason": "No static references; Not exported; Confidence meets threshold",
+              "dead_code_reason_tags": [
+                "no_refs",
+                "not_exported",
+                "confidence_ge_threshold"
+              ],
+              "dead_code_disposition": "reported",
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-used-get-class-import",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/Error/Renderers/PlainTextErrorRenderer.php",
+      "line": 16,
+      "start_line": 16,
+      "end_line": 16,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/Error/Renderers/PlainTextErrorRenderer.php#L16",
+      "symbol": "get_class",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-used-sprintf-import",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/Error/Renderers/PlainTextErrorRenderer.php",
+      "line": 18,
+      "start_line": 18,
+      "end_line": 18,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/Error/Renderers/PlainTextErrorRenderer.php#L18",
+      "symbol": "sprintf",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-used-format-exception-fragment",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/Error/Renderers/PlainTextErrorRenderer.php",
+      "line": 41,
+      "start_line": 41,
+      "end_line": 41,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/Error/Renderers/PlainTextErrorRenderer.php#L41",
+      "symbol": "formatExceptionFragment",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-used-is-route-callback",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/CallableResolver.php",
+      "line": 110,
+      "start_line": 110,
+      "end_line": 110,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/CallableResolver.php#L110",
+      "symbol": "isRoute",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "false_positive",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [
+            {
+              "name": "CallableResolver.isRoute",
+              "full_name": "Slim.CallableResolver.isRoute",
+              "simple_name": "isRoute",
+              "type": "method",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/slimphp--Slim/Slim/CallableResolver.php",
+              "basename": "CallableResolver.php",
+              "line": 110,
+              "confidence": 80,
+              "references": 0,
+              "confidence_factors": [
+                "public_method"
+              ],
+              "dead_code_classification": "likely_dead",
+              "dead_code_evidence": [
+                {
+                  "kind": "no_static_references",
+                  "role": "supports_dead",
+                  "reason": "no static references were found",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "references": 0,
+                    "searched_name": "isRoute",
+                    "files_searched": 125
+                  }
+                },
+                {
+                  "kind": "not_exported",
+                  "role": "supports_dead",
+                  "reason": "symbol is not exported as public API",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {}
+                },
+                {
+                  "kind": "no_entrypoint",
+                  "role": "supports_dead",
+                  "reason": "no package, framework, test, or root entrypoint evidence",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {}
+                },
+                {
+                  "kind": "confidence_gate",
+                  "role": "supports_dead",
+                  "reason": "confidence meets the configured reporting threshold",
+                  "source": "confidence",
+                  "confidence": 0.8,
+                  "details": {
+                    "confidence": 80,
+                    "threshold": 60
+                  }
+                }
+              ],
+              "dead_code_decision": {
+                "classification": "likely_dead",
+                "primary_reason": "No static references; Not exported; No entrypoint evidence",
+                "reason_tags": [
+                  "no_refs",
+                  "not_exported",
+                  "no_entrypoint",
+                  "confidence_ge_threshold"
+                ],
+                "live_evidence_count": 0,
+                "dead_evidence_count": 4,
+                "uncertainty_count": 0,
+                "confidence": 80,
+                "threshold": 60
+              },
+              "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+              "dead_code_reason_tags": [
+                "no_refs",
+                "not_exported",
+                "no_entrypoint",
+                "confidence_ge_threshold"
+              ],
+              "dead_code_disposition": "reported",
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        },
+        "after": {
+          "outcome": "false_positive",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [
+            {
+              "name": "CallableResolver.isRoute",
+              "full_name": "Slim.CallableResolver.isRoute",
+              "simple_name": "isRoute",
+              "type": "method",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/slimphp--Slim/Slim/CallableResolver.php",
+              "basename": "CallableResolver.php",
+              "line": 110,
+              "confidence": 80,
+              "references": 0,
+              "confidence_factors": [
+                "public_method"
+              ],
+              "dead_code_classification": "likely_dead",
+              "dead_code_evidence": [
+                {
+                  "kind": "no_static_references",
+                  "role": "supports_dead",
+                  "reason": "no static references were found",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "references": 0,
+                    "searched_name": "isRoute",
+                    "files_searched": 125
+                  }
+                },
+                {
+                  "kind": "not_exported",
+                  "role": "supports_dead",
+                  "reason": "symbol is not exported as public API",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {}
+                },
+                {
+                  "kind": "no_entrypoint",
+                  "role": "supports_dead",
+                  "reason": "no package, framework, test, or root entrypoint evidence",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {}
+                },
+                {
+                  "kind": "confidence_gate",
+                  "role": "supports_dead",
+                  "reason": "confidence meets the configured reporting threshold",
+                  "source": "confidence",
+                  "confidence": 0.8,
+                  "details": {
+                    "confidence": 80,
+                    "threshold": 60
+                  }
+                }
+              ],
+              "dead_code_decision": {
+                "classification": "likely_dead",
+                "primary_reason": "No static references; Not exported; No entrypoint evidence",
+                "reason_tags": [
+                  "no_refs",
+                  "not_exported",
+                  "no_entrypoint",
+                  "confidence_ge_threshold"
+                ],
+                "live_evidence_count": 0,
+                "dead_evidence_count": 4,
+                "uncertainty_count": 0,
+                "confidence": 80,
+                "threshold": 60
+              },
+              "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+              "dead_code_reason_tags": [
+                "no_refs",
+                "not_exported",
+                "no_entrypoint",
+                "confidence_ge_threshold"
+              ],
+              "dead_code_disposition": "reported",
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-used-is-middleware-callback",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/CallableResolver.php",
+      "line": 118,
+      "start_line": 118,
+      "end_line": 118,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/CallableResolver.php#L118",
+      "symbol": "isMiddleware",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "false_positive",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [
+            {
+              "name": "CallableResolver.isMiddleware",
+              "full_name": "Slim.CallableResolver.isMiddleware",
+              "simple_name": "isMiddleware",
+              "type": "method",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/slimphp--Slim/Slim/CallableResolver.php",
+              "basename": "CallableResolver.php",
+              "line": 118,
+              "confidence": 80,
+              "references": 0,
+              "confidence_factors": [
+                "public_method"
+              ],
+              "dead_code_classification": "likely_dead",
+              "dead_code_evidence": [
+                {
+                  "kind": "no_static_references",
+                  "role": "supports_dead",
+                  "reason": "no static references were found",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "references": 0,
+                    "searched_name": "isMiddleware",
+                    "files_searched": 125
+                  }
+                },
+                {
+                  "kind": "not_exported",
+                  "role": "supports_dead",
+                  "reason": "symbol is not exported as public API",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {}
+                },
+                {
+                  "kind": "no_entrypoint",
+                  "role": "supports_dead",
+                  "reason": "no package, framework, test, or root entrypoint evidence",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {}
+                },
+                {
+                  "kind": "confidence_gate",
+                  "role": "supports_dead",
+                  "reason": "confidence meets the configured reporting threshold",
+                  "source": "confidence",
+                  "confidence": 0.8,
+                  "details": {
+                    "confidence": 80,
+                    "threshold": 60
+                  }
+                }
+              ],
+              "dead_code_decision": {
+                "classification": "likely_dead",
+                "primary_reason": "No static references; Not exported; No entrypoint evidence",
+                "reason_tags": [
+                  "no_refs",
+                  "not_exported",
+                  "no_entrypoint",
+                  "confidence_ge_threshold"
+                ],
+                "live_evidence_count": 0,
+                "dead_evidence_count": 4,
+                "uncertainty_count": 0,
+                "confidence": 80,
+                "threshold": 60
+              },
+              "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+              "dead_code_reason_tags": [
+                "no_refs",
+                "not_exported",
+                "no_entrypoint",
+                "confidence_ge_threshold"
+              ],
+              "dead_code_disposition": "reported",
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        },
+        "after": {
+          "outcome": "false_positive",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [
+            {
+              "name": "CallableResolver.isMiddleware",
+              "full_name": "Slim.CallableResolver.isMiddleware",
+              "simple_name": "isMiddleware",
+              "type": "method",
+              "file": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/checkouts/slimphp--Slim/Slim/CallableResolver.php",
+              "basename": "CallableResolver.php",
+              "line": 118,
+              "confidence": 80,
+              "references": 0,
+              "confidence_factors": [
+                "public_method"
+              ],
+              "dead_code_classification": "likely_dead",
+              "dead_code_evidence": [
+                {
+                  "kind": "no_static_references",
+                  "role": "supports_dead",
+                  "reason": "no static references were found",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {
+                    "references": 0,
+                    "searched_name": "isMiddleware",
+                    "files_searched": 125
+                  }
+                },
+                {
+                  "kind": "not_exported",
+                  "role": "supports_dead",
+                  "reason": "symbol is not exported as public API",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {}
+                },
+                {
+                  "kind": "no_entrypoint",
+                  "role": "supports_dead",
+                  "reason": "no package, framework, test, or root entrypoint evidence",
+                  "source": "analyzer",
+                  "confidence": 1.0,
+                  "details": {}
+                },
+                {
+                  "kind": "confidence_gate",
+                  "role": "supports_dead",
+                  "reason": "confidence meets the configured reporting threshold",
+                  "source": "confidence",
+                  "confidence": 0.8,
+                  "details": {
+                    "confidence": 80,
+                    "threshold": 60
+                  }
+                }
+              ],
+              "dead_code_decision": {
+                "classification": "likely_dead",
+                "primary_reason": "No static references; Not exported; No entrypoint evidence",
+                "reason_tags": [
+                  "no_refs",
+                  "not_exported",
+                  "no_entrypoint",
+                  "confidence_ge_threshold"
+                ],
+                "live_evidence_count": 0,
+                "dead_evidence_count": 4,
+                "uncertainty_count": 0,
+                "confidence": 80,
+                "threshold": 60
+              },
+              "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+              "dead_code_reason_tags": [
+                "no_refs",
+                "not_exported",
+                "no_entrypoint",
+                "confidence_ge_threshold"
+              ],
+              "dead_code_disposition": "reported",
+              "finding_type": "review",
+              "listing": {
+                "version": 1,
+                "listed": true,
+                "reason": "finding"
+              }
+            }
+          ],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-used-private-route-context-constructor",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/Routing/RouteContext.php",
+      "line": 55,
+      "start_line": 55,
+      "end_line": 55,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/Routing/RouteContext.php#L55",
+      "symbol": "__construct",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-used-emit-body",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/ResponseEmitter.php",
+      "line": 87,
+      "start_line": 87,
+      "end_line": 87,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/ResponseEmitter.php#L87",
+      "symbol": "emitBody",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-used-plain-text-renderer-class",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/Error/Renderers/PlainTextErrorRenderer.php",
+      "line": 23,
+      "start_line": 23,
+      "end_line": 23,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/Error/Renderers/PlainTextErrorRenderer.php#L23",
+      "symbol": "PlainTextErrorRenderer",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": "Framework registration and public renderer contract.",
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-used-named-args-invocation",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/Handlers/Strategies/RequestResponseNamedArgs.php",
+      "line": 30,
+      "start_line": 30,
+      "end_line": 30,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/Handlers/Strategies/RequestResponseNamedArgs.php#L30",
+      "symbol": "__invoke",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": "Public strategy contract; test call is source evidence only.",
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-unknown-response-echo-103",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/ResponseEmitter.php",
+      "line": 103,
+      "start_line": 103,
+      "end_line": 103,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/ResponseEmitter.php#L103",
+      "symbol": "echo",
+      "rule_id": "SKY-D228",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "unscored_reason": "Unknown truth: retain observation, no TP/FP/FN/TN credit.",
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "Unknown truth: retain observation, no TP/FP/FN/TN credit.",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "Unknown truth: retain observation, no TP/FP/FN/TN credit.",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "Unknown truth: retain observation, no TP/FP/FN/TN credit.",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-unknown-response-echo-113",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/ResponseEmitter.php",
+      "line": 113,
+      "start_line": 113,
+      "end_line": 113,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/ResponseEmitter.php#L113",
+      "symbol": "echo",
+      "rule_id": "SKY-D228",
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "unscored_reason": "Unknown truth: retain observation, no TP/FP/FN/TN credit.",
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "Unknown truth: retain observation, no TP/FP/FN/TN credit.",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "Unknown truth: retain observation, no TP/FP/FN/TN credit.",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "Unknown truth: retain observation, no TP/FP/FN/TN credit.",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-safe-exception-message-html-construction",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/Error/Renderers/HtmlErrorRenderer.php",
+      "line": 46,
+      "start_line": 46,
+      "end_line": 46,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/Error/Renderers/HtmlErrorRenderer.php#L46",
+      "symbol": "renderExceptionFragment",
+      "rule_id": null,
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": false,
+      "unscored_reason": "HTML construction is outside a specific implemented sink at this site; no security metric credit.",
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "HTML construction is outside a specific implemented sink at this site; no security metric credit.",
+          "truth": "safe",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "HTML construction is outside a specific implemented sink at this site; no security metric credit.",
+          "truth": "safe",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "HTML construction is outside a specific implemented sink at this site; no security metric credit.",
+          "truth": "safe",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "slim-unknown-xml-parser-runtime-contract",
+      "repo_id": "slimphp--Slim",
+      "revision": "8d872ae0a146bba4ce750094b21754f9c9f21d00",
+      "file": "Slim/Middleware/BodyParsingMiddleware.php",
+      "line": 122,
+      "start_line": 122,
+      "end_line": 122,
+      "source_url": "https://github.com/slimphp/Slim/blob/8d872ae0a146bba4ce750094b21754f9c9f21d00/Slim/Middleware/BodyParsingMiddleware.php#L122",
+      "symbol": "simplexml_load_string",
+      "rule_id": null,
+      "category": "security",
+      "truth": "unknown",
+      "score_eligible": false,
+      "unscored_reason": "Unknown truth: retain observation, no TP/FP/FN/TN credit.",
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "Unknown truth: retain observation, no TP/FP/FN/TN credit.",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "Unknown truth: retain observation, no TP/FP/FN/TN credit.",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "Unknown truth: retain observation, no TP/FP/FN/TN credit.",
+          "truth": "unknown",
+          "score_eligible": false,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "petclinic-used-owner-init-creation-form",
+      "repo_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "file": "src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java",
+      "line": 73,
+      "start_line": 73,
+      "end_line": 73,
+      "source_url": "https://github.com/spring-projects/spring-petclinic/blob/500158f732419217507c7656904b8e6aa1bcc0d6/src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java#L73",
+      "symbol": "initCreationForm",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": "Framework request entry point.",
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "petclinic-used-base-entity-id-getter",
+      "repo_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "file": "src/main/java/org/springframework/samples/petclinic/model/BaseEntity.java",
+      "line": 39,
+      "start_line": 39,
+      "end_line": 39,
+      "source_url": "https://github.com/spring-projects/spring-petclinic/blob/500158f732419217507c7656904b8e6aa1bcc0d6/src/main/java/org/springframework/samples/petclinic/model/BaseEntity.java#L39",
+      "symbol": "getId",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "petclinic-used-vet-pagination-query-helper",
+      "repo_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "file": "src/main/java/org/springframework/samples/petclinic/vet/VetController.java",
+      "line": 65,
+      "start_line": 65,
+      "end_line": 65,
+      "source_url": "https://github.com/spring-projects/spring-petclinic/blob/500158f732419217507c7656904b8e6aa1bcc0d6/src/main/java/org/springframework/samples/petclinic/vet/VetController.java#L65",
+      "symbol": "findPaginated",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "petclinic-used-vet-pagination-view-helper",
+      "repo_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "file": "src/main/java/org/springframework/samples/petclinic/vet/VetController.java",
+      "line": 56,
+      "start_line": 56,
+      "end_line": 56,
+      "source_url": "https://github.com/spring-projects/spring-petclinic/blob/500158f732419217507c7656904b8e6aa1bcc0d6/src/main/java/org/springframework/samples/petclinic/vet/VetController.java#L56",
+      "symbol": "addPaginationModel",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "petclinic-used-locale-resolver-bean",
+      "repo_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "file": "src/main/java/org/springframework/samples/petclinic/system/WebConfiguration.java",
+      "line": 33,
+      "start_line": 33,
+      "end_line": 33,
+      "source_url": "https://github.com/spring-projects/spring-petclinic/blob/500158f732419217507c7656904b8e6aa1bcc0d6/src/main/java/org/springframework/samples/petclinic/system/WebConfiguration.java#L33",
+      "symbol": "localeResolver",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": "Framework bean factory; missing direct callers is expected.",
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "petclinic-used-locale-interceptor-bean",
+      "repo_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "file": "src/main/java/org/springframework/samples/petclinic/system/WebConfiguration.java",
+      "line": 45,
+      "start_line": 45,
+      "end_line": 45,
+      "source_url": "https://github.com/spring-projects/spring-petclinic/blob/500158f732419217507c7656904b8e6aa1bcc0d6/src/main/java/org/springframework/samples/petclinic/system/WebConfiguration.java#L45",
+      "symbol": "localeChangeInterceptor",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": "Bean factory and registered interceptor.",
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "petclinic-used-formatter-print",
+      "repo_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "file": "src/main/java/org/springframework/samples/petclinic/owner/PetTypeFormatter.java",
+      "line": 46,
+      "start_line": 46,
+      "end_line": 46,
+      "source_url": "https://github.com/spring-projects/spring-petclinic/blob/500158f732419217507c7656904b8e6aa1bcc0d6/src/main/java/org/springframework/samples/petclinic/owner/PetTypeFormatter.java#L46",
+      "symbol": "print",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": "Formatter interface signature includes Locale even when this implementation does not read it.",
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "petclinic-used-formatter-parse",
+      "repo_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "file": "src/main/java/org/springframework/samples/petclinic/owner/PetTypeFormatter.java",
+      "line": 52,
+      "start_line": 52,
+      "end_line": 52,
+      "source_url": "https://github.com/spring-projects/spring-petclinic/blob/500158f732419217507c7656904b8e6aa1bcc0d6/src/main/java/org/springframework/samples/petclinic/owner/PetTypeFormatter.java#L52",
+      "symbol": "parse",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": "Formatter interface signature includes Locale even when this implementation does not read it.",
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "unscored",
+          "unscored_reason": "missing_extraction",
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "petclinic-used-derived-repository-query",
+      "repo_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "file": "src/main/java/org/springframework/samples/petclinic/owner/OwnerRepository.java",
+      "line": 45,
+      "start_line": 45,
+      "end_line": 45,
+      "source_url": "https://github.com/spring-projects/spring-petclinic/blob/500158f732419217507c7656904b8e6aa1bcc0d6/src/main/java/org/springframework/samples/petclinic/owner/OwnerRepository.java#L45",
+      "symbol": "findByLastNameStartingWith",
+      "rule_id": null,
+      "category": "dead_code",
+      "truth": "used",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": "Framework-generated repository implementation.",
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "used",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "petclinic-safe-fixed-vet-redirect",
+      "repo_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "file": "src/main/java/org/springframework/samples/petclinic/vet/VetController.java",
+      "line": 51,
+      "start_line": 51,
+      "end_line": 51,
+      "source_url": "https://github.com/spring-projects/spring-petclinic/blob/500158f732419217507c7656904b8e6aa1bcc0d6/src/main/java/org/springframework/samples/petclinic/vet/VetController.java#L51",
+      "symbol": "showVetList",
+      "rule_id": "SKY-D230",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "petclinic-safe-numeric-owner-redirect-86",
+      "repo_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "file": "src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java",
+      "line": 86,
+      "start_line": 86,
+      "end_line": 86,
+      "source_url": "https://github.com/spring-projects/spring-petclinic/blob/500158f732419217507c7656904b8e6aa1bcc0d6/src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java#L86",
+      "symbol": "processCreationForm",
+      "rule_id": "SKY-D230",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    },
+    {
+      "id": "petclinic-safe-numeric-owner-redirect-125",
+      "repo_id": "spring-projects--spring-petclinic",
+      "revision": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "file": "src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java",
+      "line": 125,
+      "start_line": 125,
+      "end_line": 125,
+      "source_url": "https://github.com/spring-projects/spring-petclinic/blob/500158f732419217507c7656904b8e6aa1bcc0d6/src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java#L125",
+      "symbol": "processFindForm",
+      "rule_id": "SKY-D230",
+      "category": "security",
+      "truth": "safe",
+      "score_eligible": true,
+      "unscored_reason": null,
+      "intentional_keep": null,
+      "label_author": "/root/corpus_inventory",
+      "independent_reviewer": "/root/security_precision",
+      "outcomes": {
+        "before": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        },
+        "after_php": {
+          "outcome": "true_negative",
+          "unscored_reason": null,
+          "truth": "safe",
+          "score_eligible": true,
+          "matching_findings": [],
+          "issues": []
+        }
+      }
+    }
+  ]
+}

@@ -194,12 +194,12 @@ func hookDependency() {}
 			t.Errorf("live test consumer %s = %q", name, states[name])
 		}
 	}
-	for _, name := range []string{"alpha", "beta", "stale"} {
+	for _, name := range []string{"alpha", "beta", "stale", "suite.hook"} {
 		if states[name] != "unreachable" {
 			t.Errorf("unused test helper %s = %q", name, states[name])
 		}
 	}
-	for _, name := range []string{"TestValue", "TestMain", "BenchmarkValue", "FuzzValue", "ExampleValue", "suite.hook"} {
+	for _, name := range []string{"TestValue", "TestMain", "BenchmarkValue", "FuzzValue", "ExampleValue"} {
 		if _, ok := states[name]; ok {
 			t.Errorf("test entry or unknown method hook %s became a dead-code candidate", name)
 		}

@@ -425,6 +425,7 @@ func ExtractScoped(root string, sourceFiles map[string]bool) (*Result, error) {
 	}
 	if proofComplete {
 		markFunctionReachability(result, reachabilityFiles, fset, modulePath, typeImporter)
+		appendUninstantiatedTestMethods(result, reachabilityFiles, fset, incompleteDirs)
 	}
 	// Test helpers were previously omitted entirely. Only expose their private
 	// function definitions when complete type information establishes their use.

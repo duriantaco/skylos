@@ -944,6 +944,7 @@ class TypeScriptCore:
             if current.type in (
                 "export_statement",
                 "lexical_declaration",
+                "variable_declaration",
                 "variable_declarator",
             ):
                 current = current.parent

@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "node-import-preload",
+      "path": "fixtures/node-import-preload",
+      "description": "Node attached preload flag loads one exact module; data operand and unselected sibling remain unused.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "package_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original paired static contract based on documented Node --import=module and --require=module options. Target source is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "file",
+            "file": "src/register.js",
+            "symbol": "src/register.js"
+          },
+          {
+            "kind": "file",
+            "file": "src/worker.js",
+            "symbol": "src/worker.js"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "file",
+            "file": "src/data.js",
+            "symbol": "src/data.js"
+          },
+          {
+            "kind": "file",
+            "file": "src/retired.js",
+            "symbol": "src/retired.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "node-require-preload",
+      "path": "fixtures/node-require-preload",
+      "description": "Node attached preload flag loads one exact module; data operand and unselected sibling remain unused.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "package_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original paired static contract based on documented Node --import=module and --require=module options. Target source is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "file",
+            "file": "src/register.js",
+            "symbol": "src/register.js"
+          },
+          {
+            "kind": "file",
+            "file": "src/worker.js",
+            "symbol": "src/worker.js"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "file",
+            "file": "src/data.js",
+            "symbol": "src/data.js"
+          },
+          {
+            "kind": "file",
+            "file": "src/retired.js",
+            "symbol": "src/retired.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "node-preload-terminator",
+      "path": "fixtures/node-preload-terminator",
+      "description": "After Node end-of-options, a preload-shaped operand is a literal entry filename and does not load the similarly named module.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "package_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original paired static contract based on documented Node --import=module and --require=module options. Target source is never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": false
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "src/register.js",
+            "symbol": "src/register.js"
+          }
+        ],
+        "used": []
+      }
+    }
+  ]
+}

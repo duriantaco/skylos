@@ -1,0 +1,264 @@
+{
+  "phase": "versioned post-scan adjudication v1; original frozen labels unchanged",
+  "author": "/root/ts_truth",
+  "findings": [
+    {
+      "repository": "lukeed--regexparam",
+      "scanner": "skylos",
+      "rule_id": "SKY-D291",
+      "file": ".github/workflows/ci.yml",
+      "line": 1,
+      "verdict": "context_dependent_review",
+      "reason": "Whole workflow has no permissions key. Repository/organization default token permissions are unavailable. Accurate omitted-setting fact; actual excessive privilege remains unknown.",
+      "source_review": "Complete source/config files were read before scan; rule-specific adjudication occurred after scan. Not a pre-scan positive label."
+    },
+    {
+      "repository": "lukeed--regexparam",
+      "scanner": "skylos",
+      "rule_id": "SKY-D292",
+      "file": ".github/workflows/ci.yml",
+      "line": 13,
+      "verdict": "true_positive_policy",
+      "reason": "Workflow line 13 has uses: actions/checkout@v2, a tag/branch rather than a 40-digit commit. Correct posture warning; no compromised action or reachable application vulnerability established.",
+      "source_review": "Complete source/config files were read before scan; rule-specific adjudication occurred after scan. Not a pre-scan positive label."
+    },
+    {
+      "repository": "lukeed--regexparam",
+      "scanner": "skylos",
+      "rule_id": "SKY-D292",
+      "file": ".github/workflows/ci.yml",
+      "line": 14,
+      "verdict": "true_positive_policy",
+      "reason": "Workflow line 14 has uses: actions/setup-node@v2, a tag/branch rather than a 40-digit commit. Correct posture warning; no compromised action or reachable application vulnerability established.",
+      "source_review": "Complete source/config files were read before scan; rule-specific adjudication occurred after scan. Not a pre-scan positive label."
+    },
+    {
+      "repository": "lukeed--regexparam",
+      "scanner": "skylos",
+      "rule_id": "SKY-D292",
+      "file": ".github/workflows/ci.yml",
+      "line": 19,
+      "verdict": "true_positive_policy",
+      "reason": "Workflow line 19 has uses: actions/cache@master, a tag/branch rather than a 40-digit commit. Correct posture warning; no compromised action or reachable application vulnerability established.",
+      "source_review": "Complete source/config files were read before scan; rule-specific adjudication occurred after scan. Not a pre-scan positive label."
+    },
+    {
+      "repository": "lukeed--regexparam",
+      "scanner": "skylos",
+      "rule_id": "SKY-D312",
+      "file": ".github/workflows/ci.yml",
+      "line": 25,
+      "verdict": "true_positive_policy",
+      "reason": "Workflow line 25 runs npm install without --ignore-scripts. Dependency lifecycle execution is real intended npm behavior, but dependency compromise/attacker influence is not proven. Treat as posture review, not confirmed application exploit.",
+      "source_review": "Complete source/config files were read before scan; rule-specific adjudication occurred after scan. Not a pre-scan positive label."
+    },
+    {
+      "repository": "lukeed--regexparam",
+      "scanner": "skylos",
+      "rule_id": "SKY-D260",
+      "file": "package.json",
+      "line": 5,
+      "verdict": "false_positive_security_impact",
+      "reason": "package.json:5 description contains an emoji followed by U+200D. The character is present, but the full description is a benign library explanation, with no hidden instruction or prompt-injection behavior. This is noisy HIGH security presentation, not a confirmed prompt injection. Literal character-presence detection is technically correct.",
+      "source_review": "Complete source/config files were read before scan; rule-specific adjudication occurred after scan. Not a pre-scan positive label."
+    },
+    {
+      "repository": "lukeed--regexparam",
+      "scanner": "knip",
+      "file": "test/inject.js",
+      "verdict": "false_positive",
+      "reason": "test/inject.js has uvu test calls and test.run(); package.json script \"uvu -r esm test\" discovers the test directory. CI invokes npm test (trouter after its build). File is an intended test entrypoint even without an import edge.",
+      "root_cause": "Missing uvu convention/entrypoint recognition in default plugin behavior; no target dependencies were installed.",
+      "score_scope": "Post-scan finding adjudication; not added to frozen source-label score."
+    },
+    {
+      "repository": "lukeed--regexparam",
+      "scanner": "knip",
+      "file": "test/parse.js",
+      "verdict": "false_positive",
+      "reason": "test/parse.js has uvu test calls and test.run(); package.json script \"uvu -r esm test\" discovers the test directory. CI invokes npm test (trouter after its build). File is an intended test entrypoint even without an import edge.",
+      "root_cause": "Missing uvu convention/entrypoint recognition in default plugin behavior; no target dependencies were installed.",
+      "score_scope": "Post-scan finding adjudication; not added to frozen source-label score."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "skylos",
+      "rule_id": "SKY-D291",
+      "file": ".github/workflows/ci.yml",
+      "line": 1,
+      "verdict": "context_dependent_review",
+      "reason": "Whole workflow has no permissions key. Repository/organization default token permissions are unavailable. Accurate omitted-setting fact; actual excessive privilege remains unknown.",
+      "source_review": "Complete source/config files were read before scan; rule-specific adjudication occurred after scan. Not a pre-scan positive label."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "skylos",
+      "rule_id": "SKY-D292",
+      "file": ".github/workflows/ci.yml",
+      "line": 13,
+      "verdict": "true_positive_policy",
+      "reason": "Workflow line 13 has uses: actions/checkout@v4, a tag/branch rather than a 40-digit commit. Correct posture warning; no compromised action or reachable application vulnerability established.",
+      "source_review": "Complete source/config files were read before scan; rule-specific adjudication occurred after scan. Not a pre-scan positive label."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "skylos",
+      "rule_id": "SKY-D292",
+      "file": ".github/workflows/ci.yml",
+      "line": 14,
+      "verdict": "true_positive_policy",
+      "reason": "Workflow line 14 has uses: actions/setup-node@v4, a tag/branch rather than a 40-digit commit. Correct posture warning; no compromised action or reachable application vulnerability established.",
+      "source_review": "Complete source/config files were read before scan; rule-specific adjudication occurred after scan. Not a pre-scan positive label."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "skylos",
+      "rule_id": "SKY-D292",
+      "file": ".github/workflows/ci.yml",
+      "line": 19,
+      "verdict": "true_positive_policy",
+      "reason": "Workflow line 19 has uses: actions/cache@master, a tag/branch rather than a 40-digit commit. Correct posture warning; no compromised action or reachable application vulnerability established.",
+      "source_review": "Complete source/config files were read before scan; rule-specific adjudication occurred after scan. Not a pre-scan positive label."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "skylos",
+      "rule_id": "SKY-D312",
+      "file": ".github/workflows/ci.yml",
+      "line": 25,
+      "verdict": "true_positive_policy",
+      "reason": "Workflow line 25 runs npm install without --ignore-scripts. Dependency lifecycle execution is real intended npm behavior, but dependency compromise/attacker influence is not proven. Treat as posture review, not confirmed application exploit.",
+      "source_review": "Complete source/config files were read before scan; rule-specific adjudication occurred after scan. Not a pre-scan positive label."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "knip",
+      "file": "test/index.js",
+      "verdict": "false_positive",
+      "reason": "test/index.js has uvu test calls and test.run(); package.json script \"uvu -r esm test\" discovers the test directory. CI invokes npm test (trouter after its build). File is an intended test entrypoint even without an import edge.",
+      "root_cause": "Missing uvu convention/entrypoint recognition in default plugin behavior; no target dependencies were installed.",
+      "score_scope": "Post-scan finding adjudication; not added to frozen source-label score."
+    },
+    {
+      "repository": "lukeed--regexparam",
+      "scanner": "eslint-plugin-security",
+      "rule_id": "security/detect-non-literal-regexp",
+      "file": "src/index.js",
+      "line": 28,
+      "message": "Found non-literal argument to RegExp Constructor",
+      "verdict": "caller_dependent_review",
+      "reason": "Regex compilation is the documented purpose of parse(). Route input is a public API parameter, while repository callers supply literals. No untrusted route-registration consumer was established; non-literal construction is accurate but not a confirmed vulnerability.",
+      "score_scope": "Post-scan source adjudication only; original frozen labels unchanged."
+    },
+    {
+      "repository": "lukeed--regexparam",
+      "scanner": "eslint-plugin-security",
+      "rule_id": "security/detect-object-injection",
+      "file": "test/parse.js",
+      "line": 13,
+      "message": "Generic Object Injection Sink",
+      "verdict": "false_positive_security_impact",
+      "reason": "This is a test-only helper/fixture, consumed by uvu. Full test source passes fixed short literals and developer-defined route patterns; no attacker input reaches the operation in this repository. The syntax detector may correctly recognize a broad risky pattern, which is not a demonstrated security issue here.",
+      "score_scope": "Post-scan source adjudication only; original frozen labels unchanged."
+    },
+    {
+      "repository": "lukeed--regexparam",
+      "scanner": "eslint-plugin-security",
+      "rule_id": "security/detect-unsafe-regex",
+      "file": "test/parse.js",
+      "line": 723,
+      "message": "Unsafe Regular Expression",
+      "verdict": "false_positive_security_impact",
+      "reason": "This is a test-only helper/fixture, consumed by uvu. Full test source passes fixed short literals and developer-defined route patterns; no attacker input reaches the operation in this repository. The syntax detector may correctly recognize a broad risky pattern, which is not a demonstrated security issue here.",
+      "score_scope": "Post-scan source adjudication only; original frozen labels unchanged."
+    },
+    {
+      "repository": "lukeed--regexparam",
+      "scanner": "eslint-plugin-security",
+      "rule_id": "security/detect-unsafe-regex",
+      "file": "test/parse.js",
+      "line": 754,
+      "message": "Unsafe Regular Expression",
+      "verdict": "false_positive_security_impact",
+      "reason": "This is a test-only helper/fixture, consumed by uvu. Full test source passes fixed short literals and developer-defined route patterns; no attacker input reaches the operation in this repository. The syntax detector may correctly recognize a broad risky pattern, which is not a demonstrated security issue here.",
+      "score_scope": "Post-scan source adjudication only; original frozen labels unchanged."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "eslint-plugin-security",
+      "rule_id": "security/detect-object-injection",
+      "file": "index.mjs",
+      "line": 42,
+      "message": "Generic Object Injection Sink",
+      "verdict": "false_positive_security_impact",
+      "reason": "This operation reads a method dispatch map or an array by loop index. No property write, dangerous sink or privilege-changing downstream consumer is present. Dynamic key syntax alone does not prove object injection.",
+      "score_scope": "Post-scan source adjudication only; original frozen labels unchanged."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "eslint-plugin-security",
+      "rule_id": "security/detect-object-injection",
+      "file": "index.mjs",
+      "line": 47,
+      "message": "Variable Assigned to Object Injection Sink",
+      "verdict": "false_positive_security_impact",
+      "reason": "This operation reads a method dispatch map or an array by loop index. No property write, dangerous sink or privilege-changing downstream consumer is present. Dynamic key syntax alone does not prove object injection.",
+      "score_scope": "Post-scan source adjudication only; original frozen labels unchanged."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "eslint-plugin-security",
+      "rule_id": "security/detect-object-injection",
+      "file": "index.mjs",
+      "line": 52,
+      "message": "Generic Object Injection Sink",
+      "verdict": "false_positive_security_impact",
+      "reason": "This operation reads a method dispatch map or an array by loop index. No property write, dangerous sink or privilege-changing downstream consumer is present. Dynamic key syntax alone does not prove object injection.",
+      "score_scope": "Post-scan source adjudication only; original frozen labels unchanged."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "eslint-plugin-security",
+      "rule_id": "security/detect-object-injection",
+      "file": "index.mjs",
+      "line": 57,
+      "message": "Generic Object Injection Sink",
+      "verdict": "caller_dependent_review",
+      "reason": "Keys derive from developer-configured route captures; values derive from the matched URL. No attacker-controlled route registration or dangerous downstream consumer was proven. Flag remains review-only, not a confirmed vulnerability or definite safe label.",
+      "score_scope": "Post-scan source adjudication only; original frozen labels unchanged."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "eslint-plugin-security",
+      "rule_id": "security/detect-object-injection",
+      "file": "index.mjs",
+      "line": 57,
+      "message": "Generic Object Injection Sink",
+      "verdict": "caller_dependent_review",
+      "reason": "Keys derive from developer-configured route captures; values derive from the matched URL. No attacker-controlled route registration or dangerous downstream consumer was proven. Flag remains review-only, not a confirmed vulnerability or definite safe label.",
+      "score_scope": "Post-scan source adjudication only; original frozen labels unchanged."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "eslint-plugin-security",
+      "rule_id": "security/detect-object-injection",
+      "file": "index.mjs",
+      "line": 62,
+      "message": "Generic Object Injection Sink",
+      "verdict": "caller_dependent_review",
+      "reason": "Keys derive from developer-configured route captures; values derive from the matched URL. No attacker-controlled route registration or dangerous downstream consumer was proven. Flag remains review-only, not a confirmed vulnerability or definite safe label.",
+      "score_scope": "Post-scan source adjudication only; original frozen labels unchanged."
+    },
+    {
+      "repository": "lukeed--trouter",
+      "scanner": "eslint-plugin-security",
+      "rule_id": "security/detect-unsafe-regex",
+      "file": "test/index.js",
+      "line": 514,
+      "message": "Unsafe Regular Expression",
+      "verdict": "false_positive_security_impact",
+      "reason": "This is a test-only helper/fixture, consumed by uvu. Full test source passes fixed short literals and developer-defined route patterns; no attacker input reaches the operation in this repository. The syntax detector may correctly recognize a broad risky pattern, which is not a demonstrated security issue here.",
+      "score_scope": "Post-scan source adjudication only; original frozen labels unchanged."
+    }
+  ]
+}

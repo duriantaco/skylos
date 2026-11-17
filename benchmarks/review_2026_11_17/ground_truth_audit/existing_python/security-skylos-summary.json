@@ -1,0 +1,2749 @@
+{
+  "manifest": "/Users/oha/skylos/benchmarks/security/manifest.json",
+  "scanner": "skylos",
+  "case_count": 78,
+  "scored_case_count": 78,
+  "unscored_case_count": 0,
+  "analysis_status": "complete",
+  "metrics_scoped_to_scored_cases": true,
+  "skipped_case_count": 0,
+  "skipped_cases": [],
+  "pass_count": 78,
+  "failure_count": 0,
+  "total_elapsed_seconds": 14.3345,
+  "counts": {
+    "true_positives": 43,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "true_negatives": 41
+  },
+  "scores": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "absence_guard": 1.0,
+    "latency_score": 1.0,
+    "overall_score": 100.0
+  },
+  "taxonomy": {
+    "auth_bypass": {
+      "description": "Authentication or token verification is bypassed or disabled.",
+      "case_count": 3,
+      "scored_case_count": 3,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1
+    },
+    "command_injection": {
+      "description": "Untrusted or unsafe command execution reaches shell/process sinks.",
+      "case_count": 9,
+      "scored_case_count": 9,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 8,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4
+    },
+    "cors": {
+      "description": "CORS policy is overly permissive or credential unsafe.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0
+    },
+    "deserialization": {
+      "description": "Untrusted data reaches unsafe deserialization APIs.",
+      "case_count": 9,
+      "scored_case_count": 9,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 5,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4
+    },
+    "open_redirect": {
+      "description": "Untrusted URLs reach redirect/navigation sinks.",
+      "case_count": 3,
+      "scored_case_count": 3,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1
+    },
+    "path_traversal": {
+      "description": "Untrusted path segments reach filesystem sinks.",
+      "case_count": 5,
+      "scored_case_count": 5,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2
+    },
+    "precision_guard": {
+      "description": "Clean patterns that should stay free of noisy security findings.",
+      "case_count": 38,
+      "scored_case_count": 38,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 41
+    },
+    "prompt_injection": {
+      "description": "Hidden, disguised or encoded instructions aimed at AI tools, and text that only resembles them.",
+      "case_count": 2,
+      "scored_case_count": 2,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1
+    },
+    "sensitive_logging": {
+      "description": "Credential-source data reaches output, with redaction and response-data controls.",
+      "case_count": 13,
+      "scored_case_count": 13,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 7,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 6
+    },
+    "sql_injection": {
+      "description": "Untrusted data reaches SQL construction or execution.",
+      "case_count": 2,
+      "scored_case_count": 2,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2
+    },
+    "ssrf": {
+      "description": "Untrusted data controls outbound request destinations.",
+      "case_count": 5,
+      "scored_case_count": 5,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 3
+    },
+    "tls_verification": {
+      "description": "TLS peer verification settings and provider identity controls.",
+      "case_count": 8,
+      "scored_case_count": 8,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4
+    },
+    "weak_hash": {
+      "description": "MD5/SHA1 warnings, explicit nonsecurity use and strong-hash lookalikes.",
+      "case_count": 7,
+      "scored_case_count": 7,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 6
+    },
+    "weak_random": {
+      "description": "Security-sensitive random values and the identity of their source.",
+      "case_count": 9,
+      "scored_case_count": 9,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 6
+    },
+    "xss": {
+      "description": "Untrusted data reaches HTML or script rendering sinks.",
+      "case_count": 2,
+      "scored_case_count": 2,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1
+    }
+  },
+  "cases": [
+    {
+      "id": "sql-tainted-param",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/sql_tainted_param",
+      "description": "Request-supplied SQL passed through a helper remains injection even when execute() binds a separate ID value.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sql_injection"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.7761,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "sql-constant-format",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/sql_constant_format",
+      "description": "Statically built SQL using constant .format() arguments should not be reported as SQL injection.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sql_injection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.1909,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "ssrf-tainted-host",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/ssrf_tainted_host",
+      "description": "A request parameter interpolated into the URL host of a route handler should be detected as SSRF.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "ssrf"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.175,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "ssrf-helper-parameter-safe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/ssrf_helper_parameter_safe",
+      "description": "A helper whose URL host comes only from its own parameter (no route, request, CLI, MCP-tool or stdin source) is not reported as SSRF.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "ssrf",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.1679,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "ssrf-fixed-host-path",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/ssrf_fixed_host_path",
+      "description": "Fixed-host URL interpolation should not be reported as SSRF when only the path segment is tainted.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "ssrf",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.1334,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "subprocess-alias-shell",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/subprocess_alias_shell",
+      "description": "subprocess imported with an alias should still be detected when shell=True is used.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "command_injection"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.1184,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "yaml-safeloader-positional",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/yaml_safeloader_positional",
+      "description": "yaml.load with positional yaml.SafeLoader should not be reported as unsafe deserialization.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.124,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "path-traversal-tainted-join",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/path_traversal_tainted_join",
+      "description": "User-controlled path segments joined into a filesystem path should be reported as path traversal.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "path_traversal"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.1261,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 2
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "path-traversal-basename",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/path_traversal_basename",
+      "description": "Path input sanitized with os.path.basename before opening a fixed directory should stay quiet.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "path_traversal",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.171,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "xss-mark-safe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/xss_mark_safe",
+      "description": "Tainted HTML interpolated into Markup should be reported as XSS.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "xss"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.1781,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "dead_code_abstentions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "xss-escape-safe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/xss_escape_safe",
+      "description": "Escaped content wrapped with Markup should not be reported as XSS.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "xss",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.1649,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "dead_code_abstentions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "open-redirect-tainted",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/open_redirect_tainted",
+      "description": "User-controlled redirect targets should be reported as open redirect.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "open_redirect"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.1447,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "open-redirect-local-guard",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/open_redirect_local_guard",
+      "description": "A leading-slash check still accepts protocol-relative external redirect targets.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "open_redirect"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.1558,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "open-redirect-literal-allowlist",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/open_redirect_literal_allowlist",
+      "description": "A redirect restricted to explicit local destinations should stay quiet.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "open_redirect",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.1385,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "jwt-verify-disabled",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/jwt_verify_disabled",
+      "description": "JWT decode with signature verification disabled should be reported.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "auth_bypass"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.1976,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "cors-wildcard",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/cors_wildcard",
+      "description": "Wildcard CORS configuration should be reported.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "cors"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1654,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_variables": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "tls-corpus-requests-disabled",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/tls_corpus_requests_disabled",
+      "description": "An ordinary Requests client explicitly disables certificate verification.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1839,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "tls-corpus-requests-verified",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/tls_corpus_requests_verified",
+      "description": "The paired Requests client explicitly keeps certificate verification enabled.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1286,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "tls-corpus-context-alias-disabled",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/tls_corpus_context_alias_disabled",
+      "description": "A native client context is made non-verifying through an alias after its secure-looking constructor.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.117,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "tls-corpus-context-default-verified",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/tls_corpus_context_default_verified",
+      "description": "A native PROTOCOL_TLS_CLIENT context preserves certificate and hostname verification.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1862,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "tls-corpus-inert-helper",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/tls_corpus_inert_helper",
+      "description": "A local inert helper stores a similarly named option and performs no TLS operation.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2068,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_variables": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "tls-corpus-imported-helper-patch",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/tls_corpus_imported_helper_patch",
+      "description": "Import-time code replaces the inert-looking helper with BrowserConfig, so the later disabling option retains a finding.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.5286,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_imports": 1,
+        "unused_variables": 1,
+        "danger": 1,
+        "circular_dependencies": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "tls-corpus-context-required-tampered",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/tls_corpus_context_required_tampered",
+      "description": "A replaced CERT_REQUIRED value cannot prove certificate checking is enabled.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1466,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_variables": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "tls-corpus-context-explicit-verified",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/tls_corpus_context_explicit_verified",
+      "description": "A native legacy client context has both chain and hostname verification explicitly enabled.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "tls_verification",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1937,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_variables": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-md5-password",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_md5_password",
+      "description": "Password bytes enter native hashlib.md5; weak algorithm remains a finding.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2569,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-md5-nonsecurity",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_md5_nonsecurity",
+      "description": "Explicit usedforsecurity=False marks a nonsecurity content fingerprint under the documented opt-out policy.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1209,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-sha1-token-factory",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_sha1_token_factory",
+      "description": "The aliased hashlib.new factory explicitly chooses SHA1 over an API token.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1202,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-sha1-nonsecurity",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_sha1_nonsecurity",
+      "description": "The native factory uses the explicit nonsecurity opt-out.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1138,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-sha256-password",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_sha256_password",
+      "description": "SHA256 is neither MD5 nor SHA1. This control makes no claim that unsalted SHA256 is an adequate password storage scheme.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1516,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-hash-named-lookalike",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_hash_named_lookalike",
+      "description": "A local method named md5 actually uses SHA256 and is not a native weak-hash API.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2296,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "unused_classes": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-misleading-cache-name",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_misleading_cache_name",
+      "description": "A cache_key name does not prove nonsecurity use; the value is a credential and security use is explicitly true.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_hash"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1562,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-weak-random-cookie",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_weak_random_cookie",
+      "description": "Native random.getrandbits controls a session cookie value.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1661,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-secrets-cookie",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_secrets_cookie",
+      "description": "Native secrets.token_urlsafe supplies cookie entropy.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1878,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-system-random-cookie",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_system_random_cookie",
+      "description": "SystemRandom uses OS entropy rather than random.Random PRNG state.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.169,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-retry-jitter",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_retry_jitter",
+      "description": "Randomness changes retry delay, not a credential, cookie or authentication value.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1427,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-reassigned-strong",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_reassigned_strong",
+      "description": "The weak value is overwritten with strong entropy before the only security sink.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1731,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-branch-weak-cookie",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_branch_weak_cookie",
+      "description": "One reachable branch replaces strong entropy with random.getrandbits before the cookie sink.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1131,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-random-named-lookalike",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_random_named_lookalike",
+      "description": "A local random-named method delegates to secrets.token_urlsafe; no native weak-random source exists.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1154,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "unused_classes": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "logging-corpus-env-token",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/logging_corpus_env_token",
+      "description": "Credential environment data reaches a real logger unchanged.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1859,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "logging-corpus-public-name",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/logging_corpus_public_name",
+      "description": "A password-like variable name holds an explicitly public literal, not credential source data.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1111,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "logging-corpus-literal-redaction",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/logging_corpus_literal_redaction",
+      "description": "The credential binding is overwritten with a literal before output.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1176,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "logging-corpus-partial-redaction",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/logging_corpus_partial_redaction",
+      "description": "The branch where redaction is declined still sends the credential to logging.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2027,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "logging-corpus-http-status",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/logging_corpus_http_status",
+      "description": "The HTTP response status is server data; it is not the password in the request payload.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1538,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "logging-corpus-http-request-url",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/logging_corpus_http_request_url",
+      "description": "The response URL retains the credential query parameter sent in the request.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1428,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "logging-corpus-redact-identity",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/logging_corpus_redact_identity",
+      "description": "The helper named redact explicitly returns its input unchanged; its name cannot prove redaction.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1309,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "logging-corpus-alias-mutation",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/logging_corpus_alias_mutation",
+      "description": "Mutating the shared container through an alias actually removes the credential before logging.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1218,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "logging-corpus-alias-rebind",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/logging_corpus_alias_rebind",
+      "description": "Rebinding the alias leaves the original credential-bearing container unchanged.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1468,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_variables": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-alias-rebound-strong",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_alias_rebound_strong",
+      "description": "The weak-module alias is explicitly rebound to native SystemRandom before its only credential sink.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1182,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "crypto-corpus-alias-rebound-weak",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/crypto_corpus_alias_rebound_weak",
+      "description": "The secrets alias is explicitly rebound to native random.Random before its cookie entropy call.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "weak_random"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.126,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-pickle-direct-unsafe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_python_pickle_direct_unsafe",
+      "description": "Request bytes are passed directly to the actual pickle.loads provider.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "deserialization"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.119,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-pickle-capture-unsafe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_python_pickle_capture_unsafe",
+      "description": "A captured pickle.loads function still deserializes request bytes.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "deserialization"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1392,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-pickle-capture-rebind-unsafe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_python_pickle_capture_rebind_unsafe",
+      "description": "Rebinding the pickle module name to json does not change a previously captured pickle.loads callable.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "deserialization"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1168,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_variables": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-pickle-json-rebind-safe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_python_pickle_json_rebind_safe",
+      "description": "The module name is rebound to json before loads is looked up, so this call parses data without unpickling.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1232,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-pickle-custom-local-safe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_python_pickle_custom_local_safe",
+      "description": "A source-owned DataParser.loads method returns its input and does not unpickle.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1319,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_imports": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-json-capture-safe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_python_json_capture_safe",
+      "description": "A captured json.loads callable parses JSON and is not a pickle provider.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1416,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-eval-direct-unsafe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_python_eval_direct_unsafe",
+      "description": "Request text reaches the builtin eval function directly.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "command_injection"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1288,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-eval-capture-unsafe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_python_eval_capture_unsafe",
+      "description": "Request text reaches the builtin eval function captured in a variable.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "command_injection"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1153,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-eval-custom-function-safe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_python_eval_custom_function_safe",
+      "description": "A source-owned function named eval returns text without interpreting it.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1146,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-command-direct-unsafe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_python_command_direct_unsafe",
+      "description": "Request text reaches the real subprocess.run provider with shell=True.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "command_injection"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1211,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 2
+      },
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-command-capture-unsafe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_python_command_capture_unsafe",
+      "description": "A captured subprocess.run provider still executes request text with shell=True.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "command_injection"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1376,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 2
+      },
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-command-custom-local-safe",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/security_depth_python_command_custom_local_safe",
+      "description": "A source-owned DataSink.run method accepts a shell keyword but only returns its input.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1321,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_imports": 1,
+        "unused_parameters": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "prompt-native-script-and-shown-characters",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/prompt_native_script_and_shown_characters",
+      "description": "Ukrainian and Greek translation files with JSON escapes, zero-width characters passed as whole literals to str.replace, and Japanese text with word-break hints.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "prompt_injection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.5055,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "unused_variables": 1
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "prompt-homoglyph-and-split-keyword",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/prompt_homoglyph_and_split_keyword",
+      "description": "A Cyrillic letter inside Latin identifiers (also inside a translation file) and a zero-width character splitting an instruction keyword.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "prompt_injection"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1124,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 4
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-ssrf-mapping-lookup",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_ssrf_mapping_lookup",
+      "description": "self._session_replacements is only ever a dict, so .get(key) is a lookup and not an HTTP request.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "ssrf",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2093,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-ssrf-mapping-or-client",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_ssrf_mapping_or_client",
+      "description": "The same attribute can also hold an httpx.Client, so .get(value) can be a request to a request-supplied URL.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "ssrf"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2308,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-secret-log-masked-helper",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_secret_log_masked_helper",
+      "description": "The printed values are the key file path and a mask that keeps six leading and four trailing characters.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2713,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 3
+      },
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-secret-log-raw-beside-mask",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_secret_log_raw_beside_mask",
+      "description": "The raw key is printed next to its masked form.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2155,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 2,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-secret-log-helper-named-redact",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_secret_log_helper_named_redact",
+      "description": "A helper named redact returns the whole key without dashes; its name is not a proof.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2543,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 2,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-dynamic-import-fixed-table",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_dynamic_import_fixed_table",
+      "description": "The module name is a value of a constant table; the command-line argument only selects a key.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "command_injection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2813,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-dynamic-import-alias-fallback",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_dynamic_import_alias_fallback",
+      "description": "The table lookup falls back to the raw command-line argument, so any module can be imported.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "command_injection"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2528,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-hf-local-checkpoint-path",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_hf_local_checkpoint_path",
+      "description": "A Path annotation may still hold a Hub repository id; offline-only and explicit absolute-path controls do not fetch mutable artifacts.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.3521,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 3,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-hf-string-reference",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_hf_string_reference",
+      "description": "A str parameter may be a Hub repository id, so the download has no pinned revision.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "deserialization"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2772,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-path-fullmatch-validated-name",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_path_fullmatch_validated_name",
+      "description": "The route rejects every name that does not fully match letters, digits, dash and underscore before joining it into a path.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "path_traversal",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.223,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-path-prefix-match-name",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_path_prefix_match_name",
+      "description": "match without an end anchor accepts a/../../x, so the joined path can leave the directory.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "path_traversal"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2285,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-path-search-checked-name",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_path_search_checked_name",
+      "description": "re.search finds one allowed character anywhere; ../x still passes.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "path_traversal"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2142,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-mcp-constructor-bind-all",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_mcp_constructor_bind_all",
+      "description": "FastMCP takes host=0.0.0.0 in its constructor and run() starts a network transport without authentication.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "auth_bypass"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2209,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "danger": 2
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-mcp-constructor-host-stdio",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_mcp_constructor_host_stdio",
+      "description": "The same constructor host is unused when the server runs on stdio; no socket is opened.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "auth_bypass",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1897,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "python-secret-log-client-result",
+      "path": "/Users/oha/skylos/benchmarks/security/fixtures/noise_python_secret_log_client_result",
+      "description": "A helper reads the key and builds a client; the printed value is an API result of that client, not the key.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sensitive_logging",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.1813,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {},
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    }
+  ]
+}

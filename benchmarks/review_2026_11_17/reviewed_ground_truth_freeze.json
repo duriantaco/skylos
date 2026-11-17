@@ -1,0 +1,31 @@
+{
+  "status": "frozen_after_independent_review",
+  "frozen_at": "2026-11-17T00:34:46.437693+00:00",
+  "manifest": {
+    "path": "reviewed_ground_truth_manifest.json",
+    "sha256": "578922e0c6c385e47f4e05d059fe73b61ea1153cb99c8803ba6498fc6819a7b1"
+  },
+  "review_artifacts": [
+    {
+      "path": "SOURCE_LABELS_MUX_TINY_REVIEW.json",
+      "sha256": "ecaef809eb5b214ef2f11aa1d0a323d93fbebd8bed6746465a15374fc732fb8a"
+    },
+    {
+      "path": "hono_source_truth_independent_review.json",
+      "sha256": "e62ea31edab0171dee182e3919433e3ddccd54272d1618c32bc094b1a59854d8"
+    },
+    {
+      "path": "slim_petclinic_source_truth_independent_review.json",
+      "sha256": "4ad9084df48eb989bc2298cac4dc9923b76a56ae3c4d55668d77e635e4d6540a"
+    }
+  ],
+  "runner": {
+    "path": "run_reviewed_ground_truth.py",
+    "sha256": "982f61421202e451be08f2b0fc02e7648da8010199a7dbfec0e19828b2f6d663"
+  },
+  "independent_runner_audit": {
+    "path": "reviewed_ground_truth_independent_audit.json",
+    "sha256": "fd14e79f805874effed3ac6cb36d5e1507299deb65d4b202ae41be144c088443"
+  },
+  "study": "Post-exploratory source-only labels with independent review; not a new blind study"
+}

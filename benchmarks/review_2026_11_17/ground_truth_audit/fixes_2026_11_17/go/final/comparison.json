@@ -1,0 +1,499 @@
+{
+  "before": {
+    "binary_sha256": "c9c7d0426c22f577cc9602d9911579ef6c9b0ac88084f24514631693afc16e1a",
+    "cases": {
+      "goji": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [],
+        "danger": [],
+        "label_outcomes": [
+          {
+            "id": "goji-chain",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-longest-prefix",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-trie-clone",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-trie-sort-len",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-trie-sort-less",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-trie-sort-swap",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-pat-sort-len",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-pat-sort-less",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-pat-sort-swap",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-ishex",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-unhex",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-unescape",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-router-value",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-pat-value",
+            "truth": "used",
+            "parsed": false,
+            "reported": false,
+            "outcome": "incomplete"
+          },
+          {
+            "id": "goji-test-wrapper",
+            "truth": "used",
+            "parsed": false,
+            "reported": false,
+            "outcome": "incomplete"
+          },
+          {
+            "id": "goji-test-request",
+            "truth": "used",
+            "parsed": false,
+            "reported": false,
+            "outcome": "incomplete"
+          },
+          {
+            "id": "goji-simple-add",
+            "truth": "used",
+            "parsed": false,
+            "reported": false,
+            "outcome": "incomplete"
+          },
+          {
+            "id": "goji-simple-route",
+            "truth": "used",
+            "parsed": false,
+            "reported": false,
+            "outcome": "incomplete"
+          },
+          {
+            "id": "goji-stale-bool-match",
+            "truth": "unused",
+            "parsed": false,
+            "reported": false,
+            "outcome": "missed_or_out_of_scope"
+          },
+          {
+            "id": "goji-stale-prefix-match",
+            "truth": "unused",
+            "parsed": false,
+            "reported": false,
+            "outcome": "missed_or_out_of_scope"
+          },
+          {
+            "id": "goji-stale-prefix-method",
+            "truth": "unused",
+            "parsed": false,
+            "reported": false,
+            "outcome": "missed_or_out_of_scope"
+          }
+        ]
+      },
+      "go-ssrf-function-alias": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "handler",
+            3
+          ]
+        ],
+        "danger": []
+      },
+      "go-ssrf-method-alias": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "handler",
+            3
+          ]
+        ],
+        "danger": []
+      },
+      "go-command-function-alias": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "handler",
+            3
+          ]
+        ],
+        "danger": []
+      },
+      "go-path-function-alias": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "handler",
+            3
+          ]
+        ],
+        "danger": []
+      },
+      "go-ssrf-request-alias": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "handler",
+            4
+          ]
+        ],
+        "danger": []
+      },
+      "go-tls-field-assignment": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "handler",
+            3
+          ]
+        ],
+        "danger": []
+      }
+    }
+  },
+  "after": {
+    "binary_sha256": "3865e4716c344400c8b1d1e37fe8464d89de6084c70b16cbfd335e525dbdc907",
+    "cases": {
+      "goji": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "pattern.boolPattern.Match",
+            11
+          ],
+          [
+            "pattern.prefixPattern.Match",
+            20
+          ],
+          [
+            "pattern.prefixPattern.PathPrefix",
+            23
+          ]
+        ],
+        "danger": [],
+        "label_outcomes": [
+          {
+            "id": "goji-chain",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-longest-prefix",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-trie-clone",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-trie-sort-len",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-trie-sort-less",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-trie-sort-swap",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-pat-sort-len",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-pat-sort-less",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-pat-sort-swap",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-ishex",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-unhex",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-unescape",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-router-value",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-pat-value",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-test-wrapper",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-test-request",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-simple-add",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-simple-route",
+            "truth": "used",
+            "parsed": true,
+            "reported": false,
+            "outcome": "retained_control"
+          },
+          {
+            "id": "goji-stale-bool-match",
+            "truth": "unused",
+            "parsed": true,
+            "reported": true,
+            "outcome": "true_positive"
+          },
+          {
+            "id": "goji-stale-prefix-match",
+            "truth": "unused",
+            "parsed": true,
+            "reported": true,
+            "outcome": "true_positive"
+          },
+          {
+            "id": "goji-stale-prefix-method",
+            "truth": "unused",
+            "parsed": true,
+            "reported": true,
+            "outcome": "true_positive"
+          }
+        ]
+      },
+      "go-ssrf-function-alias": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "handler",
+            3
+          ]
+        ],
+        "danger": [
+          [
+            "SKY-D216",
+            4
+          ]
+        ]
+      },
+      "go-ssrf-method-alias": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "handler",
+            3
+          ]
+        ],
+        "danger": [
+          [
+            "SKY-D216",
+            4
+          ]
+        ]
+      },
+      "go-command-function-alias": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "handler",
+            3
+          ]
+        ],
+        "danger": [
+          [
+            "SKY-D212",
+            4
+          ]
+        ]
+      },
+      "go-path-function-alias": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "handler",
+            3
+          ]
+        ],
+        "danger": [
+          [
+            "SKY-D215",
+            4
+          ]
+        ]
+      },
+      "go-ssrf-request-alias": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "handler",
+            4
+          ]
+        ],
+        "danger": [
+          [
+            "SKY-D216",
+            5
+          ]
+        ]
+      },
+      "go-tls-field-assignment": {
+        "exit_code": 0,
+        "analysis_errors": [],
+        "unused_functions": [
+          [
+            "handler",
+            3
+          ]
+        ],
+        "danger": [
+          [
+            "SKY-D210",
+            4
+          ]
+        ]
+      }
+    }
+  },
+  "source_hashes_unchanged": true,
+  "context": "Development remeasurement after source review; same host SDK both arms; no target execution; not new blind evidence."
+}

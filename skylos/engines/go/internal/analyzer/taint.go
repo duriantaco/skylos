@@ -97,30 +97,16 @@ var nonDataRequestMethods = map[string]bool{
 var fixedHostPrefixRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://[^/?#{}%\s]+[/?#]`)
 
 func (a *Analyzer) isSourceParamType(expr ast.Expr) bool {
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-	}
-	sel, ok := expr.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok {
-		return false
-	}
-	importPath := a.imports[pkgIdent.Name]
-	name := sel.Sel.Name
+	ref := a.sourceTypeRef(expr)
 	switch {
-	case importPath == "net/http":
-		return name == "Request"
-	case importPath == "net":
-		return name == "Conn" || name == "TCPConn" || name == "UDPConn" || name == "UnixConn"
-	case strings.HasPrefix(importPath, "github.com/gin-gonic/gin"):
-		return name == "Context"
-	case strings.HasPrefix(importPath, "github.com/labstack/echo"):
-		return name == "Context"
-	case strings.HasPrefix(importPath, "github.com/gofiber/fiber"):
-		return name == "Ctx"
+	case ref.pkg == "net/http":
+		return ref.name == "Request"
+	case ref.pkg == "net":
+		return ref.name == "Conn" || ref.name == "TCPConn" || ref.name == "UDPConn" || ref.name == "UnixConn"
+	case strings.HasPrefix(ref.pkg, "github.com/gin-gonic/gin"), strings.HasPrefix(ref.pkg, "github.com/labstack/echo"):
+		return ref.name == "Context"
+	case strings.HasPrefix(ref.pkg, "github.com/gofiber/fiber"):
+		return ref.name == "Ctx"
 	}
 	return false
 }
@@ -501,6 +487,7 @@ func collectDefs(body ast.Node) map[string][]ast.Expr {
 // top-level function it appears in.
 func (a *Analyzer) computeTaint(file *ast.File) {
 	a.callTaint = make(map[*ast.CallExpr]*funcTaint)
+	a.assignTaint = make(map[*ast.AssignStmt]*funcTaint)
 	var funcs []*ast.FuncDecl
 	byName := map[string][]*ast.FuncDecl{}
 	scopes := map[*ast.FuncDecl]*funcTaint{}
@@ -591,6 +578,9 @@ func (a *Analyzer) computeTaint(file *ast.File) {
 		ast.Inspect(fd.Body, func(n ast.Node) bool {
 			if call, ok := n.(*ast.CallExpr); ok {
 				a.callTaint[call] = ft
+			}
+			if assign, ok := n.(*ast.AssignStmt); ok {
+				a.assignTaint[assign] = ft
 			}
 			return true
 		})

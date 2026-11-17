@@ -1,0 +1,84 @@
+{
+  "reviewer": "/root/security_precision",
+  "author": "/root/corpus_inventory",
+  "created_at": "2026-11-17T00:44:53.370599+00:00",
+  "status": "no_remaining_blocking_issue_in_reviewed_scope",
+  "core_file": "skylos/visitors/languages/php/core.py",
+  "core_sha256": "a5de734e9ef78067c439836c8a855d18105e2443d40f0626861f35c21905b818",
+  "manifest_sha256": "51d9ea6fbd0e42f466edd545be0db2f7e2e4c7af756233592fcea56e611cdbc0",
+  "fixture_sha256": "47974138e5e04ff01e85cd024f45e4eb50b0605ee096c38b8b3e0cca0be5d9f7",
+  "before_report_sha256": "0d85909761f5f7e06aacc8fb7c65b06f6a4e7139d49adad2a88a83e42c8392cd",
+  "after_report_sha256": "108ac2ea4651db119c6e753bba5121cfdc06e42b5e2b3541fd2f54ae4fb9ecfb",
+  "implementation_scope": "Literal unkeyed positional [$this, privateLocalMethod] passed to the matching explicitly callable parameter of an exact same-class private nonstatic helper whose parameter uses prove direct invocation. Qualified call edge belongs to the actual caller; no new global root.",
+  "review_changes_required_and_resolved": [
+    {
+      "finding": "Overridable callback could bind a base declaration although receiver dispatch selects a subclass override.",
+      "resolution": "Callback target must itself be a private method declared in this class.",
+      "test": "test_overridable_callback_is_not_bound_to_declaring_class"
+    },
+    {
+      "finding": "First-class callable creation was treated as direct invocation.",
+      "resolution": "variadic_placeholder excluded.",
+      "test": "test_first_class_callable_creation_is_not_direct_invocation",
+      "caveat": "Contract exclusion, not a source-unused label: construction or callable validation may require target existence."
+    },
+    {
+      "finding": "Dynamic local mutation can rebind a parameter without explicit identifier assignment.",
+      "resolution": "Scope-mutation builtins including imported aliases, variable variables, include/require and unknown dynamic calls reject proof.",
+      "test": "test_dynamic_local_rebinding_does_not_prove_original_callback_invocation",
+      "caveat": "Contract exclusion, not a new source-unused claim."
+    }
+  ],
+  "independent_verification": {
+    "command": "/tmp/skylos-new001-validation/bin/python -m pytest -q test/test_php_private_callable_arguments.py test/test_php_private_callable_audit.py",
+    "passed": 39,
+    "failed": 0,
+    "own_audit_controls": 3,
+    "author_reported_regressions": "126 combined new/audit/existing PHP/core/benchmark tests passed; reviewer independently reran final39 focused controls."
+  },
+  "fixture_results": {
+    "before": {
+      "true_positives": 6,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 2
+    },
+    "after": {
+      "true_positives": 6,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4
+    },
+    "removed_findings": [
+      [
+        "unused_functions",
+        "Review.Resolver.isMiddleware",
+        18
+      ],
+      [
+        "unused_functions",
+        "Review.Resolver.isRoute",
+        17
+      ]
+    ],
+    "new_findings": [],
+    "required_findings_retained": 6,
+    "notes": "Dead caller and its callback, unused sibling, other-class method and two unused imports remain findings. Both grep modes exercised by focused full-scan controls."
+  },
+  "primary_references": [
+    {
+      "url": "https://www.php.net/manual/en/functions.first_class_callable_syntax.php",
+      "supports": "Creates a Closure rather than normal invocation."
+    },
+    {
+      "url": "https://www.php.net/manual/en/function.extract.php",
+      "supports": "Imports into current symbol table and overwrites colliding variables by default."
+    }
+  ],
+  "limits": [
+    "Scope abstentions do not declare unsupported callbacks dead.",
+    "Fixture is development evidence derived from observed Slim false positives, not independent holdout validation.",
+    "Does not establish whole-repository recall or general PHP callable completeness.",
+    "No sealed labels, harness, manifest or predictions modified; no target PHP code executed."
+  ]
+}

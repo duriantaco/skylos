@@ -1,0 +1,1141 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "extreme-grounding-framework-dead-code",
+      "path": "fixtures/extreme_grounding_framework",
+      "description": "Dead-code view of framework, package-entrypoint, app-root, and CLI-root grounding.",
+      "languages": ["python"],
+      "taxonomy": [
+        "multi_file",
+        "framework_precision",
+        "package_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "test-only",
+        "notes": "Adversarial regression target for framework/package liveness. This manifest is not part of the default required gate."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 35.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "services/account.py", "symbol": "dormant_report"},
+          {"kind": "function", "file": "services/hooks.py", "symbol": "run_sample"},
+          {"kind": "function", "file": "services/network.py", "symbol": "lab_fetch"}
+        ],
+        "used": [
+          {"kind": "function", "file": "services/account.py", "symbol": "load_account"},
+          {"kind": "function", "file": "services/account.py", "symbol": "archive_account"},
+          {"kind": "function", "file": "services/hooks.py", "symbol": "run_dynamic_hook"},
+          {"kind": "function", "file": "services/hooks.py", "symbol": "run_registered_hook"},
+          {"kind": "function", "file": "services/hooks.py", "symbol": "run_mutable_runner"},
+          {"kind": "function", "file": "services/network.py", "symbol": "fetch_partner"},
+          {"kind": "function", "file": "services/network.py", "symbol": "fetch_internal_status"},
+          {"kind": "function", "file": "web/routes.py", "symbol": "admin_query_route"},
+          {"kind": "function", "file": "tools/admin.py", "symbol": "dangerous_admin"}
+        ]
+      }
+    },
+    {
+      "id": "static-blind-plugin-dispatch-dead-code",
+      "path": "fixtures/static_blind_plugin_dispatch",
+      "description": "Dead-code view of dynamic plugin dispatch through module:function strings and importlib.",
+      "languages": ["python"],
+      "taxonomy": ["multi_file", "dynamic_dispatch", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "test-only",
+        "notes": "Adversarial regression target for dynamic dispatch liveness. This manifest is not part of the default required gate."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 35.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "plugins/payments.py", "symbol": "debug_query"},
+          {"kind": "function", "file": "plugins/audit.py", "symbol": "sample_shell"},
+          {"kind": "function", "file": "plugins/network.py", "symbol": "lab_fetch"}
+        ],
+        "used": [
+          {"kind": "function", "file": "plugins/payments.py", "symbol": "charge_card"},
+          {"kind": "function", "file": "plugins/payments.py", "symbol": "archived_invoice"},
+          {"kind": "function", "file": "plugins/audit.py", "symbol": "ship_audit"},
+          {"kind": "function", "file": "plugins/tools.py", "symbol": "run_mutable_registered"},
+          {"kind": "function", "file": "plugins/tools.py", "symbol": "run_safe_builtin"},
+          {"kind": "function", "file": "plugins/network.py", "symbol": "fetch_url"},
+          {"kind": "function", "file": "plugins/network.py", "symbol": "fetch_fixed_status"}
+        ]
+      }
+    },
+    {
+      "id": "corpus-type-registry-owner",
+      "path": "fixtures/corpus_type_registry_owner",
+      "description": "An exact-type callback is selected from one registry instance; another type, another instance and an unregistered function stay uncalled.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Independently authored closed-program challenge. Callback definitions and registry instances are local to parameterless run(), invoked with fixed inputs, which returns no registry or callback. There is no exposed extension/registration contract. Helper APIs construct separate instances. Target code is parsed, never executed; the case is adversarial, not the default required gate."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "routes.py",
+            "symbol": "Router"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "__init__"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "register"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "attach"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "apply"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "format_alpha"
+          },
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "Router"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "run"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "format_beta"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "format_gamma"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "format_delta"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-type-registry-mismatch",
+      "path": "fixtures/corpus_type_registry_mismatch",
+      "description": "Registering a string callback does not call its body when the only message has integer type.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Independently authored closed-program challenge. Callback definitions and registry instances are local to parameterless run(), invoked with fixed inputs, which returns no registry or callback. There is no exposed extension/registration contract. Helper APIs construct separate instances. Target code is parsed, never executed; the case is adversarial, not the default required gate."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "routes.py",
+            "symbol": "HandlerSet"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "__init__"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "for_type"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "bind"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "send"
+          },
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "HandlerSet"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "run"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "process_alpha"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "process_beta"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-type-registry-rebound",
+      "path": "fixtures/corpus_type_registry_rebound",
+      "description": "Replacing a decorator method with an identity decorator leaves the original registry empty and its callback uncalled.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Independently authored closed-program challenge. Callback definitions and registry instances are local to parameterless run(), invoked with fixed inputs, which returns no registry or callback. There is no exposed extension/registration contract. Helper APIs construct separate instances. Target code is parsed, never executed; the case is adversarial, not the default required gate."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "routes.py",
+            "symbol": "Inbox"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "__init__"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "handle"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "preserve"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "wrap"
+          },
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "Inbox"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "run"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "subscribe"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "save"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "consume_alpha"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "consume_beta"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-type-registry-snapshot",
+      "path": "fixtures/corpus_type_registry_snapshot",
+      "description": "A copied callback table preserves its earlier function after the original registry replaces the same type key.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Independently authored closed-program challenge. Callback definitions and registry instances are local to parameterless run(), invoked with fixed inputs, which returns no registry or callback. There is no exposed extension/registration contract. Helper APIs construct separate instances. Target code is parsed, never executed; the case is adversarial, not the default required gate."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "routes.py",
+            "symbol": "RouteSet"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "__init__"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "register"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "attach"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "fork"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "dispatch"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "convert_alpha"
+          },
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "RouteSet"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "run"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "convert_beta"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "convert_gamma"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-type-registry-closure",
+      "path": "fixtures/corpus_type_registry_closure",
+      "description": "A closure-owned type registry returns its decorator and sender; only the callback for the supplied integer is called.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Independently authored closed-program challenge. Callback definitions and registry instances are local to parameterless run(), invoked with fixed inputs, which returns no registry or callback. There is no exposed extension/registration contract. Helper APIs construct separate instances. Target code is parsed, never executed; the case is adversarial, not the default required gate."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "channels.py",
+            "symbol": "channel"
+          },
+          {
+            "kind": "function",
+            "file": "channels.py",
+            "symbol": "register"
+          },
+          {
+            "kind": "function",
+            "file": "channels.py",
+            "symbol": "wrap"
+          },
+          {
+            "kind": "function",
+            "file": "channels.py",
+            "symbol": "send"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "normalize_alpha"
+          },
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "channel"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "run"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "normalize_beta"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "normalize_gamma"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-type-registry-hierarchy",
+      "path": "fixtures/corpus_type_registry_hierarchy",
+      "description": "An MRO-based type registry selects the base-class callback for a concrete subclass while another owner remains separate.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Independently authored closed-program challenge. Callback definitions and registry instances are local to parameterless run(), invoked with fixed inputs, which returns no registry or callback. There is no exposed extension/registration contract. Helper APIs construct separate instances. Target code is parsed, never executed; the case is adversarial, not the default required gate."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "class",
+            "file": "routes.py",
+            "symbol": "Envelope"
+          },
+          {
+            "kind": "class",
+            "file": "routes.py",
+            "symbol": "Note"
+          },
+          {
+            "kind": "class",
+            "file": "routes.py",
+            "symbol": "Router"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "__init__"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "register"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "attach"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "deliver"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "describe_alpha"
+          },
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "Envelope"
+          },
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "Note"
+          },
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "Router"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "run"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "describe_beta"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "describe_gamma"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-type-registry-private",
+      "path": "fixtures/corpus_type_registry_private",
+      "description": "A module-private registry selects a typed callback by MRO and channel while another type, another owner and an unregistered callback remain separate.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Independently authored closed standalone program with fixed input. Registry instances and callbacks use private names, have no package exports or extension contract, and are not configured by outside callers. This contrasts intentionally public registration entrypoints in existing default cases. Target code is parsed, never executed."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_encode_beta"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_encode_gamma"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_encode_delta"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "routes.py",
+            "symbol": "ConversionTable"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "__init__"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "accepts"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "remember"
+          },
+          {
+            "kind": "function",
+            "file": "routes.py",
+            "symbol": "convert"
+          },
+          {
+            "kind": "function",
+            "file": "app.py",
+            "symbol": "_encode_alpha"
+          },
+          {
+            "kind": "import",
+            "file": "app.py",
+            "symbol": "ConversionTable"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-protocol-fields-native",
+      "path": "fixtures/corpus_protocol_fields_native",
+      "description": "An assigned native protocol callback is read for metadata when a completion callback constructs a nested record.",
+      "expect": {
+        "used": [
+          {
+            "kind": "variable",
+            "file": "adapter.py",
+            "symbol": "runTest"
+          },
+          {
+            "kind": "function",
+            "file": "adapter.py",
+            "symbol": "publish"
+          },
+          {
+            "kind": "function",
+            "file": "adapter.py",
+            "symbol": "complete"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "variable",
+            "file": "adapter.py",
+            "symbol": "format_note"
+          }
+        ]
+      },
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Neutral static-only assigned-protocol metadata fixture; expected labels describe source semantics, including lookalike and unused sibling controls."
+      }
+    },
+    {
+      "id": "corpus-protocol-fields-alias",
+      "path": "fixtures/corpus_protocol_fields_alias",
+      "description": "A module import alias and an assigned named function descriptor preserve the native metadata protocol through a method-local record.",
+      "expect": {
+        "used": [
+          {
+            "kind": "variable",
+            "file": "adapter.py",
+            "symbol": "runTest"
+          },
+          {
+            "kind": "function",
+            "file": "adapter.py",
+            "symbol": "complete"
+          },
+          {
+            "kind": "function",
+            "file": "adapter.py",
+            "symbol": "invoke_record"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "variable",
+            "file": "adapter.py",
+            "symbol": "format_note"
+          }
+        ]
+      },
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Neutral static-only assigned-protocol metadata fixture; expected labels describe source semantics, including lookalike and unused sibling controls."
+      }
+    },
+    {
+      "id": "corpus-protocol-fields-local",
+      "path": "fixtures/corpus_protocol_fields_local",
+      "description": "A local API with the same class spelling has no callback metadata reader, so its assigned attributes remain unused.",
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "adapter.py",
+            "symbol": "complete"
+          },
+          {
+            "kind": "function",
+            "file": "record_api.py",
+            "symbol": "shortDescription"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "variable",
+            "file": "adapter.py",
+            "symbol": "runTest"
+          },
+          {
+            "kind": "variable",
+            "file": "adapter.py",
+            "symbol": "format_note"
+          }
+        ]
+      },
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Neutral static-only assigned-protocol metadata fixture; expected labels describe source semantics, including lookalike and unused sibling controls."
+      }
+    },
+    {
+      "id": "corpus-protocol-fields-source",
+      "path": "fixtures/corpus_protocol_fields_source",
+      "description": "A source-owned base constructor reads an arbitrarily named assigned callback for metadata while a sibling has no reader.",
+      "expect": {
+        "used": [
+          {
+            "kind": "variable",
+            "file": "adapter.py",
+            "symbol": "render_summary"
+          },
+          {
+            "kind": "function",
+            "file": "adapter.py",
+            "symbol": "describe"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "variable",
+            "file": "adapter.py",
+            "symbol": "format_note"
+          }
+        ]
+      },
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Neutral static-only assigned-protocol metadata fixture; expected labels describe source semantics, including lookalike and unused sibling controls."
+      }
+    },
+    {
+      "id": "corpus-conditional-assets-direct",
+      "path": "fixtures/corpus_conditional_assets_direct",
+      "description": "Direct HTML script references preserve exact paths while ordinary and malformed comments do not load scripts.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "low",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic asset-loading corpus. Conditional-comment loads apply only to matching legacy Internet Explorer modes; no modern-browser execution claim."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "js/c.js",
+            "symbol": "js/c.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/d.js",
+            "symbol": "js/d.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/e.js",
+            "symbol": "js/e.js"
+          },
+          {
+            "kind": "file",
+            "file": "other/b.js",
+            "symbol": "other/b.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "js/a.js",
+            "symbol": "js/a.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/b.js",
+            "symbol": "js/b.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-conditional-assets-plain",
+      "path": "fixtures/corpus_conditional_assets_plain",
+      "description": "Legacy IE conditional HTML script references preserve the exact asset without treating ordinary or malformed comments as loads.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "low",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic asset-loading corpus. Conditional-comment loads apply only to matching legacy Internet Explorer modes; no modern-browser execution claim."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "js/c.js",
+            "symbol": "js/c.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/d.js",
+            "symbol": "js/d.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/e.js",
+            "symbol": "js/e.js"
+          },
+          {
+            "kind": "file",
+            "file": "other/b.js",
+            "symbol": "other/b.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "js/a.js",
+            "symbol": "js/a.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/b.js",
+            "symbol": "js/b.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "corpus-conditional-assets-jinja",
+      "path": "fixtures/corpus_conditional_assets_jinja",
+      "description": "Legacy IE conditional HTML script references support the native Jinja safe filter on simple literal paths while comments and wrong paths remain unused.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "low",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic asset-loading corpus. Native Jinja safe preserves these literal ASCII paths; no custom URL filter or renderer is assumed. Conditional-comment loads apply only to matching legacy Internet Explorer modes; no modern-browser execution claim."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "file",
+            "file": "js/c.js",
+            "symbol": "js/c.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/d.js",
+            "symbol": "js/d.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/e.js",
+            "symbol": "js/e.js"
+          },
+          {
+            "kind": "file",
+            "file": "other/b.js",
+            "symbol": "other/b.js"
+          }
+        ],
+        "used": [
+          {
+            "kind": "file",
+            "file": "js/a.js",
+            "symbol": "js/a.js"
+          },
+          {
+            "kind": "file",
+            "file": "js/b.js",
+            "symbol": "js/b.js"
+          }
+        ]
+      }
+    },
+    {
+      "id": "csharp-owner-call-identity",
+      "path": "fixtures/csharp_owner_call_identity",
+      "description": "Main constructs both namespace-specific Worker classes but only invokes Primary.Run→Primary.Process. The Secondary private method has no caller; its owner is constructed so parent grouping cannot hide it.",
+      "languages": [
+        "csharp"
+      ],
+      "taxonomy": [
+        "csharp",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original local static-only language corpus control; no upstream source copied."
+      },
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Secondary.Worker.Process"
+          }
+        ],
+        "used": [
+          {
+            "kind": "class",
+            "file": "Program.cs",
+            "symbol": "Portfolio.Program"
+          },
+          {
+            "kind": "function",
+            "file": "Program.cs",
+            "symbol": "Portfolio.Program.Main"
+          },
+          {
+            "kind": "class",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker"
+          },
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker.Run"
+          },
+          {
+            "kind": "function",
+            "file": "Workers.cs",
+            "symbol": "Primary.Worker.Process"
+          },
+          {
+            "kind": "class",
+            "file": "Workers.cs",
+            "symbol": "Secondary.Worker"
+          }
+        ]
+      },
+      "symbol_identity": "qualified",
+      "coverage_notes": "Known current false positive: the static entrypoint Main is live but its owning Portfolio.Program class is reported unused. Ground truth retained; not a detector fix."
+    }
+  ]
+}

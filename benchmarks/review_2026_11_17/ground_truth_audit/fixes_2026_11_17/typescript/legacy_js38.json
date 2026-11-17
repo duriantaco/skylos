@@ -1,0 +1,1594 @@
+{
+  "manifest": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/legacy_js38_manifest.json",
+  "scanner": "skylos",
+  "strict_labels": true,
+  "case_count": 38,
+  "scored_case_count": 38,
+  "unscored_case_count": 0,
+  "analysis_status": "complete",
+  "metrics_scoped_to_scored_cases": true,
+  "skipped_case_count": 0,
+  "skipped_cases": [],
+  "pass_count": 37,
+  "failure_count": 2,
+  "total_elapsed_seconds": 16.8162,
+  "counts": {
+    "true_positives": 96,
+    "false_positives": 2,
+    "false_negatives": 0,
+    "true_negatives": 95
+  },
+  "scores": {
+    "precision": 0.9796,
+    "recall": 1.0,
+    "f1": 0.9897,
+    "absence_guard": 0.9794,
+    "latency_score": 1.0,
+    "overall_score": 98.98
+  },
+  "taxonomy": {
+    "basic_detection": {
+      "description": "Core unused import, function, class, variable, and parameter detection.",
+      "case_count": 18,
+      "scored_case_count": 18,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 29,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 44
+    },
+    "cli_entrypoint": {
+      "description": "CLI decorators and framework command entrypoints.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 6,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 3
+    },
+    "dynamic_dispatch": {
+      "description": "Registries, decorators, getattr, and runtime dispatch patterns.",
+      "case_count": 3,
+      "scored_case_count": 3,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 5,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 7
+    },
+    "framework_precision": {
+      "description": "Framework-owned symbols that should not be reported as dead code.",
+      "case_count": 7,
+      "scored_case_count": 7,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 18,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 23
+    },
+    "javascript": {
+      "description": "JavaScript dead-code and module liveness patterns.",
+      "case_count": 12,
+      "scored_case_count": 12,
+      "unscored_case_count": 0,
+      "weighted_score": 97.97,
+      "failure_count": 2,
+      "true_positives": 47,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 28
+    },
+    "multi_file": {
+      "description": "Cross-file package and service-layer liveness patterns.",
+      "case_count": 17,
+      "scored_case_count": 17,
+      "unscored_case_count": 0,
+      "weighted_score": 98.49,
+      "failure_count": 2,
+      "true_positives": 57,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 50
+    },
+    "package_entrypoint": {
+      "description": "Package metadata entrypoint liveness patterns.",
+      "case_count": 3,
+      "scored_case_count": 3,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 8,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 7
+    },
+    "precision_guard": {
+      "description": "Known-used symbols that should stay quiet.",
+      "case_count": 34,
+      "scored_case_count": 34,
+      "unscored_case_count": 0,
+      "weighted_score": 99.32,
+      "failure_count": 2,
+      "true_positives": 90,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 94
+    },
+    "typescript": {
+      "description": "TypeScript dead-code and module liveness patterns.",
+      "case_count": 32,
+      "scored_case_count": 32,
+      "unscored_case_count": 0,
+      "weighted_score": 99.31,
+      "failure_count": 2,
+      "true_positives": 77,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 84
+    }
+  },
+  "cases": [
+    {
+      "id": "typescript-vscode-pseudoterminal-callbacks",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/typescript_vscode_pseudoterminal",
+      "description": "VS Code Pseudoterminal and provider contract methods are host-invoked callbacks, while unrelated methods on the same classes remain dead code.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.1779,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 7,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "ts-js-package-reachability",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/ts_js_package",
+      "description": "TypeScript package entrypoints and imports should keep live exports reachable while stale TS and JS exports are reported.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "package_entrypoint",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.3813,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2,
+        "file": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-javascript-namespace-members",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/typescript_namespace_members",
+      "description": "Static namespace member reads and stable aliases retain selected exports without crediting unrelated or shadowed members.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.4095,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 3,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-namespace-escape-boundaries",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/typescript_namespace_escape",
+      "description": "Escaped namespaces and dynamic member keys keep all their exports while an unrelated internal helper remains unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "dynamic_dispatch",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.3503,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-lexical-value-identity",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/typescript_lexical_value_identity",
+      "description": "Lexical value and selected-program module reachability with used and unused controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.3437,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 3,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-dead-import-consumers",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/typescript_dead_import_consumers",
+      "description": "Lexical value and selected-program module reachability with used and unused controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.3815,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2,
+        "variable": 1,
+        "file": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-loaded-import-consumers",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/typescript_loaded_import_consumers",
+      "description": "Lexical value and selected-program module reachability with used and unused controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4153,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 5,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-reexport-demand-chain",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/typescript_reexport_demand_chain",
+      "description": "Resolved named and wildcard export forwarding with exact unused and used source controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4588,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-reexport-public-and-escape",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/typescript_reexport_public_and_escape",
+      "description": "Resolved named and wildcard export forwarding with exact unused and used source controls.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4844,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 5,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-reexport-enumerated-aliases",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/typescript_reexport_enumerated_aliases",
+      "description": "Literal module namespace key enumeration follows resolved wildcard bindings even when generated package outputs are unavailable; private helpers remain unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4197,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 3,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-nested-namespace-export",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/typescript_nested_namespace_export",
+      "description": "A closed application reads compact through two namespace exports; expanded has no consumer. A native-valid tagged template must not make the source scope incomplete or disable exact export demand.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4599,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-namespace-export-public-and-opaque",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/typescript_namespace_export_public_and_opaque",
+      "description": "Escaping namespace preserves exported service functions; declared package API preserves renderer functions; private uncalled helpers remain dead in both providers.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard",
+        "multi_file"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4727,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-jsx-classic-runtime",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_jsx_classic",
+      "description": "With tsconfig jsx: react, JSX reads the React binding; a React import in a file without JSX is still unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4062,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "import": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-jsx-automatic-runtime",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_jsx_automatic",
+      "description": "With tsconfig jsx: react-jsx the compiler imports the runtime itself, so an unread React import is unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.0806,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "import": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-jsx-pragma-factory",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_jsx_pragma",
+      "description": "A @jsx pragma makes JSX read the named factory in that file only.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2827,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "import": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-jsx-configured-factory",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_jsx_factory",
+      "description": "tsconfig jsxFactory names the binding JSX reads; React is unused under a custom factory.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.357,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "import": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-qualified-type-import-use",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_type_use",
+      "description": "A type namespace import used as the root of a qualified type name is read; unnamed type imports are unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4876,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "import": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-destructuring-default-reads",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_default_value",
+      "description": "Default values of destructured bindings and parameters read the import or constant they name.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "precision_guard",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.3956,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "variable": 1,
+        "import": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-dependency-base-overrides",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_override",
+      "description": "Methods of a class that extends a dependency's class can be overrides the dependency calls; methods of base-less and project-base classes are judged normally.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.3594,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "qualified",
+      "findings_by_kind": {
+        "function": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-member-call-same-name-local",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_member_same_name",
+      "description": "A method called through an instance inside a declaration of the same name is used; a local variable that only shares a method's name is not a call.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4921,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "javascript-storybook-config-files",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_storybook",
+      "description": "Storybook loads its named .storybook config files; other files there and orphans need an importer.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.5162,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "variable": 2,
+        "file": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "javascript-storybook-config-without-storybook",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_storybook_nodep",
+      "description": "Without a Storybook dependency or script, a .storybook file is an ordinary unused file.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4334,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "variable": 1,
+        "file": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-runner-conf-files",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_conf_files",
+      "description": "karma.conf and wdio.conf in a package that uses the runner are loaded by it; WebdriverIO reads only the exported config.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.6393,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "file": 1,
+        "variable": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 3,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "javascript-runner-conf-without-runner",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_conf_nodep",
+      "description": "A karma.conf.js in a package that neither depends on nor runs Karma is unused.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.7481,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "file": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-tool-config-path-strings",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_tool_config_paths",
+      "description": "Path strings in a tool configuration file load the files they name; comments, prose and path strings in ordinary modules do not.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.656,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "variable": 6,
+        "file": 5
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 11,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 6,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-tsconfig-include-exact-file",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_tsconfig_include",
+      "description": "A tsconfig include entry that names one file is a compilation root; globs, excludes and unlisted files are not.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.3969,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "file": 3
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "javascript-path-join-literal-files",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_path_join",
+      "description": "path.join/path.resolve from node:path with literal segments name the file they build; comments, Array.join and local lookalikes do not.",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "typescript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.6421,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "file": 6
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 4,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 0.6667,
+        "recall": 1.0,
+        "f1": 0.8,
+        "absence_guard": 0.3333,
+        "latency_score": 1.0,
+        "overall_score": 76.67
+      },
+      "failures": [
+        {
+          "case_id": "javascript-path-join-literal-files",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "file:tools/input.ts:tools/input.ts",
+          "found": [
+            "file:tools/input.ts:tools/input.ts"
+          ]
+        },
+        {
+          "case_id": "javascript-path-join-literal-files",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "file:src/bundle.ts:src/bundle.ts",
+          "found": [
+            "file:src/bundle.ts:src/bundle.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "typescript-runtime-command-template-files",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_command_template",
+      "description": "A runtime command built in a template literal runs the script it names; prose and non-command joins do not.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.442,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "file": 3
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-markdown-run-instructions",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_markdown_run",
+      "description": "A runtime command in a Markdown code block or code span is a run instruction; prose, links and non-runtime commands are mentions.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "multi_file",
+        "cli_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.5955,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "file": 6
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 6,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 3,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-package-manifest-named-files",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_package_keys",
+      "description": "package.json files entries that name one file and path values of custom keys load that file; folder entries, descriptions and ignore lists do not.",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "javascript",
+        "package_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.5052,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "file": 3,
+        "variable": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 5,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 3,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-react-native-platform-extensions",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_platform_rn",
+      "description": "In a React Native project an import loads every platform sibling of its target; platform files nobody imports stay unused.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "framework_precision",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.6958,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "file": 3,
+        "function": 3
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 6,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-platform-suffix-without-react-native",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_platform_none",
+      "description": "Without React Native or Expo, scale.web.ts is an ordinary module that needs its own importer.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4124,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "file": 1,
+        "function": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-source-reexport-import-binding",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_reexport_import",
+      "description": "An `export { X } from` statement re-exports from the module and does not read a local import of X; a local `export { X }` does.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4008,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "import": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 3,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "typescript-default-reexport-from-entry",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/tsjs_reexport_default",
+      "description": "A default export re-exported by name from the package entry is public API.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "package_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.4429,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {},
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "corpus-conditional-assets-direct",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/corpus_conditional_assets_direct",
+      "description": "Direct HTML script references preserve exact paths while ordinary and malformed comments do not load scripts.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "low",
+      "elapsed_seconds": 0.4438,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "file": 4
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "corpus-conditional-assets-plain",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/corpus_conditional_assets_plain",
+      "description": "Legacy IE conditional HTML script references preserve the exact asset without treating ordinary or malformed comments as loads.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "low",
+      "elapsed_seconds": 0.4621,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "file": 4
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "corpus-conditional-assets-jinja",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/corpus_conditional_assets_jinja",
+      "description": "Legacy IE conditional HTML script references support the native Jinja safe filter on simple literal paths while comments and wrong paths remain unused.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "javascript",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "low",
+      "elapsed_seconds": 0.4475,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "file": 4
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "private-exported-enum-members",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/fixes_2026_11_17/typescript/fixtures/private_exported_enum_members",
+      "description": "Imported aliases in a closed private package consume individual enum members.",
+      "languages": [
+        "typescript"
+      ],
+      "taxonomy": [
+        "typescript",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.32,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "variable": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    }
+  ]
+}

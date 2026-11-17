@@ -1,0 +1,9 @@
+{
+  "GOROOT": "/tmp/skylos-gap-go/go",
+  "PATH": "/tmp/skylos-gap-go/go/bin:/Users/oha/.codex/packages/app-server-daemon/releases/0.169.0-aarch64-apple-darwin/codex-path:/Users/oha/.grok/bin:/Users/oha/.local/bin:/opt/homebrew/opt/python@3.13/libexec/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/oha/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/opt/homebrew/bin:/Users/oha/.codex/tmp/arg0-macos/codex-arg0cjqMwe:/Users/oha/.codex/packages/app-server-daemon/releases/0.169.0-aarch64-apple-darwin/codex-path:/Users/oha/.codex/tmp/arg0-macos/codex-arg0XdX1gQ:/Users/oha/.codex/packages/standalone/releases/0.169.0-aarch64-apple-darwin/codex-path:/Users/oha/.local/bin:/opt/homebrew/opt/python@3.13/libexec/bin:/opt/homebrew/sbin:/Users/oha/.docker/bin:/Users/oha/Library/Application Support/Code/User/globalStorage/github.copilot-chat/debugCommand:/Users/oha/.docker/bin",
+  "GOTOOLCHAIN": "local",
+  "GOWORK": "off",
+  "GOPROXY": "off",
+  "GOSUMDB": "off",
+  "CGO_ENABLED": "0"
+}

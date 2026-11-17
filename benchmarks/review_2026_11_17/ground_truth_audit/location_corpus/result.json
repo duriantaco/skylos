@@ -1,0 +1,183 @@
+{
+  "manifest": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/location_corpus/manifest.json",
+  "scanner": "skylos",
+  "case_count": 3,
+  "scored_case_count": 3,
+  "unscored_case_count": 0,
+  "analysis_status": "complete",
+  "metrics_scoped_to_scored_cases": true,
+  "skipped_case_count": 0,
+  "skipped_cases": [],
+  "pass_count": 3,
+  "failure_count": 0,
+  "total_elapsed_seconds": 0.5912,
+  "counts": {
+    "true_positives": 3,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "true_negatives": 6
+  },
+  "scores": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "absence_guard": 1.0,
+    "latency_score": 1.0,
+    "overall_score": 100.0
+  },
+  "taxonomy": {
+    "deserialization": {
+      "description": "Untrusted data reaches unsafe deserialization APIs.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1
+    },
+    "precision_guard": {
+      "description": "Clean patterns that should stay free of noisy security findings.",
+      "case_count": 3,
+      "scored_case_count": 3,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 6
+    },
+    "sql_injection": {
+      "description": "Untrusted data reaches SQL construction or execution.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2
+    },
+    "xss": {
+      "description": "Untrusted data reaches HTML or script rendering sinks.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 3
+    }
+  },
+  "cases": [
+    {
+      "id": "location-python-deserialization",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/location_corpus/fixtures/loader.py",
+      "description": "Source-reviewed unsafe operation with exact-location safe siblings; static parsing only.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "deserialization",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2664,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 2,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "location-javascript-xss",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/location_corpus/fixtures/dom.js",
+      "description": "Source-reviewed unsafe operation with exact-location safe siblings; static parsing only.",
+      "languages": [
+        "javascript"
+      ],
+      "taxonomy": [
+        "xss",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.2508,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "unused_files": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 3,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "location-php-sql_injection",
+      "path": "/Users/oha/skylos/benchmarks/review_2026_11_17/ground_truth_audit/location_corpus/fixtures/database.php",
+      "description": "Source-reviewed unsafe operation with exact-location safe siblings; static parsing only.",
+      "languages": [
+        "php"
+      ],
+      "taxonomy": [
+        "sql_injection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.074,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "findings_by_category": {
+        "unused_functions": 1,
+        "danger": 1
+      },
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    }
+  ]
+}

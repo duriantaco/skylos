@@ -139,3 +139,42 @@ range.createContextualFragment(msg);
 
 def test_more_html_sinks_report_unproven_values_only(tmp_path):
     assert _xss_lines(tmp_path, "dom.js", DOM) == [4, 7, 8, 10, 14, 17]
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "el.innerHTML = null;",
+        "el.outerHTML = (null);",
+        "el.innerHTML = (null as string | null);",
+        "export function Reset() { return <div dangerouslySetInnerHTML={{ __html: null }} />; }",
+    ],
+    ids=["inner-reset", "outer-reset", "asserted-null", "react-null"],
+)
+def test_literal_null_html_resets_are_inert(tmp_path, code):
+    assert _xss_lines(tmp_path, "reset.tsx", code) == []
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "export function display(html: string | null) { el.innerHTML = html; }",
+        "export function display(html) { el.innerHTML = html ?? null; }",
+        "export function display(html) { el.innerHTML = html || null; }",
+        "export function display(html) { el.innerHTML = html as null; }",
+        "export function display(html) { return <div dangerouslySetInnerHTML={{ __html: html ?? null }} />; }",
+        "document.write(null, untrusted);",
+        "el.innerHTML += null;",
+    ],
+    ids=[
+        "nullable-parameter",
+        "nullish-fallback",
+        "or-fallback",
+        "null-assertion",
+        "react-dynamic",
+        "variadic-write",
+        "append-keeps-existing-markup-unknown",
+    ],
+)
+def test_null_lookalikes_do_not_hide_unproven_html(tmp_path, code):
+    assert _xss_lines(tmp_path, "reset.tsx", code) == [1]

@@ -1,0 +1,26 @@
+{
+  "role": "Index of other-language authored/reviewed ground truths; do not add duplicated label rows to aggregate denominators",
+  "fresh_repository": "goji--goji",
+  "fresh_frozen_labels": "SOURCE_LABELS_GOJI.json",
+  "fresh_results": "GOJI_RESULTS.json",
+  "supplementary_existing_source_review": "OTHER_EXISTING_DRAFT_INDEPENDENT_REVIEW.json",
+  "sources": {
+    "SOURCE_LABELS_GOJI.json": {
+      "sha256": "fdd9850dd09eb0f3f54c320132ac59fc5690d3575022591bebaf4a14e3b3828c",
+      "rows": 22
+    },
+    "../SOURCE_LABELS_MUX_TINY_DRAFT.json": {
+      "sha256": "4cae6e6bc308fad413c5d8af88626f2c643f6e8e8264d0c020f19f1a309af951",
+      "rows": 33
+    },
+    "OTHER_EXISTING_DRAFT_INDEPENDENT_REVIEW.json": {
+      "sha256": "1c158aba5c31b4d05676088baa3ce64fcf0c42b33b10f05f2deeef426fc92f56",
+      "rows": 33
+    }
+  },
+  "not_claimed": [
+    "No whole-repository semantic review claimed for Mux/tiny-http/Slim/Spring in this phase.",
+    "No extra fresh cohort repositories beyond Goji in this agent scope."
+  ],
+  "target_execution": false
+}

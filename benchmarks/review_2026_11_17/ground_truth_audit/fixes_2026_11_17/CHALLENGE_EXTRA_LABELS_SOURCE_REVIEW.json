@@ -1,0 +1,203 @@
+{
+  "author": "/root/ts_truth",
+  "independent_reviewer": "/root/other_truth",
+  "reviewer_agreement": "Both agents independently read the complete two fixture trees and agree on all6 diagnostic facts and five signature-retention caveats.",
+  "before_manifest_sha256": "679ea87b6d86ceb1dcc7a6f4197fe32151b5e6780e2020b26607de6d51dc91c5",
+  "after_manifest_sha256": "945b1d30c6d15532abbc8a46249877d524f17e5a39b7c025c8cc61d400690c64",
+  "retained_original_labels": true,
+  "scope": "These additions complete previously unlabelled diagnostics; they are not detector changes, six removed false positives, or six automatically removable declarations.",
+  "labels": [
+    {
+      "case_id": "extreme-grounding-framework-dead-code",
+      "kind": "function",
+      "file": "app.py",
+      "symbol": "preview",
+      "owner": null,
+      "line": 11,
+      "semantic_label": "unused function",
+      "verdict": "true_positive_diagnostic",
+      "removal_safe_within_closed_fixture": true,
+      "reason": "No import, registry, CLI, test or call refers to preview in the entire fixture; only its declaration exists.",
+      "limitation": "Post-scan source adjudication, not pre-scan blind ground truth. Parameter labels assert unread bindings; signature compatibility is a separate property."
+    },
+    {
+      "case_id": "extreme-grounding-framework-dead-code",
+      "kind": "parameter",
+      "file": "services/db.py",
+      "symbol": "query",
+      "owner": "query_all",
+      "line": 1,
+      "semantic_label": "unused binding",
+      "verdict": "true_positive_diagnostic",
+      "removal_safe_within_closed_fixture": false,
+      "reason": "query_all body returns[] without reading query; services/account.py:12,17 and web/routes.py:10 pass query positionally.",
+      "limitation": "Post-scan source adjudication, not pre-scan blind ground truth. Parameter labels assert unread bindings; signature compatibility is a separate property."
+    },
+    {
+      "case_id": "extreme-grounding-framework-dead-code",
+      "kind": "parameter",
+      "file": "services/db.py",
+      "symbol": "params",
+      "owner": "query_all",
+      "line": 1,
+      "semantic_label": "unused binding",
+      "verdict": "true_positive_diagnostic",
+      "removal_safe_within_closed_fixture": false,
+      "reason": "query_all body returns[] without reading params; services/account.py:17 supplies positional parameters. Preserve signature or update callers.",
+      "limitation": "Post-scan source adjudication, not pre-scan blind ground truth. Parameter labels assert unread bindings; signature compatibility is a separate property."
+    },
+    {
+      "case_id": "static-blind-plugin-dispatch-dead-code",
+      "kind": "parameter",
+      "file": "plugins/db.py",
+      "symbol": "query",
+      "owner": "query_all",
+      "line": 1,
+      "semantic_label": "unused binding",
+      "verdict": "true_positive_diagnostic",
+      "removal_safe_within_closed_fixture": false,
+      "reason": "query_all body returns[] without reading query; plugins/payments.py:8,13,18 call this stub with a positional query.",
+      "limitation": "Post-scan source adjudication, not pre-scan blind ground truth. Parameter labels assert unread bindings; signature compatibility is a separate property."
+    },
+    {
+      "case_id": "static-blind-plugin-dispatch-dead-code",
+      "kind": "parameter",
+      "file": "plugins/db.py",
+      "symbol": "params",
+      "owner": "query_all",
+      "line": 1,
+      "semantic_label": "unused binding",
+      "verdict": "true_positive_diagnostic",
+      "removal_safe_within_closed_fixture": false,
+      "reason": "query_all body returns[] without reading params; plugins/payments.py:13 supplies the second positional argument. Preserve signature or update callers.",
+      "limitation": "Post-scan source adjudication, not pre-scan blind ground truth. Parameter labels assert unread bindings; signature compatibility is a separate property."
+    },
+    {
+      "case_id": "static-blind-plugin-dispatch-dead-code",
+      "kind": "parameter",
+      "file": "plugins/network.py",
+      "symbol": "payload",
+      "owner": "fetch_fixed_status",
+      "line": 9,
+      "semantic_label": "unused binding",
+      "verdict": "true_positive_diagnostic",
+      "removal_safe_within_closed_fixture": false,
+      "reason": "fetch_fixed_status body requests a fixed URL without reading payload; registry.py:8 selects it and dispatcher.py:10 always invokes handler(payload). Uniform protocol requires retaining this argument slot.",
+      "limitation": "Post-scan source adjudication, not pre-scan blind ground truth. Parameter labels assert unread bindings; signature compatibility is a separate property."
+    }
+  ],
+  "complete_fixture_source_coverage": {
+    "static-blind-plugin-dispatch-dead-code": [
+      {
+        "file": "app.py",
+        "sha256": "e920a2079d3df0223a5a3d91720e85c5e25dd889f5431ad128b13afbc437a3a8"
+      },
+      {
+        "file": "dispatcher.py",
+        "sha256": "4056ac22b1364a725d3da00cded72e1ef98115a5cf4e41204f0c71f3c5815c39"
+      },
+      {
+        "file": "plugins/__init__.py",
+        "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      },
+      {
+        "file": "plugins/audit.py",
+        "sha256": "0df5173b1dff037d94d80f119b7fe2ff79201b1333a9a2f637eb6cf75cca8ea2"
+      },
+      {
+        "file": "plugins/db.py",
+        "sha256": "561dde27ef1022c461ef67b76c84ef2f83944e84c605d1d3bd4c01e5591b4aa3"
+      },
+      {
+        "file": "plugins/network.py",
+        "sha256": "b006937ff6fb56b30fcfee2be71084f8a5e077f139e9382eae320c08c05c3c91"
+      },
+      {
+        "file": "plugins/payments.py",
+        "sha256": "17ca43a5076448d44c7c252f93805efedbc91dae05789d2611f634213aac4d7d"
+      },
+      {
+        "file": "plugins/tools.py",
+        "sha256": "62e90d892db84362d4015468a378567739c1e89468c625b81779d719d594cbb5"
+      },
+      {
+        "file": "pyproject.toml",
+        "sha256": "ae76c0f46eed7dc14ff8aa2e022746cc98ebf893498e3df21513852364f513fb"
+      },
+      {
+        "file": "registry.py",
+        "sha256": "a5ae9734260890df89d57de179c8bbb1cad0119c8ef841602a04c5f6bda08f02"
+      },
+      {
+        "file": "tests/test_dispatcher.py",
+        "sha256": "3e6cdc4e152034679f5b6cba4f2a36b63311642c7e62528b526812dc06537883"
+      }
+    ],
+    "extreme-grounding-framework-dead-code": [
+      {
+        "file": "api.py",
+        "sha256": "3cb665c23cd379e610c12efd060460966ae122dde301c746fa0c56627e39c00c"
+      },
+      {
+        "file": "app.py",
+        "sha256": "4068f40cd1cd29a2efe93aaf9bb8d0db344870e3a9e21f4c606a9878be473793"
+      },
+      {
+        "file": "cli.py",
+        "sha256": "62e0eccb8c2005943b3649b50f361b9ac565ff32c27b5c77ece90fee0a36c6b7"
+      },
+      {
+        "file": "pyproject.toml",
+        "sha256": "0a22ad805bc858931dcd35d73761a53f6fdfb72a2d37757f44f45c83955fb019"
+      },
+      {
+        "file": "services/__init__.py",
+        "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      },
+      {
+        "file": "services/account.py",
+        "sha256": "75aefa4a07c93cc9fccf87f20c2ea7893914f39b2645297b1d2760e1660abeaf"
+      },
+      {
+        "file": "services/db.py",
+        "sha256": "3b6fb40382774650430842776ccac0ad14c3529d10e2af707195eebd084d31f9"
+      },
+      {
+        "file": "services/formatters.py",
+        "sha256": "b3922a9d1f7c751af39906ac75150f3d798b5966cc2b5be540dc1740db4fa776"
+      },
+      {
+        "file": "services/hooks.py",
+        "sha256": "0450fd8d5c4e988c78f3f3051649918f73ef1f3bb80d5dc1b8a9689e320a15ea"
+      },
+      {
+        "file": "services/network.py",
+        "sha256": "ee931a6be5d3412d0782c1db9adab8527039926ca4540bc49c09cab20b1af3f9"
+      },
+      {
+        "file": "tests/test_flow.py",
+        "sha256": "8d2d74b632d75599627f0caa1345ec32cf2f1fd084a22404dd6d0847d1496ae8"
+      },
+      {
+        "file": "tools/__init__.py",
+        "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      },
+      {
+        "file": "tools/admin.py",
+        "sha256": "c2d5c14d6ca833f7f2461753ea6fd97aa79e177de4c57b3a51f96408cd01cc1d"
+      },
+      {
+        "file": "web/__init__.py",
+        "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      },
+      {
+        "file": "web/framework.py",
+        "sha256": "593780c0ce74b02f79ed0ca2cc7a4f90e455b84a620c710438ba08af5028f6f2"
+      },
+      {
+        "file": "web/routes.py",
+        "sha256": "cd7d1a7da6042c7f8ea426e54f43bbc16edb64fb79afcb6121f9e4c7fa79cb93"
+      }
+    ]
+  }
+}

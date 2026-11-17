@@ -1075,6 +1075,8 @@ def _dedupe(values: Iterable[str]) -> list[str]:
 
 
 def _reference_safe_uncertainty_reasons(definition: Any) -> Iterable[str]:
+    if getattr(definition, "heuristic_refs", {}).get("closed_type_registry_unused"):
+        return
     symbol_type = str(getattr(definition, "type", ""))
     qname = str(getattr(definition, "name", ""))
     simple_name = str(getattr(definition, "simple_name", ""))

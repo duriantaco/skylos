@@ -5,20 +5,25 @@ from pathlib import Path
 
 import pytest
 
+from skylos.analyzer import analyze
 from skylos.engines.go_runner import GoEngineError, resolve_go_engine_bin
 from skylos.visitors.languages.go import clear_go_cache, scan_go_file
-from skylos.analyzer import analyze
 
 
 @pytest.fixture(autouse=True)
 def _pin_repo_go_engine(monkeypatch):
     engine_name = "skylos-go.exe" if os.name == "nt" else "skylos-go"
+    configured_engine = os.environ.get("SKYLOS_GO_BIN")
     engine_bin = (
-        Path(__file__).resolve().parent.parent
-        / "skylos"
-        / "engines"
-        / "go"
-        / engine_name
+        Path(configured_engine)
+        if configured_engine
+        else (
+            Path(__file__).resolve().parent.parent
+            / "skylos"
+            / "engines"
+            / "go"
+            / engine_name
+        )
     )
     if not engine_bin.is_file():
         pytest.skip("repo skylos-go engine binary not available")
@@ -32,12 +37,16 @@ def _scan_go(tmp_path: Path, code: str) -> list[dict]:
     except GoEngineError:
         pytest.skip("skylos-go engine binary not available")
 
-    (tmp_path / "go.mod").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+    (
+        tmp_path / "go.mod"
+    ).write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
         "module example.com/demo\n\ngo 1.22\n",
         encoding="utf-8",
     )
     file_path = tmp_path / "main.go"
-    file_path.write_text(code, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+    file_path.write_text(
+        code, encoding="utf-8"
+    )  # skylos: ignore[SKY-D324] pytest tmp_path fixture
     clear_go_cache()
     return scan_go_file(str(file_path), {})[7]
 
@@ -52,12 +61,16 @@ def _scan_go_full(tmp_path: Path, code: str) -> tuple:
     except GoEngineError:
         pytest.skip("skylos-go engine binary not available")
 
-    (tmp_path / "go.mod").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+    (
+        tmp_path / "go.mod"
+    ).write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
         "module example.com/demo\n\ngo 1.22\n",
         encoding="utf-8",
     )
     file_path = tmp_path / "main.go"
-    file_path.write_text(code, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+    file_path.write_text(
+        code, encoding="utf-8"
+    )  # skylos: ignore[SKY-D324] pytest tmp_path fixture
     clear_go_cache()
     return scan_go_file(str(file_path), {})
 
@@ -1090,21 +1103,21 @@ func untar(reader *tar.Reader, dest string) error {
     ("body", "rule", "severity"),
     [
         pytest.param(
-            'func h(w http.ResponseWriter, r *http.Request) {\n'
+            "func h(w http.ResponseWriter, r *http.Request) {\n"
             '    http.Get(r.URL.Query().Get("u"))\n}\n',
             "SKY-D216",
             "CRITICAL",
             id="request-query-ssrf",
         ),
         pytest.param(
-            'func h(w http.ResponseWriter, r *http.Request) {\n'
+            "func h(w http.ResponseWriter, r *http.Request) {\n"
             '    exec.Command("sh", "-c", r.FormValue("cmd")).Run()\n}\n',
             "SKY-D212",
             "CRITICAL",
             id="request-shell-command",
         ),
         pytest.param(
-            'func h(w http.ResponseWriter, r *http.Request) {\n'
+            "func h(w http.ResponseWriter, r *http.Request) {\n"
             '    exec.Command(r.FormValue("bin")).Run()\n}\n',
             "SKY-D212",
             "CRITICAL",
@@ -1125,22 +1138,22 @@ def test_untrusted_request_input_reaches_go_sinks(tmp_path, body, rule, severity
     "body",
     [
         pytest.param(
-            'func run(addr string) {\n'
+            "func run(addr string) {\n"
             '    exec.Command(os.Args[0], "run", "--pingback", addr).Run()\n}\n',
             id="re-exec-self",
         ),
         pytest.param(
-            'func run() {\n    self, _ := os.Executable()\n'
+            "func run() {\n    self, _ := os.Executable()\n"
             '    exec.Command(self, "version").Run()\n}\n',
             id="own-binary",
         ),
         pytest.param(
-            'func run(port int) {\n'
+            "func run(port int) {\n"
             '    http.Get(fmt.Sprintf("http://localhost:%d/config/", port))\n}\n',
             id="loopback",
         ),
         pytest.param(
-            'type Loader struct{ URL string }\n\n'
+            "type Loader struct{ URL string }\n\n"
             'func (l Loader) Load() { http.NewRequest("GET", l.URL, nil) }\n',
             id="config-url",
         ),
@@ -1162,12 +1175,12 @@ def test_program_inputs_are_not_go_ssrf_or_command_injection(tmp_path, body):
     "body",
     [
         pytest.param(
-            'func h(w http.ResponseWriter, r *http.Request) {\n'
+            "func h(w http.ResponseWriter, r *http.Request) {\n"
             '    os.ReadFile(r.URL.Query().Get("f"))\n}\n',
             id="request-query-read",
         ),
         pytest.param(
-            'func h(w http.ResponseWriter, r *http.Request) {\n'
+            "func h(w http.ResponseWriter, r *http.Request) {\n"
             "    http.ServeFile(w, r, filepath.Join(root, r.URL.Path))\n}\n",
             id="serve-file-join",
         ),
@@ -1175,9 +1188,7 @@ def test_program_inputs_are_not_go_ssrf_or_command_injection(tmp_path, body):
 )
 def test_untrusted_go_path_is_traversal(tmp_path, body):
     findings = _scan_go(tmp_path, _GO_PATH_PRELUDE + body)
-    assert [f["severity"] for f in findings if f["rule_id"] == "SKY-D215"] == [
-        "HIGH"
-    ]
+    assert [f["severity"] for f in findings if f["rule_id"] == "SKY-D215"] == ["HIGH"]
 
 
 @pytest.mark.parametrize(
@@ -1185,7 +1196,7 @@ def test_untrusted_go_path_is_traversal(tmp_path, body):
     [
         pytest.param("func load(name string) { os.ReadFile(name) }\n", id="param"),
         pytest.param(
-            'func h(w http.ResponseWriter, r *http.Request) {\n'
+            "func h(w http.ResponseWriter, r *http.Request) {\n"
             '    p := filepath.Join(root, r.FormValue("n"))\n'
             "    rel, err := filepath.Rel(root, p)\n"
             '    if err != nil || strings.HasPrefix(rel, "..") {\n        return\n    }\n'

@@ -1,0 +1,1720 @@
+{
+  "manifest": "/Users/oha/skylos/benchmarks/dead_code/manifest.json",
+  "scanner": "vulture",
+  "strict_labels": false,
+  "case_count": 27,
+  "scored_case_count": 27,
+  "unscored_case_count": 0,
+  "analysis_status": "complete",
+  "metrics_scoped_to_scored_cases": true,
+  "skipped_case_count": 0,
+  "skipped_cases": [],
+  "pass_count": 6,
+  "failure_count": 48,
+  "total_elapsed_seconds": 0.8038,
+  "counts": {
+    "true_positives": 50,
+    "false_positives": 43,
+    "false_negatives": 5,
+    "true_negatives": 54
+  },
+  "scores": {
+    "precision": 0.5376,
+    "recall": 0.9091,
+    "f1": 0.6757,
+    "absence_guard": 0.5567,
+    "latency_score": 1.0,
+    "overall_score": 73.63
+  },
+  "taxonomy": {
+    "alembic": {
+      "description": "Alembic migration lifecycle function liveness patterns.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 60.0,
+      "failure_count": 4,
+      "true_positives": 2,
+      "false_positives": 4,
+      "false_negatives": 0,
+      "true_negatives": 0
+    },
+    "basic_detection": {
+      "description": "Core unused import, function, class, variable, and parameter detection.",
+      "case_count": 5,
+      "scored_case_count": 5,
+      "unscored_case_count": 0,
+      "weighted_score": 80.92,
+      "failure_count": 9,
+      "true_positives": 12,
+      "false_positives": 6,
+      "false_negatives": 3,
+      "true_negatives": 26
+    },
+    "celery": {
+      "description": "Celery task decorator and worker entrypoint liveness patterns.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 71.67,
+      "failure_count": 2,
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 1
+    },
+    "cli_entrypoint": {
+      "description": "CLI decorators and framework command entrypoints.",
+      "case_count": 3,
+      "scored_case_count": 3,
+      "unscored_case_count": 0,
+      "weighted_score": 64.52,
+      "failure_count": 8,
+      "true_positives": 4,
+      "false_positives": 8,
+      "false_negatives": 0,
+      "true_negatives": 3
+    },
+    "django": {
+      "description": "Django management command, URL, admin, and lifecycle liveness patterns.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 61.9,
+      "failure_count": 5,
+      "true_positives": 2,
+      "false_positives": 5,
+      "false_negatives": 0,
+      "true_negatives": 1
+    },
+    "dynamic_dispatch": {
+      "description": "Registries, decorators, getattr, and runtime dispatch patterns.",
+      "case_count": 11,
+      "scored_case_count": 11,
+      "unscored_case_count": 0,
+      "weighted_score": 70.84,
+      "failure_count": 23,
+      "true_positives": 20,
+      "false_positives": 22,
+      "false_negatives": 1,
+      "true_negatives": 16
+    },
+    "fastapi": {
+      "description": "FastAPI route and dependency injection liveness patterns.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 75.0,
+      "failure_count": 1,
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "true_negatives": 1
+    },
+    "flask": {
+      "description": "Flask route and registration liveness patterns.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 71.67,
+      "failure_count": 2,
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 1
+    },
+    "framework_precision": {
+      "description": "Framework-owned symbols that should not be reported as dead code.",
+      "case_count": 10,
+      "scored_case_count": 10,
+      "unscored_case_count": 0,
+      "weighted_score": 70.55,
+      "failure_count": 22,
+      "true_positives": 16,
+      "false_positives": 22,
+      "false_negatives": 0,
+      "true_negatives": 8
+    },
+    "multi_file": {
+      "description": "Cross-file package and service-layer liveness patterns.",
+      "case_count": 6,
+      "scored_case_count": 6,
+      "unscored_case_count": 0,
+      "weighted_score": 74.87,
+      "failure_count": 7,
+      "true_positives": 11,
+      "false_positives": 5,
+      "false_negatives": 2,
+      "true_negatives": 17
+    },
+    "package_entrypoint": {
+      "description": "Package metadata entrypoint liveness patterns.",
+      "case_count": 2,
+      "scored_case_count": 2,
+      "unscored_case_count": 0,
+      "weighted_score": 80.0,
+      "failure_count": 1,
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "true_negatives": 3
+    },
+    "plugin_loading": {
+      "description": "String-based importlib and plugin module liveness patterns.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4
+    },
+    "precision_guard": {
+      "description": "Known-used symbols that should stay quiet.",
+      "case_count": 24,
+      "scored_case_count": 24,
+      "unscored_case_count": 0,
+      "weighted_score": 72.48,
+      "failure_count": 47,
+      "true_positives": 39,
+      "false_positives": 42,
+      "false_negatives": 5,
+      "true_negatives": 46
+    },
+    "pydantic": {
+      "description": "Pydantic model validator and serializer liveness patterns.",
+      "case_count": 2,
+      "scored_case_count": 2,
+      "unscored_case_count": 0,
+      "weighted_score": 83.48,
+      "failure_count": 5,
+      "true_positives": 6,
+      "false_positives": 5,
+      "false_negatives": 0,
+      "true_negatives": 4
+    },
+    "pytest": {
+      "description": "Pytest test and fixture entrypoint liveness patterns.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 63.33,
+      "failure_count": 1,
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "true_negatives": 2
+    },
+    "service_layer": {
+      "description": "Repository and service objects in industry-style application layers.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 100.0,
+      "failure_count": 0,
+      "true_positives": 5,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4
+    },
+    "sqlalchemy": {
+      "description": "SQLAlchemy declarative model and repository liveness patterns.",
+      "case_count": 1,
+      "scored_case_count": 1,
+      "unscored_case_count": 0,
+      "weighted_score": 79.29,
+      "failure_count": 2,
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 5
+    }
+  },
+  "cases": [
+    {
+      "id": "basic-unused-symbols",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/basic_unused_symbols",
+      "description": "Basic unused functions, classes, imports, and module variables should be found while referenced symbols stay alive.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "basic_detection"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0407,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "variable": 2,
+        "class": 1,
+        "function": 1,
+        "import": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 5,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 3,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "fastapi-route-used",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/fastapi_route_used",
+      "description": "FastAPI route handlers and dependency providers are framework entrypoints, not dead code.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "fastapi"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.03,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6667,
+        "absence_guard": 0.5,
+        "latency_score": 1.0,
+        "overall_score": 75.0
+      },
+      "failures": [
+        {
+          "case_id": "fastapi-route-used",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:read_profile",
+          "found": [
+            "function:app.py:read_profile"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dynamic-registry-used",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/dynamic_registry_used",
+      "description": "Handlers registered through an explicit local registry should stay alive while unregistered handlers are reported.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.0307,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 4
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6667,
+        "absence_guard": 0.0,
+        "latency_score": 1.0,
+        "overall_score": 65.0
+      },
+      "failures": [
+        {
+          "case_id": "dynamic-registry-used",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:handle_create",
+          "found": [
+            "function:app.py:handle_create"
+          ]
+        },
+        {
+          "case_id": "dynamic-registry-used",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:handle_update",
+          "found": [
+            "function:app.py:handle_update"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "local-registration-decorator-entrypoints",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/local_registration_decorator",
+      "description": "Locally defined decorators that register and return functions should keep decorated entrypoints alive while unregistered helpers are still reported.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0359,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 5
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 3,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 0.4,
+        "recall": 1.0,
+        "f1": 0.5714,
+        "absence_guard": 0.4,
+        "latency_score": 1.0,
+        "overall_score": 70.0
+      },
+      "failures": [
+        {
+          "case_id": "local-registration-decorator-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:resize_image",
+          "found": [
+            "function:app.py:resize_image"
+          ]
+        },
+        {
+          "case_id": "local-registration-decorator-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:archive_image",
+          "found": [
+            "function:app.py:archive_image"
+          ]
+        },
+        {
+          "case_id": "local-registration-decorator-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:warm_cache",
+          "found": [
+            "function:app.py:warm_cache"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "explicit-same-name-reexports",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/explicit_reexports",
+      "description": "Python explicit same-name aliases are public re-export signals and should not be reported as unused imports.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "package_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0298,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "import": 1,
+        "function": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "annotation-metadata-import-scope",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/annotation_metadata_scope",
+      "description": "Annotation metadata should bind to imported decorators even when a function parameter has the same leaf name.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "pydantic",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0297,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 1,
+        "import": 1,
+        "variable": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "sqlalchemy-mixed-models",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/sqlalchemy_mixed_models",
+      "description": "A realistic model module should report only the unreferenced SQLAlchemy model while keeping used models and ORM columns quiet.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "sqlalchemy",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0322,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "variable": 3,
+        "class": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 5,
+      "scores": {
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6667,
+        "absence_guard": 0.7143,
+        "latency_score": 1.0,
+        "overall_score": 79.29
+      },
+      "failures": [
+        {
+          "case_id": "sqlalchemy-mixed-models",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "variable:models.py:id",
+          "found": [
+            "variable:models.py:id"
+          ]
+        },
+        {
+          "case_id": "sqlalchemy-mixed-models",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "variable:models.py:name",
+          "found": [
+            "variable:models.py:name"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flask-cli-blueprint",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/flask_cli_blueprint",
+      "description": "Flask blueprint routes and app CLI commands are entrypoints, while nearby unregistered helpers remain dead code.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "flask",
+        "cli_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0312,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 4,
+        "class": 1
+      },
+      "unlabeled_finding_count": 1,
+      "unlabeled_findings": [
+        "function:app.py:format"
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6667,
+        "absence_guard": 0.3333,
+        "latency_score": 1.0,
+        "overall_score": 71.67
+      },
+      "failures": [
+        {
+          "case_id": "flask-cli-blueprint",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:show_order",
+          "found": [
+            "function:app.py:show_order"
+          ]
+        },
+        {
+          "case_id": "flask-cli-blueprint",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:reindex_orders",
+          "found": [
+            "function:app.py:reindex_orders"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "package-service-layers",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/package_service_layers",
+      "description": "A small service/repository package should resolve cross-file references and still find stale local strategy code.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "service_layer",
+        "basic_detection"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0317,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "variable": 2,
+        "function": 2,
+        "class": 1,
+        "import": 1
+      },
+      "unlabeled_finding_count": 1,
+      "unlabeled_findings": [
+        "function:service.py:apply"
+      ],
+      "true_positives": 5,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "django-management-command",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/django_management_command",
+      "description": "Django management command classes and lifecycle methods are CLI entrypoints while unrelated helpers remain dead code.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "django",
+        "cli_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0316,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "class": 2,
+        "variable": 2,
+        "function": 4
+      },
+      "unlabeled_finding_count": 1,
+      "unlabeled_findings": [
+        "function:shop/management/commands/rebuild_index.py:build"
+      ],
+      "true_positives": 2,
+      "false_positives": 5,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 0.2857,
+        "recall": 1.0,
+        "f1": 0.4444,
+        "absence_guard": 0.1667,
+        "latency_score": 1.0,
+        "overall_score": 61.9
+      },
+      "failures": [
+        {
+          "case_id": "django-management-command",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "class:shop/management/commands/rebuild_index.py:Command",
+          "found": [
+            "class:shop/management/commands/rebuild_index.py:Command"
+          ]
+        },
+        {
+          "case_id": "django-management-command",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:shop/management/commands/rebuild_index.py:add_arguments",
+          "found": [
+            "function:shop/management/commands/rebuild_index.py:add_arguments"
+          ]
+        },
+        {
+          "case_id": "django-management-command",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:shop/management/commands/rebuild_index.py:handle",
+          "found": [
+            "function:shop/management/commands/rebuild_index.py:handle"
+          ]
+        },
+        {
+          "case_id": "django-management-command",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "variable:shop/management/commands/rebuild_index.py:args",
+          "found": [
+            "variable:shop/management/commands/rebuild_index.py:args"
+          ]
+        },
+        {
+          "case_id": "django-management-command",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "variable:shop/management/commands/rebuild_index.py:help",
+          "found": [
+            "variable:shop/management/commands/rebuild_index.py:help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "celery-task-entrypoints",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/celery_tasks",
+      "description": "Celery task decorators should keep worker functions alive while unregistered helpers are reported.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "celery",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0281,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 4,
+        "class": 1
+      },
+      "unlabeled_finding_count": 1,
+      "unlabeled_findings": [
+        "function:app.py:serialize"
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6667,
+        "absence_guard": 0.3333,
+        "latency_score": 1.0,
+        "overall_score": 71.67
+      },
+      "failures": [
+        {
+          "case_id": "celery-task-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:send_receipt",
+          "found": [
+            "function:app.py:send_receipt"
+          ]
+        },
+        {
+          "case_id": "celery-task-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:rebuild_rollups",
+          "found": [
+            "function:app.py:rebuild_rollups"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pytest-fixture-entrypoints",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/pytest_fixtures",
+      "description": "Pytest tests and fixtures are runtime entrypoints even when referenced through parameter injection.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "pytest",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0281,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 0.0,
+        "recall": 1.0,
+        "f1": 0.0,
+        "absence_guard": 0.6667,
+        "latency_score": 1.0,
+        "overall_score": 63.33
+      },
+      "failures": [
+        {
+          "case_id": "pytest-fixture-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:tests/test_orders.py:payload_fixture",
+          "found": [
+            "function:tests/test_orders.py:payload_fixture"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pydantic-validator-entrypoints",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/pydantic_validators",
+      "description": "Pydantic validators are framework-called methods while unrelated helpers are still reportable.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "pydantic",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0275,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "variable": 4,
+        "function": 3,
+        "class": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 3,
+      "false_positives": 5,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 0.375,
+        "recall": 1.0,
+        "f1": 0.5455,
+        "absence_guard": 0.2857,
+        "latency_score": 1.0,
+        "overall_score": 66.96
+      },
+      "failures": [
+        {
+          "case_id": "pydantic-validator-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:normalize_email",
+          "found": [
+            "function:app.py:normalize_email"
+          ]
+        },
+        {
+          "case_id": "pydantic-validator-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:ensure_domain",
+          "found": [
+            "function:app.py:ensure_domain"
+          ]
+        },
+        {
+          "case_id": "pydantic-validator-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "variable:app.py:cls",
+          "found": [
+            "variable:app.py:cls"
+          ]
+        },
+        {
+          "case_id": "pydantic-validator-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "variable:app.py:email",
+          "found": [
+            "variable:app.py:email"
+          ]
+        },
+        {
+          "case_id": "pydantic-validator-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "variable:app.py:name",
+          "found": [
+            "variable:app.py:name"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "alembic-migration-entrypoints",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/alembic_migration",
+      "description": "Alembic migration lifecycle functions and revision metadata are entrypoints; helper code can still be dead.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "alembic",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0285,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "class": 1,
+        "variable": 2,
+        "function": 3
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 4,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 0.3333,
+        "recall": 1.0,
+        "f1": 0.5,
+        "absence_guard": 0.0,
+        "latency_score": 1.0,
+        "overall_score": 60.0
+      },
+      "failures": [
+        {
+          "case_id": "alembic-migration-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:versions/20260425_add_orders.py:upgrade",
+          "found": [
+            "function:versions/20260425_add_orders.py:upgrade"
+          ]
+        },
+        {
+          "case_id": "alembic-migration-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:versions/20260425_add_orders.py:downgrade",
+          "found": [
+            "function:versions/20260425_add_orders.py:downgrade"
+          ]
+        },
+        {
+          "case_id": "alembic-migration-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "variable:versions/20260425_add_orders.py:revision",
+          "found": [
+            "variable:versions/20260425_add_orders.py:revision"
+          ]
+        },
+        {
+          "case_id": "alembic-migration-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "variable:versions/20260425_add_orders.py:down_revision",
+          "found": [
+            "variable:versions/20260425_add_orders.py:down_revision"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "importlib-plugin-loading",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/importlib_plugins",
+      "description": "String-based importlib plugin loading should keep loaded plugin hooks alive while stale plugin code is reported.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "plugin_loading",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0283,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2,
+        "class": 1,
+        "variable": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 4,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "package-entrypoints",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/package_entrypoints",
+      "description": "pyproject project.scripts entrypoints should keep CLI functions alive.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "package_entrypoint",
+        "cli_entrypoint",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0282,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 1
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 0.0,
+        "recall": 1.0,
+        "f1": 0.0,
+        "absence_guard": 0.5,
+        "latency_score": 1.0,
+        "overall_score": 60.0
+      },
+      "failures": [
+        {
+          "case_id": "package-entrypoints",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:bench/cli.py:main",
+          "found": [
+            "function:bench/cli.py:main"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "robot-programmatic-library",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/robot_programmatic_library",
+      "description": "A native Robot library decorator applied as a function retains its keyword and leaves an unregistered helper unused.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0283,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6667,
+        "absence_guard": 0.0,
+        "latency_score": 1.0,
+        "overall_score": 65.0
+      },
+      "failures": [
+        {
+          "case_id": "robot-programmatic-library",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:keywords.py:measure",
+          "found": [
+            "function:keywords.py:measure"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "robot-variable-object-methods",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/robot_variable_methods",
+      "description": "Robot variable expressions call the exact exported object method while unused helpers and another object remain reported.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0276,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "variable": 2,
+        "function": 3
+      },
+      "unlabeled_finding_count": 2,
+      "unlabeled_findings": [
+        "variable:values.py:OBJ",
+        "variable:values.py:OTHER"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 0.6667,
+        "recall": 1.0,
+        "f1": 0.8,
+        "absence_guard": 0.0,
+        "latency_score": 1.0,
+        "overall_score": 70.0
+      },
+      "failures": [
+        {
+          "case_id": "robot-variable-object-methods",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:values.py:render",
+          "found": [
+            "function:values.py:render"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "robot-variable-literal-control",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/robot_variable_literal",
+      "description": "Escaped Robot variable text, comments and a constant-false branch do not call an exported object method.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "framework_precision",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.027,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "variable": 1,
+        "function": 1
+      },
+      "unlabeled_finding_count": 1,
+      "unlabeled_findings": [
+        "variable:values.py:OBJ"
+      ],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 100.0
+      },
+      "failures": []
+    },
+    {
+      "id": "wildcard-provider-binding",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/wildcard_provider_binding",
+      "description": "A package consumer reads the exact wildcard-exported import binding without retaining an unrelated import of the same module.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0285,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {},
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 1,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 60.0
+      },
+      "failures": [
+        {
+          "case_id": "wildcard-provider-binding",
+          "failure_type": "expectation",
+          "mode": "unused",
+          "expected": "import:unrelated.py:settings",
+          "found": []
+        }
+      ]
+    },
+    {
+      "id": "finite-globals-dispatch",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/finite_globals_dispatch",
+      "description": "A reachable caller selects a literal callback name through globals without retaining an unselected callback.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0263,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 2
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "true_negatives": 1,
+      "scores": {
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6667,
+        "absence_guard": 0.5,
+        "latency_score": 1.0,
+        "overall_score": 75.0
+      },
+      "failures": [
+        {
+          "case_id": "finite-globals-dispatch",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:scale_a",
+          "found": [
+            "function:app.py:scale_a"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "finite-inherited-method-registry",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/finite_method_registry",
+      "description": "An inherited receiver dispatches through a finite tuple-valued method registry and leaves unrelated or unselected methods unused.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "elapsed_seconds": 0.0285,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 4
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 2,
+      "scores": {
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6667,
+        "absence_guard": 0.5,
+        "latency_score": 1.0,
+        "overall_score": 75.0
+      },
+      "failures": [
+        {
+          "case_id": "finite-inherited-method-registry",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:render_a",
+          "found": [
+            "function:app.py:render_a"
+          ]
+        },
+        {
+          "case_id": "finite-inherited-method-registry",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:render_b",
+          "found": [
+            "function:app.py:render_b"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "python-module-variable-same-name",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/python_module_variable_same_name",
+      "description": "A module variable nobody imports is unused even when other modules bind and read their own variable of the same name; imports, star imports, module attribute reads and namespace reads keep theirs.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "multi_file",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.0291,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {},
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 1,
+      "true_negatives": 5,
+      "scores": {
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 60.0
+      },
+      "failures": [
+        {
+          "case_id": "python-module-variable-same-name",
+          "failure_type": "expectation",
+          "mode": "unused",
+          "expected": "variable:lone.py:logger",
+          "found": []
+        }
+      ]
+    },
+    {
+      "id": "python-unnamed-receiver-methods",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/python_unnamed_receiver_methods",
+      "description": "Methods of an escaped instance that nothing in the project names are unused; literal and prefix lookups, names held as data, proxies, callbacks, protocol members, sibling implementations and instances handed outside the project keep theirs.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.0288,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 8,
+        "class": 1
+      },
+      "unlabeled_finding_count": 1,
+      "unlabeled_findings": [
+        "class:app.py:Sink"
+      ],
+      "true_positives": 2,
+      "false_positives": 6,
+      "false_negatives": 0,
+      "true_negatives": 4,
+      "scores": {
+        "precision": 0.25,
+        "recall": 1.0,
+        "f1": 0.4,
+        "absence_guard": 0.4,
+        "latency_score": 1.0,
+        "overall_score": 65.5
+      },
+      "failures": [
+        {
+          "case_id": "python-unnamed-receiver-methods",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:handle_open",
+          "found": [
+            "function:app.py:handle_open"
+          ]
+        },
+        {
+          "case_id": "python-unnamed-receiver-methods",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:_named_in_table",
+          "found": [
+            "function:app.py:_named_in_table"
+          ]
+        },
+        {
+          "case_id": "python-unnamed-receiver-methods",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:_flush",
+          "found": [
+            "function:app.py:_flush"
+          ]
+        },
+        {
+          "case_id": "python-unnamed-receiver-methods",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:write",
+          "found": [
+            "function:app.py:write"
+          ]
+        },
+        {
+          "case_id": "python-unnamed-receiver-methods",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:launch",
+          "found": [
+            "function:app.py:launch"
+          ]
+        },
+        {
+          "case_id": "python-unnamed-receiver-methods",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:describe",
+          "found": [
+            "function:app.py:describe"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "python-direct-call-parameters",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/python_direct_call_parameters",
+      "description": "An unread parameter of a private function that is defined once and only called directly is unused; callbacks, partials, variadics, public functions, string lookups, constant-return default hooks, alternative definitions, abstract implementations and overridden hooks keep theirs.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "basic_detection",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.03,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "variable": 10,
+        "function": 1
+      },
+      "unlabeled_finding_count": 11,
+      "unlabeled_findings": [
+        "function:app.py:_by_name",
+        "variable:app.py:args",
+        "variable:app.py:context",
+        "variable:app.py:extra",
+        "variable:app.py:factor",
+        "variable:app.py:kwargs",
+        "variable:app.py:meta",
+        "variable:app.py:options",
+        "variable:app.py:recorder",
+        "variable:app.py:reserved",
+        "variable:app.py:width"
+      ],
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 2,
+      "true_negatives": 10,
+      "scores": {
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "absence_guard": 1.0,
+        "latency_score": 1.0,
+        "overall_score": 60.0
+      },
+      "failures": [
+        {
+          "case_id": "python-direct-call-parameters",
+          "failure_type": "expectation",
+          "mode": "unused",
+          "expected": "parameter:app.py:factor",
+          "found": []
+        },
+        {
+          "case_id": "python-direct-call-parameters",
+          "failure_type": "expectation",
+          "mode": "unused",
+          "expected": "parameter:app.py:width",
+          "found": []
+        }
+      ]
+    },
+    {
+      "id": "string-named-backend-dispatch",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/string_named_backend_dispatch",
+      "description": "Method names a class builds as strings inside a method and a dispatcher calls through getattr(channel, name) stay alive; an unlisted sibling is reported.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.0291,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 4
+      },
+      "unlabeled_finding_count": 0,
+      "unlabeled_findings": [],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6667,
+        "absence_guard": 0.0,
+        "latency_score": 1.0,
+        "overall_score": 65.0
+      },
+      "failures": [
+        {
+          "case_id": "string-named-backend-dispatch",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:channels/video.py:_cli_read",
+          "found": [
+            "function:channels/video.py:_cli_read"
+          ]
+        },
+        {
+          "case_id": "string-named-backend-dispatch",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:channels/video.py:_cli_hot",
+          "found": [
+            "function:channels/video.py:_cli_hot"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "decorator-factory-registry",
+      "path": "/Users/oha/skylos/benchmarks/dead_code/fixtures/decorator_factory_registry",
+      "description": "Callbacks registered through a source-owned decorator factory are alive regardless of the factory's method name; a factory that does not store its argument registers nothing.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "elapsed_seconds": 0.0284,
+      "analysis_status": "complete",
+      "analysis_issues": [],
+      "scored": true,
+      "symbol_identity": "simple",
+      "findings_by_kind": {
+        "function": 4,
+        "variable": 1
+      },
+      "unlabeled_finding_count": 1,
+      "unlabeled_findings": [
+        "variable:routes.py:name"
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 1,
+      "true_negatives": 0,
+      "scores": {
+        "precision": 0.5,
+        "recall": 0.6667,
+        "f1": 0.5714,
+        "absence_guard": 0.0,
+        "latency_score": 1.0,
+        "overall_score": 51.67
+      },
+      "failures": [
+        {
+          "case_id": "decorator-factory-registry",
+          "failure_type": "expectation",
+          "mode": "unused",
+          "expected": "parameter:routes.py:name",
+          "found": []
+        },
+        {
+          "case_id": "decorator-factory-registry",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:_encode_upper",
+          "found": [
+            "function:app.py:_encode_upper"
+          ]
+        },
+        {
+          "case_id": "decorator-factory-registry",
+          "failure_type": "expectation",
+          "mode": "used",
+          "expected": "function:app.py:_encode_hex",
+          "found": [
+            "function:app.py:_encode_hex"
+          ]
+        }
+      ]
+    }
+  ]
+}

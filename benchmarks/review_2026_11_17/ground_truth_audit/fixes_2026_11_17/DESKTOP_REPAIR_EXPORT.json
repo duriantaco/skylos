@@ -1,0 +1,9 @@
+{
+  "desktop_primary": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/confirmed_results.md",
+  "desktop_primary_sha256": "80325d0c46d0a0eb845d123c4d21a640cd98e272832bdc7fa6df48676cedab51",
+  "before_source_preserved": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/source_audit_snapshot",
+  "after_source": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/source_repair_snapshot",
+  "bundled_go_sha256": "3865e4716c344400c8b1d1e37fe8464d89de6084c70b16cbfd335e525dbdc907",
+  "raw_archive": "/Users/oha/Desktop/skylos-benchmark-2026-11-14/review_2026_11_17/report",
+  "third_party_execution": false
+}

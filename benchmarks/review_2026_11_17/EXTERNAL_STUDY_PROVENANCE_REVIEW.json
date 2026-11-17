@@ -1,0 +1,122 @@
+{
+  "reviewer": "/root/corpus_inventory",
+  "mode": "read_only_provenance_check_not_execution_or_independent_result_adjudication",
+  "audited_at_utc": "2026-11-17T00:35:06.303485+00:00",
+  "artifact_authorship": "Concurrent externally authored workspace artifacts; tree-local /root and agent names in their metadata are not claims of authorship by this current review team.",
+  "draft_hash_checks": [
+    {
+      "file": "benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_PYTHON_DRAFT.json",
+      "recorded_sha256": "8d42f17d8d7ebde3d6bce53b8e002c007265e0f804a6a58a4c686e78d556dd63",
+      "actual_sha256": "8d42f17d8d7ebde3d6bce53b8e002c007265e0f804a6a58a4c686e78d556dd63",
+      "matches": true
+    },
+    {
+      "file": "benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_TYPESCRIPT_DRAFT.json",
+      "recorded_sha256": "98aca5cf07106c98276d48b0575027f1c056dce2836c2545c495bb466ac20cf7",
+      "actual_sha256": "98aca5cf07106c98276d48b0575027f1c056dce2836c2545c495bb466ac20cf7",
+      "matches": true
+    },
+    {
+      "file": "benchmarks/review_2026_11_17/ground_truth_audit/SOURCE_LABELS_GOJI_DRAFT.json",
+      "recorded_sha256": "fdd9850dd09eb0f3f54c320132ac59fc5690d3575022591bebaf4a14e3b3828c",
+      "actual_sha256": "fdd9850dd09eb0f3f54c320132ac59fc5690d3575022591bebaf4a14e3b3828c",
+      "matches": true
+    }
+  ],
+  "current_checkout_checks": [
+    {
+      "id": "jfhbrook--pyee",
+      "declared_revision": "be2025fc579a033326157dd41b5ad1f319d7d827",
+      "actual_revision": "be2025fc579a033326157dd41b5ad1f319d7d827",
+      "revision_matches": true,
+      "declared_reviewed_files": 24,
+      "hash_mismatches": [],
+      "git_status": ""
+    },
+    {
+      "id": "pallets-eco--blinker",
+      "declared_revision": "c3364059663df1ddce32799d6b1922af89a345f6",
+      "actual_revision": "c3364059663df1ddce32799d6b1922af89a345f6",
+      "revision_matches": true,
+      "declared_reviewed_files": 15,
+      "hash_mismatches": [],
+      "git_status": ""
+    },
+    {
+      "id": "lukeed--regexparam",
+      "declared_revision": "d05da2631beb7c5620774dae207cb09c7cbf24cc",
+      "actual_revision": "d05da2631beb7c5620774dae207cb09c7cbf24cc",
+      "revision_matches": true,
+      "declared_reviewed_files": 11,
+      "hash_mismatches": [],
+      "git_status": ""
+    },
+    {
+      "id": "lukeed--trouter",
+      "declared_revision": "c5176edd1cd94b439a341c6b009f2f7b3d42d5a6",
+      "actual_revision": "c5176edd1cd94b439a341c6b009f2f7b3d42d5a6",
+      "revision_matches": true,
+      "declared_reviewed_files": 12,
+      "hash_mismatches": [],
+      "git_status": ""
+    },
+    {
+      "id": "goji--goji",
+      "declared_revision": "490b001d03d16a116d7c44d95d216c69a1aae798",
+      "actual_revision": "490b001d03d16a116d7c44d95d216c69a1aae798",
+      "revision_matches": true,
+      "declared_reviewed_files": 32,
+      "hash_mismatches": [],
+      "git_status": ""
+    }
+  ],
+  "python": {
+    "draft_author": "python_truth",
+    "independent_reviewer": "/root",
+    "review_record_at": "2026-11-17T00:21:08.963165+00:00",
+    "frozen_at": "2026-11-17T00:21:14.750283+00:00",
+    "scan_started_at": "2026-11-17T00:21:14.779642+00:00",
+    "frozen_label_hash_matches_receipt": true,
+    "frozen_repositories_equal_draft_repositories": true,
+    "raw_scans_recorded": 8,
+    "scope": "Receipt records scanner commands/return codes/output hashes. No target execution asserted."
+  },
+  "javascript": {
+    "author": "/root/ts_truth",
+    "freeze_reviewer": "/root",
+    "frozen_at": "2026-11-17T00:21:49.908718+00:00",
+    "frozen_equals_draft": true,
+    "label_hash_matches_run_result": true,
+    "run_start_timestamp_present": false,
+    "scope": "Runner source creates freeze receipt before scan calls and verifies source hashes; result carries label hash. Author-asserted review approval is not an external signed attestation."
+  },
+  "go": {
+    "author": "/root/other_truth",
+    "independent_reviewer": "/root",
+    "frozen_at": "2026-11-17T00:21:43.031540+00:00",
+    "frozen_hash_matches_receipt": true,
+    "frozen_equals_draft": true,
+    "run_metadata_has_label_hash": false,
+    "run_metadata_has_absolute_start": false,
+    "scope": "Freeze asserts prior independent review; run metadata records tool commands/durations/binary hash but does not bind label-file hash or absolute run start. Freeze-before-run ordering is not independently machine-proven by these receipts alone."
+  },
+  "final_provenance_file_present": true,
+  "conclusion": "Can link as a separate externally authored study with its own claims and limitations. Current file hashes and selected receipt links validate internal consistency; this check did not run tools, independently re-adjudicate all labels/results, or establish historical no-prior-scan freshness. Do not merge its execution counts into our own run claims.",
+  "limits": [
+    "Timestamp and reviewer fields are self-reported local metadata, not cryptographic identity/order attestations.",
+    "JS related projects are not independent random samples; real security positives remain absent per external report.",
+    "Go test-only positives are outside default Skylos extraction; compare scopes separately.",
+    "FINAL_PROVENANCE.json appeared during this audit and its listed hashes were checked; see final_seal_followup. The earlier absence was transient."
+  ],
+  "final_seal_followup": {
+    "checked_at_utc": "2026-11-17T00:36:56.200184+00:00",
+    "file": "benchmarks/review_2026_11_17/ground_truth_audit/FINAL_PROVENANCE.json",
+    "sha256": "a2196f49690d29329ac58e9048675bb2e04ed143a1d959a5ce6591e7ed5b26ae",
+    "declared_finished_utc": "2026-11-17T00:35:39.212439+00:00",
+    "artifact_hashes_checked": 315,
+    "artifact_mismatches": [],
+    "source_hashes_checked": 9,
+    "source_mismatches": [],
+    "note": "Final seal appeared after initial read-only check; it does not retroactively provide missing per-run start/label-binding fields."
+  }
+}

@@ -1,8 +1,49 @@
 # Remaining corpus and capability gaps
 
+The [completed detector repairs](review_2026_11_17/ground_truth_audit/confirmed_results.md)
+supersede the audit-only status below. Corrected default dead code now has
+TP300/FP0/FN0/TN469, security TP150/FP0/FN0/TN140; both challenge suites pass.
+Source-confirmed callback, dispatch, identity/extraction, CI, Dart/Kotlin/Go
+security and PHP reachability gaps are repaired with paired controls. Historical
+descriptions below document original gaps, not continuing failures. Broader
+coverage and real-repository security-positive labels remain separate needs.
+
 This inventory separates missing benchmark evidence from missing detectors.
 It records the state reviewed in November 2026. A unit test, shared synthetic
 corpus and independent repository holdout answer different questions.
+
+The [source-reviewed audit](review_2026_11_17/ground_truth_audit/confirmed_results.md)
+adds five fresh source-labelled repositories and competitor reruns. Its
+three-label correction manifest exposes **three additional Skylos misses**
+(two JS files whose paths reach a no-op helper and an unreachable Python
+backend): TP290/FP1/FN10/TN468. The original manifest remains unchanged.
+Only 17/44 Vulture and 6/28 Knip legacy FP labels were confirmed directly;
+other mismatches include incorrect labels, retention policies and unresolved
+framework contracts. These columns are not independent tool precision.
+
+New concrete gaps are receiver-proven callback decorators (Pyee), bounded CI
+runner expressions (Blinker), Go package/build definition identity, excluded
+Go test methods, and missing JS variable extraction. The linked report gives
+safe/unsafe or used/unused counterexamples needed before suppressing warnings.
+Exact-location security labels and nine new paired controls now work; most
+default security labels still use legacy rule-only matching. F1 arithmetic and
+Bandit pickle/eval matching are corrected. Real-repository security positives
+remain insufficient to measure recall.
+
+The [73-fact reviewed follow-up](review_2026_11_17/confirmed_results.md) now
+confirms two Slim callback false positives (fixed), two unused PHP imports
+(still detected), and one conditional tiny-http example security miss (retained).
+All labels were independently checked and frozen before scored reruns; the
+previously explored cohort is not a new blind study. All 538 existing regression
+cases retain their prior expectations after the PHP correction.
+
+Explicit Go SDK discovery restores the earlier seven default misses with the
+same binary, so they are an environment/completeness-reporting issue, not seven
+remaining detector defects. The two challenge suites retain their failures.
+The [complete inventory](review_2026_11_17/CORPUS_INVENTORY.md) and exact all-language
+[dead-code](review_2026_11_17/DEAD_CODE_GAP_EVIDENCE.md) / [security](review_2026_11_17/SECURITY_GAP_EVIDENCE.md)
+matrices give source, test and manifest evidence. Unsupported, unknown and
+missing-extraction outcomes receive no pass credit.
 
 | Area | Evidence we have | Gap and next useful contract |
 | --- | --- | --- |

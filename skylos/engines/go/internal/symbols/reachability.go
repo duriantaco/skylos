@@ -89,6 +89,7 @@ func markPackageFunctionReachability(defs map[string]*Def, files []reachabilityF
 	}
 	checkedPkg, err := conf.Check(importPath, fset, asts, info)
 	if err != nil {
+		markPartialLiveTestHelpers(defs, files, info)
 		return nil, false
 	}
 
