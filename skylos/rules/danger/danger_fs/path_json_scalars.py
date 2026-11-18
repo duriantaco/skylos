@@ -533,8 +533,28 @@ class JSONScalarProof:
             ) and self._unpacked_native(unit, owner, binding, env, active)
         if binding.kind != "assign" or owner.kind not in {"function", "lambda"}:
             return False
-        if not binding.top_level or binding.node.end_lineno >= node.lineno:
+        if binding.node.end_lineno >= node.lineno:
             return False
+        if not binding.top_level:
+            block = unit.parents.get(id(binding.node))
+            # Only normal completion of this single assignment can reach
+            # the later use. A handler that resumes could supply other data.
+            if not (
+                owner.kind == "function"
+                and len(owner.binds[node.id]) == 1
+                and isinstance(binding.node, ast.Assign)
+                and len(binding.node.targets) == 1
+                and isinstance(binding.node.targets[0], ast.Name)
+                and isinstance(block, ast.Try)
+                and block in owner.node.body
+                and block.body == [binding.node]
+                and block.end_lineno < node.lineno
+                and not block.finalbody
+                and not block.orelse
+                and block.handlers
+                and all(isinstance(h.body[-1], (ast.Return, ast.Raise)) for h in block.handlers)
+            ):
+                return False
         return self._stable_storage(
             unit, owner, node.id, binding.value
         ) and self.native(unit, binding.scope, binding.value, env, active)

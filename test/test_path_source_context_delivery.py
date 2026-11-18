@@ -795,6 +795,69 @@ def test_native_json_dictionary_in_reader_tuple_retains_scalar_domain(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("decoder", "on_error", "safe"),
+    [
+        ("json.loads(text)", "return None", True),
+        ("json.loads(text, parse_int=foreign.number)", "return None", False),
+    ],
+)
+def test_try_decoded_integer_filename_requires_a_single_native_source(
+    tmp_path, decoder, on_error, safe
+):
+    source = f"""import json
+from pathlib import Path
+def read(text):
+    try:
+        payload = {decoder}
+    except ValueError:
+        {on_error}
+    value = payload.get("id")
+    if not isinstance(value, int):
+        return None
+    return Path(f"/srv/reports/{{value}}.json").read_text()
+read(input())
+"""
+    visible, suppressed = _scan(tmp_path, {"app.py": source})
+    if safe:
+        _quiet(visible, suppressed, "SKY-D215", "read")
+    else:
+        _kept(visible, suppressed, "SKY-D215", "read")
+    _kept(visible, suppressed, "SKY-D325", "read")
+
+
+@pytest.mark.parametrize(
+    "decode_block",
+    [
+        "try:\n    payload = json.loads(text)\nexcept ValueError:\n    if flag:\n        return None",
+        "try:\n    payload = json.loads(text)\nexcept ValueError:\n    payload = other",
+        "try:\n    payload = json.loads(text)\nexcept ValueError:\n    return None\nfinally:\n    payload = other",
+        "if flag:\n    try:\n        payload = json.loads(text)\n    except ValueError:\n        return None",
+        "try:\n    payload = json.loads(text)\nexcept ValueError:\n    return None\npayload = other",
+        "try:\n    payload = json.loads(text)\nexcept ValueError:\n    return None\nalias = payload\nalias.update(other)",
+        "try:\n    foreign.payload = payload = json.loads(text)\nexcept ValueError:\n    return None",
+    ],
+)
+def test_try_decoded_source_rejects_alternative_control_or_mutation(tmp_path, decode_block):
+    import ast
+    from textwrap import indent
+
+    from skylos.rules.danger.danger_fs.path_json_scalars import JSONScalarProof
+
+    file = tmp_path / "app.py"
+    file.write_text(
+        "import json\ndef read(text, other, flag):\n"
+        + indent(decode_block, "    ")
+        + "\n    return payload\n"
+    )
+    project = path_provenance._Project.load(tmp_path, None, True)
+    unit = project.by_path[file.resolve()]
+    use = next(node for node in ast.walk(unit.tree)
+               if isinstance(node, ast.Name) and isinstance(unit.parents.get(id(node)), ast.Return))
+    proof = JSONScalarProof(path_provenance._Tracer(project, "SKY-D215"))
+    assert not proof.native(unit, unit.scope_of(use), use)
+
+
+@pytest.mark.parametrize(
     "change",
     [
         ("json.loads(text)", "json.loads(text, parse_int=foreign.number)"),
