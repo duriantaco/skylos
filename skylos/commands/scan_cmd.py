@@ -1856,7 +1856,7 @@ def _run_scan_command(
                 return receipt, 2
             formatted_destination = _resolve_upload_destination(project_root)
             if _refuse_mismatched_upload(None, formatted_destination):
-                receipt = {"status": "skipped", "reason": "project_repository_mismatch"}
+                receipt = {"status": "skipped", "reason": formatted_destination.refusal_reason}
                 if not defer_exit:
                     raise SystemExit(1)
                 return receipt, 1
