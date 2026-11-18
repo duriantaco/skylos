@@ -644,7 +644,10 @@ def test_clock_and_integer_values_are_safe(tmp_path):
     )
     result = _scan(root)
     assert _reported(result, "_snapshot") == {}
-    assert _reported(result, "_read_pid") == {}
+    # Numeric shape proves traversal only; generic source cannot attest a
+    # native procfs mount or ownership/regular-file bounds for the later read.
+    assert _status(_reported(result, "_read_pid")["SKY-D325"]) == "unknown"
+    assert "SKY-D215" not in _reported(result, "_read_pid")
     assert _status(_suppressed(result, "_snapshot")["SKY-D324"]) == "safe"
 
 

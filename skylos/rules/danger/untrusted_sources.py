@@ -407,7 +407,7 @@ def _argument_parser_names(
 ) -> set[str]:
     """Names whose assignments all construct a proven argparse parser."""
     assigned: dict[str, bool] = {}
-    factory_receivers: set[str] = set()
+    direct_constructors: dict[str, ast.AST] = {}
     for node in body:
         value, targets = _assign_parts(node)
         if value is None or not targets:
@@ -420,23 +420,61 @@ def _argument_parser_names(
         is_factory = callee in parser_factories and not value.args and not value.keywords
         for target in targets:
             assigned[target] = assigned.get(target, True) and (is_parser or is_factory)
-            if is_factory:
-                factory_receivers.add(target)
+            if is_parser:
+                direct_constructors[target] = value
     # A factory result is new proof, so decline it if the parser escapes or
     # gets configured/replaced after construction. Explicit argv/namespace
     # remains unknown here: it can come from an HTTP caller, not the process.
-    if factory_receivers and scope is not None:
+    for name, constructor in direct_constructors.items():
+        probe = ast.parse("def _parser(): pass").body[0]
+        probe.body = [
+            ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=constructor),
+            ast.Return(value=ast.Name(id=name, ctx=ast.Load())),
+        ]
+        if not _plain_parser_factory(
+            probe, import_bindings, getattr(parser_factories, "values", {}),
+            scalar_types=getattr(parser_factories, "scalar_types", ()),
+            native=getattr(parser_factories, "native", None),
+        ):
+            assigned[name] = False
+    if assigned and scope is not None:
         parents = {
             id(child): parent for parent in ast.walk(scope)
             for child in ast.iter_child_nodes(parent)
         }
         for node in ast.walk(scope):
-            if not isinstance(node, ast.Name) or node.id not in factory_receivers:
+            if not isinstance(node, ast.Name) or node.id not in assigned:
                 continue
             if not isinstance(node.ctx, ast.Load):
                 continue
             parent = parents.get(id(node))
             call = parents.get(id(parent))
+            if (
+                node.id in direct_constructors
+                and isinstance(parent, ast.Attribute)
+                and parent.attr == "add_argument"
+                and isinstance(call, ast.Call)
+                and call.func is parent
+            ):
+                # Native parser identity alone does not certify custom Action,
+                # type or default callbacks. Reuse the factory's finite plain
+                # configuration contract for each direct-parser argument.
+                probe = ast.parse("def _parser(): pass").body[0]
+                probe.body = [
+                    ast.Assign(
+                        targets=[ast.Name(id=node.id, ctx=ast.Store())],
+                        value=direct_constructors[node.id],
+                    ),
+                    ast.Expr(value=call),
+                    ast.Return(value=ast.Name(id=node.id, ctx=ast.Load())),
+                ]
+                if not _plain_parser_factory(
+                    probe, import_bindings, getattr(parser_factories, 'values', {}),
+                    scalar_types=getattr(parser_factories, 'scalar_types', ()),
+                    native=getattr(parser_factories, 'native', None),
+                ):
+                    assigned[node.id] = False
+                continue
             if not (
                 isinstance(parent, ast.Attribute) and parent.attr == "parse_args"
                 and isinstance(call, ast.Call) and call.func is parent
@@ -446,7 +484,7 @@ def _argument_parser_names(
     return {name for name, is_parser in assigned.items() if is_parser}
 
 
-def _plain_parser_factory(func, bindings, module_values):
+def _plain_parser_factory(func, bindings, module_values, *, scalar_types=(), native=None):
     """Prove one bounded factory shape, without trusting its name/annotation.
 
     Custom actions/type callbacks, parser escapes, decorators and arbitrary
@@ -476,6 +514,8 @@ def _plain_parser_factory(func, bindings, module_values):
     canonical = f"{imported}.{tail}" if imported and tail else imported
     if canonical != "argparse.ArgumentParser":
         return False
+    if callable(native) and not native(canonical):
+        return False
     if not isinstance(statements[-1].value, ast.Name) or statements[-1].value.id != receiver:
         return False
 
@@ -492,6 +532,10 @@ def _plain_parser_factory(func, bindings, module_values):
             # without rebinding its name. Only immutable literal constants
             # are proof here; local literal choices/defaults are separate.
             return immutable_literal(resolved, depth + 1)
+        if callable(native) and isinstance(value, ast.Call):
+            from .parser_scalar_proof import operator_default
+
+            return operator_default(value, bindings, module_values, native)
         return False
 
     def immutable_literal(value, depth):
@@ -525,8 +569,11 @@ def _plain_parser_factory(func, bindings, module_values):
             if kw.arg == "type":
                 if not (
                     isinstance(kw.value, ast.Name)
-                    and kw.value.id in {"str", "int", "float", "bool"}
-                    and kw.value.id not in bindings
+                    and (kw.value.id in scalar_types or (
+                        kw.value.id in {"str", "int", "float", "bool"}
+                        and kw.value.id not in bindings
+                        and (not callable(native) or native("builtins." + kw.value.id))
+                    ))
                 ):
                     return False
             elif kw.arg is None or not plain(kw.value):
@@ -766,9 +813,8 @@ class _FunctionSources:
     def derived_names_in(self, expr: ast.AST) -> list[str]:
         names = []
         for sub in ast.walk(expr):
-            if isinstance(sub, ast.Name) and sub.id in self.origins:
-                if sub.id not in names:
-                    names.append(sub.id)
+            if isinstance(sub, ast.Name) and sub.id in self.origins and sub.id not in names:
+                names.append(sub.id)
         return names
 
 
@@ -777,13 +823,14 @@ class UntrustedSourceIndex:
 
     def __init__(
         self, module: ast.AST | None = None, *, follow_local_calls: bool = False,
-        prove_parser_factories: bool = False,
+        prove_parser_factories: bool = False, parser_native=None,
     ):
         self.module = module
         self.follow_local_calls = follow_local_calls
         # Opt-in: only the SSRF operator-source distinction consumes this
         # stronger parser proof. Other rule families retain their old facts.
         self.prove_parser_factories = prove_parser_factories
+        self._parser_native = parser_native
         self._parser_factories_cache: dict[int, frozenset[str]] = {}
         self._module_parser_factory_cache: frozenset[str] | None = None
         self._cache: dict[int, _FunctionSources] = {}
@@ -800,10 +847,14 @@ class UntrustedSourceIndex:
         cached = self._parser_factories_cache.get(key)
         if cached is not None:
             return cached
-        factories = set(self._module_parser_factories())
-        if not factories:
-            self._parser_factories_cache[key] = frozenset()
-            return frozenset()
+        contract = self._module_parser_factories()
+        factories = set(contract)
+        from .parser_scalar_proof import ParserContracts
+
+        if not factories and not isinstance(contract, ParserContracts):
+            result = ParserContracts(native=self._parser_native)
+            self._parser_factories_cache[key] = result
+            return result
         if func is not None:
             if self._parents is None:
                 self._parents = {
@@ -813,9 +864,15 @@ class UntrustedSourceIndex:
             current = func
             while current is not None and current is not self.module:
                 if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    factories.difference_update(_scope_bindings(current))
+                    bound = _scope_bindings(current)
+                    factories.difference_update(bound)
+                    if isinstance(contract, ParserContracts):
+                        contract = contract.narrowed(bound)
                 current = self._parents.get(id(current))
-        result = frozenset(factories)
+        result = (ParserContracts(
+            factories, scalar_types=contract.scalar_types, values=contract.values,
+            native=contract.native,
+        ) if isinstance(contract, ParserContracts) else frozenset(factories))
         self._parser_factories_cache[key] = result
         return result
 
@@ -886,22 +943,31 @@ class UntrustedSourceIndex:
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 for alias in node.names:
                     competing.add(alias.asname or alias.name.split('.', 1)[0])
-            if isinstance(node, ast.ExceptHandler) and node.name:
-                competing.add(node.name)
-            elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
                 competing.add(node.name)
             elif isinstance(node, ast.MatchMapping) and node.rest:
                 competing.add(node.rest)
         stable_values = {name: value for name, value in values.items() if name not in competing}
+        from .parser_scalar_proof import ParserContracts, scalar_callback
+
+        scalar_types = {
+            name for name, callback in definitions.items()
+            if name not in competing and scalar_callback(
+                callback, self._import_bindings_for(callback), self._parser_native
+            )
+        }
         factories = set()
         for name, factory in definitions.items():
             if name in competing:
                 continue
             local = _scope_bindings(factory)
             literals = {name: value for name, value in stable_values.items() if name not in local}
-            if _plain_parser_factory(factory, self._import_bindings_for(factory), literals):
+            if _plain_parser_factory(
+                factory, self._import_bindings_for(factory), literals,
+                scalar_types=scalar_types, native=self._parser_native,
+            ):
                 factories.add(name)
-        if factories:
+        if factories or scalar_types:
             parents = {
                 id(child): parent for parent in ast.walk(self.module)
                 for child in ast.iter_child_nodes(parent)
@@ -916,10 +982,27 @@ class UntrustedSourceIndex:
                     continue
                 parent = parents.get(id(node))
                 if node.id in definitions:
+                    if node.id in scalar_types and isinstance(parent, ast.keyword) and parent.arg == 'type':
+                        call = parents.get(id(parent))
+                        owner = call
+                        while owner is not None and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            owner = parents.get(id(owner))
+                        if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                                and call.func.attr == 'add_argument'
+                                and isinstance(call.func.value, ast.Name) and owner is not None):
+                            contracts = ParserContracts(factories, scalar_types=scalar_types,
+                                                        values=stable_values, native=self._parser_native)
+                            proven = _argument_parser_names(
+                                list(_module_level_nodes(owner)), self._import_bindings_for(owner),
+                                contracts, owner,
+                            )
+                            if call.func.value.id in proven:
+                                continue
                     if not (isinstance(parent, ast.Call) and parent.func is node):
                         # A function object exposes its module globals, so
                         # leaking even another helper invalidates all proofs.
                         factories.clear()
+                        scalar_types.clear()
                         break
                 if node.id not in protected:
                     continue
@@ -930,6 +1013,7 @@ class UntrustedSourceIndex:
                         and parent.attr in {'ArgumentParser', 'ArgumentTypeError'}
                     ):
                         factories.clear()
+                        scalar_types.clear()
                         break
                     referenced = parent
                     parent = parents.get(id(referenced))
@@ -937,8 +1021,12 @@ class UntrustedSourceIndex:
                     # Aliases, annotations and arguments can expose the
                     # constructor/module to code that replaces its behavior.
                     factories.clear()
+                    scalar_types.clear()
                     break
-        self._module_parser_factory_cache = frozenset(factories)
+        self._module_parser_factory_cache = ParserContracts(
+            factories, scalar_types=scalar_types, values=stable_values,
+            native=self._parser_native,
+        )
         return self._module_parser_factory_cache
 
     def _import_bindings_for(self, func: ast.AST | None) -> dict[str, str | None]:

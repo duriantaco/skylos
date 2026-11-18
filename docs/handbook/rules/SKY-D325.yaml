@@ -71,6 +71,10 @@ how_skylos_decides:
     Observed descriptor reads also count after a read/write open or exclusive
     create. Unknown or rebound flags retain both read and write checks.
   - >-
+    A descriptor used only for native metadata, locking, synchronization
+    and closure does not read contents. An actual read, unknown consumer,
+    descriptor escape or replaced provider keeps the content-read check.
+  - >-
     The path must be able to carry outside data: a tainted value (a
     function parameter, `request.*`, `input()`, `os.getenv()`), a string
     built with an f-string, `+`, `%` or `.format()`, or a name taken from

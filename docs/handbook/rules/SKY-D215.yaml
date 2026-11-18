@@ -181,8 +181,14 @@ how_skylos_decides:
     stays visible as a path-safety review, with the missing edge recorded.
     A chain cut off by a depth or size limit stays reported too.
   - >-
-    Does not report paths whose only source is the person running the
-    program: command-line arguments and environment variables.
+    Follows command-line arguments and environment values in their modeled
+    process contexts. A proven standalone operator source can be suppressed;
+    an HTTP caller forwarding a path to a worker remains untrusted.
+  - >-
+    Native unittest dispatch and temporary-directory lifetimes can establish
+    a safe caller context. A test filename, an unused helper or a custom
+    workspace name does not. Validated native JSON numeric components can
+    establish traversal safety without establishing read or write safety.
   - >-
     Accepts values that cannot carry `/` or `..`: `os.path.basename()`,
     `Path(...).name`, werkzeug `secure_filename()`, `safe_join()` with a
@@ -224,6 +230,8 @@ source_refs:
   - path: skylos/rules/danger/danger_fs/path_provenance.py
     symbol: "def resolve_helper_parameter_findings"
     note: callers of a helper; safe, unknown and incomplete chains.
+  - path: test/test_path_source_context_delivery.py
+    symbol: "def test_"
   - path: skylos/engines/go/internal/analyzer/analyzer.go
     symbol: "\"SKY-G215\""
   - path: skylos/visitors/languages/go/go.py

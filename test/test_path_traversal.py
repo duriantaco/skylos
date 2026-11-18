@@ -250,6 +250,7 @@ def write_result(key, part, data):
 
 
 def test_direct_cli_and_repo_root_paths_are_not_reported(tmp_path):
+    _write(tmp_path, "pyproject.toml", '[project]\nname="operator-project"\n')
     code = """
 import argparse
 import json
@@ -294,6 +295,7 @@ def main():
 
 
 def test_click_cli_parameter_path_is_not_reported(tmp_path):
+    _write(tmp_path, "pyproject.toml", '[project]\nname="operator-project"\n')
     code = """
 import click
 

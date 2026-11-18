@@ -186,3 +186,23 @@ def test_upload_transports_keep_path_reviews_and_leave_local_examples_local(
     assert "path_review" not in prepared.compatibility_payload["summary"]
     assert str(tmp_path) not in json.dumps(prepared.compatibility_payload)
     assert result == before
+
+
+@pytest.mark.parametrize("status", ["untrusted", "unknown", "incomplete"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_compact_upload_preserves_process_source_context(status, nested):
+    chain = [["routes.py:3 HTTP input", "worker.py:4 URL sink"]]
+    record = {
+        "status": status,
+        "source_kinds": ["cli", "environment"],
+        "reason": "the worker's source context still needs review",
+        **({"chains": {status: chain}} if nested else {status: chain}),
+    }
+    metadata = {"process_context": record}
+    before = copy.deepcopy(metadata)
+    result = api._compact_finding_metadata(metadata)["process_context"]
+    assert result["status"] == status
+    assert result[status] == chain
+    assert result["reason"] == record["reason"]
+    assert result["source_kinds"] == record["source_kinds"]
+    assert metadata == before

@@ -217,7 +217,7 @@ def _context_launch_gap(tracer, launch, kinds):
     return gaps
 
 
-def operator_launch_gap(tracer, facts):
+def _operator_launch_gap(tracer, facts):
     """Associate each operator source with relevant launch transports.
 
     Structured source records are independent of presentation text and its
@@ -282,3 +282,42 @@ def operator_launch_gap(tracer, facts):
         finally:
             active.discard(id(origin))
     return gaps
+
+
+def operator_launch_gap(tracer, facts):
+    """Reuse completed source summaries under the exact active process context.
+
+    Provisional caller fixpoints and limited results are never cached. Active
+    process origins are part of the semantic key: a cycle in one launch context
+    cannot become safety in another. Authority is independent of display chains.
+    """
+    from .path_provenance import INCOMPLETE, OPERATOR, _Facts
+
+    records = getattr(facts, "operator_origins", ())
+    if not facts.chains[OPERATOR] or not records or not getattr(facts, "operator_origins_complete", False):
+        return _operator_launch_gap(tracer, facts)
+    key = (
+        tracer.rule,
+        getattr(tracer, "_stdin_sink_scope", None),
+        getattr(facts, "operator_origins_complete", False),
+        tuple(sorted((id(unit), kind) for unit, kind in records)),
+        tuple(sorted(getattr(tracer, "_operator_launch_gaps_active", ()))),
+    )
+    settled = not tracer.depth_of and not tracer.pending
+    cache = getattr(tracer, "_operator_launch_gap_cache", None)
+    if cache is None:
+        cache = tracer._operator_launch_gap_cache = {}
+    if settled and key in cache:
+        return _Facts().add(cache[key])
+    limited = tracer.limited
+    result = _operator_launch_gap(tracer, facts)
+    if (
+        settled
+        and tracer.limited == limited
+        and not result.chains[INCOMPLETE]
+        and not tracer.depth_of
+        and not tracer.pending
+        and len(cache) < 512
+    ):
+        cache[key] = _Facts().add(result)
+    return result

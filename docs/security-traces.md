@@ -80,6 +80,19 @@ Custom openers, changed I/O providers and unresolved flag values do not
 inherit native atomic guarantees. An observed read through an exclusive
 update handle still receives the read check.
 
+Read and write direction are separate from link protection. Native optional
+non-access flags, such as `O_CLOEXEC` with a fallback of zero, can preserve a
+proven read-only mode; optional `O_NOFOLLOW` does not prove link protection.
+A descriptor used only for proven native metadata, locking or synchronization
+operations is not a content read. Actual reads, escaped descriptors, callbacks
+and uncertain providers retain the corresponding checks.
+
+Test filenames and unused helpers are not safety proofs. The caller trace can
+model native unittest dispatch and the lifetime of a native temporary directory,
+but custom workspaces, escaped objects and unresolved callbacks remain reviews.
+Likewise, a validated native JSON integer can establish a traversal-safe path
+component without establishing symlink or bounded-read safety.
+
 For modeled native Python subprocess launches, a fixed child `sys.argv`
 position follows the corresponding parent argument, with separate steps at
 the process boundary. An untrusted sibling argument does not taint a literal
@@ -94,6 +107,16 @@ and stdin transports are checked separately from argv. Unsupported parser
 fields, opaque execution options, provider mutations, dynamic imports and
 exhausted context budgets remain explicit reviews or incomplete traces.
 These are static models; the analysis never launches the child program.
+
+For SSRF source classification, native argparse construction is insufficient
+when actions, type callbacks or defaults can obtain remote data. Only finite
+source-proven scalar converters and native operator defaults inherit the
+operator-input classification. Unknown callbacks, explicit unproven argv,
+provider replacement and escaped parser capabilities remain candidates.
+HTTP-to-worker URL transports also retain SSRF findings: a worker's environment
+or argv is operator input only when its modeled launch context establishes it.
+`metadata.process_context` records known sources and unresolved boundaries and
+survives compact uploads with bounded chains.
 
 JSON stores `metadata.security_trace`. The existing semantic `metadata.security_evidence` packet remains unchanged. Located trace fields do not upgrade a finding to verified or refuted. SARIF uses the recorded per-step locations for code flows and keeps the trace in metadata; compact uploads also retain trace and receiver evidence. When the source-resolved walk finds no source but the detector recorded an untrusted chain (`metadata.sql_provenance`, `redirect_provenance` or `path_provenance`), the trace adds that chain as a `source` step and `propagation` steps (edge kind `provenance`) with their file, line and column. Python steps also carry `snippet`, the single source line at their location (at most 240 characters) with every string literal replaced by `<literal>` and comments removed; a step on a line a secret finding flags, or where credential redaction would apply, has no snippet. SARIF puts the snippet in each thread-flow location's `region.snippet`; the compact upload fallback keeps step locations without code and keeps the provenance chains.
 

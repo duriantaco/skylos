@@ -73,6 +73,11 @@ how_skylos_decides:
     `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_TRUNC` or `O_APPEND`. Unknown or
     rebound flags retain both read and write checks.
   - >-
+    Native optional non-access flags preserve proven access direction.
+    A read-only open does not become a write merely because a native
+    `O_CLOEXEC` or `O_NOFOLLOW` lookup has a fallback of zero. Unknown
+    flag names, replacements or escaped providers do not inherit that proof.
+  - >-
     The path must be able to carry outside data: a tainted value (a
     function parameter, `request.*`, `input()`, `os.getenv()`), a string
     built with an f-string, `+`, `%` or `.format()`, or a name taken from
@@ -110,7 +115,7 @@ source_refs:
     note: check-like names are observations, not atomic-open safety proofs.
   - path: skylos/rules/danger/danger_fs/path_flow.py
     symbol: "def _untrusted_path_evidence"
-    note: operator input is skipped; helper parameters go to the caller trace.
+    note: operator and helper inputs go to the caller trace.
   - path: skylos/rules/danger/danger_fs/path_provenance.py
     symbol: "def resolve_helper_parameter_findings"
   - path: skylos/rules/danger/danger_fs/atomic_open_proof.py
@@ -155,9 +160,9 @@ false_alarms_and_suppression:
       may change between the check and the operation. Use flags on that
       operation rather than relying on a check-like name elsewhere.
     - >-
-      A helper whose callers Skylos cannot resolve is moved to `suppressed`
-      as unknown instead of being reported; look there when a scan of part
-      of a project shows nothing.
+      A helper whose callers Skylos cannot resolve remains reported as
+      unknown. Inspect its recorded caller trace before deciding whether
+      deployment permissions or an unmodeled caller establish safety.
   suppress:
     - check: inline
       text: >-

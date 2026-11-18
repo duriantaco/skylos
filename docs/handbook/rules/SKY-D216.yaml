@@ -177,10 +177,19 @@ how_skylos_decides:
     `if urlparse(url).hostname not in ALLOWED_HOSTS: abort(400)` or
     `url.startswith("https://api.example.com/")`.
   - >-
-    Reports CRITICAL only when a real untrusted source reaches the URL: a
+    Reports CRITICAL when a modeled untrusted source reaches the URL: a
     route, MCP tool or command-dispatch argument, request data, `input()` or
-    standard input. A URL whose only source is a command-line argument or an
-    environment variable is the operator's choice and is not reported.
+    standard input. Command-line and environment sources are followed through
+    modeled process contexts. A proven standalone operator source is quiet;
+    an HTTP launcher forwarding the URL to a child remains reported. An
+    unresolved or incomplete context stays visible as a review, with its
+    original severity and bounded `metadata.process_context` evidence.
+  - >-
+    Native argparse identity alone does not certify an operator source.
+    Custom actions, unknown conversions, remote defaults, escaped callbacks
+    and changed parser or environment dependencies keep the source unresolved.
+    Only finite source-proven scalar callbacks and operator defaults inherit
+    the native parser contract.
   - >-
     TypeScript and JavaScript: request data in an Express, Fastify, Koa,
     NestJS or Next.js handler that reaches the URL of `fetch`, axios, got,
@@ -202,6 +211,10 @@ source_refs:
     symbol: "def _host_allowlist_guard_dominates"
   - path: skylos/rules/danger/danger_net/ssrf_flow.py
     symbol: "def _only_operator_sources"
+  - path: skylos/rules/danger/danger_net/ssrf_process_context.py
+    symbol: "class URLProcessContext"
+  - path: skylos/security/parser_contracts.py
+    symbol: "def native_parser_producer_is_intact"
   - path: skylos/visitors/languages/typescript/express_taint.py
     symbol: "SSRF: request data chooses the URL of the"
   - path: skylos/visitors/languages/typescript/danger.py

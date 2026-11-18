@@ -8,23 +8,11 @@ They do not establish ancestor containment; traversal analysis stays separate.
 from __future__ import annotations
 
 import ast
+from contextlib import contextmanager
 
+from .descriptor_effects import DescriptorEffects
+from .open_flag_facts import OpenFlagFacts
 from .path_open_modes import PathOpenModes
-
-_FLAGS = frozenset(
-    {
-        "O_RDONLY",
-        "O_WRONLY",
-        "O_RDWR",
-        "O_CREAT",
-        "O_TRUNC",
-        "O_APPEND",
-        "O_EXCL",
-        "O_NOFOLLOW",
-        "O_CLOEXEC",
-        "O_DIRECTORY",
-    }
-)
 
 
 def _argument(call, position, name):
@@ -47,47 +35,54 @@ class AtomicOpenProofs:
         self.modes = modes or PathOpenModes(tree)
         self.module = self.modes.module
         self.provider = provider
+        self.flag_facts = OpenFlagFacts(self.modes)
+        self.descriptors = DescriptorEffects(self.modes, provider)
+        self._operation = None
 
-    def _flags(self, node, native, budget, active=frozenset()):
-        budget[0] += 1
-        if node is None or node in active or budget[0] > self.MAX_EXPRESSIONS:
-            return None
-        active = active | {node}
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-            left = self._flags(node.left, native, budget, active)
-            right = self._flags(node.right, native, budget, active)
-            return left | right if left is not None and right is not None else None
-        for flag in sorted(_FLAGS):
-            if native(node, f"os.{flag}"):
-                return frozenset({flag})
-        if (
-            isinstance(node, ast.Constant)
-            and type(node.value) is int
-            and node.value == 0
-        ):
-            return frozenset()
-        if isinstance(node, ast.Name):
-            value = self.modes._binding(node)
-            if value is not None:
-                return self._flags(value, native, budget, active)
-        return None
+    @contextmanager
+    def operation(self, call):
+        """Reuse validation only during this call visit, never across calls."""
+        previous = self._operation
+        self._operation = [call, False, None]
+        try:
+            yield
+        finally:
+            self._operation = previous
+
+    def facts(self, call, native):
+        current = self._operation
+        if current is not None and current[0] is call:
+            if not current[1]:
+                current[2] = self.flag_facts.facts(call, native)
+                current[1] = True
+            return current[2]
+        return self.flag_facts.facts(call, native)
 
     def flags(self, call, native):
-        if not native(call.func, "os.open"):
-            return None
-        if any(isinstance(argument, ast.Starred) for argument in call.args) or any(
-            keyword.arg is None for keyword in call.keywords
-        ):
-            return None
-        return self._flags(_argument(call, 1, "flags"), native, [0])
+        facts = self.facts(call, native)
+        return (
+            facts.required
+            if facts is not None and facts.required == facts.possible
+            else None
+        )
 
     def nofollow(self, call, native):
-        flags = self.flags(call, native)
-        return flags is not None and "O_NOFOLLOW" in flags
+        facts = self.facts(call, native)
+        return facts is not None and "O_NOFOLLOW" in facts.required
 
     def exclusive(self, call, native):
-        flags = self.flags(call, native)
-        return flags is not None and {"O_CREAT", "O_EXCL"} <= flags
+        facts = self.facts(call, native)
+        return facts is not None and {"O_CREAT", "O_EXCL"} <= facts.required
+
+    def descriptor_metadata_only(self, call, native):
+        return self.facts(call, native) is not None and self.descriptors.metadata_only(
+            call, native
+        )
+
+    def uncertain_descriptor_read(self, call, native, canonical, handle_read):
+        return self.descriptors.uncertain_read(
+            call, native, canonical, self.modes.modes, handle_read
+        )
 
     def descriptor_read_observed(self, call, canonical, handle_read):
         """Recognize reads of this descriptor without granting any safety.

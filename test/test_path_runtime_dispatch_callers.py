@@ -92,6 +92,7 @@ def _resolve(tmp_path, extra):
         (Path(f["file"]).name, f["line"], f["metadata"]["path_provenance"]["status"])
         for f in kept
         if f["rule_id"] == "SKY-D215"
+        and Path(f["file"]).name == "storage.py"
     ]
     statuses = sorted(
         f["metadata"]["path_provenance"]["status"]
@@ -117,6 +118,13 @@ def test_dispatch_in_a_separate_program_leaves_the_proof_unknown_not_untrusted(
         for chain in row["metadata"]["path_provenance"]["unknown"]
     ]
     assert any("picks its target at run time" in step for step in chains)
+    # The runner's own dynamic execution also prevents attesting its native
+    # argv provider. Its operand remains a separate review candidate.
+    runner = [row for row in kept if Path(row["file"]).name == "runner.py"
+              and row["rule_id"] == "SKY-D215"]
+    assert runner
+    assert all(row["metadata"]["path_provenance"]["status"] == "unknown"
+               for row in runner)
 
 
 @pytest.mark.parametrize(

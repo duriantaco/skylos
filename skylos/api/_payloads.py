@@ -1,9 +1,8 @@
+import json
 from pathlib import Path
 from typing import Any
-import json
 
 from skylos.deadcode.finding_evidence import dead_code_finding_evidence_payload
-
 
 __all__ = [
     "_build_legacy_payload",
@@ -247,6 +246,32 @@ def _trace_step_locations(trace: Any) -> Any:
     return {**trace, "steps": steps}
 
 
+def _compact_process_context(record: Any) -> dict[str, Any] | None:
+    if not isinstance(record, dict):
+        return None
+    # Accept the bounded process model's nested chains and the standard
+    # provenance shape. Losing an unresolved source in a small upload would
+    # otherwise make a review look like an established remote-input finding.
+    chains = record.get("chains")
+    flattened = dict(record)
+    if isinstance(chains, dict):
+        flattened.update(
+            {kind: chains[kind] for kind in _PROVENANCE_CHAIN_KINDS if kind in chains}
+        )
+    compact = _compact_provenance(flattened) or {}
+    reason = _truncate_upload_text(record.get("reason"), 500)
+    if reason:
+        compact["reason"] = reason
+    kinds = record.get("source_kinds")
+    if isinstance(kinds, list):
+        compact["source_kinds"] = [
+            _truncate_upload_text(kind, 64)
+            for kind in kinds[:8]
+            if isinstance(kind, str)
+        ]
+    return compact or None
+
+
 def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
     if not isinstance(metadata, dict):
         return None
@@ -290,6 +315,9 @@ def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
         provenance = _compact_provenance(metadata.get(key))
         if provenance is not None:
             compact[key] = provenance
+    process = _compact_process_context(metadata.get("process_context"))
+    if process is not None:
+        compact["process_context"] = process
     for key in _REACHABILITY_KEYS:
         value = metadata.get(key)
         if isinstance(value, (bool, int)):

@@ -3,18 +3,15 @@
 Per-file path analysis keeps a finding when the only source is a parameter of
 a non-entrypoint function: a caller elsewhere might pass it untrusted input
 (see ``_PathFlowChecker._untrusted_path_evidence``). On a scan of a whole
-repository this module drops such a finding only when it sits in test code
-that no non-test file imports, names, configures or dynamically loads (a
-loader call whose module name, path or source is computed can load any
-module): test code is not deployed, so its values come from the tests.
-Comments in non-test files are not evidence: a comment can mention a module or
-a folder but never imports or loads one.
+repository this module establishes the scan boundary and sends each operation
+to caller provenance. A test filename or the absence of production imports
+does not prove the operation safe: callback escapes, custom workspaces and
+framework dispatch still require source evidence.
 
 Every other helper-parameter finding goes to ``path_provenance``, which
-resolves the helper's callers in the scanned source. It reports a finding
-only when a resolved caller passes untrusted input and records the steps; a
-caller it cannot resolve leaves the finding ``unknown``, which is not a claim
-of an attack or of safety. Dispatch by computed name, mutable module state,
+resolves the helper's callers in the scanned source. Proven-safe candidates
+are suppressed with their evidence. Untrusted, unknown and incomplete paths
+stay visible. Dispatch by computed name, mutable module state,
 CGI request variables and process launches with untrusted arguments are
 modelled there rather than assumed safe.
 """
@@ -159,10 +156,11 @@ def drop_closed_world_helper_findings(
 
     if not any(needs_provenance(f) for f in findings):
         return findings
-    candidates = [f for f in findings if is_helper_parameter_finding(f)]
     root = _closed_world_root(scan_path)
-    if root is not None and any(_in_test_code(root, f) for f in candidates):
-        findings = _drop_unreferenced_test_helpers(findings, root, suppressed)
+    # Test discovery and the absence of production imports do not prove the
+    # helper's paths safe: callbacks, test services and inherited directory
+    # permissions still matter. Use the same source/caller proof for each
+    # operation, including findings in test modules.
     return resolve_helper_parameter_findings(
         findings, scan_path=scan_path, project_root=root, suppressed=suppressed
     )

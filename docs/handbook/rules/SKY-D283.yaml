@@ -157,6 +157,12 @@ how_skylos_decides:
     not reject with 401 or 403 and uses no name such as `auth`, `token` or
     `login`.
   - >-
+    Excludes a source-proven read-only FastAPI handler only when native
+    scalar request inputs, every resolved delegate and the returned JSON
+    values have finite proofs. Stores, dispatch, opaque calls, escaped
+    receivers or module namespaces and altered HTTP dependencies retain
+    the route finding. A preview name or return annotation is not a proof.
+  - >-
     Reports the route only when its function name or path names a
     privileged action: control (`reboot`, `shutdown`, `arm`, `power` and
     similar), destructive (`delete`, `drop`, `purge`, `wipe` and similar,
@@ -176,6 +182,10 @@ source_refs:
   - path: skylos/rules/quality/practices.py
     symbol: "def open_unguarded_routes("
     note: the order of the checks.
+  - path: skylos/rules/quality/route_read_proof.py
+    symbol: "def source_read_only_route"
+  - path: skylos/security/framework_contracts.py
+    symbol: "def native_http_pipeline_is_intact"
   - path: skylos/rules/quality/_route_exposure.py
     symbol: "PRIVILEGED_ROUTE_WORDS = {"
   - path: skylos/rules/quality/_route_exposure.py

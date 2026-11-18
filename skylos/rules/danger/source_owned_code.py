@@ -62,7 +62,9 @@ _READ_ONLY_AST = frozenset(
 )
 _COPIES = frozenset({"copy.deepcopy", "copy.copy"})
 _SEQUENCES = frozenset({"list", "tuple", "iter", "reversed", "enumerate"})
-_READS = frozenset({"len", "hasattr", "repr", "bool", "any", "all", "str"})
+_READS = frozenset(
+    {"len", "hasattr", "repr", "bool", "any", "all", "str", "staticmethod", "classmethod"}
+)
 _EXCEPTIONS = frozenset({"AssertionError", "ValueError", "TypeError", "RuntimeError"})
 _BUILTIN_NAMES = frozenset(
     {"compile", "next", "isinstance", "getattr", "dict", "open", "input"}
@@ -482,6 +484,7 @@ class _Frame:
         self.escaped = False
         self.returns: list[object] = []
         self.candidates: set[int] = set()
+        self.source_namespaces: set[str] = set()
         self.owned_names: set[str] = set()
         self.leaked: set[str] = set()
         self.closure_loads: set[str] = set()
@@ -583,7 +586,7 @@ class _Proof:
         )
         saw_current = False
         project_written = set()
-        project_reads = set(self.used_attrs)
+        project_reads = set(self.used_attrs | self.used_globals)
         for path, tree in trees.items():
             own = os.path.realpath(path) == os.path.realpath(self.file)
             if own:
@@ -626,7 +629,7 @@ class _Proof:
                     )
             if audit.file_unsafe:
                 return False
-            project_reads.update(audit.used_attrs)
+            project_reads.update(audit.used_attrs | audit.used_globals)
         return saw_current and not project_reads & project_written
 
     def _source_path(self, kind):
@@ -1183,6 +1186,25 @@ class _Proof:
             return self._compile(frame, node)
         if name in _CODE_RUNNERS:
             return self._run_code(frame, node)
+        if name in {"staticmethod", "classmethod"}:
+            # A native descriptor can wrap a function exported by an already
+            # proved source-owned exec without calling that function. Keep the
+            # proof limited to a fresh local globals dict and a literal key;
+            # arbitrary wrapper arguments can still execute user protocols.
+            if self._positional(node, 1):
+                argument = node.args[0]
+                if (
+                    isinstance(argument, ast.Subscript)
+                    and isinstance(argument.value, ast.Name)
+                    and argument.value.id in frame.source_namespaces
+                    and frame.env.get(argument.value.id) is None
+                    and _is_str(argument.slice)
+                    and _fresh_mapping(argument.value, frame.function, self.counts)
+                ):
+                    self.used_attrs.add(name)
+                    self._value(frame, argument)
+                    return _DATA
+            return self._unknown_call(frame, node)
         if name == "next" and self._positional(node, 1):
             kind = self._value(frame, node.args[0])
             if kind in _NODES:
@@ -1304,6 +1326,15 @@ class _Proof:
         self._consume_rest(frame, node, {source})
         if frame.collect and kind in {_CODE, _TEXT} and id(node) in self.isolated:
             frame.candidates.add(id(node))
+        namespace = _argument(node, 1, "globals")
+        if (
+            not frame.escaped
+            and kind in {_CODE, _TEXT}
+            and id(node) in self.isolated
+            and isinstance(namespace, ast.Name)
+            and _fresh_mapping(namespace, frame.function, self.counts)
+        ):
+            frame.source_namespaces.add(namespace.id)
         return None
 
     def _library_call(self, frame, node, resolved):
@@ -1772,6 +1803,7 @@ class _Proof:
 
     def _assign(self, frame, target, kind, value=None):
         if isinstance(target, ast.Name):
+            frame.source_namespaces.discard(target.id)
             if target.id in frame.local_names:
                 frame.env[target.id] = kind
                 if kind in _NODES:

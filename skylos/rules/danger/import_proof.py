@@ -61,6 +61,7 @@ _IMMUTABLE_VALUES = {
     "os.O_RDWR",
     "os.O_TRUNC",
     "os.O_APPEND",
+    "os.O_NONBLOCK",
     "ssl.CERT_NONE",
     "ssl.CERT_OPTIONAL",
     "ssl.CERT_REQUIRED",
@@ -104,6 +105,13 @@ class _Effects:
         self.ref_work = 0
         self.stable_results = {}
         self.yaml_builtin_getattrs = None
+        self.flag_builtin_getattrs = None
+        self.optional_flag_reads = None
+        self.generic_builtin_refs = None
+        self.generic_dependencies = set()
+        self.generic_global_names = set()
+        self.generic_dependencies_checked = False
+        self.scalar_operator_results = {}
         self.value_bindings = {}
         self.iteration_bindings = {}
         self.parameter_bindings = set()
@@ -350,6 +358,8 @@ class _Effects:
     def refs(self, node, depth=0):
         if node is None:
             return set()
+        if isinstance(node, (ast.BinOp, ast.UnaryOp)) and self.scalar_operator_tree(node):
+            return set()
         self.ref_work += 1
         if depth > 32 or self.ref_work > 65536:
             self.complete = False
@@ -366,6 +376,10 @@ class _Effects:
             return values
         if isinstance(node, ast.Subscript):
             bases = self.refs(node.value, depth + 1)
+            if self.native_generic_subscription(node, bases):
+                # GenericAlias stores its arguments. Preserve capabilities in
+                # its result so assignment/return/opaque escape is still seen.
+                return bases | self.refs(node.slice, depth + 1)
             if self.native_argv_item(node, bases):
                 # A constant-index read of untouched native argv yields a
                 # string, not the mutable argv list or a provider capability.
@@ -471,6 +485,38 @@ class _Effects:
                 *(self.refs(value, depth + 1) for value in ast.iter_child_nodes(node))
             )
         return set()
+
+    def scalar_operator_tree(self, node):
+        """Literal numeric operators cannot carry a provider capability.
+
+        Do not evaluate them or apply this to user values/protocol dispatch.
+        A deep unrelated numeric expression must not exhaust provider tracing.
+        """
+        key = id(node)
+        if key in self.scalar_operator_results:
+            return self.scalar_operator_results[key]
+        pending = [node]
+        work = 0
+        result = True
+        while pending:
+            expression = pending.pop()
+            work += 1
+            if work > 4096:
+                result = False
+                break
+            if isinstance(expression, ast.Constant):
+                if type(expression.value) not in {int, float, complex, bool}:
+                    result = False
+                    break
+            elif isinstance(expression, ast.BinOp):
+                pending.extend((expression.left, expression.right))
+            elif isinstance(expression, ast.UnaryOp):
+                pending.append(expression.operand)
+            else:
+                result = False
+                break
+        self.scalar_operator_results[key] = result
+        return result
 
     def safe_reader(self, node):
         if isinstance(node, ast.Name) and node.id in _READ_BUILTINS:
@@ -611,7 +657,7 @@ class _Effects:
         )
 
     def safe_reader_call(self, node):
-        if self.safe_yaml_loader_getattr(node):
+        if self.safe_yaml_loader_getattr(node) or self.safe_optional_flag_getattr(node):
             return True
         if not self.safe_reader(node.func):
             return False
@@ -635,6 +681,37 @@ class _Effects:
             )
         return True
 
+    def safe_optional_flag_getattr(self, node):
+        """A literal native integer flag read does not expose the os module."""
+        if not (
+            isinstance(node, ast.Call)
+            and len(node.args) == 3
+            and not node.keywords
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+            and "os." + node.args[1].value in _IMMUTABLE_VALUES
+            and node.args[1].value.startswith("O_")
+            and isinstance(node.args[2], ast.Constant)
+            and type(node.args[2].value) is int
+            and node.args[2].value == 0
+            and self.refs(node.args[0]) == {"os"}
+            and self.canonical_reference(node.args[0])
+        ):
+            return False
+        if self.flag_builtin_getattrs is None:
+            self.flag_builtin_getattrs = builtin_references(self.nodes[0], {"getattr"})
+        return id(node.func) in self.flag_builtin_getattrs or (
+            self.refs(node.func) == {"builtins.getattr"}
+            and self.canonical_reference(node.func)
+        )
+
+    def has_optional_flag_reads(self):
+        if self.optional_flag_reads is None:
+            self.optional_flag_reads = any(
+                self.safe_optional_flag_getattr(node) for node in self.nodes
+            )
+        return self.optional_flag_reads
+
     def native_argv_item(self, node, bases=None):
         if not isinstance(node, ast.Subscript) or not isinstance(node.ctx, ast.Load):
             return False
@@ -647,6 +724,48 @@ class _Effects:
             and (self.refs(node.value) if bases is None else bases) == {"sys.argv"}
             and self.canonical_reference(node.value)
         )
+
+    def native_generic_subscription(self, node, bases=None):
+        """Only native builtin GenericAlias construction, not annotation trust.
+
+        The immutable builtin class records its arguments without dispatching
+        their protocols. Caller-level provider checks attest the builtin name
+        and any module binding which could shadow a bare builtin read.
+        """
+        if not isinstance(node, ast.Subscript) or not isinstance(node.ctx, ast.Load):
+            return False
+        names = {"dict", "list", "tuple", "set", "frozenset", "type"}
+        value = node.value
+        if isinstance(value, ast.Name) and value.id in names:
+            if self.generic_builtin_refs is None:
+                self.generic_builtin_refs = builtin_references(self.nodes[0], names)
+            if id(value) not in self.generic_builtin_refs:
+                return False
+            self.generic_dependencies.add("builtins." + value.id)
+            self.generic_global_names.add(value.id)
+            return True
+        references = self.refs(value) if bases is None else bases
+        if (
+            len(references) == 1
+            and next(iter(references)) in {"builtins." + name for name in names}
+            and self.canonical_reference(value)
+        ):
+            self.generic_dependencies.update(references)
+            root = value
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name):
+                self.generic_global_names.add(root.id)
+            return True
+        return False
+
+    def native_generic_dependencies(self):
+        if not self.generic_dependencies_checked:
+            for node in self.nodes:
+                if isinstance(node, ast.Subscript):
+                    self.native_generic_subscription(node)
+            self.generic_dependencies_checked = True
+        return self.generic_dependencies, self.generic_global_names
 
     def implicit_use_is_safe(self, node, sensitive, immutable_values=None):
         immutable_values = (
@@ -714,6 +833,8 @@ class _Effects:
                 for key, value in zip(node.keys, node.values)
             )
         if isinstance(node, ast.Subscript):
+            if self.native_generic_subscription(node):
+                return True
             if capability(node.slice):
                 return False
             if capability(node.value):
@@ -1009,6 +1130,8 @@ def _provider_effects(
         return False
     effects = _effects(tree)
     names = set(qualified_names)
+    generic_dependencies, _ = effects.native_generic_dependencies()
+    names.update(generic_dependencies)
     for symbol in local_symbols:
         head, separator, rest = symbol.partition(".")
         names.update(
@@ -1064,6 +1187,20 @@ def provider_binding_is_stable(qualified, tree, filename, project_root=None):
         return False
     if context is not None and qualified.split(".", 1)[0] in context.modules:
         return False
+    if qualified.split(".", 1)[0] == "os":
+        # The projection is valid only while the actual getter remains native
+        # across this source's import context, including imported patchers.
+        projected = (
+            [tree] if context is None else [parsed for _, parsed in context.entries]
+        )
+        if any(
+            (effects := _effects(parsed)) is not None
+            and effects.has_optional_flag_reads()
+            for parsed in projected
+        ) and not provider_binding_is_stable(
+            "builtins.getattr", tree, filename, project_root
+        ):
+            return False
     if project_provider_effects_are_stable(qualified, tree, filename, project_root):
         return True
     return provider_is_visibly_untampered(qualified, tree, filename, project_root)
@@ -2876,7 +3013,27 @@ def project_provider_effects_are_stable(qualified, tree, filename, project_root=
     context = project_import_context(tree, source, project_root)
     if context is None:
         return False
-    names = context.qualified_names(qualified)
+    names = set(context.qualified_names(qualified))
+    # Native GenericAlias construction is a read of its arguments, but only
+    # while its actual subscription provider and bare-name bindings are native.
+    # Resolve these dependencies in the same attested import context; do not
+    # trust the presence of annotation syntax or a builtin-looking spelling.
+    for path, parsed in context.entries:
+        effects = _effects(parsed)
+        if effects is None or not effects.complete:
+            return False
+        dependencies, global_names = effects.native_generic_dependencies()
+        for dependency in dependencies:
+            if (
+                dependency.split(".", 1)[0] in context.modules
+                or not provider_is_unshadowed(dependency, path, project_root)
+            ):
+                return False
+            names.update(context.qualified_names(dependency))
+        for module in context.names.get(path, ()):
+            if module:
+                names.update(module + "." + name for name in global_names)
+    names = frozenset(names)
     cached = context.provider_results.get(names)
     if cached is not None:
         return cached and all(

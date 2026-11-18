@@ -1903,6 +1903,10 @@ def open_unguarded_routes(
             continue
         if route_guard_possible(function, route_decorators, facts):
             continue
+        from skylos.rules.quality.route_read_proof import source_read_only_route
+
+        if source_read_only_route(module, function, filename, project_root):
+            continue
         paths = _route_paths(route_decorators)
         actions = route_actions(route_words(function, paths), methods)
         entry = {

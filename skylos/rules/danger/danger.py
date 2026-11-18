@@ -23,6 +23,7 @@ from .danger_llm.llm_flow import scan as scan_llm
 from .danger_ml.model_deserialization import scan as scan_ml_model_load
 from .danger_logging import scan as scan_secret_logging
 from .pickle_provenance import safe_pickle_loads
+from .source_owned_code import source_owned_code_calls
 from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
 from .callable_bindings import callable_names
 from .python_security_gaps import (
@@ -84,6 +85,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.assigned_calls_stack = [{}]
         self._parents_annotated = False
         self._safe_pickle_loads = set()
+        self._source_owned_code = frozenset()
         self._module = None
         self._unpickler_classes = {}
         self._safe_yaml_loaders = None
@@ -138,6 +140,9 @@ class _DangerousCallsChecker(ast.NodeVisitor):
 
     def visit_Module(self, node):
         self._safe_pickle_loads = safe_pickle_loads(node, self.file_path)
+        self._source_owned_code = source_owned_code_calls(
+            node, self.file_path, self._project_root
+        )
         self._module = node
         self._unpickler_classes = unrestricted_unpickler_classes(node)
         self._safe_yaml_loaders = None
@@ -201,6 +206,9 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     continue
 
                 if rule_key == "pickle.loads" and id(node) in self._safe_pickle_loads:
+                    continue
+
+                if rule_key in {"exec", "eval"} and id(node) in self._source_owned_code:
                     continue
 
                 if rule_key in {
@@ -715,7 +723,7 @@ def scan_file_with_tree(
         scan_sql(tree, file_path, findings, project_root=project_root)
         scan_cmd(tree, file_path, findings, project_root=project_root)
         scan_sql_raw(tree, file_path, findings)
-        scan_ssrf(tree, file_path, findings)
+        scan_ssrf(tree, file_path, findings, project_root=project_root)
         scan_path(tree, file_path, findings, project_root=project_root)
         scan_xss(tree, file_path, findings, project_root=project_root)
         scan_redirect(tree, file_path, findings, project_root=project_root)
@@ -742,7 +750,7 @@ def scan_file_with_tree(
     if _has_any(source_lower, _SQL_RAW_TOKENS):
         scan_sql_raw(tree, file_path, findings)
     if _has_any(source_lower, _SSRF_TOKENS):
-        scan_ssrf(tree, file_path, findings)
+        scan_ssrf(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _PATH_TOKENS) or _mentions_file_open(tree):
         scan_path(tree, file_path, findings, project_root=project_root)
     if _has_any(source_lower, _XSS_TOKENS):
@@ -838,6 +846,7 @@ def _scan_file(file_path: Path, findings, project_root=None):
 
 def scan_ctx(_, files):
     findings = []
+    files = list(files)
 
     for file_path in files:
         if file_path.suffix.lower() not in ALLOWED_SUFFIXES:
@@ -848,4 +857,31 @@ def scan_ctx(_, files):
         except Exception as e:
             print(f"Scan failed for {file_path}: {e}", file=sys.stderr)
 
+    # Admit operator operands before deciding whether their process context
+    # is trusted. Other helper candidates retain this API's raw review shape.
+    prospective = [
+        finding for finding in findings
+        if (finding.get("metadata") or {}).get("path_source") == "operator_context"
+    ]
+    if prospective:
+        from .danger_fs.closed_world import _closed_world_root
+        from .danger_fs.path_provenance import resolve_helper_parameter_findings
+
+        retained = resolve_helper_parameter_findings(
+            prospective, scan_path=files, project_root=_closed_world_root(_),
+            suppressed=[],
+        )
+        operator_ids = {id(finding) for finding in prospective}
+
+        def identity(finding):
+            return (finding.get("file"), finding.get("line"), finding.get("col"),
+                    finding.get("rule_id"), finding.get("symbol"))
+
+        resolved = {identity(finding): finding for finding in retained}
+        findings = [
+            resolved[identity(finding)]
+            if id(finding) in operator_ids else finding
+            for finding in findings
+            if id(finding) not in operator_ids or identity(finding) in resolved
+        ]
     return dedupe_findings(findings)

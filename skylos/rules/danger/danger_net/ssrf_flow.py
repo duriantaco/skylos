@@ -1,14 +1,19 @@
 from __future__ import annotations
+
 import ast
 import re
 import sys
 from collections import Counter
 from functools import cached_property
 from typing import NamedTuple
+
 from skylos.core.test_paths import is_test_source_file
 from skylos.rules.danger.module_namespace import module_name_for, module_rebinding
-from skylos.rules.danger.taint import TaintVisitor, URL_SANITIZERS
+from skylos.rules.danger.taint import URL_SANITIZERS, TaintVisitor
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
+from skylos.security.parser_contracts import native_parser_producer_is_intact
+
+from .ssrf_process_context import URLProcessContext
 from .url_scheme import audit_urlopen
 
 # ``scheme://host`` followed by a path/query/fragment delimiter: once a literal
@@ -759,14 +764,11 @@ def _dispatched_functions(tree) -> set[str]:
 
 
 def _only_operator_sources(labels):
-    # Deployment settings and process arguments are chosen by the operator.
-    # A separate request source still keeps the finding actionable.
-    return all(
-        label.startswith("`os.environ")
-        or label.startswith("`os.getenv")
-        or label.startswith("CLI arguments `")
-        or label.startswith("CLI parameter `")
-        or label.startswith("`sys.argv")
+    # These are candidate process-input labels. The caller separately proves
+    # their runtime process context; the labels never authorize suppression.
+    return bool(labels) and all(
+        label.startswith(("`os.environ", "`os.getenv", "CLI arguments `",
+                          "CLI parameter `", "`sys.argv"))
         for label in labels
     )
 
@@ -776,7 +778,7 @@ def _tainted_url_is_ssrf_relevant(checker, node):
         return False
     if _is_fixed_host_urljoin(node):
         return False
-    return checker.is_tainted(node) or bool(
+    return checker.is_tainted(node) or checker._setting_context(node) is not None or bool(
         checker.untrusted_sources.for_function(
             checker._current_function()
         ).sources_in(node)
@@ -881,7 +883,10 @@ class _SSRFFlowChecker(TaintVisitor):
         self.http_names: set[str] = set()
         self.http_receiver_alias_stack: list[set[str]] = [set()]
         self.untrusted_sources = UntrustedSourceIndex(
-            tree, follow_local_calls=True, prove_parser_factories=True
+            tree, follow_local_calls=True, prove_parser_factories=True,
+            parser_native=lambda qualified: native_parser_producer_is_intact(
+                qualified, tree, file_path, getattr(self, "project_root", None)
+            ),
         )
         self.assigned_values: list[dict[str, ast.AST]] = [{}]
         self.request_url_mutations: list[dict[str, list[ast.AST]]] = [{}]
@@ -902,6 +907,7 @@ class _SSRFFlowChecker(TaintVisitor):
         self._subtree_names: dict[int, frozenset[str]] = {}
         self._test_client_bindings: dict[tuple[int, str], bool] = {}
         self._test_client_attributes: dict[tuple[int, str], bool] = {}
+        self._setting_contexts = {}
         self._fixed_host_helpers: dict[int, bool] = {}
         self._fixed_host_locals: dict[tuple[int, str], bool] = {}
         self._orm_unit_of_work_memo: dict[tuple[int, str], bool] = {}
@@ -2027,6 +2033,112 @@ class _SSRFFlowChecker(TaintVisitor):
         """What a module-level dotted name is bound to by unambiguous imports."""
         return self.untrusted_sources.resolved_import(None, dotted)
 
+    def _input_context(self, operand):
+        context = getattr(self, "_url_process_context", None)
+        if context is None:
+            context = self._url_process_context = URLProcessContext(
+                self.tree, self.file_path, getattr(self, "project_root", None)
+            )
+            self._input_contexts = {}
+        key = id(operand)
+        if key not in self._input_contexts:
+            self._input_contexts[key] = context.inspect(operand)
+        return self._input_contexts[key]
+
+    @cached_property
+    def _has_process_settings(self):
+        return any(
+            _operator_lookup(part, self._resolve_module_name)[0]
+            for value in self._module_scope.values.values()
+            if value is not None
+            for part in ast.walk(value)
+            if isinstance(part, (ast.Subscript, ast.Call))
+        )
+
+    def _host_predecessors(self, expression, inside_setting):
+        """Expressions that can contribute to the authority of this URL."""
+        if isinstance(expression, ast.Name):
+            scope = self._binding_scope(expression.id, expression)
+            if scope is None:
+                value = self._module_scope.values.get(expression.id)
+                if value is not None:
+                    yield value, True
+                return
+            for binding in self._binding_nodes(scope, expression.id):
+                parent = self.parents.get(id(binding))
+                if (
+                    isinstance(binding, ast.Name)
+                    and isinstance(parent, (ast.Assign, ast.AnnAssign))
+                    and parent.value is not None
+                ):
+                    yield parent.value, inside_setting
+            return
+        if isinstance(expression, ast.Call) and isinstance(expression.func, ast.Name):
+            helper = self._module_function(expression.func.id)
+            if helper is None or self._name_is_local(
+                expression.func.id, expression.func
+            ):
+                values = expression.args
+            else:
+                values = (
+                    stmt.value
+                    for stmt in _walk_function_body(helper)
+                    if isinstance(stmt, ast.Return) and stmt.value is not None
+                )
+        elif isinstance(expression, ast.IfExp):
+            values = (expression.body, expression.orelse)
+        elif isinstance(expression, ast.BoolOp):
+            values = expression.values
+        else:
+            for index, part in enumerate(_concat_parts(expression) or ()):
+                literal = _constant_string(part)
+                if (
+                    index
+                    and literal
+                    and literal[0] in "/?#"
+                    and not literal.startswith("//")
+                ):
+                    break
+                value = _formatted_operand(part)
+                if value is not None:
+                    yield value, inside_setting
+            return
+        for value in values:
+            yield value, inside_setting
+
+    def _setting_context(self, expression):
+        """Check process-supplied module hosts even without local taint labels."""
+        if not self._has_process_settings:
+            return None
+        if expression in self._setting_contexts:
+            return self._setting_contexts[expression]
+        rank = {"untrusted": 3, "incomplete": 2, "unknown": 1, "operator": 0}
+        best = None
+        pending = [(expression, False)]
+        visited = set()
+        while pending:
+            node, inside = pending.pop()
+            if (node, inside) in visited:
+                continue
+            visited.add((node, inside))
+            if _has_constant_host(node):
+                continue
+            if inside and _operator_lookup(node, self._resolve_module_name)[0]:
+                record = self._input_context(node)
+            elif len(visited) >= 256:
+                record = URLProcessContext._failure(
+                    "module host source tracing reached its work limit"
+                )
+            else:
+                pending.extend(self._host_predecessors(node, inside))
+                continue
+            if best is None or rank[record["status"]] > rank[best["status"]]:
+                best = record
+            if record["status"] == "untrusted" or len(visited) >= 256:
+                break
+        self._setting_contexts[expression] = best
+        return best
+
     def _value_pins_host(self, node: ast.AST | None, depth: int) -> bool:
         """A module setting's value fixes ``scheme://host``: a literal URL with
         a host, an environment variable or CLI argument whose fallback (if any)
@@ -2436,6 +2548,9 @@ class _SSRFFlowChecker(TaintVisitor):
         call or a deployment setting is not SSRF on its own; require a real
         untrusted source (route/CLI/MCP-tool argument, request data, input(),
         argv, stdin) and a host that the literal prefix does not pin."""
+        record = self._setting_context(url_arg)
+        if record is not None and record["status"] != "operator":
+            return {"source": "process-supplied URL setting", "process_context": record}
         if self._url_has_fixed_host(url_arg):
             return None
         func = self._current_function()
@@ -2449,8 +2564,12 @@ class _SSRFFlowChecker(TaintVisitor):
         # Evidence packets show at most four labels. Decide from the complete
         # source set so a later request source cannot hide behind CLI inputs.
         sources = self.untrusted_sources.for_function(func).sources_in(url_arg)
-        if evidence is not None and not _only_operator_sources(sources):
-            return evidence
+        if evidence is not None:
+            if not _only_operator_sources(sources):
+                return evidence
+            record = self._input_context(url_arg)
+            if record["status"] != "operator":
+                return {**evidence, "process_context": record}
         name = getattr(func, "name", None)
         if name in self.dispatched_functions and super().is_tainted(url_arg):
             source = f"command-dispatch argument of `{name}`"
@@ -2485,6 +2604,26 @@ class _SSRFFlowChecker(TaintVisitor):
                 },
             }
         )
+        if source_evidence.get("process_context") is not None:
+            finding = self.findings[-1]
+            record = source_evidence["process_context"]
+            finding["metadata"]["process_context"] = record
+            evidence = finding["metadata"]["security_evidence"]
+            if record["status"] in {"unknown", "incomplete"}:
+                finding["message"] = "Needs review: SSRF safety is unresolved because the URL's process input is not proven operator-only."
+                source = "process URL input with unresolved origin"
+                evidence["evidence_kind"] = "python_ssrf_process_context_review"
+                evidence["confidence_reason"] = "The static process context remains unresolved; remote control of this URL is not established and operator-only origin is not proven."
+                evidence["test_hint"] = "Add static transport controls that distinguish operator input from remote launcher input."
+                evidence["fix_shape"] = "establish the process input's origin or validate and allowlist its URL host"
+                chains = record.get(record["status"], [])
+            else:
+                chains = record.get("untrusted", [])
+                source = chains[0][0] if chains and chains[0] else source_evidence["source"]
+            evidence["source"] = source
+            finding["metadata"]["untrusted_source"] = source
+            evidence["path"] = [source, *(chains[0][:12] if chains else []),
+                f"url expression `{_safe_expr_text(url_arg)}`", f"HTTP sink `{sink}`"]
 
     def visit_Call(self, node):
         qn = _qualified_name_from_call(node)
@@ -2541,11 +2680,12 @@ class _SSRFFlowChecker(TaintVisitor):
         self.generic_visit(node)
 
 
-def scan(tree, file_path, findings):
+def scan(tree, file_path, findings, *, project_root=None):
     try:
         checker = _SSRFFlowChecker(
             file_path, findings, sanitizers=URL_SANITIZERS, tree=tree
         )
+        checker.project_root = project_root
         checker.visit(tree)
     except Exception as e:
         print(f"SSRF flow analysis failed for {file_path}: {e}", file=sys.stderr)

@@ -139,6 +139,10 @@ class _HelperParameterEvidence(dict):
     complete repository scan (``closed_world``)."""
 
 
+class _OperatorContextEvidence(dict):
+    """A process input is a candidate until its actual launch context is traced."""
+
+
 _FROM_PARAMETER = (
     "the path comes from a function parameter whose callers are not visible"
 )
@@ -202,6 +206,13 @@ def _mark_helper_parameter(finding, evidence, path_expr=None):
         finding.setdefault("metadata", {})["path_source"] = HELPER_PARAMETER_SOURCE
         finding["message"] = _helper_parameter_message(
             finding["rule_id"], finding["message"]
+        )
+    elif isinstance(evidence, _OperatorContextEvidence):
+        finding.setdefault("metadata", {})["path_source"] = "operator_context"
+        finding["message"] = (
+            "Filesystem path review: the operand comes from process input; "
+            "its command-line, environment or working-directory launch context "
+            "must be checked before treating it as trusted."
         )
 
 
@@ -677,6 +688,7 @@ class _PathFlowChecker(TaintVisitor):
         self.path_open_modes = None
         self.atomic_open_proofs = None
         self._native_open_refs = frozenset()
+        self._native_getattr_refs = frozenset()
         self.update_handle_reads = None
         self._attribute_writes = (frozenset(), True)
         self._class_methods = ()
@@ -697,6 +709,7 @@ class _PathFlowChecker(TaintVisitor):
         self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
         self._builtin_string_refs = builtin_references(node, {"str"})
         self._native_open_refs = builtin_references(node, {"open"})
+        self._native_getattr_refs = builtin_references(node, {"getattr"})
         self._module_rebound = frozenset(bound_names(node))
         self._module_bindings = scope_bindings(node)
         self._module_import_aliases = module_level_imports(node)
@@ -1170,16 +1183,25 @@ class _PathFlowChecker(TaintVisitor):
             return False
         if isinstance(node, ast.Call) and self._is_filename_validator_call(node):
             return False
-        # The common taint visitor does not seed stdin readers. Keep them as
-        # candidates here so repository provenance can distinguish a local
-        # program's operator input from a web/tool application's input stream.
+        # Process inputs remain candidates until repository provenance checks
+        # their launcher. stdin also needs its existing application-context
+        # check rather than the local visitor's operator assumption.
         sources = self.untrusted_sources.for_function(
             self._current_function()
         ).sources_in(node)
-        if any("sys.stdin" in source for source in sources):
+        if any(
+            "sys.stdin" in source or _is_operator_source(source) for source in sources
+        ):
             return True
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
             return self.is_tainted(node.left) or self.is_tainted(node.right)
+        if isinstance(node, ast.BoolOp):
+            # A request model may be selected with ``payload or Default()``.
+            # Losing that arm here removes the sink before provenance can
+            # check the model's actual callers and string-domain guarantees.
+            return any(self.is_tainted(value) for value in node.values)
+        if isinstance(node, ast.IfExp):
+            return self.is_tainted(node.body) or self.is_tainted(node.orelse)
         if isinstance(node, ast.Subscript):
             # A remote key can select a path from a mutable mapping. Even a
             # literal module dictionary may be changed through another module
@@ -1676,6 +1698,11 @@ class _PathFlowChecker(TaintVisitor):
             return False
         if qualified == "builtins.open" and id(expression) in self._native_open_refs:
             resolved = qualified
+        elif (
+            qualified == "builtins.getattr"
+            and id(expression) in self._native_getattr_refs
+        ):
+            resolved = qualified
         else:
             if not self._import_names_are_stable(name):
                 return False
@@ -1842,14 +1869,11 @@ class _PathFlowChecker(TaintVisitor):
 
     def _os_open_directions(self, node):
         if self.atomic_open_proofs is not None:
-            native_flags = self.atomic_open_proofs.flags(
+            native_flags = self.atomic_open_proofs.facts(
                 node, self._native_atomic_expression
             )
             if native_flags is not None:
-                return (
-                    bool(native_flags & OS_OPEN_WRITE_FLAGS),
-                    not native_flags & {"O_WRONLY", "O_RDWR"},
-                )
+                return native_flags.directions()
         # Unknown providers and flags cannot establish either direction absent.
         return True, True
 
@@ -2024,6 +2048,8 @@ class _PathFlowChecker(TaintVisitor):
             return evidence
         if self._has_open_world_parameter(path_expr, facts):
             return _HelperParameterEvidence()
+        if all_sources and all(_is_operator_source(source) for source in all_sources):
+            return _OperatorContextEvidence(evidence or {})
         if evidence is None:
             return {}
         return None
@@ -2321,6 +2347,12 @@ class _PathFlowChecker(TaintVisitor):
             return False
 
     def visit_Call(self, node: ast.Call):
+        if self.atomic_open_proofs is None:
+            return self._visit_call(node)
+        with self.atomic_open_proofs.operation(node):
+            return self._visit_call(node)
+
+    def _visit_call(self, node: ast.Call):
         qn = _qualified_name(node)
         canonical = self._canonical_call_name(node)
         if canonical in FIRST_PATH_PARAMETERS or canonical in {
@@ -2392,13 +2424,42 @@ class _PathFlowChecker(TaintVisitor):
             writes, readonly = self._os_open_directions(node)
             if writes and not self._os_open_is_exclusive(node):
                 self._flag_symlink_write_if_unsafe(node, first_path)
+            facts = (
+                self.atomic_open_proofs.facts(node, self._native_atomic_expression)
+                if self.atomic_open_proofs is not None
+                else None
+            )
+            write_only = (
+                facts is not None
+                and "O_WRONLY" in facts.required
+                and "O_RDWR" not in facts.possible
+            )
             reads = (
-                self.atomic_open_proofs is not None
-                and self.atomic_open_proofs.descriptor_read_observed(
-                    node, self._canonical_call_name, self._update_handle_is_read
+                not write_only
+                and self.atomic_open_proofs is not None
+                and (
+                    self.atomic_open_proofs.descriptor_read_observed(
+                        node, self._canonical_call_name, self._update_handle_is_read
+                    )
+                    or self.atomic_open_proofs.uncertain_descriptor_read(
+                        node,
+                        self._native_atomic_expression,
+                        self._canonical_call_name,
+                        self._update_handle_is_read,
+                    )
                 )
             )
-            if reads or readonly and not self._os_open_is_directory_read(node):
+            metadata_only = (
+                self.atomic_open_proofs is not None
+                and self.atomic_open_proofs.descriptor_metadata_only(
+                    node, self._native_atomic_expression
+                )
+            )
+            if (
+                (reads or readonly)
+                and not metadata_only
+                and not self._os_open_is_directory_read(node)
+            ):
                 self._flag_symlink_read_if_unsafe(node, first_path)
 
         if (

@@ -1,16 +1,7 @@
-"""Path findings that rest only on "a caller in another module may pass
-untrusted input" are dropped when the whole project shows no such caller.
+"""Whole-project context never replaces operation-specific source proof.
 
-Per-file analysis keeps a helper parameter as a possible remote source
-(test_path_traversal.py pins that). A scan of the complete repository can
-prove the module is never imported, named or registered with a framework, so
-every caller is in the file the per-file analysis already followed.
-
-A finding this test-code proof does not drop goes on to ``path_provenance``.
-Known untrusted inputs stay reported with their source chains; unresolved
-callers stay visible for review as ``unknown``. Only proven-safe paths move
-to ``suppressed``. These tests distinguish that provenance policy from the
-separate proof that a module is used only by test code.
+Native fixture inputs can establish safety. Unused helpers and escaped or
+external callers remain unresolved even in unimported test modules.
 """
 
 import json
@@ -88,7 +79,7 @@ def _classified(result: dict, key: tuple[str, str, str]) -> str | None:
     return None
 
 
-def test_unimported_test_module_helpers_are_dropped(tmp_path):
+def test_unimported_test_helpers_require_proven_fixture_callers(tmp_path):
     root = _project(
         tmp_path,
         {
@@ -111,10 +102,7 @@ def test_unimported_test_module_helpers_are_dropped(tmp_path):
         ("_read_doc", "SKY-D215"),
         ("_read_doc", "SKY-D325"),
     }
-    assert {f["reason"] for f in suppressed} == {
-        "path comes from a helper parameter in test code that no non-test file "
-        "imports, so its values come from the tests"
-    }
+    assert all(f['metadata']['path_provenance']['status'] == 'safe' for f in suppressed)
 
 
 def test_script_helpers_are_kept(tmp_path):
@@ -707,8 +695,11 @@ def test_computed_dynamic_import_in_shipped_code_keeps_test_helpers(tmp_path, lo
 )
 def test_fixed_or_test_only_loaders_still_prove_test_helpers(tmp_path, files):
     root = _project(tmp_path, {**files, "tests/test_docs.py": TEST_DOCS})
-
-    assert not {f for f in _path_findings(_scan(root)) if f[0] == "test_docs.py"}
+    result = _scan(root)
+    assert _classified(result, ('test_docs.py', '_write_doc', 'SKY-D324')) == 'safe'
+    # This helper has no caller. An unrelated fixed loader cannot prove its
+    # inputs safe merely because it does not import the test module.
+    assert _classified(result, ('test_docs.py', '_read_doc', 'SKY-D325')) == 'unknown'
 
 
 @pytest.mark.parametrize(
@@ -774,10 +765,11 @@ def test_deep_expression_in_a_loader_file_does_not_stop_the_scan(tmp_path):
     )
 
     # The scan finishes (other analyzers record app.py as too deep to
-    # process, as before) and the fixed loader still proves the helper.
+    # process, as before). Fixture callers prove the write; the unused read
+    # helper remains unresolved rather than inheriting a test-file exemption.
     result = _scan(root)
 
-    assert not {f for f in _path_findings(result) if f[0] == "test_docs.py"}
+    assert _classified(result, ('test_docs.py', '_read_doc', 'SKY-D325')) == 'unknown'
     assert ("test_docs.py", "_write_doc", "SKY-D324") in _path_findings(result, "suppressed")
     for error in result.get("analysis_errors", []):
         assert Path(error["file"]).name == "app.py"

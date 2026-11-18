@@ -471,11 +471,17 @@ class _Facts:
         self.chains = {kind: [] for kind in self.KINDS}
         self.operator_origins = set()
         self.operator_origins_complete = True
+        self.resource_origins = set()
+        self.resource_origins_complete = True
+        self.parameter_names = set()
+        self.parameter_names_complete = True
 
     @classmethod
     def leaf(cls, kind, step, *, operator_origin=None):
         facts = cls()
         facts.chains[kind].append((step,))
+        if kind == PARAMETER:
+            facts.parameter_names.add(step)
         if kind == OPERATOR:
             if operator_origin is None:
                 facts.operator_origins_complete = False
@@ -484,6 +490,18 @@ class _Facts:
         return facts
 
     def add(self, other):
+        self.parameter_names_complete &= other.parameter_names_complete
+        for name in other.parameter_names:
+            if len(self.parameter_names) >= _MAX_SITES and name not in self.parameter_names:
+                self.parameter_names_complete = False
+                break
+            self.parameter_names.add(name)
+        self.resource_origins_complete &= other.resource_origins_complete
+        for origin in other.resource_origins:
+            if len(self.resource_origins) >= _MAX_SITES and origin not in self.resource_origins:
+                self.resource_origins_complete = False
+                break
+            self.resource_origins.add(origin)
         self.operator_origins_complete &= other.operator_origins_complete
         for origin in other.operator_origins:
             if (
@@ -504,6 +522,10 @@ class _Facts:
 
     def then(self, step):
         facts = _Facts()
+        facts.parameter_names = set(self.parameter_names)
+        facts.parameter_names_complete = self.parameter_names_complete
+        facts.resource_origins = set(self.resource_origins)
+        facts.resource_origins_complete = self.resource_origins_complete
         facts.operator_origins = set(self.operator_origins)
         facts.operator_origins_complete = self.operator_origins_complete
         for kind in self.KINDS:
@@ -513,6 +535,15 @@ class _Facts:
     def moved(self, source, target, step):
         """The same facts with ``source`` chains re-filed under ``target``."""
         facts = _Facts()
+        facts.parameter_names = set(self.parameter_names)
+        facts.parameter_names_complete = self.parameter_names_complete
+        facts.resource_origins = set(self.resource_origins)
+        facts.resource_origins_complete = self.resource_origins_complete
+        if source == PARAMETER:
+            facts.parameter_names = set()
+            facts.parameter_names_complete = True
+        if target == PARAMETER:
+            facts.parameter_names_complete = False
         if source != OPERATOR:
             facts.operator_origins = set(self.operator_origins)
             facts.operator_origins_complete = self.operator_origins_complete
@@ -2358,7 +2389,9 @@ class _Project:
             sites.escapes.append(_step(unit, fn, f"`{fn.name}` is called implicitly by Python"))
         if owner is not None:
             _, external = self.mro(owner)
-            if external:
+            from .path_test_context import implicit_helper_call_is_excluded
+
+            if external and not implicit_helper_call_is_excluded(self, owner, fn):
                 sites.escapes.append(
                     _step(unit, fn, f"class `{owner.name}` extends `{external[0]}`, which may call `{fn.name}`")
                 )
@@ -2504,8 +2537,6 @@ class _Project:
             found = unit.lookup(scope, ref.id)
             if found is not None and all(bind.kind not in {"import", "assign"} for bind in found[1]):
                 return
-        if unit.is_test:
-            return
         if self._harmless_ref(unit, scope, ref, parent):
             return
         if isinstance(parent, ast.Assign) and parent.value is ref:
@@ -3312,7 +3343,11 @@ def _default_of(fn, name):
 
 def _same_facts(left, right):
     return (
-        left.operator_origins == right.operator_origins
+        left.parameter_names == right.parameter_names
+        and left.parameter_names_complete == right.parameter_names_complete
+        and left.resource_origins == right.resource_origins
+        and left.resource_origins_complete == right.resource_origins_complete
+        and left.operator_origins == right.operator_origins
         and left.operator_origins_complete == right.operator_origins_complete
         and all(
             set(left.chains[kind]) == set(right.chains[kind]) for kind in _Facts.KINDS
@@ -3484,14 +3519,30 @@ class _Tracer:
         if isinstance(expr, ast.Constant):
             return _Facts.leaf(SAFE, _step(unit, expr, "literal"))
         if isinstance(expr, ast.JoinedStr):
-            parts = [value.value for value in expr.values if isinstance(value, ast.FormattedValue)]
+            parts = [value for value in expr.values if isinstance(value, ast.FormattedValue)]
             if not parts:
                 return _Facts.leaf(SAFE, _step(unit, expr, "literal"))
             return self._union(unit, scope, parts, env)
         if isinstance(expr, ast.FormattedValue):
-            return self.trace(unit, scope, expr.value, env)
+            facts = self.trace(unit, scope, expr.value, env)
+            if expr.format_spec is not None:
+                facts.add(self.trace(unit, scope, expr.format_spec, env))
+            if self.rule == TRAVERSAL_RULE:
+                from .path_format_proof import fstring_preserves_component
+
+                if not fstring_preserves_component(expr):
+                    facts.add(_Facts.leaf(UNKNOWN, _step(unit, expr,
+                        "format conversion or specification can change pathname component shape")))
+            return facts
         if isinstance(expr, ast.BinOp):
-            return self._union(unit, scope, [expr.left, expr.right], env)
+            facts = self._union(unit, scope, [expr.left, expr.right], env)
+            if self.rule == TRAVERSAL_RULE and isinstance(expr.op, ast.Mod):
+                from .path_format_proof import percent_preserves_component
+
+                if not percent_preserves_component(expr.left):
+                    facts.add(_Facts.leaf(UNKNOWN, _step(unit, expr,
+                        "percent formatting does not preserve a proven pathname component")))
+            return facts
         if isinstance(expr, ast.BoolOp):
             return self._union(unit, scope, expr.values, env)
         if isinstance(expr, ast.IfExp):
@@ -3531,6 +3582,24 @@ class _Tracer:
         loop), and none earlier than the last unconditional one."""
         if owner.kind not in {"function", "lambda"}:
             return binds
+        source_scope = unit.scope_of(use)
+        closure = None
+        while source_scope is not None and source_scope is not owner:
+            if source_scope.kind in {"function", "lambda"}:
+                closure = source_scope.node
+            source_scope = source_scope.parent
+        if closure is not None:
+            # A closure reads the cell when invoked. Preserve later outer
+            # assignments, but an unconditional assignment before creation
+            # still eliminates the earlier parameter/initial value.
+            dominating = [bind for bind in binds
+                if bind.kind in {"assign", "unpack", "with"} and bind.top_level
+                and getattr(bind.node, "end_lineno", 0) < closure.lineno]
+            if not dominating:
+                return binds
+            last = max(dominating, key=lambda bind: bind.node.lineno)
+            return [bind for bind in binds if bind.kind != "param"
+                    and getattr(bind.node, "lineno", 0) >= last.node.lineno]
         line = getattr(use, "lineno", 0)
         ancestors = set(id(node) for node in unit.ancestors(use))
         in_loop = False
@@ -3574,6 +3643,11 @@ class _Tracer:
             return _Facts.leaf(UNKNOWN, _step(unit, node, f"`{node.id}` is not bound in the project"))
         owner, binds = found
         if self.filename_proofs:
+            from .path_json_scalars import JSONScalarProof
+
+            if JSONScalarProof(self).guarded_integer_name(unit, scope, node, env):
+                return _Facts.leaf(SAFE, _step(unit, node,
+                    "default native JSON value passes a rejecting integer guard before path formatting"))
             guard = self._guard_statement(unit, scope, node, node.id)
             proofs = {
                 "passes a body-proven filename check": self._filename_equality_guard,
@@ -3595,7 +3669,30 @@ class _Tracer:
         binds = self._visible_binds(unit, owner, binds, node)
         facts = _Facts()
         for bind in binds:
-            facts.add(self._bind_facts(unit, owner, bind, node.id, env))
+            if self.rule in {"SKY-D324", "SKY-D325"} and bind.kind == "with":
+                live = getattr(node, "lineno", 0) <= getattr(bind.node, "end_lineno", 0)
+                captured_scope = unit.scope_of(node)
+                captured = None
+                while captured_scope is not None and captured_scope is not owner:
+                    if captured_scope.kind in {"function", "lambda"}:
+                        captured = captured_scope
+                        break
+                    captured_scope = captured_scope.parent
+                if captured is not None:
+                    live = self._captured_context_live(unit, owner, captured, bind)
+                if not live:
+                    facts.add(_Facts.leaf(UNKNOWN, _step(unit, node,
+                        "the context may have ended before this pathname is used; private storage lifetime is not established")))
+                from .path_temp_ownership import context_root_was_changed
+
+                ownership = context_root_was_changed(self.project, unit, owner, bind, node.id)
+                if ownership:
+                    facts.add(_Facts.leaf(INCOMPLETE if ownership == "incomplete" else UNKNOWN, _step(unit, node,
+                        "the private temporary root may be made accessible, moved or removed before reopening")))
+            bound_facts = self._bind_facts(unit, owner, bind, node.id, env)
+            if self.rule in {"SKY-D324", "SKY-D325"} and bind.kind == "with":
+                bound_facts.resource_origins.add((unit, owner.node, bind.node))
+            facts.add(bound_facts)
         if owner.kind == "module":
             facts.add(self._global_writes(unit, node.id, binds))
         elif owner.kind in {"function", "lambda"}:
@@ -3607,6 +3704,19 @@ class _Tracer:
             if note is not None:
                 return facts.then(note)
         return facts
+
+    def _captured_context_live(self, unit, owner, captured, bind):
+        """All direct known invocations execute in the still-active suite."""
+        sites = self.project.call_sites(unit, captured.node)
+        if sites.entries or sites.escapes or sites.possible or not sites.resolved or len(sites.resolved) > _MAX_SITES:
+            return False
+        for site in sites.resolved:
+            if site.unit is not unit or site.scope is not owner or bind.node not in tuple(unit.ancestors(site.call)):
+                return False
+            targets = self.project.values(site.unit, site.scope, site.call.func)
+            if not targets or any(target.kind != "fn" or target.node is not captured.node for target in targets):
+                return False
+        return True
 
     def _bind_facts(self, unit, owner, bind, name, env):
         kind = bind.kind
@@ -4368,6 +4478,10 @@ class _Tracer:
             proof = self._django_uuid_paths.proof(unit, scope, node)
             if proof is not None:
                 return _Facts.leaf(SAFE, _step(unit, node, proof))
+        temporary = self._temporary_name_uncertainty(unit, scope, node)
+        if temporary is not None:
+            kind, reason = temporary if isinstance(temporary, tuple) else (UNKNOWN, temporary)
+            return _Facts.leaf(kind, _step(unit, node, reason))
         source = self._attribute_source(unit, scope, node)
         if source is not None:
             origin = (unit, source[2]) if len(source) > 2 else None
@@ -4390,7 +4504,69 @@ class _Tracer:
                 return facts
         if node.attr in _BASENAME_PARTS and self.rule == TRAVERSAL_RULE and self._path_object(values):
             return _Facts.leaf(SAFE, _step(unit, node, f"`.{node.attr}` keeps only the final path component"))
-        return self.trace(unit, scope, base, env).then(_step(unit, node, f"attribute `.{node.attr}`"))
+        facts = self.trace(unit, scope, base, env).then(_step(unit, node, f"attribute `.{node.attr}`"))
+        if self.rule in {"SKY-D324", "SKY-D325"} and node.attr == "name" and isinstance(base, ast.Name) and values and all(
+            value.kind in {"extinst", "extattr"} and value.name == "tempfile.TemporaryDirectory" for value in values
+        ):
+            found = unit.lookup(scope, base.id)
+            if found is not None and found[0].kind in {"function", "lambda"}:
+                facts.resource_origins.add((unit, found[0].node, node))
+        return facts
+
+    def _temporary_name_uncertainty(self, unit, scope, node):
+        if self.rule == TRAVERSAL_RULE or node.attr != "name":
+            return None
+        values = self.project.values(unit, scope, node.value)
+        if not values or not all(value.kind in {"extinst", "extattr"}
+                                 and value.name == "tempfile.TemporaryDirectory" for value in values):
+            return None
+        reason = "the mutable temporary-directory object may escape, change its name, or be cleaned up before reopening"
+        if isinstance(node.value, ast.Attribute):
+            cls = self._self_class(unit, scope, node.value.value)
+            if cls is not None:
+                from .path_test_context import native_testcase
+
+                if native_testcase(self.project, cls):
+                    return None
+            return reason
+        if not isinstance(node.value, ast.Name):
+            return reason
+        found = unit.lookup(scope, node.value.id)
+        if found is None or found[0].kind not in {"function", "lambda"}:
+            return reason
+        owner, _ = found
+        if owner.globals or owner.nonlocals:
+            return reason
+        aliases = self._local_aliases(owner, node.value.id)
+        constructors = [bind for alias in aliases for bind in owner.binds.get(alias, ())
+                        if bind.kind == "assign" and isinstance(bind.value, ast.Call)
+                        and self._external_call(unit, bind.scope, bind.value, {"tempfile.TemporaryDirectory"})]
+        if not constructors:
+            return reason
+        from .path_temp_ownership import context_root_was_changed
+
+        ownership = context_root_was_changed(self.project, unit, owner, node, None, seed=node, aliases=aliases)
+        if ownership == "incomplete":
+            return INCOMPLETE, "private temporary-root effect analysis stopped at a cycle or work limit"
+        if ownership:
+            return "the temporary object's actual root may be made accessible, moved or removed before reopening"
+        for ref, ref_scope in unit.loads:
+            if not isinstance(ref, ast.Name) or ref.id not in aliases:
+                continue
+            binding = unit.lookup(ref_scope, ref.id)
+            if binding is None or binding[0] is not owner:
+                continue
+            parent = unit.parents.get(id(ref))
+            if ref_scope is not owner:
+                return reason
+            if isinstance(parent, ast.Attribute) and parent.attr == "name" and isinstance(parent.ctx, ast.Load):
+                continue
+            if isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is ref:
+                targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+                if all(isinstance(target, ast.Name) for target in targets):
+                    continue
+            return reason
+        return None
 
     @staticmethod
     def _path_object(values):
@@ -4485,7 +4661,9 @@ class _Tracer:
                     continue
                 if cls.lineno <= getattr(call, "lineno", 0) <= getattr(cls, "end_lineno", 0):
                     facts.add(_Facts.leaf(UNKNOWN, _step(cls_unit, call, f"`setattr` may set `.{attr}`")))
-        if external:
+        from .path_test_context import implicit_attribute_write_is_excluded
+
+        if external and not implicit_attribute_write_is_excluded(project, cls_node, attr):
             facts.add(_Facts.leaf(UNKNOWN, _step(order[0][0], cls_node, f"external base `{external[0]}` may set `.{attr}`")))
         if not found:
             facts.add(_Facts.leaf(UNKNOWN, _step(order[0][0], cls_node, f"no assignment to `.{attr}` of `{cls_node.name}` in the project")))
@@ -4731,8 +4909,17 @@ class _Tracer:
             for value in values:
                 if value.kind in {"ext", "extattr"}:
                     names.add(value.name)
-        source = self._call_source(unit, scope, node, names)
+        external_only = bool(values) and all(value.kind in {"ext", "extattr"} for value in values)
+        source = self._call_source(unit, scope, node, names, env)
         if source is not None:
+            if not source.chains[UNTRUSTED] and (not external_only or len(names) > 1):
+                for name in names:
+                    alternative = self._call_source(unit, scope, node, {name}, env)
+                    if alternative is not None and alternative.chains[UNTRUSTED]:
+                        source.add(alternative)
+                source.add(self._union(unit, scope, [*node.args, *[keyword.value for keyword in node.keywords]], env))
+                source.add(_Facts.leaf(UNKNOWN, _step(unit, node,
+                    "one recognized source callable does not establish every possible callable's result")))
             return source
         if values and all(value.kind in {"fn", "partial", "cls"} for value in values):
             facts = _Facts()
@@ -4756,15 +4943,38 @@ class _Tracer:
             return _Facts.leaf(UNKNOWN, _step(unit, node, f"content of the file opened by `{_describe(node)}`"))
         if (
             names
+            and external_only
             and names <= _D215_SANITIZERS
             and self.rule == TRAVERSAL_RULE
             and not any(self._external_rebound(name) for name in names)
         ):
             return _Facts.leaf(SAFE, _step(unit, node, f"`{_describe(node)}` keeps only the final path component"))
         if names and names <= _TRANSPARENT_CALLS:
-            if not arguments:
-                return _Facts.leaf(SAFE, _step(unit, node, f"`{_describe(node)}` without arguments"))
-            return self._union(unit, scope, arguments, env).then(_step(unit, node, f"passes through `{_describe(node)}`"))
+            facts = self._union(unit, scope, arguments, env) if arguments else _Facts.leaf(
+                SAFE, _step(unit, node, f"`{_describe(node)}` without arguments"))
+            if names & {"json.loads", "json.load"}:
+                from .path_json_scalars import JSONScalarProof
+
+                if not JSONScalarProof(self).external(unit, scope, node, {"json.loads", "json.load"}):
+                    facts.add(_Facts.leaf(UNKNOWN, _step(unit, node,
+                        "native default JSON decoder dependencies are not established")))
+            if not external_only:
+                facts.add(_Facts.leaf(UNKNOWN, _step(unit, node,
+                    "a different possible callable may change the pathname")))
+            if names & (_PATH_CONSTRUCTORS | {"builtins.str", "builtins.format"}) and not all(
+                not self._external_rebound(name) and provider_binding_is_stable(
+                    name, unit.tree, unit.path, self.project.root
+                ) for name in names
+            ):
+                facts.add(_Facts.leaf(UNKNOWN, _step(unit, node,
+                    "native path/string conversion provider is not established")))
+            if self.rule == TRAVERSAL_RULE and "builtins.format" in names:
+                from .path_format_proof import format_call_preserves_component
+
+                if not format_call_preserves_component(node):
+                    facts.add(_Facts.leaf(UNKNOWN, _step(unit, node,
+                        "format specification does not preserve pathname component shape")))
+            return facts.then(_step(unit, node, f"passes through `{_describe(node)}`"))
         if isinstance(func, ast.Attribute):
             receiver = self.trace(unit, scope, func.value, env)
             if func.attr in _FORMAT_ONLY_METHODS:
@@ -4774,7 +4984,14 @@ class _Tracer:
             if func.attr in {"get", "pop", "setdefault"} and node.args:
                 receiver = self._gateway_item(unit, node, receiver, node.args[0])
             if func.attr in _TRANSPARENT_METHODS and not (values and any(value.kind == "fn" for value in values)):
-                return _Facts().add(receiver).add(self._union(unit, scope, arguments, env)).then(
+                facts = _Facts().add(receiver).add(self._union(unit, scope, arguments, env))
+                if self.rule == TRAVERSAL_RULE and func.attr in {"format", "format_map"}:
+                    from .path_format_proof import format_call_preserves_component
+
+                    if not format_call_preserves_component(node):
+                        facts.add(_Facts.leaf(UNKNOWN, _step(unit, node,
+                            "format template does not preserve pathname component shape")))
+                return facts.then(
                     _step(unit, node, f"passes through `.{func.attr}()`")
                 )
             if receiver.chains[UNTRUSTED]:
@@ -5019,7 +5236,7 @@ class _Tracer:
             for bind in found[1]
         )
 
-    def _call_source(self, unit, scope, node, names):
+    def _call_source(self, unit, scope, node, names, env=None):
         func = node.func
         for name in names:
             if name in _STDIN_CALLS:
@@ -5061,9 +5278,28 @@ class _Tracer:
             if name in _OPERATOR_CALLS:
                 return _Facts.leaf(OPERATOR, _step(unit, node, f"working directory `{name}()`"), operator_origin=(unit, "cwd"))
             if name in _SAFE_CALLS:
+                native = not self._external_rebound(name) and provider_binding_is_stable(
+                    name, unit.tree, unit.path, self.project.root
+                )
+                arguments = [*node.args, *[keyword.value for keyword in node.keywords]]
+                if not native:
+                    return self._union(unit, scope, arguments, env).add(_Facts.leaf(
+                        UNKNOWN, _step(unit, node, f"native result shape of `{name}()` is not established")))
+                if self.rule != TRAVERSAL_RULE and arguments:
+                    return self._union(unit, scope, arguments, env).then(_step(unit, node,
+                        f"`{name}()` changes component shape without proving storage ownership"))
                 return _Facts.leaf(SAFE, _step(unit, node, f"`{name}()` returns a number, clock value or identifier"))
             if name in _TEMP_CALLS:
-                facts = _Facts.leaf(SAFE, _step(unit, node, f"temporary path from `{name}()`"))
+                native = not self._external_rebound(name) and provider_binding_is_stable(
+                    name, unit.tree, unit.path, self.project.root
+                )
+                private = name in {"tempfile.TemporaryDirectory", "tempfile.mkdtemp"}
+                status = SAFE if native and (self.rule == TRAVERSAL_RULE or private) else UNKNOWN
+                description = (
+                    f"temporary path from `{name}()`" if status == SAFE else
+                    f"`{name}()` does not establish native private directory ownership or safe reopening"
+                )
+                facts = _Facts.leaf(status, _step(unit, node, description))
                 return facts.add(self._union(unit, scope, [*node.args, *[keyword.value for keyword in node.keywords]], None))
         if isinstance(func, ast.Attribute) and func.attr in {"parse_args", "parse_known_args"}:
             return self._parsed_arguments(unit, scope, node)
@@ -5218,17 +5454,28 @@ class _Tracer:
                 "resolved helper produces only filename-component characters",
             )
             return _with_hidden_callers(_Facts.leaf(SAFE, step), escapes, step)
+        if element is None and self.filename_proofs:
+            from .path_json_scalars import JSONScalarProof
+
+            site = _Site(unit, scope, call, [*prebound, *call.args],
+                         [*prebound_keywords, *call.keywords], value.bound, "call")
+            if JSONScalarProof(self).validated_integer(unit, scope, call, value, site, env):
+                return _Facts.leaf(SAFE, _step(unit, call,
+                    "default native JSON scalar passes a rejecting integer check before filename formatting"))
         summary = self._summary(fn, info[0], element)
         facts = _Facts()
         facts.operator_origins = set(summary.operator_origins)
         facts.operator_origins_complete = summary.operator_origins_complete
+        facts.resource_origins = set(summary.resource_origins)
+        facts.resource_origins_complete = summary.resource_origins_complete
+        facts.parameter_names_complete = summary.parameter_names_complete
         for kind in _Facts.KINDS:
             if kind != PARAMETER:
                 facts.chains[kind] = list(summary.chains[kind])
         site = _Site(unit, scope, call, [*prebound, *call.args], [*prebound_keywords, *call.keywords], value.bound, "call")
-        tails = {}
+        tails = {name: () for name in summary.parameter_names}
         for chain in summary.chains[PARAMETER]:
-            tails.setdefault(chain[0], chain[1:])
+            tails[chain[0]] = chain[1:]
         for name, tail in tails.items():
             step = _step(unit, call, f"call `{_describe(call)}` binds `{name}`")
             passed = _Facts()
@@ -5246,6 +5493,14 @@ class _Tracer:
             # original facts and describe the unverified assumption on this
             # exact data-flow chain, without changing its classification.
             facts = facts.then(_step(unit, call, FILENAME_UNVERIFIED))
+        if self.rule in {"SKY-D324", "SKY-D325"} and any(
+            isinstance(node, (ast.Yield, ast.YieldFrom)) for node in ast.walk(fn)
+        ) and any(self._external_call(info[0], info[1], ast.Call(
+            func=decorator, args=[], keywords=[]
+        ), {"contextlib.contextmanager", "contextlib.asynccontextmanager"})
+                  for decorator in fn.decorator_list):
+            facts.add(_Facts.leaf(UNKNOWN, _step(unit, call,
+                "a custom context manager's generated pathname does not establish private directory ownership or descriptor safety")))
         return facts
 
     def _filename_guard_uncertainty(self, unit, scope, use, binds):
@@ -5705,10 +5960,46 @@ class _Tracer:
             for value in applications
         ):
             return None
+        cache = getattr(self, "native_http_pipeline_cache", None)
+        if cache is None:
+            cache = self.native_http_pipeline_cache = {}
+        if id(unit) not in cache:
+            from skylos.security.framework_contracts import native_http_pipeline_is_intact
+
+            # A model proof may visit this route while checking its inputs.
+            # A recursive edge must not borrow the pending pipeline proof.
+            cache[id(unit)] = False
+            cache[id(unit)] = native_http_pipeline_is_intact(
+                unit.tree, unit.path, self.project.root,
+                accepts_model_field=self._http_model_field_argument,
+            ) and provider_binding_is_stable(
+                "builtins.str", unit.tree, unit.path, self.project.root
+            )
+        if not cache[id(unit)]:
+            return None
         return _step(
             unit,
             decorator,
             f"decorated with `{_describe(decorator.func)}`; the wrapper's callers are not visible",
+        )
+
+    def _http_model_field_argument(self, path, caller, field):
+        # Permit a model constructor to consume a value only after its own
+        # source-bound native string schema and receiver have been established.
+        if not self.project.complete or self.project.truncated or caller.args:
+            return False
+        unit = self.project.by_path.get(path)
+        if unit is None or any(kw.arg is None for kw in caller.keywords):
+            return False
+        location = {"line": caller.lineno, "col": caller.col_offset,
+                    "end_line": caller.end_lineno, "end_col": caller.end_col_offset}
+        node = _locate_operand(unit, location)
+        if not isinstance(node, ast.Call) or ast.dump(node) != ast.dump(caller):
+            return False
+        models = self.project.values(unit, unit.scope_of(node), node.func)
+        return bool(models) and all(
+            value.kind == "cls" and self._plain_str_field(value.node, field)
+            for value in models
         )
 
     def _validated_str_field(self, unit, scope, node, env, active, escapes):
@@ -5736,10 +6027,13 @@ class _Tracer:
                 models.extend(found)
             return models
         if isinstance(expr, ast.Call):
-            if expr.args or expr.keywords:
+            if expr.args or any(keyword.arg is None or not self._inert_model_default(keyword.value)
+                                for keyword in expr.keywords):
                 return None
             values = self.project.values(unit, scope, expr.func)
             if not values or not all(value.kind == "cls" for value in values):
+                return None
+            if expr.keywords and not all(self._plain_model(value.node) for value in values):
                 return None
             return [value.node for value in values]
         if not isinstance(expr, ast.Name):
@@ -6417,7 +6711,7 @@ class _Tracer:
         unit, definer, scope = info
         if not all(
             self._plain_model_statement(unit, scope, item) for item in cls_node.body
-        ):
+        ) and not self._ordinary_instance_body(unit, scope, cls_node):
             return False
         for base in cls_node.bases:
             values = self.project.values(unit, definer, base)
@@ -6444,6 +6738,48 @@ class _Tracer:
                 ):
                     return False
         memo[id(cls_node)] = True
+        return True
+
+    def _ordinary_instance_body(self, unit, scope, cls):
+        """An ordinary constructor's methods do not change its instance type.
+
+        This is an identity exclusion proof for unrelated classes, not a
+        Pydantic field-validation proof. Custom construction, identity hooks,
+        instance escape and project class replacement still fail closed.
+        """
+        forbidden = {
+            "__new__", "__init_subclass__", "__getattribute__", "__getattr__",
+            "__setattr__", "__delattr__", "__class__", "__class_getitem__",
+        }
+        for statement in cls.body:
+            if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not self._plain_model_statement(unit, scope, statement):
+                    return False
+                continue
+            if statement.name in forbidden or statement.decorator_list:
+                return False
+            arguments = [*statement.args.posonlyargs, *statement.args.args]
+            if not arguments:
+                return False
+            receiver = arguments[0].arg
+            for node in ast.walk(statement):
+                if node is not statement and isinstance(node, (
+                    ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda
+                )):
+                    return False
+                if isinstance(node, (ast.Global, ast.Nonlocal)):
+                    return False
+                if not isinstance(node, ast.Name) or node.id != receiver or not isinstance(node.ctx, ast.Load):
+                    continue
+                parent = unit.parents.get(id(node))
+                if not isinstance(parent, ast.Attribute) or parent.attr.startswith("__"):
+                    return False
+                if isinstance(parent.ctx, ast.Load):
+                    values = self.project.values(unit, unit.scope_of(parent), parent)
+                    if values and any(value.kind == "fn" for value in values):
+                        operation = unit.parents.get(id(parent))
+                        if not isinstance(operation, ast.Call) or operation.func is not parent:
+                            return False
         return True
 
     @staticmethod
@@ -6481,6 +6817,11 @@ class _Tracer:
         return memo[id(unit)]
 
     def _model_receiver_types(self, unit, scope, expr, active=frozenset()):
+        if getattr(self, "model_effects_incomplete", False):
+            # This domain has already failed closed. Repeating a provisional
+            # type walk cannot establish completeness, and can exhaust the
+            # unrelated path-tracing budget at every following sink.
+            return frozenset(), False
         if active:
             return self._model_receiver_type_facts(unit, scope, expr, active)
         memo = getattr(self, "model_type_memo", None)
@@ -7217,9 +7558,15 @@ class _Tracer:
             returned = [expr.elts[element] for expr in returned]
         facts = _Facts()
         for expr in returned:
-            facts.add(self.trace(fn_unit, fn_unit.scope_of(expr), expr, env).then(
+            result = self.trace(fn_unit, fn_unit.scope_of(expr), expr, env).then(
                 _step(fn_unit, expr, f"`{name}` returns {_describe(expr)}")
-            ))
+            )
+            if self.rule in {"SKY-D324", "SKY-D325"} and any(
+                source is fn_unit and owner is fn for source, owner, _context in result.resource_origins
+            ):
+                result.add(_Facts.leaf(UNKNOWN, _step(fn_unit, expr,
+                    "the producer's context closes before its returned pathname is reopened")))
+            facts.add(result)
         return facts
 
 
@@ -7436,6 +7783,13 @@ def _unsourced_finding(finding):
 
 
 def needs_provenance(finding):
+    metadata = finding.get("metadata") or {}
+    if (
+        finding.get("rule_id") in PATH_RULES_TRACED
+        and Path(str(finding.get("file", ""))).suffix in {".py", ".pyw"}
+        and isinstance(metadata.get("path_operand"), dict)
+    ):
+        return True
     return (
         is_helper_parameter_finding(finding)
         or _convention_finding(finding)
@@ -7501,21 +7855,25 @@ def _resolve(findings, root, files, complete, suppressed):
             updated["message"] = _untrusted_message(updated, evidence["source"])
             kept.append(updated)
             continue
-        if status == INCOMPLETE:
-            kept.append(updated)
-            continue
         if status != SAFE:
-            updated["reason"] = UNKNOWN_REASON
             kind = {
                 "SKY-D215": "path traversal",
                 "SKY-D324": "symlink-following write",
                 "SKY-D325": "symlink-following or unbounded read",
             }.get(updated.get("rule_id"), "filesystem path")
-            updated["message"] = (
-                f"Needs review: {kind} safety is unresolved because not all "
-                "caller or source paths could be established. Inspect the "
-                "recorded path_provenance trace; unresolved input is not a safety proof."
-            )
+            if status == INCOMPLETE:
+                updated["reason"] = INCOMPLETE_NOTE
+                updated["message"] = (
+                    f"Needs review: the {kind} trace stopped before every input "
+                    "could be checked. See the incomplete chain in metadata.path_provenance."
+                )
+            else:
+                updated["reason"] = UNKNOWN_REASON
+                updated["message"] = (
+                    f"Needs review: {kind} safety is unresolved because not all "
+                    "caller or source paths could be established. Inspect the "
+                    "recorded path_provenance trace; unresolved input is not a safety proof."
+                )
             kept.append(updated)
             continue
         updated["category"] = "danger"
@@ -7565,6 +7923,10 @@ def _classify(project, tracers, finding):
     from skylos.rules.danger.danger_fs.path_process_flow import operator_launch_gap
 
     facts.add(operator_launch_gap(tracer, facts).then(_sink_step(unit, finding, operand)))
+    if not facts.parameter_names_complete:
+        facts.add(_Facts.leaf(INCOMPLETE, "parameter-source identities exceeded their bounded capacity"))
+    if not facts.resource_origins_complete:
+        facts.add(_Facts.leaf(INCOMPLETE, "private-context origin metadata exceeded its bounded capacity"))
     if tracer.work > _MAX_WORK:
         limits.append("analysis budget reached for this finding")
     if project.truncated:

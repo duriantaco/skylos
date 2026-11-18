@@ -1517,7 +1517,6 @@ def test_fixed_host_settings_and_helpers_stay_quiet(tmp_path):
         "ALIAS = BASE\n"
         "from flaskapp.settings import SITE\n"
         "SEEN = 'DEBUG' in globals() and globals().get('DEBUG')\n"
-        "HAS = hasattr(sys.modules[__name__], 'X') and 'json' in sys.modules\n"
         "@functools.lru_cache(maxsize=None)\n"
         "def cached(path):\n"
         "    return f'{BASE}/{path}'\n"

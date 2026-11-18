@@ -109,6 +109,8 @@ def test_exhausted_caller_resolution_keeps_original_findings(
     for row in rows:
         record = row["metadata"]["path_provenance"]
         assert record["status"] == "incomplete"
+        assert row["message"].startswith("Needs review:")
+        assert row["reason"] == path_provenance.INCOMPLETE_NOTE
         assert any(
             f"caller resolution {limit}" in step
             for chain in record["incomplete"]

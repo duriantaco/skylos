@@ -6,7 +6,15 @@ from skylos.rules.danger.danger import scan_ctx
 from test.fixture_paths import write_fixture
 
 
-def _scan(tmp_path, flags, *, before="", arguments="path", extra=""):
+def _scan(
+    tmp_path,
+    flags,
+    *,
+    before="",
+    arguments="path",
+    extra="",
+    operation="os.fsync(descriptor)",
+):
     source = (
         "import os\n"
         + extra
@@ -15,7 +23,7 @@ def _scan(tmp_path, flags, *, before="", arguments="path", extra=""):
         + f"def read_directory({arguments}):\n"
         + f"    descriptor = os.open(path, {flags})\n"
         + "    try:\n"
-        + "        os.fsync(descriptor)\n"
+        + f"        {operation}\n"
         + "    finally:\n"
         + "        os.close(descriptor)\n"
     )
@@ -53,7 +61,12 @@ def test_proven_directory_descriptor_has_no_file_read_finding(tmp_path, flags, e
     ],
 )
 def test_unknown_or_file_capable_flags_keep_file_read_finding(tmp_path, flags):
-    rules = _scan(tmp_path, flags, arguments="path, extra_flags, flags")
+    rules = _scan(
+        tmp_path,
+        flags,
+        arguments="path, extra_flags, flags",
+        operation="os.read(descriptor, 4097)",
+    )
 
     assert "SKY-D325" in rules
 
