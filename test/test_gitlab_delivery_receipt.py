@@ -160,18 +160,28 @@ def test_api_key_and_github_finalization_keep_existing_result_and_gate_behavior(
     assert caught.value.code == 1
 
 
-def test_unverified_upload_notice_is_printed_and_returned(capsys):
+@pytest.mark.parametrize("has_trust_metadata", [True, False])
+def test_saved_upload_receipt_handles_legacy_trust_notice(capsys, has_trust_metadata):
+    notice = "Unverified upload: it used the key from skylos login."
+    payload = {
+        "scan_id": "fixture-saved-scan",
+        "quality_gate": {"passed": True},
+        "upload_trust_notice": notice + "\x1b[2J",
+    }
+    if has_trust_metadata:
+        payload["upload_trust"] = "unverified"
     response = SimpleNamespace(
         status_code=200,
-        json=lambda: {
-            "scan_id": "fixture-saved-scan",
-            "quality_gate": {"passed": True},
-            "upload_trust": "unverified",
-            "upload_trust_notice": "Unverified upload: it used the key from skylos login.\x1b[2J",
-        },
+        json=lambda: payload,
     )
     result = api._finalize_report_upload(response, grade_data=None, quiet=False)
-    assert result["upload_trust"] == "unverified"
     out = capsys.readouterr().out
-    assert "Unverified upload: it used the key from skylos login." in out
-    assert "\x1b" not in out, "server text is printed without control characters"
+    if has_trust_metadata:
+        assert result["upload_trust"] == "unverified"
+        assert "Scan saved" in out
+        assert "Policy preview: pass" in out
+        assert notice not in out
+    else:
+        assert "upload_trust" not in result
+        assert notice in out
+    assert "\x1b" not in out
