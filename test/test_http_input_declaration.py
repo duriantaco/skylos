@@ -46,6 +46,7 @@ def test_native_declarations_bind_exact_parameter_and_model_field():
 @pytest.mark.parametrize(
     ("before", "after"),
     [
+        ("count: int = 4", "count: int = UNKNOWN"),
         ("class Payload(BaseModel)", "class Payload(CustomModel)"),
         ("class Payload(BaseModel)", "@decorated\nclass Payload(BaseModel)"),
         ("name: Optional[str]", "name: CustomType"),
@@ -127,3 +128,10 @@ def test_project_shadow_or_imported_write_is_adverse(tmp_path, name, code):
 def test_ordinary_declaration_works_in_real_source_context(tmp_path):
     path = write_fixture(tmp_path, "main.py", BODY)
     assert _declared(BODY, filename=path, project_root=tmp_path)
+
+
+def test_opaque_default_on_another_field_is_adverse():
+    source = BODY.replace(
+        "class Payload", "DEFAULT = foreign.make_object()\nclass Payload"
+    )
+    assert not _declared(source.replace("count: int = 4", "count: int = DEFAULT"))

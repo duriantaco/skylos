@@ -126,7 +126,9 @@ class _Module:
         definition = self.definition(node.id)
         if isinstance(definition, str):
             return definition
-        if not self.definitions.get(node.id) and "builtins." + node.id in _SCALARS:
+        if not self.definitions.get(node.id) and (
+            "builtins." + node.id in _SCALARS or node.id in {"min", "max"}
+        ):
             return "builtins." + node.id
         return None
 
@@ -189,6 +191,34 @@ class _Module:
             return annotation.slice
         return annotation
 
+    def plain_scalar(self, value, depth=0):
+        # A named default for a different field may still have runtime hooks.
+        # Support only primitive expressions and scalar environment settings.
+        if depth > 12:
+            return False
+        if isinstance(value, ast.Constant):
+            return type(value.value) in {type(None), str, bool, int, float}
+        if isinstance(value, ast.Compare):
+            return (
+                len(value.ops) == 1
+                and isinstance(value.ops[0], (ast.Eq, ast.NotEq))
+                and all(
+                    self.plain_scalar(part, depth + 1)
+                    for part in [value.left, *value.comparators]
+                )
+            )
+        if not isinstance(value, ast.Call) or value.keywords:
+            return False
+        target = self.qualified(value.func)
+        if target == "os.environ.get":
+            return len(value.args) == 2 and all(
+                isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                for arg in value.args
+            )
+        return target in _SCALARS | {"builtins.min", "builtins.max"} and all(
+            self.plain_scalar(arg, depth + 1) for arg in value.args
+        )
+
     def scalar_default(self, value, *, selected):
         if value is None:
             return True
@@ -199,7 +229,10 @@ class _Module:
                 else True
             )
         if isinstance(value, ast.Name) and not selected:
-            return isinstance(self.definition(value.id), (ast.Assign, ast.AnnAssign))
+            definition = self.definition(value.id)
+            return isinstance(
+                definition, (ast.Assign, ast.AnnAssign)
+            ) and self.plain_scalar(definition.value)
         if not isinstance(value, ast.Call) or self.qualified(value.func) not in {
             "pydantic.Field",
             "pydantic.fields.Field",
@@ -370,8 +403,9 @@ def _providers_declared(tree, filename, project_root, protected):
         "builtins",
         "json",
         "typing",
+        "uvicorn",
     }
-    watched = set(providers)
+    watched = {*providers, "os.environ.get"}
     indices = [_module(tree)]
     if filename is not None:
         context = project_import_context(tree, filename, project_root)
@@ -392,7 +426,9 @@ def _providers_declared(tree, filename, project_root, protected):
             index = _module(parsed)
             if path != context.source and (
                 index.effects is None
-                or index.used_imports().intersection(watched - providers)
+                or index.used_imports().intersection(
+                    watched - providers - {"os.environ.get"}
+                )
             ):
                 context.provider_results[key] = False
                 return False
