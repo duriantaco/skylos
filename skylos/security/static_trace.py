@@ -154,6 +154,8 @@ def _sink_call(unit, finding):
             "FileResponse",
             "send_file",
         }
+    elif rule == "SKY-D202":
+        names = {"exec"}
     else:
         return None
     source_calls = unit.calls_by_line.get(line, [])
@@ -246,6 +248,12 @@ def _receiver(index, unit, call, graph):
 def _arguments(call, finding, receiver, graph):
     rule = finding.get("rule_id")
     arguments = []
+    if rule == "SKY-D202":
+        # exec's first positional argument supplies the program. Its globals,
+        # locals and closure are separate execution context.
+        if call.args and not isinstance(call.args[0], ast.Starred):
+            return [call.args[0]]
+        return []
     if rule in {"SKY-D211", "SKY-D217"}:
         if call.args:
             return [call.args[0]]

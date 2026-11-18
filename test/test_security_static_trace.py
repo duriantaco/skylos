@@ -43,6 +43,34 @@ def kinds(trace, kind):
     return found
 
 
+@pytest.mark.parametrize(
+    "expression,uses_program",
+    [
+        ("exec(compile(program, 'checked.py', 'exec'), {})", True),
+        ("exec('pass', {'value': program})", False),
+        ("exec(*arguments)", False),
+    ],
+)
+def test_exec_traces_the_program_operand(tmp_path, expression, uses_program):
+    trace = explain(
+        tmp_path,
+        {"sink.py": "program = input()\n" + expression + "\n"},
+        rule="SKY-D202",
+    )
+    assert any("program" in step["message"] for step in trace["steps"]) is uses_program
+    assert not any("No unambiguous Python call" in item for item in trace["limitations"])
+
+
+def test_exec_traces_input_when_the_binding_is_stable(tmp_path):
+    trace = explain(
+        tmp_path,
+        {"sink.py": "import builtins\nprogram = input()\nbuiltins.exec(program, {})\n"},
+        rule="SKY-D202",
+        line=3,
+    )
+    assert [step["line"] for step in kinds(trace, "source")] == [2]
+
+
 def test_imported_alias_caller_source_and_original_evidence_are_preserved(tmp_path):
     trace = explain(
         tmp_path,
