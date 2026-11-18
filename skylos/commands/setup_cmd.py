@@ -506,6 +506,7 @@ def write_ci(root: Path, args, out: Console, connected: bool) -> Step:
 
         code = run_cicd_impl(
             _cicd_argv(args, connected),
+            cloud_connected=connected,
             console_factory=factory,
             load_config_func=cli_module.load_config,
             run_gate_interaction_func=cli_module.run_gate_interaction,

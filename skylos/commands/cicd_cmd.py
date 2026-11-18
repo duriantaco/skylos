@@ -164,7 +164,7 @@ def _cloud_login_found(repo_root: Path) -> bool:
 
 
 def _init_upload_choice(
-    cicd_args, repo_root: Path, console=None
+    cicd_args, repo_root: Path, console=None, *, cloud_connected: bool | None = None
 ) -> tuple[bool, str | None]:
     """Whether `cicd init` adds the Cloud upload jobs, and the note to print.
 
@@ -175,7 +175,9 @@ def _init_upload_choice(
     """
     if cicd_args.upload is False:
         return False, None
-    if _cloud_login_found(repo_root):
+    if cloud_connected is None:
+        cloud_connected = _cloud_login_found(repo_root)
+    if cloud_connected:
         return True, None
     if cicd_args.upload is None:
         return False, UPLOAD_OFF_NOT_LOGGED_IN
@@ -381,7 +383,7 @@ def _review_sidecar_path(raw_path: str, *, label: str) -> Path:
     return path
 
 
-def _run_cicd_init(cicd_args, console) -> int:
+def _run_cicd_init(cicd_args, console, *, cloud_connected: bool | None = None) -> int:
     """
     Write the workflow for `skylos cicd init` and print the next steps.
 
@@ -407,7 +409,9 @@ def _run_cicd_init(cicd_args, console) -> int:
     if platform.key != "github":
         return _run_platform_init(cicd_args, console, platform, platform_name)
     repo_root = _repo_root()
-    use_upload, upload_note = _init_upload_choice(cicd_args, repo_root, console)
+    use_upload, upload_note = _init_upload_choice(
+        cicd_args, repo_root, console, cloud_connected=cloud_connected
+    )
 
     done_setup = detect_done_setup(repo_root)
     use_done = done_setup.enabled if cicd_args.done is None else cicd_args.done
@@ -698,6 +702,7 @@ def run_cicd_command(
     load_config_func,
     run_gate_interaction_func,
     emit_github_annotations_func,
+    cloud_connected: bool | None = None,
 ) -> int:
     """
     Run the CI/CD subcommands for workflow generation, gates, annotations, and reviews.
@@ -953,7 +958,7 @@ def run_cicd_command(
     console = console_factory()
 
     if cicd_args.cicd_cmd == "init":
-        return _run_cicd_init(cicd_args, console)
+        return _run_cicd_init(cicd_args, console, cloud_connected=cloud_connected)
 
     if cicd_args.cicd_cmd == "agent-review":
         from skylos.cicd.agent_review import run_agent_review_command
