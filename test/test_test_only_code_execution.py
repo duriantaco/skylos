@@ -142,3 +142,108 @@ def test_scanning_only_the_test_folder_keeps_high(tmp_path):
 def test_test_code_running_network_input_keeps_high(tmp_path, harness):
     found = _danger(tmp_path, {"tests/test_plugin.py": harness})
     assert [row[2] for row in found if row[1] == "SKY-D202"] == ["HIGH"]
+
+
+LIFTED = """
+    import ast
+    import unittest
+    from pathlib import Path
+
+    SOURCE = Path(__file__).resolve().parents[1] / "app.py"
+
+    def _load(name):
+        tree = ast.parse(SOURCE.read_text())
+        nodes = [node for node in tree.body if getattr(node, "name", None) == name]
+        {build}
+        namespace = {{}}
+        exec(compile(module, str(SOURCE), "exec"), namespace)
+        return namespace[name]
+
+    def test_double_is_present():
+        assert _load("double") is not None
+"""
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        "module = ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[]))",
+        "module = ast.Module(body=nodes, type_ignores=[])\n        ast.fix_missing_locations(module)",
+    ],
+    ids=["fixed-module", "module-then-fix"],
+)
+def test_test_running_an_assembled_syntax_tree_is_not_reported(tmp_path, build):
+    found = _danger(
+        tmp_path,
+        {
+            "tests/test_lifted.py": LIFTED.format(build=build),
+            "app.py": "def double(value):\n    return value * 2\n",
+        },
+    )
+    assert found == []
+
+
+def test_lifted_callable_with_unresolved_effects_keeps_its_finding(tmp_path):
+    harness = LIFTED.format(build="module = ast.Module(body=nodes, type_ignores=[])")
+    harness = harness.replace('_load("double") is not None', '_load("double")(2) == 4')
+    found = _danger(
+        tmp_path,
+        {
+            "tests/test_lifted.py": harness,
+            "app.py": "def double(value):\n    return value * 2\n",
+        },
+    )
+    assert [row[1] for row in found] == ["SKY-D202"]
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        # Text and syntax nodes from an unknown source both remain findings.
+        "module = ast.parse(name)",
+        "module = name",
+        "module = ast.Module(body=name, type_ignores=[])",
+        # A parameter can carry anything.
+        "module = nodes and globals().get('module')",
+    ],
+    ids=["parsed-text", "plain-text", "unknown-nodes", "unknown-value"],
+)
+def test_test_running_unproven_code_keeps_its_finding(tmp_path, build):
+    found = _danger(
+        tmp_path,
+        {
+            "tests/test_lifted.py": LIFTED.format(build=build),
+            "app.py": "def double(value):\n    return value * 2\n",
+        },
+    )
+    assert [row[1] for row in found] == ["SKY-D202"]
+
+
+def test_assembled_syntax_tree_in_production_keeps_its_finding(tmp_path):
+    found = _danger(
+        tmp_path,
+        {
+            "service/runner.py": (
+                "import ast\n\ndef run(nodes):\n"
+                "    exec(compile(ast.Module(body=nodes, type_ignores=[]), 'x', 'exec'))\n"
+            )
+        },
+    )
+    assert found == [("service/runner.py", "SKY-D202", "HIGH", None)]
+
+
+def test_assembled_syntax_tree_from_fetched_code_keeps_its_finding(tmp_path):
+    harness = textwrap.dedent(
+        """
+        import ast
+        import requests
+
+        def test_plugin():
+            code = requests.get(URL).text
+            module = ast.Module(body=ast.parse(code).body, type_ignores=[])
+            exec(compile(module, "plugin", "exec"), {})
+        """
+    )
+    found = _danger(tmp_path, {"tests/test_plugin.py": harness})
+    # Still reported; the module-level cap may lower its severity.
+    assert [row[1] for row in found] == ["SKY-D202"]

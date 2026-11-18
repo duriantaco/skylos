@@ -141,6 +141,47 @@ def demotion_reason(finding):
     return None
 
 
+NONBLOCKING_REVIEW_RULES = frozenset({"SKY-D324", "SKY-D325"})
+
+
+def is_nonblocking_review(finding):
+    """A symlink finding whose only open question is who can create entries
+    in the directory: the caller selects one validated filename component
+    (``metadata.path_provenance.component_review``). It stays reported as a
+    review item but does not fail gates. Other rules cannot use this."""
+    if not isinstance(finding, Mapping):
+        return False
+    rule = str(finding.get("rule_id") or "").upper()
+    item = finding.get("review_item")
+    metadata = finding.get("metadata")
+    if rule not in NONBLOCKING_REVIEW_RULES or not isinstance(item, Mapping):
+        return False
+    if item.get("kind") != "directory_entry_access" or item.get("blocking") is not False:
+        return False
+    provenance = metadata.get("path_provenance") if isinstance(metadata, Mapping) else None
+    if not isinstance(provenance, Mapping) or provenance.get("complete_project") is not True:
+        return False
+    review = provenance.get("component_review")
+    if not isinstance(review, Mapping):
+        return False
+    group = item.get("group")
+    proofs = review.get("proofs")
+    return (
+        provenance.get("status") == "untrusted"
+        and not provenance.get("shared_temp_path")
+        and review.get("status") == "caller_selects_one_filename_component"
+        and isinstance(group, str) and bool(group.strip())
+        and group == review.get("group")
+        and isinstance(proofs, list) and bool(proofs)
+        and all(isinstance(proof, str) and proof.strip() for proof in proofs)
+    )
+
+
+def is_combined_review(finding):
+    """One finding of a review item that lists once under its lead."""
+    return is_combined(finding) and is_nonblocking_review(finding)
+
+
 def is_combined_advisory(finding):
     """One advisory of a package version that lists once under its lead."""
     if not is_combined(finding):
@@ -162,7 +203,7 @@ def is_listed(finding, category=None, *, explicit_rules=()):
         mark = listing_decision(finding)
         if mark is None or mark["listed"]:
             return True
-        if is_combined_advisory(finding):
+        if is_combined_advisory(finding) or is_combined_review(finding):
             return False
         reason = demotion_reason(finding)
         return reason is None or mark["reason"] != reason

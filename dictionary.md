@@ -416,6 +416,25 @@ read. D215 still checks its path; unknown flags and a fallback such as
 Caller provenance establishes which inputs reach a path, not whether an
 attacker can create or replace filesystem entries. Symlink findings state
 that additional prerequisite; a filename filter alone does not reject links.
+When the traversal proofs (a body-proven filename filter or reject-on-change
+guard, a full-match filename pattern, a constant allowlist) show that request
+input selects only one filename component, the D324/D325 finding stays reported
+as a review item: `review_item.blocking` is `false`,
+`metadata.path_provenance.component_review` names the validators and the open
+prerequisite. Findings share a `review_item.group` when the analyzer can
+establish both a common directory and the same validators. If the directory
+is unresolved, each site stays listed separately. A grouped finding names the rest in
+`listing.combines`; the others are `combined` under its `listing.lead`. Review
+items do not count toward gates. Close the group for a deployment where only
+trusted writers control the directory and its parents. A path in a shared
+temporary directory never becomes a review item.
+A helper-parameter path that resolves to a fixed name in a shared temporary
+directory (`tempfile.gettempdir()`, `tempfile.mktemp()`, or a `/tmp`,
+`/var/tmp` or `/dev/shm` literal, including an environment variable's
+default) is reported by D324/D325 with reason "Predictable name in a shared
+temporary directory", whoever chooses the name: any local user can create that
+entry first. Names that include `uuid.uuid4()`, `secrets` tokens or `random`
+values, and private `mkstemp`/`mkdtemp` paths, are not reported this way.
 D326 needs an `extract` call that can pass a member (BeautifulSoup's `tag.extract()`
 cannot) and reports `shutil.unpack_archive` without `filter="data"`. Test
 files are scanned too; the literal pytest parameter proof below still applies.

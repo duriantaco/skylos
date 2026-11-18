@@ -398,7 +398,10 @@ class _Analysis:
                 return True, frozenset()
             if isinstance(node, ast.Call):
                 callee = _callee(node.func)
-                if callee in self.reloaders:
+                # ``importlib.reload(module)`` needs the module to reload; a
+                # call with nothing to reload (``container.reload()`` on a
+                # Docker or ORM object) cannot replace this module's globals.
+                if callee in self.reloaders and (node.args or node.keywords):
                     return True, frozenset()
                 if (
                     _dotted(node.func) in _CODE_RUNNERS

@@ -373,6 +373,7 @@ def apply_advice_policy(
     if not all_advice:
         view = _combine_same_location_advice(view)
         view = _combine_package_advisories(view, explicit_rules)
+    view = _combine_review_items(view, explicit_rules)
     view["listing_policy_version"] = LISTING_VERSION
     return refresh_listing_summary(view)
 
@@ -450,6 +451,77 @@ def _combine_package_advisories(view, explicit_rules=()):
             "listing": {**lead["listing"], "combines": combines},
         }
     return {**view, "dependency_vulnerabilities": updated}
+
+
+def _combine_review_items(view, explicit_rules=()):
+    """List one review item per group of nonblocking symlink findings.
+
+    Symlink findings whose request input is proven to select one filename
+    component through the same validator share one open question (can an
+    untrusted party create entries in that directory?) and close together,
+    so the first stays listed and names the others in ``listing.combines``;
+    each other is unlisted as ``combined`` with a ``listing.lead``. Every
+    record stays in the report, and none of them counts toward gates."""
+    from skylos.reporting.listing import (
+        COMBINED_REASON,
+        is_listed,
+        is_nonblocking_review,
+    )
+
+    rows = view.get("danger")
+    if not isinstance(rows, list):
+        return view
+    groups = {}
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping) or not isinstance(row.get("listing"), Mapping):
+            continue
+        if _rule_id(row).upper() in explicit_rules or not is_nonblocking_review(row):
+            continue
+        if not is_listed(row, "danger"):
+            continue
+        groups.setdefault(row["review_item"]["group"], []).append(index)
+
+    def position(index):
+        row = rows[index]
+        return (str(row.get("file") or ""), int(row.get("line") or 0), index)
+
+    updated = list(rows)
+    for indices in groups.values():
+        if len(indices) < 2:
+            continue
+        lead_index = min(indices, key=position)
+        lead = rows[lead_index]
+        reference = {
+            "rule_id": _rule_id(lead),
+            "file": lead.get("file") or lead.get("file_path"),
+            "line": lead.get("line"),
+        }
+        combines = []
+        for index in sorted(indices, key=position):
+            if index == lead_index:
+                continue
+            row = rows[index]
+            combines.append(
+                {
+                    "rule_id": _rule_id(row),
+                    "file": row.get("file") or row.get("file_path"),
+                    "line": row.get("line"),
+                }
+            )
+            updated[index] = {
+                **row,
+                "listing": {
+                    **row["listing"],
+                    "listed": False,
+                    "reason": COMBINED_REASON,
+                    "lead": reference,
+                },
+            }
+        updated[lead_index] = {
+            **lead,
+            "listing": {**lead["listing"], "combines": combines},
+        }
+    return {**view, "danger": updated}
 
 
 def _combine_same_location_advice(view):
