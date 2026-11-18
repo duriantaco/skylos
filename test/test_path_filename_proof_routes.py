@@ -419,3 +419,29 @@ def export(name: str):
         # validation assumptions remain unresolved for traversal. Neither is safe.
         assert provenance["status"] in {"unknown", "untrusted"}
         assert provenance.get(provenance["status"])
+
+
+@pytest.mark.parametrize("raw_first", [False, True])
+def test_unchecked_route_stays_visible_among_many_guarded_routes(tmp_path, raw_first):
+    guarded_routes = [
+        START.replace('"/start"', f'"/guarded-{index}"').replace(
+            "def start(", f"def guarded_{index}("
+        )
+        for index in range(6)
+    ]
+    raw = START.replace('"/start"', '"/raw"').replace(
+        "def start(", "def unguarded_route("
+    ).replace("clean(base)", "base")
+    routes = [raw, *guarded_routes] if raw_first else [*guarded_routes, raw]
+    # App escape prevents a proof of native request-model validation. Every
+    # guarded route therefore produces a competing untrusted-input witness.
+    source = HEADER + "\nimport foreign\nforeign.configure(app)\n" + "".join(routes)
+    kept, held_back = _scan(tmp_path, source)
+    assert not held_back
+    assert len(kept) == 2
+    for row in kept:
+        proof = row["metadata"]["path_provenance"]
+        assert proof["status"] == "untrusted"
+        assert "validation_uncertainty" not in proof
+        assert any("of `unguarded_route`" in step for step in proof["untrusted"][0])
+        assert "unguarded_route" in row["metadata"]["security_evidence"]["source"]

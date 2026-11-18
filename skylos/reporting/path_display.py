@@ -42,7 +42,15 @@ def path_review_summary(findings):
         if not isinstance(provenance, Mapping):
             continue
         status = provenance.get("status")
-        if not isinstance(status, str) or status not in _REVIEW_STATUSES:
+        guard = provenance.get("validation_uncertainty")
+        if (
+            rule_id == "SKY-D215" and status == "untrusted"
+            and isinstance(guard, Mapping)
+            and guard.get("assumption") == "standard_http_string_decoding"
+        ):
+            status = "conditional_http_guard"
+            statuses.setdefault(status, 0)
+        elif not isinstance(status, str) or status not in _REVIEW_STATUSES:
             continue
         statuses[status] += 1
         by_rule[rule_id] += 1
@@ -57,6 +65,8 @@ def path_review_summary(findings):
                     break
         if status == "incomplete" and reason.startswith("The caller"):
             reason = "Analysis stopped before every caller chain could be followed."
+        if status == "conditional_http_guard":
+            reason = "The filename check constrains standard HTTP strings. Runtime validation or other callers need review."
         example = {
             "rule_id": rule_id,
             "file": _review_text(row.get("file") or row.get("file_path") or "?"),
@@ -93,6 +103,9 @@ def path_review_lines(result, *, root_path=None):
             f"Incomplete traces ({statuses['incomplete']}). Exploitability remains unconfirmed."
         ),
     ]
+    if guard_count := statuses.get("conditional_http_guard"):
+        lines[0] = f"{count} path {noun} review."
+        lines.append(f"Filename checks conditional on standard HTTP decoding ({guard_count}).")
     for example in summary["examples"]:
         file = example["file"]
         if root_path is not None:

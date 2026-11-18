@@ -443,6 +443,42 @@ _MODEL_HOOK_ATTRIBUTES = frozenset(
 )  # fmt: skip
 
 
+class _FilenameGuardStep(str):
+    """A source-checked filter on this value; runtime assumptions remain open."""
+
+
+class _HttpFilenameGuardStep(_FilenameGuardStep):
+    """A filter on a value covered by a standard HTTP string declaration."""
+
+
+def _guard_rank(chain):
+    """Prefer evidence of unchecked input, including when explanations fill up."""
+    rank = 0
+    for step in chain:
+        if isinstance(step, _HttpFilenameGuardStep):
+            return 2
+        if isinstance(step, _FilenameGuardStep):
+            rank = 1
+    return rank
+
+
+def _store_chain(chains, chain, kind):
+    if len(chains) < _MAX_CHAINS:
+        if chain not in chains:
+            chains.append(chain)
+        return
+    if kind not in {UNTRUSTED, PARAMETER}:
+        return
+    # A later unchecked caller takes precedence over a conditional guard.
+    # The same rule applies to parameter placeholders in return summaries.
+    rank = _guard_rank(chain)
+    if rank == 2 or chain in chains:
+        return
+    index = max(range(len(chains)), key=lambda i: _guard_rank(chains[i]))
+    if _guard_rank(chains[index]) > rank:
+        chains[index] = chain
+
+
 def _extend(chain, step):
     if len(chain) >= _MAX_STEPS:
         return (*chain[: _MAX_STEPS - 1], step)
@@ -514,10 +550,7 @@ class _Facts:
         for kind in self.KINDS:
             mine = self.chains[kind]
             for chain in other.chains[kind]:
-                if len(mine) >= _MAX_CHAINS:
-                    break
-                if chain not in mine:
-                    mine.append(chain)
+                _store_chain(mine, chain, kind)
         return self
 
     def then(self, step):
@@ -552,8 +585,7 @@ class _Facts:
         for kind in self.KINDS:
             facts.chains[kind] = list(self.chains[kind])
         for chain in self.chains[source]:
-            if len(facts.chains[target]) < _MAX_CHAINS:
-                facts.chains[target].append(_extend(chain, step))
+            _store_chain(facts.chains[target], _extend(chain, step), target)
         facts.chains[source] = []
         return facts
 
@@ -5473,9 +5505,13 @@ class _Tracer:
             if kind != PARAMETER:
                 facts.chains[kind] = list(summary.chains[kind])
         site = _Site(unit, scope, call, [*prebound, *call.args], [*prebound_keywords, *call.keywords], value.bound, "call")
-        tails = {name: () for name in summary.parameter_names}
+        tails = {}
         for chain in summary.chains[PARAMETER]:
-            tails[chain[0]] = chain[1:]
+            name, tail = chain[0], chain[1:]
+            if name not in tails or _guard_rank(tail) < _guard_rank(tails[name]):
+                tails[name] = tail
+        for name in summary.parameter_names:
+            tails.setdefault(name, ())
         for name, tail in tails.items():
             step = _step(unit, call, f"call `{_describe(call)}` binds `{name}`")
             passed = _Facts()
@@ -5492,7 +5528,7 @@ class _Tracer:
             # The body match alone is not a runtime safety proof. Retain the
             # original facts and describe the unverified assumption on this
             # exact data-flow chain, without changing its classification.
-            facts = facts.then(_step(unit, call, FILENAME_UNVERIFIED))
+            facts = facts.then(_FilenameGuardStep(_step(unit, call, FILENAME_UNVERIFIED)))
         if self.rule in {"SKY-D324", "SKY-D325"} and any(
             isinstance(node, (ast.Yield, ast.YieldFrom)) for node in ast.walk(fn)
         ) and any(self._external_call(info[0], info[1], ast.Call(
@@ -5526,7 +5562,7 @@ class _Tracer:
                     continue
                 values = self.project.values(unit, scope, call.func)
                 if values and all(value.kind == "fn" and self._filename_body(value.unit, value.node) is not None for value in values):
-                    return _step(unit, statement, FILENAME_UNVERIFIED)
+                    return _FilenameGuardStep(_step(unit, statement, FILENAME_UNVERIFIED))
         return None
 
     @staticmethod
@@ -7611,7 +7647,14 @@ def _untrusted_message(finding, source):
         if served:
             where = f"the path {served.group(1)}() serves"
         provenance = (finding.get("metadata") or {}).get("path_provenance") or {}
-        if provenance.get("validation_uncertainty"):
+        uncertainty = provenance.get("validation_uncertainty") or {}
+        if uncertainty.get("assumption") == "standard_http_string_decoding":
+            return (
+                f"Needs review. The HTTP input reaching {where} passes a filename "
+                "check that constrains standard decoded strings. Review runtime "
+                "validation and any unresolved callers shown in the trace."
+            )
+        if uncertainty:
             return (
                 f"Possible path traversal needs review: {source} reaches {where} "
                 "through project callers. A filename check body is present, but "
@@ -7672,17 +7715,19 @@ def _provenance_record(status, function, facts, project, limits):
     for kind in _Facts.KINDS:
         chains = facts.chains[kind]
         if chains and kind != PARAMETER:
+            if kind == UNTRUSTED:
+                chains = sorted(chains, key=_guard_rank)
             record[kind] = [list(chain) for chain in chains]
     if limits:
         record["limits"] = list(limits)
-    unverified = list(dict.fromkeys(
-        step for chain in facts.chains[UNTRUSTED][:1] for step in chain
-        if FILENAME_UNVERIFIED in step
-    ))
+    witness = record.get(UNTRUSTED, [()])[0]
+    unverified = list(dict.fromkeys(step for step in witness if isinstance(step, _FilenameGuardStep)))
     if unverified:
         record["validation_uncertainty"] = {
             "status": "unverified", "check": "filename_filter_body", "steps": unverified,
         }
+        if _guard_rank(witness) == 2:
+            record["validation_uncertainty"]["assumption"] = "standard_http_string_decoding"
     return record
 
 
@@ -7695,17 +7740,17 @@ def _evidence(chain, finding):
     }.get(rule, "filesystem path")
     steps = [_strip_location(step) for step in chain]
     source = steps[0]
-    unverified = any(FILENAME_UNVERIFIED in step for step in steps)
+    guards = [_strip_location(step) for step in chain if isinstance(step, _FilenameGuardStep)]
     return {
         "evidence_kind": "python_path_taint",
         "source": source,
         "sources": [source],
         "sink": sink,
         "path": [f"untrusted input from {source}", *steps[1:]],
-        "guards_seen": [FILENAME_UNVERIFIED] if unverified else [],
+        "guards_seen": list(dict.fromkeys(guards)),
         "guards_missing": [
             "proof of effective filename validation or resolved-path containment"
-            if unverified else "resolved-path containment check against a fixed base"
+            if guards else "resolved-path containment check against a fixed base"
         ],
         "analysis_complete": False,
     }
@@ -7948,7 +7993,7 @@ def _classify(project, tracers, finding):
         facts.add(_Facts.leaf(UNKNOWN, _sink_step(unit, finding, operand)))
     chain = None
     if facts.chains[UNTRUSTED]:
-        chain = facts.chains[UNTRUSTED][0]
+        chain = min(facts.chains[UNTRUSTED], key=_guard_rank)
     record = _provenance_record(status, _function_name(unit, operand), facts, project, limits)
     return status, record, chain
 

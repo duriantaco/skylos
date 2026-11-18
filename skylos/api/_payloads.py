@@ -215,6 +215,21 @@ def _compact_provenance(record: Any) -> dict[str, Any] | None:
     function = record.get("function")
     if isinstance(function, str) and function:
         compact["function"] = _truncate_upload_text(function, _PROVENANCE_TEXT_LIMIT)
+    guard = record.get("validation_uncertainty")
+    if (
+        isinstance(guard, dict) and guard.get("status") == "unverified"
+        and guard.get("check") == "filename_filter_body"
+    ):
+        check = {"status": "unverified", "check": "filename_filter_body"}
+        if guard.get("assumption") == "standard_http_string_decoding":
+            check["assumption"] = "standard_http_string_decoding"
+        steps = guard.get("steps")
+        if isinstance(steps, list):
+            check["steps"] = [
+                _truncate_upload_text(step, _PROVENANCE_TEXT_LIMIT)
+                for step in steps[:_PROVENANCE_STEP_LIMIT] if isinstance(step, str)
+            ]
+        compact["validation_uncertainty"] = check
     for kind in _PROVENANCE_CHAIN_KINDS:
         chains = record.get(kind)
         if not isinstance(chains, list):
