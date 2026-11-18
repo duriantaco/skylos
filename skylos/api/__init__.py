@@ -612,7 +612,9 @@ def _current_repo_subpath(git_root) -> str:
         return ""
 
 
-def _linked_project_id_for_current_path(link: dict, git_root) -> str | None:
+def _linked_project_id_for_current_path(
+    link: dict, git_root, *, exact_subpath: bool = False
+) -> str | None:
     repo_subpath = _current_repo_subpath(git_root)
     projects = link.get("projects") if isinstance(link, dict) else None
     if isinstance(projects, dict):
@@ -622,6 +624,11 @@ def _linked_project_id_for_current_path(link: dict, git_root) -> str | None:
             if project_id:
                 return str(project_id)
 
+    if exact_subpath:
+        from skylos.cloud.project_context import normalize_repo_subpath
+
+        if normalize_repo_subpath(link.get("repo_subpath")) != repo_subpath:
+            return None
     project_id = link.get("project_id") or link.get("projectId")
     return str(project_id) if project_id else None
 

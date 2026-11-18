@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from skylos import api, cli
+from skylos.cli import _resolve_upload_destination as resolve_cli_destination
 from skylos.cloud import sync
 from skylos.cloud.upload_destination import (
     UploadDestination,
@@ -71,6 +72,14 @@ def repo(tmp_path, monkeypatch):
 
 def _saved_default_key(token="tok"):
     sync.save_token(token)
+
+
+def _set_upload_key(repo, key_source):
+    if key_source == "link":
+        sync.save_token("tok", project_id="proj-1")
+        sync._write_link(repo, "proj-1")
+    else:
+        _saved_default_key()
 
 
 def test_saved_key_for_same_repo_over_ssh_and_https_uploads(repo):
@@ -173,8 +182,10 @@ def test_env_token_for_another_repo_is_never_refused(repo, monkeypatch):
     assert should_refuse_upload(dest) is False
 
 
-def test_project_without_repository_is_not_a_mismatch(repo):
-    _saved_default_key()
+@pytest.mark.parametrize("key_source", ["saved", "link"])
+def test_project_without_repository_is_not_a_mismatch(repo, key_source):
+    _set_upload_key(repo, key_source)
+    _git(repo, "remote", "remove", "origin")
 
     dest = resolve_upload_destination(
         repo, whoami=_whoami(repo_url=None), git_info=_git_info()
@@ -184,31 +195,102 @@ def test_project_without_repository_is_not_a_mismatch(repo):
     assert should_refuse_upload(dest) is False
 
 
-def test_repo_without_origin_is_not_a_mismatch(repo):
+def test_bound_link_refuses_upload_if_origin_is_missing(repo):
     _git(repo, "remote", "remove", "origin")
-    _saved_default_key()
+    _set_upload_key(repo, "link")
 
     dest = resolve_upload_destination(repo, whoami=_whoami(), git_info=_git_info())
 
     assert dest.local_repo is None
     assert dest.default_branch is None
-    assert should_refuse_upload(dest) is False
+    assert dest.key_source == "link"
+    assert should_refuse_upload(dest)
+    assert dest.refusal_reason == "repository_origin_unavailable"
+    assert "could not read this checkout's Git origin" in mismatch_refusal_lines(dest)[0]
     assert branch_label(dest) == "feat/lidar @ 1acce90"
 
 
-def test_failed_project_lookup_never_invents_a_project_name(repo):
-    _saved_default_key()
+@pytest.mark.parametrize("lookup", [lambda _t: None, Mock(side_effect=TimeoutError)])
+def test_failed_project_lookup_refuses_linked_credentials(repo, lookup):
+    _set_upload_key(repo, "link")
 
     dest = resolve_upload_destination(
-        repo, whoami=lambda _t: None, git_info=_git_info()
+        repo, whoami=lookup, git_info=_git_info()
     )
 
     assert dest.project_name is None
     assert dest.project_id is None
-    assert should_refuse_upload(dest) is False
+    assert dest.key_source == "link"
+    assert should_refuse_upload(dest)
+    assert dest.refusal_reason == "project_lookup_unavailable"
+    assert "Retry the upload" in mismatch_refusal_lines(dest)[1]
     assert project_label(dest) == (
         "unknown (Skylos Cloud did not name the project for this token)"
     )
+
+
+@pytest.mark.parametrize(
+    "project", [{"id": "proj-1"}, {"id": "proj-1", "repo_url": "https://["}]
+)
+def test_incomplete_project_lookup_is_distinct_from_an_unbound_project(repo, project):
+    _set_upload_key(repo, "link")
+    dest = resolve_upload_destination(
+        repo, whoami=lambda _: {"ok": True, "project": project}, git_info=_git_info()
+    )
+    assert dest.refusal_reason == "project_lookup_unavailable"
+
+
+@pytest.mark.parametrize("whoami", [_whoami(), lambda _: None])
+def test_legacy_global_login_allows_upload_without_a_confirmed_origin(repo, whoami):
+    _saved_default_key()
+    _git(repo, "remote", "remove", "origin")
+    dest = resolve_upload_destination(repo, whoami=whoami, git_info=_git_info())
+    assert dest.key_source == "saved"
+    assert not should_refuse_upload(dest)
+
+
+@pytest.mark.parametrize("key_source", ["link", "saved", "env", "ci"])
+def test_cli_handles_unexpected_destination_failure_by_credential_source(
+    repo, monkeypatch, key_source
+):
+    if key_source == "env":
+        monkeypatch.setenv("SKYLOS_TOKEN", "explicit")
+    elif key_source == "ci":
+        monkeypatch.setattr(api, "get_project_token", lambda: "oidc:identity")
+    else:
+        _set_upload_key(repo, key_source)
+    monkeypatch.setattr(api, "get_project_info", _whoami())
+    monkeypatch.setattr(api, "get_git_info", Mock(side_effect=RuntimeError("unavailable")))
+
+    dest = resolve_cli_destination(repo)
+
+    assert dest.key_source == key_source
+    assert should_refuse_upload(dest) is (key_source == "link")
+
+
+def test_cli_refuses_when_it_cannot_identify_the_credential_source(repo, monkeypatch):
+    monkeypatch.setattr(api, "get_project_token", Mock(side_effect=ValueError("invalid")))
+    dest = resolve_cli_destination(repo)
+    assert dest.refusal_reason == "project_lookup_unavailable"
+
+
+@pytest.mark.parametrize("project_id,source", [("proj-1", "link"), ("proj-2", "saved")])
+def test_legacy_token_only_counts_as_linked_for_a_matching_project(repo, project_id, source):
+    api.GLOBAL_CREDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    api.GLOBAL_CREDS_FILE.write_text(json.dumps({"token": "tok", "project_id": project_id}))
+    sync._write_link(repo, "proj-1")
+    dest = resolve_upload_destination(repo, whoami=lambda _: None, git_info=_git_info())
+    assert dest.key_source == source
+    assert should_refuse_upload(dest) is (source == "link")
+
+
+@pytest.mark.parametrize("token", ["env-token", "oidc:identity", "gitlab_oidc:identity"])
+def test_explicit_and_ci_uploads_allow_unavailable_destination(repo, monkeypatch, token):
+    _git(repo, "remote", "remove", "origin")
+    if token == "env-token":
+        monkeypatch.setenv("SKYLOS_TOKEN", token)
+    dest = resolve_upload_destination(repo, token=token, whoami=lambda _: None, git_info=_git_info())
+    assert not should_refuse_upload(dest)
 
 
 def test_hostile_project_fields_are_not_used_in_links_or_text(repo):
@@ -519,6 +601,25 @@ def test_json_upload_to_another_repos_project_is_refused_before_sending(
     assert exit_code == 1
     upload.assert_not_called()
     assert "Not uploaded: this repo is github.com/acme/other" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "fields,reason",
+    [
+        ({"project_lookup_failed": True}, "project_lookup_unavailable"),
+        ({"project_repo": "github.com/acme/repo"}, "repository_origin_unavailable"),
+    ],
+)
+def test_json_refuses_unconfirmed_saved_destination_before_upload(monkeypatch, capsys, fields, reason):
+    exit_code, upload, _ = _run_main(
+        monkeypatch,
+        ["skylos", ".", "--upload", "--json", "--no-provenance"],
+        UploadDestination(key_source="link", **fields),
+        {"success": True},
+    )
+    assert exit_code == 1
+    upload.assert_not_called()
+    assert json.loads(capsys.readouterr().out)["upload"] == {"status": "skipped", "reason": reason}
 
 
 def test_rich_upload_names_project_branch_and_links(monkeypatch):

@@ -298,6 +298,34 @@ def test_cloud_selects_saved_monorepo_project_for_target_subpath(
     assert observed == [(first, "first-token"), (second, "second-token")]
 
 
+def test_an_unlinked_monorepo_subdirectory_gets_its_own_first_connection(
+    isolated_cloud, monkeypatch, tmp_path
+):
+    root = tmp_path / "repo"
+    second = root / "apps" / "second"
+    second.mkdir(parents=True)
+    (root / ".skylos").mkdir()
+    (root / ".skylos/link.json").write_text(json.dumps({
+        "project_id": "first-project",
+        "repo_subpath": "apps/first",
+        "projects": {"apps/first": {"project_id": "first-project"}},
+    }))
+    api.GLOBAL_CREDS_FILE.write_text(json.dumps({
+        "tokens": {"first-project": {"token": "first-token"}},
+    }))
+    monkeypatch.setattr(api, "get_git_root", lambda: str(root))
+    monkeypatch.setattr(cli, "_is_tty", lambda: True)
+    login_attempts = []
+    monkeypatch.setattr(login, "run_login", lambda **kwargs: login_attempts.append(Path.cwd()))
+    monkeypatch.setattr(
+        "skylos.commands.scan_cmd.run_scan_command",
+        lambda *_args, **_kwargs: pytest.fail("must wait for the new project's login"),
+    )
+
+    assert cloud_cmd.run_cloud_command([str(second)], cli_module=cli) == 1
+    assert login_attempts == [second]
+
+
 @pytest.mark.parametrize("failure", [SystemExit(3), RuntimeError("scan failed")])
 def test_cloud_restores_caller_directory_when_scan_exits(
     isolated_cloud, monkeypatch, tmp_path, failure

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import os
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
@@ -16,6 +18,7 @@ KEY_SOURCE_LABELS = {
 
 _PROJECT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _DEFAULT_BRANCH_SOURCES = {"repository", "assumed"}
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -29,12 +32,24 @@ class UploadDestination:
     commit: str | None = None
     default_branch: str | None = None
     default_branch_source: str | None = None
+    project_lookup_failed: bool = False
 
     @property
     def repo_mismatch(self) -> bool:
         if not self.project_repo or not self.local_repo:
             return False
         return self.project_repo.casefold() != self.local_repo.casefold()
+
+    @property
+    def refusal_reason(self) -> str | None:
+        if self.key_source in {"link", "unknown"}:
+            if self.project_lookup_failed:
+                return "project_lookup_unavailable"
+            if self.project_repo and not self.local_repo:
+                return "repository_origin_unavailable"
+        if self.key_source in {"link", "saved"} and self.repo_mismatch:
+            return "project_repository_mismatch"
+        return None
 
     @property
     def on_default_branch(self) -> bool | None:
@@ -51,15 +66,27 @@ def resolve_upload_destination(
     git_info=None,
 ) -> UploadDestination:
     from skylos import api
+
+    key_source = "unknown"
+    try:
+        if token is None:
+            token = api.get_project_token()
+        key_source = _key_source(token)
+        return _read_upload_destination(
+            token, key_source, whoami or api.get_project_info, git_info or api.get_git_info
+        )
+    except Exception:
+        logger.debug("Could not resolve the Cloud upload destination", exc_info=True)
+        return UploadDestination(key_source=key_source, project_lookup_failed=True)
+
+
+def _read_upload_destination(token, key_source, lookup, git_info) -> UploadDestination:
+    from skylos import api
     from skylos.cloud.project_context import cloud_origin_identity
     from skylos.core.review_decisions import _normalize_repository_identity
 
-    if token is None:
-        token = api.get_project_token()
-    key_source = _key_source(token)
     project: dict = {}
     if token and key_source != "ci":
-        lookup = whoami or api.get_project_info
         info = lookup(token)
         if (
             isinstance(info, dict)
@@ -68,7 +95,20 @@ def resolve_upload_destination(
         ):
             project = info["project"]
 
-    commit, branch, _actor, _ci = (git_info or api.get_git_info)()
+    project_id = _clean_project_id(project.get("id"))
+    repo_url = project.get("repo_url")
+    try:
+        project_repo = _normalize_repository_identity(repo_url)
+    except ValueError:
+        project_repo = None
+    # A null/empty binding is valid for existing unbound projects. A missing
+    # field, invalid URL or failed lookup cannot establish that same fact.
+    project_lookup_failed = (
+        project_id is None or "repo_url" not in project
+        or (repo_url not in (None, "") and project_repo is None)
+    )
+
+    commit, branch, _actor, _ci = git_info()
     git_root = api.get_git_root()
     local_repo = None
     if git_root:
@@ -76,12 +116,15 @@ def resolve_upload_destination(
             local_repo = cloud_origin_identity(git_root)
         except ValueError:
             local_repo = "unsupported Git origin"
+        except (OSError, subprocess.SubprocessError):
+            local_repo = None
 
     return UploadDestination(
         key_source=key_source,
-        project_id=_clean_project_id(project.get("id")),
+        project_id=project_id,
         project_name=_clean_text(project.get("name")),
-        project_repo=_normalize_repository_identity(project.get("repo_url")),
+        project_repo=project_repo,
+        project_lookup_failed=project_lookup_failed,
         local_repo=local_repo,
         branch=_clean_ref(branch),
         commit=_clean_ref(commit),
@@ -126,6 +169,8 @@ def _key_source(token: str | None) -> str:
         creds = api._read_json(api.GLOBAL_CREDS_FILE) or {}
         entry = (creds.get("tokens") or {}).get(linked_project_id) or {}
         if entry.get("token") == token:
+            return "link"
+        if creds.get("project_id") == linked_project_id and creds.get("token") == token:
             return "link"
     return "saved"
 
@@ -212,6 +257,17 @@ UPLOAD_CONTENTS_LINE = (
 
 
 def mismatch_refusal_lines(dest: UploadDestination) -> list[str]:
+    if dest.refusal_reason == "project_lookup_unavailable":
+        return [
+            "Not uploaded: Skylos Cloud could not confirm the project for your saved login.",
+            "  Retry the upload. If this persists, reconnect with skylos login.",
+        ]
+    if dest.refusal_reason == "repository_origin_unavailable":
+        return [
+            f"Not uploaded: your saved login belongs to {_shown(dest.project_repo)}, "
+            "and Skylos could not read this checkout's Git origin.",
+            "  Run from the matching checkout with its origin configured, then retry.",
+        ]
     lines = [
         f"Not uploaded: this repo is {_shown(dest.local_repo)}, but your saved login token "
         f"belongs to project {project_label(dest)} ({_shown(dest.project_repo)}).",
@@ -223,7 +279,7 @@ def mismatch_refusal_lines(dest: UploadDestination) -> list[str]:
 
 
 def should_refuse_upload(dest: UploadDestination) -> bool:
-    return dest.key_source in {"saved", "link"} and dest.repo_mismatch
+    return dest.refusal_reason is not None
 
 
 def receipt_note(dest: UploadDestination, upload_trust) -> str | None:

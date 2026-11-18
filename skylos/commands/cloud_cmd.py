@@ -104,7 +104,7 @@ def _connected(cli_module: ModuleType, project_root) -> bool:
     link = api._read_json(repo_root / api.LINK_FILE) or {}
     if not isinstance(link, dict):
         return False
-    project_id = api._linked_project_id_for_current_path(link, repo_root)
+    project_id = api._linked_project_id_for_current_path(link, repo_root, exact_subpath=True)
     if not project_id:
         return False
     credentials = api._read_json(api.GLOBAL_CREDS_FILE) or {}

@@ -1373,11 +1373,7 @@ def _detect_link_file(project_root: Path) -> Path | None:
 def _resolve_upload_destination(project_root: Path):
     from skylos.cloud.upload_destination import resolve_upload_destination
 
-    try:
-        return resolve_upload_destination(project_root)
-    except Exception:
-        logger.debug("Could not resolve the Cloud upload destination", exc_info=True)
-        return None
+    return resolve_upload_destination(project_root)
 
 
 def _print_upload_receipt(console: Console, destination, upload_resp) -> None:
