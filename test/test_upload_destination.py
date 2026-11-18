@@ -110,7 +110,7 @@ def test_saved_key_for_another_repo_is_refused(repo):
     )
 
 
-def test_linked_project_for_another_repo_warns_but_uploads(repo):
+def test_linked_project_for_another_repo_is_refused(repo):
     sync.save_token("tok", project_id="proj-1", project_name="hatchpoint-dronecode")
     sync._write_link(repo, "proj-1", project_name="hatchpoint-dronecode")
 
@@ -121,11 +121,42 @@ def test_linked_project_for_another_repo_warns_but_uploads(repo):
     )
 
     assert dest.key_source == "link"
-    assert should_refuse_upload(dest) is False
+    assert should_refuse_upload(dest) is True
     assert destination_lines(dest)[-1] == (
         "  This token's project is connected to github.com/acme/other, "
         "but this repo is github.com/hatch-point/hatchpoint-dronecode."
     )
+
+
+def test_login_and_saved_destination_use_only_public_origin_identity(repo):
+    from skylos.cloud.login import _get_repo_url
+
+    _git(repo, "remote", "set-url", "origin",
+         "https://user:private-example@github.com/acme/other.git?auth=private-example#private-example")
+    sync.save_token("tok", project_id="proj-1")
+    sync._write_link(repo, "proj-1")
+    assert _get_repo_url() == "https://github.com/acme/other"
+    dest = resolve_upload_destination(repo, whoami=_whoami(), git_info=_git_info())
+    assert dest.local_repo == "github.com/acme/other"
+    assert should_refuse_upload(dest)
+    assert "private-example" not in "\n".join(mismatch_refusal_lines(dest))
+
+
+@pytest.mark.parametrize("remote", ["/private/path/to/repository", "git@github.com:acme/repo?auth=private-example"])
+def test_unsupported_origin_is_not_forwarded_to_browser(repo, remote):
+    from skylos.cloud.login import _get_repo_url
+
+    _git(repo, "remote", "set-url", "origin", remote)
+    with pytest.raises(ValueError) as error:
+        _get_repo_url()
+    assert str(error.value) == "Cloud repository linking supports GitHub and GitLab.com origins."
+
+
+def test_gitlab_ssh_subgroup_is_a_valid_browser_destination(repo):
+    from skylos.cloud.login import _get_repo_url
+
+    _git(repo, "remote", "set-url", "origin", "git@gitlab.com:acme/group/repo.git")
+    assert _get_repo_url() == "https://gitlab.com/acme/group/repo"
 
 
 def test_env_token_for_another_repo_is_never_refused(repo, monkeypatch):
@@ -341,8 +372,8 @@ def test_feature_branch_effects_say_verdict_follows_default_branch():
 
 def test_default_branch_login_key_upload_says_it_does_not_count():
     assert receipt_note(_dest(branch="main"), "unverified") == (
-        "This is main, but a login-token upload is unverified: it does not set the "
-        "project verdict or mark issues fixed."
+        "This scan on main is saved for review. CI uploads "
+        "update the project verdict and mark resolved issues fixed."
     )
 
 

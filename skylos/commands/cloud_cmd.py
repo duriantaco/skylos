@@ -23,8 +23,8 @@ Skylos Cloud, then show the quality gate for this branch and one link to it.
           files, lines, sizes, which calls which). Not your repository.
   Login:  opens your browser the first time to pick this repo's project;
           your sign-in is saved. No token to find or copy for local scans.
-  Trust:  browser sign-in saves developer reports. Verified quality gates and
-          checks require CI authentication (follow setup on the saved scan).
+  Reports: saved developer scans are ready to review. Optional CI setup adds
+          automatic repository checks and project verdict updates.
   Gate:   the Skylos Cloud quality gate for this branch. Exit 0 even when it
           fails; add --gate to exit 1 when it fails (use this in CI). Your
           local [tool.skylos.gate] limits are only used by skylos . --gate.

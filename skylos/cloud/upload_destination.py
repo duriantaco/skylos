@@ -51,10 +51,8 @@ def resolve_upload_destination(
     git_info=None,
 ) -> UploadDestination:
     from skylos import api
-    from skylos.core.review_decisions import (
-        _git_remote_identity,
-        _normalize_repository_identity,
-    )
+    from skylos.cloud.project_context import cloud_origin_identity
+    from skylos.core.review_decisions import _normalize_repository_identity
 
     if token is None:
         token = api.get_project_token()
@@ -74,7 +72,10 @@ def resolve_upload_destination(
     git_root = api.get_git_root()
     local_repo = None
     if git_root:
-        local_repo = _git_remote_identity(Path(git_root))
+        try:
+            local_repo = cloud_origin_identity(git_root)
+        except ValueError:
+            local_repo = "unsupported Git origin"
 
     return UploadDestination(
         key_source=key_source,
@@ -222,7 +223,7 @@ def mismatch_refusal_lines(dest: UploadDestination) -> list[str]:
 
 
 def should_refuse_upload(dest: UploadDestination) -> bool:
-    return dest.key_source == "saved" and dest.repo_mismatch
+    return dest.key_source in {"saved", "link"} and dest.repo_mismatch
 
 
 def receipt_note(dest: UploadDestination, upload_trust) -> str | None:
@@ -234,8 +235,8 @@ def receipt_note(dest: UploadDestination, upload_trust) -> str | None:
         )
     if dest.on_default_branch is True and upload_trust == "unverified":
         return (
-            f"This is {default}, but a login-token upload is unverified: it does not "
-            "set the project verdict or mark issues fixed."
+            f"This scan on {default} is saved for review. CI uploads "
+            "update the project verdict and mark resolved issues fixed."
         )
     if dest.default_branch is None:
         return (
