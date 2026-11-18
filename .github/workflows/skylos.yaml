@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: skylos-advisory-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -63,11 +67,11 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           uv venv --python 3.11
-          # Reviewed callable-flow, source-evaluation and caller-resolution
-          # limits, including the inactive Django converter fast path.
+          # Reviewed scanner fixes and the compact PR report button, including
+          # escaped report links and isolated Actions context.
           # Use this snapshot until those fixes are released on PyPI.
           # Keep this immutable and independent of the PR's code or metadata.
-          uv pip install --python .venv/bin/python "skylos @ git+https://github.com/duriantaco/skylos.git@ca5cc8cf43c909558d918729caf36998ab86c643"
+          uv pip install --python .venv/bin/python "skylos @ git+https://github.com/duriantaco/skylos.git@ab5fda49b111f844e0ae3c7fa2218b3730a6bb31"
           .venv/bin/skylos --version
 
       - name: Use repo Skylos on trusted refs
@@ -270,3 +274,62 @@ jobs:
         if: always()
         run: |
           echo "Skylos report: ${{ steps.scan.outputs.REPORT }}" >> $GITHUB_STEP_SUMMARY
+
+  summary:
+    name: Skylos PR summary
+    needs: scan
+    # Fork PRs keep their read-only scan and artifact. Posting is restricted to
+    # same-repository PRs, where GitHub can grant the comment permission.
+    if: >-
+      always() && !cancelled() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      REPORT: skylos_${{ github.run_number }}_${{ github.sha }}.json
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Install trusted PR renderer
+        run: |
+          # Keep the installed renderer outside the PR checkout. Isolated
+          # Python prevents checked-out modules from replacing it.
+          python -I -m venv "$RUNNER_TEMP/skylos-review-venv"
+          "$RUNNER_TEMP/skylos-review-venv/bin/python" -I -m pip install \
+            "skylos @ git+https://github.com/duriantaco/skylos.git@ab5fda49b111f844e0ae3c7fa2218b3730a6bb31"
+
+      - name: Download the saved scan report
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ env.REPORT }}
+          path: ${{ runner.temp }}/skylos-review
+
+      - name: Update the PR summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SKYLOS_GATE_RESULT: ${{ needs.scan.result }}
+        run: |
+          if [[ ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "Invalid pull request identity or comparison base" >&2
+            exit 1
+          fi
+          "$RUNNER_TEMP/skylos-review-venv/bin/python" -I -m skylos.cli cicd review . \
+            --input "$RUNNER_TEMP/skylos-review/$REPORT" \
+            --diff-base "$PR_BASE_SHA" \
+            --pr "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --summary-only \
+            --gate-result "$SKYLOS_GATE_RESULT"
