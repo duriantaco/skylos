@@ -103,6 +103,7 @@ INCOMPLETE_NOTE = (
     "caller analysis stopped at a limit before every chain was followed; the "
     "finding is kept because an exhausted analysis is not proof of safety"
 )
+FILENAME_HTTP_GUARD = "filename filter constrains this value under standard HTTP string decoding"
 FILENAME_UNVERIFIED = (
     "filename check body is present; native-string/runtime assumptions remain unverified"
 )
@@ -653,6 +654,7 @@ class _Sites:
     escapes: list = field(default_factory=list)
     entries: list = field(default_factory=list)
     computed: list = field(default_factory=list)
+    unresolved_refs: list = field(default_factory=list)
 
 
 def _target_names(target):
@@ -2598,9 +2600,9 @@ class _Project:
                 if self._registration(unit, scope, ref, call, sites):
                     return
         if values is None:
-            sites.escapes.append(
-                _step(unit, ref, f"`{_describe(ref)}` may be `{_function_label(fn)}` passed as a value; its receiver is not resolved")
-            )
+            step = _step(unit, ref, f"`{_describe(ref)}` may be `{_function_label(fn)}` passed as a value; its receiver is not resolved")
+            sites.escapes.append(step)
+            sites.unresolved_refs.append((step, unit))
             return
         sites.escapes.append(_step(unit, ref, f"`{_function_label(fn)}` is passed as a value; its callers are not visible"))
 
@@ -3436,6 +3438,7 @@ class _Tracer:
         self.string_constructor_memo = {}
         self.string_runtime_stable = None
         self.filename_proofs = rule == TRAVERSAL_RULE
+        self.http_string_declarations = {}
         self.filename_runtime_stable = {}
         self.unit_runtime_stable = {}
         self.process_members = {}
@@ -3732,7 +3735,7 @@ class _Tracer:
         if facts.empty():
             return _Facts.leaf(UNKNOWN, _step(unit, node, f"no binding of `{node.id}` reaches here"))
         if self.filename_proofs:
-            note = self._filename_guard_uncertainty(unit, scope, node, binds)
+            note = self._filename_guard_uncertainty(unit, scope, node, binds, env)
             if note is not None:
                 return facts.then(note)
         return facts
@@ -5524,11 +5527,15 @@ class _Tracer:
             for item in tail:
                 passed = passed.then(item)
             facts.add(passed)
-        if self.filename_proofs and self._filename_body(info[0], fn) is not None:
+        if self.filename_proofs and (parameter := self._filename_body(info[0], fn)) is not None:
             # The body match alone is not a runtime safety proof. Retain the
             # original facts and describe the unverified assumption on this
             # exact data-flow chain, without changing its classification.
-            facts = facts.then(_FilenameGuardStep(_step(unit, call, FILENAME_UNVERIFIED)))
+            if self._http_filename_argument(unit, info[0], fn, site, parameter, env):
+                note = _HttpFilenameGuardStep(_step(unit, call, FILENAME_HTTP_GUARD))
+            else:
+                note = _FilenameGuardStep(_step(unit, call, FILENAME_UNVERIFIED))
+            facts = facts.then(note)
         if self.rule in {"SKY-D324", "SKY-D325"} and any(
             isinstance(node, (ast.Yield, ast.YieldFrom)) for node in ast.walk(fn)
         ) and any(self._external_call(info[0], info[1], ast.Call(
@@ -5539,7 +5546,7 @@ class _Tracer:
                 "a custom context manager's generated pathname does not establish private directory ownership or descriptor safety")))
         return facts
 
-    def _filename_guard_uncertainty(self, unit, scope, use, binds):
+    def _filename_guard_uncertainty(self, unit, scope, use, binds, env=None):
         """A preceding reject-on-change check whose helper body is known.
         This is diagnostic evidence only; it never establishes safety."""
         if scope.kind != "function":
@@ -5548,6 +5555,8 @@ class _Tracer:
             if getattr(statement, "lineno", 0) >= use.lineno:
                 break
             if not isinstance(statement, ast.If) or not self._guard_terminates(unit, scope, statement.body):
+                continue
+            if getattr(statement, "end_lineno", 0) >= use.lineno:
                 continue
             test = statement.test
             if not isinstance(test, ast.Compare) or len(test.ops) != 1 or not isinstance(test.ops[0], ast.NotEq):
@@ -5562,8 +5571,27 @@ class _Tracer:
                     continue
                 values = self.project.values(unit, scope, call.func)
                 if values and all(value.kind == "fn" and self._filename_body(value.unit, value.node) is not None for value in values):
+                    if (len(call.args) == 1 and not call.keywords
+                            and isinstance(call.args[0], ast.Name)
+                            and call.args[0].id == use.id
+                            and not any(bind.kind != "param" and call.lineno <=
+                                        getattr(bind.node, "lineno", 0) <= use.lineno for bind in binds)
+                            and all(self._http_filename_argument(
+                                unit, value.unit, value.node,
+                                _Site(unit, scope, call, list(call.args), [], value.bound, "call"),
+                                self._filename_body(value.unit, value.node), env,
+                            ) for value in values)):
+                        return _HttpFilenameGuardStep(_step(unit, statement, FILENAME_HTTP_GUARD))
                     return _FilenameGuardStep(_step(unit, statement, FILENAME_UNVERIFIED))
         return None
+
+    def _http_filename_argument(self, unit, fn_unit, fn, site, parameter, env):
+        if not self.project.complete or not self._filename_runtime_is_stable((unit, fn_unit)):
+            return False
+        from .path_http_filename_input import HTTPFilenameInput
+
+        proof = HTTPFilenameInput(self)
+        return proof.arguments(fn, site, parameter, env, None, frozenset()) and proof.http_seen
 
     @staticmethod
     def _filename_literal(node):
