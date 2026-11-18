@@ -6087,7 +6087,9 @@ class Skylos:
             if enable_dependency_hallucinations:
                 try:
                     from skylos.rules.ai_defect.dependency_hallucination import (
+                        merge_repeated_dependency_findings,
                         scan_python_dependency_hallucinations,
+                        strip_dependency_scope,
                     )
 
                     py_files = [
@@ -6105,13 +6107,23 @@ class Skylos:
                                 "unverified_import_count": len(unverified),
                                 "unverified_imports": sorted(unverified)[:25],
                             }
+                        reported_dependencies = []
+                        suppressed_before = len(all_suppressed)
                         _extend_unsuppressed_ai_defect_findings(
                             dep_findings,
                             project_ignore=project_ignore,
                             per_file_ignore_lines=per_file_ignore_lines,
                             per_file_ignore_rules=per_file_ignore_rules,
-                            all_ai_defects=all_ai_defects,
+                            all_ai_defects=reported_dependencies,
                             all_suppressed=all_suppressed,
+                        )
+                        strip_dependency_scope(all_suppressed[suppressed_before:])
+                        # Merge after suppression so an ignored import site
+                        # never hides another site of the same package.
+                        all_ai_defects.extend(
+                            merge_repeated_dependency_findings(
+                                reported_dependencies, project_root
+                            )
                         )
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
