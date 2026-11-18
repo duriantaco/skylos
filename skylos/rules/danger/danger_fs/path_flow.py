@@ -149,7 +149,7 @@ _FROM_PARAMETER = (
 )
 
 
-def _helper_parameter_message(rule_id, message):
+def _helper_parameter_message(rule_id, message, *, read_capable_open=False):
     """The finding rests on a parameter, not on input Skylos saw: say so
     instead of "untrusted" or "attacker-controlled"."""
     if rule_id == "SKY-D215":
@@ -172,6 +172,12 @@ def _helper_parameter_message(rule_id, message):
             "pass user input, reject symlinks or open with O_NOFOLLOW and check containment."
         )
     if rule_id == "SKY-D325":
+        if read_capable_open:
+            return (
+                "A read-capable open may follow a symlink. Its operand comes from a "
+                "function parameter whose callers are not visible. Check whether a "
+                "caller can select or replace the path."
+            )
         if "unbounded" in message:
             return (
                 f"Possible symlink-following or unbounded read: {_FROM_PARAMETER}; if a "
@@ -206,7 +212,8 @@ def _mark_helper_parameter(finding, evidence, path_expr=None):
     if isinstance(evidence, _HelperParameterEvidence):
         finding.setdefault("metadata", {})["path_source"] = HELPER_PARAMETER_SOURCE
         finding["message"] = _helper_parameter_message(
-            finding["rule_id"], finding["message"]
+            finding["rule_id"], finding["message"],
+            read_capable_open=finding["metadata"].get("path_operation") == "read_capable_open",
         )
     elif isinstance(evidence, _OperatorContextEvidence):
         finding.setdefault("metadata", {})["path_source"] = "operator_context"
@@ -1941,7 +1948,7 @@ class _PathFlowChecker(TaintVisitor):
         return True
 
     def _add_finding(
-        self, node, rule_id, severity, message, evidence=None, path_expr=None
+        self, node, rule_id, severity, message, evidence=None, path_expr=None, *, read_capable_open=False
     ):
         key = (rule_id, getattr(node, "lineno", 0), getattr(node, "col_offset", 0))
         if key in self._emitted:
@@ -1958,6 +1965,8 @@ class _PathFlowChecker(TaintVisitor):
         }
         if evidence:
             finding["metadata"] = {"security_evidence": evidence}
+        if read_capable_open:
+            finding.setdefault("metadata", {})["path_operation"] = "read_capable_open"
         _mark_helper_parameter(finding, evidence, path_expr)
         if rule_id in {SYMLINK_WRITE_RULE, SYMLINK_READ_RULE} and id(path_expr) in self._shared_file_operands:
             finding.setdefault("metadata", {})["predictable_shared_path"] = True
@@ -2307,13 +2316,14 @@ class _PathFlowChecker(TaintVisitor):
             ):
                 self._bounded_opens.add(id(item.context_expr))
 
-    def _flag_symlink_read_if_unsafe(self, node, path_expr):
+    def _flag_symlink_read_if_unsafe(self, node, path_expr, *, read_capable_open=False):
         if not self._path_needs_symlink_protection(path_expr, node):
             return
         bounded = id(node) in self._bounded_opens
         if self._has_symlink_read_guard(node):
             return
-        evidence = self._untrusted_path_evidence(path_expr, "filesystem read")
+        sink = "read-capable file open" if read_capable_open else "filesystem read"
+        evidence = self._untrusted_path_evidence(path_expr, sink)
         if evidence is None:
             return
         message = (
@@ -2321,8 +2331,11 @@ class _PathFlowChecker(TaintVisitor):
             if bounded
             else "Possible symlink-following or unbounded read on attacker-controlled path; require a regular in-root file and a size cap."
         )
+        if read_capable_open:
+            message = "A read-capable open may follow a symlink on this path. Verify the target and directory permissions."
         self._add_finding(
-            node, SYMLINK_READ_RULE, "MEDIUM", message, evidence, path_expr
+            node, SYMLINK_READ_RULE, "MEDIUM", message, evidence, path_expr,
+            read_capable_open=read_capable_open,
         )
 
     def _flag_archive_extract_if_unsafe(self, node):
@@ -2365,7 +2378,9 @@ class _PathFlowChecker(TaintVisitor):
         if may_write and not exclusive:
             self._flag_symlink_write_if_unsafe(node, path_expr)
         if may_read:
-            self._flag_symlink_read_if_unsafe(node, path_expr)
+            self._flag_symlink_read_if_unsafe(
+                node, path_expr, read_capable_open=not self._update_handle_is_read(node)
+            )
 
     def _update_handle_is_read(self, node):
         if self.update_handle_reads is None:
@@ -2463,19 +2478,21 @@ class _PathFlowChecker(TaintVisitor):
                 and "O_WRONLY" in facts.required
                 and "O_RDWR" not in facts.possible
             )
-            reads = (
+            observed_read = (
                 not write_only
                 and self.atomic_open_proofs is not None
-                and (
-                    self.atomic_open_proofs.descriptor_read_observed(
-                        node, self._canonical_call_name, self._update_handle_is_read
-                    )
-                    or self.atomic_open_proofs.uncertain_descriptor_read(
-                        node,
-                        self._native_atomic_expression,
-                        self._canonical_call_name,
-                        self._update_handle_is_read,
-                    )
+                and self.atomic_open_proofs.descriptor_read_observed(
+                    node, self._canonical_call_name, self._update_handle_is_read
+                )
+            )
+            reads = observed_read or (
+                not write_only
+                and self.atomic_open_proofs is not None
+                and self.atomic_open_proofs.uncertain_descriptor_read(
+                    node,
+                    self._native_atomic_expression,
+                    self._canonical_call_name,
+                    self._update_handle_is_read,
                 )
             )
             metadata_only = (
@@ -2489,7 +2506,9 @@ class _PathFlowChecker(TaintVisitor):
                 and not metadata_only
                 and not self._os_open_is_directory_read(node)
             ):
-                self._flag_symlink_read_if_unsafe(node, first_path)
+                self._flag_symlink_read_if_unsafe(
+                    node, first_path, read_capable_open=not observed_read
+                )
 
         if (
             isinstance(node.func, ast.Attribute)

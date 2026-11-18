@@ -7699,14 +7699,18 @@ def _locate_operand(unit, location):
     return None
 
 
-def _sink_step(unit, finding, operand):
-    rule = finding.get("rule_id")
-    sink = {
+def _path_sink(finding):
+    if (finding.get("metadata") or {}).get("path_operation") == "read_capable_open":
+        return "read-capable file open"
+    return {
         "SKY-D215": "filesystem path operation",
         "SKY-D324": "filesystem write",
         "SKY-D325": "filesystem read",
-    }.get(rule, "filesystem path")
-    return _step(unit, operand, f"path `{_describe(operand)}` reaches the {sink}")
+    }.get(finding.get("rule_id"), "filesystem path")
+
+
+def _sink_step(unit, finding, operand):
+    return _step(unit, operand, f"path `{_describe(operand)}` reaches the {_path_sink(finding)}")
 
 
 def _changed_path_component(unit, node, facts, operands=None):
@@ -7775,6 +7779,11 @@ def _untrusted_message(finding, source):
             "an attacker to create or replace a path entry; that filesystem access "
             "is not established by this source trace. Reject symlinks or open "
             "with O_NOFOLLOW and check containment."
+        )
+    if (finding.get("metadata") or {}).get("path_operation") == "read_capable_open":
+        return (
+            f"A read-capable open may follow a symlink. {source} reaches this path "
+            "through project callers. Check who can create or replace its directory entry."
         )
     if "unbounded" in message:
         return (
@@ -7849,12 +7858,7 @@ def _provenance_record(status, function, facts, project, limits):
 
 
 def _evidence(chain, finding):
-    rule = finding.get("rule_id")
-    sink = {
-        "SKY-D215": "filesystem path operation",
-        "SKY-D324": "filesystem write",
-        "SKY-D325": "filesystem read",
-    }.get(rule, "filesystem path")
+    sink = _path_sink(finding)
     steps = [_strip_location(step) for step in chain]
     source = steps[0]
     guards = [_strip_location(step) for step in chain if isinstance(step, _FilenameGuardStep)]
@@ -8017,12 +8021,16 @@ def _resolve(findings, root, files, complete, suppressed):
             updated["message"] = _untrusted_message(updated, evidence["source"])
             kept.append(updated)
             continue
+        read_capable_open = metadata.get("path_operation") == "read_capable_open"
         if record.get("shared_temp_path"):
             updated["reason"] = "Predictable name in a shared temporary directory"
             operation = "write" if updated["rule_id"] == "SKY-D324" else "read"
+            if read_capable_open:
+                operation_message = "A read-capable open may follow a symlink at a predictable temporary path."
+            else:
+                operation_message = f"Possible symlink-following {operation} at a predictable temporary path."
             updated["message"] = (
-                f"Possible symlink-following {operation} at a predictable temporary path. "
-                "Check who can create or replace the directory entry before this open."
+                f"{operation_message} Check who can create or replace the directory entry before this open."
             )
             kept.append(updated)
             continue
@@ -8030,7 +8038,7 @@ def _resolve(findings, root, files, complete, suppressed):
             kind = {
                 "SKY-D215": "path traversal",
                 "SKY-D324": "symlink-following write",
-                "SKY-D325": "symlink-following or unbounded read",
+                "SKY-D325": "read-capable open" if read_capable_open else "symlink-following or unbounded read",
             }.get(updated.get("rule_id"), "filesystem path")
             if status == INCOMPLETE:
                 updated["reason"] = INCOMPLETE_NOTE

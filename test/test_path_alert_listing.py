@@ -132,3 +132,39 @@ def custom_open():
         if (row["rule_id"], row["line"]) in paths:
             assert is_listed(row, "security")
             assert row["metadata"]["path_provenance"]["shared_temp_path"] is True
+
+
+def test_read_capable_opens_and_observed_reads_have_distinct_messages(tmp_path):
+    source = tmp_path / "storage.py"
+    source.write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "def get_descriptor():\n"
+        "    return os.open('/tmp/descriptor', os.O_RDONLY)\n"
+        "def get_stream():\n"
+        "    return open('/tmp/stream', 'rb')\n"
+        "def get_contents():\n"
+        "    return Path('/tmp/contents').read_bytes()\n"
+        "def read_descriptor():\n"
+        "    fd = os.open('/tmp/direct', os.O_RDONLY)\n"
+        "    return os.read(fd, 8)\n"
+        "def read_stream():\n"
+        "    return open('/tmp/stream-read', 'rb').read()\n"
+    )
+    result = json.loads(
+        analyze(str(tmp_path), enable_danger=True, trace_file=False, grep_verify=False)
+    )
+    assert not result.get("analysis_errors")
+    rows = {r["symbol"]: r for r in result["danger"] if r["rule_id"] == "SKY-D325"}
+    assert set(rows) == {
+        "get_descriptor", "get_stream", "get_contents", "read_descriptor", "read_stream"
+    }
+    for symbol, row in rows.items():
+        assert row["severity"] == "MEDIUM"
+        assert is_listed(row, "security")
+        assert row["metadata"]["path_provenance"]["shared_temp_path"] is True
+        if symbol in {"get_descriptor", "get_stream"}:
+            assert row["metadata"]["path_operation"] == "read_capable_open"
+            assert row["message"].startswith("A read-capable open may follow a symlink")
+        else:
+            assert "symlink-following read" in row["message"]
