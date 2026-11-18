@@ -217,6 +217,36 @@ def _context_launch_gap(tracer, launch, kinds):
     return gaps
 
 
+def _ambiguous_context_gaps(tracer, origin, kinds):
+    """Expand the project-wide ambiguous launches once per active set of inputs."""
+    from .path_provenance import UNKNOWN, _Facts, _step
+
+    launches = python_argv_ambiguous_launches(tracer.project)
+    if not launches:
+        return _Facts()
+    channels = frozenset("env" if kind == "environment" else kind for kind in kinds)
+    expanding = getattr(tracer, "_ambiguous_launch_channels", None)
+    if expanding is None:
+        expanding = tracer._ambiguous_launch_channels = set()
+    if channels in expanding:
+        # Every origin shares this dependency. The outer pass visits each
+        # launch, including alternative inputs beyond the recursive edge.
+        return _Facts.leaf(
+            UNKNOWN,
+            _step(origin, origin.tree, "recursive ambiguous process input is unresolved"),
+        )
+    expanding.add(channels)
+    try:
+        gaps = _Facts()
+        for launch in launches:
+            if "cli" in kinds:
+                gaps.add(_uncertain_launch(tracer, launch, stdin="stdin" in kinds))
+            gaps.add(_context_launch_gap(tracer, launch, kinds))
+        return gaps
+    finally:
+        expanding.discard(channels)
+
+
 def _operator_launch_gap(tracer, facts):
     """Associate each operator source with relevant launch transports.
 
@@ -275,10 +305,7 @@ def _operator_launch_gap(tracer, facts):
                         )
                     )
                 gaps.add(_context_launch_gap(tracer, launch, kinds))
-            for launch in python_argv_ambiguous_launches(tracer.project):
-                if "cli" in kinds:
-                    gaps.add(_uncertain_launch(tracer, launch, stdin="stdin" in kinds))
-                gaps.add(_context_launch_gap(tracer, launch, kinds))
+            gaps.add(_ambiguous_context_gaps(tracer, origin, kinds))
         finally:
             active.discard(id(origin))
     return gaps
@@ -302,6 +329,7 @@ def operator_launch_gap(tracer, facts):
         getattr(facts, "operator_origins_complete", False),
         tuple(sorted((id(unit), kind) for unit, kind in records)),
         tuple(sorted(getattr(tracer, "_operator_launch_gaps_active", ()))),
+        frozenset(getattr(tracer, "_ambiguous_launch_channels", ())),
     )
     settled = not tracer.depth_of and not tracer.pending
     cache = getattr(tracer, "_operator_launch_gap_cache", None)

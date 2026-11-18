@@ -94,7 +94,10 @@ def test_malformed_or_unproven_metadata_does_not_claim_a_review_or_safety():
 
 @pytest.mark.parametrize("output", ["rich", "pretty"])
 def test_human_output_names_uncertainty_and_the_missing_caller_edge(output, tmp_path):
-    result = _result(_finding(file=str(tmp_path / "app.py")))
+    result = _result(
+        _finding(file=str(tmp_path / "app.py")),
+        _finding("incomplete", line=9, file=str(tmp_path / "app.py")),
+    )
     before = copy.deepcopy(result)
     buffer = StringIO()
     console = Console(
@@ -105,7 +108,9 @@ def test_human_output_names_uncertainty_and_the_missing_caller_edge(output, tmp_
     else:
         render_pretty_results(console, result, root_path=tmp_path)
     rendered = buffer.getvalue()
-    assert "1 path finding needs review: caller/source unresolved" in rendered
+    assert "2 path findings need review: caller/source unresolved" in rendered
+    assert "Unknown sources or callers (1) · Incomplete traces (1)" in rendered
+    assert "Exploitability remains unconfirmed." in rendered
     assert "safety is not established" in rendered
     assert "SKY-D215 app.py:7: app.py:4 caller callback is external" in rendered
     assert "metadata.path_provenance with --format json" in rendered

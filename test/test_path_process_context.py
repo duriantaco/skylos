@@ -457,3 +457,44 @@ def test_opaque_runtime_context_is_uncertain_instead_of_a_safety_proof(
     (launch,) = process.python_process_context_launches(project, units["unrelated.py"])
     assert launch.uncertainty
     assert ("startup" if implicit else "dynamic loader") in launch.uncertainty
+
+
+def test_recursive_opaque_launches_check_every_external_alternative_once(
+    tmp_path, monkeypatch
+):
+    from skylos.rules.danger.danger_fs import path_process_flow as flow
+    from skylos.rules.danger.danger_fs.path_provenance import (
+        INCOMPLETE,
+        OPERATOR,
+        UNKNOWN,
+        _Facts,
+        _Tracer,
+    )
+
+    # Each opaque supervisor inherits an environment field from its own
+    # process. Its executable may start the worker indirectly. The web route
+    # is another, independent way an unknown launcher can receive this field.
+    source = (
+        "import os, subprocess\n"
+        "subprocess.run(['supervisor'], env={'DOC': os.getenv('DOC')})\n"
+    )
+    wrappers = {f"wrapper_{i}.py": source for i in range(5)}
+    route = "subprocess.run(['supervisor'], env={'DOC': request.args['doc']})"
+    project, units = _project(tmp_path, route, extra_files=wrappers)
+    tracer = _Tracer(project, "SKY-D215")
+    facts = _Facts.leaf(
+        OPERATOR, "worker environment", operator_origin=(units["child.py"], "environment")
+    )
+    observed = []
+    original = flow._context_launch_gap
+
+    def count(tracer, launch, kinds):
+        observed.append(launch.unit.rel)
+        return original(tracer, launch, kinds)
+
+    monkeypatch.setattr(flow, "_context_launch_gap", count)
+    result = flow.operator_launch_gap(tracer, facts)
+
+    assert any("web.py" in step for chain in result.chains[UNKNOWN] for step in chain)
+    assert not result.chains[INCOMPLETE]
+    assert sorted(observed) == sorted(["web.py", *wrappers])

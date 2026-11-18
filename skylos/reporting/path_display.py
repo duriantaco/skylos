@@ -85,8 +85,13 @@ def path_review_lines(result, *, root_path=None):
     if not count:
         return []
     noun = "finding needs" if count == 1 else "findings need"
+    statuses = summary["by_status"]
     lines = [
-        f"{count} path {noun} review: caller/source unresolved; safety is not established."
+        f"{count} path {noun} review: caller/source unresolved; safety is not established.",
+        (
+            f"Unknown sources or callers ({statuses['unknown']}) · "
+            f"Incomplete traces ({statuses['incomplete']}). Exploitability remains unconfirmed."
+        ),
     ]
     for example in summary["examples"]:
         file = example["file"]
