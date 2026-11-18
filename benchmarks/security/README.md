@@ -223,3 +223,23 @@ harmless classes with serializer-like names. Dangerous providers still warn;
 matching a local class/property spelling alone does not establish unsafe
 deserialization. PHP loose comparisons remain conservative until operand types
 are proved; strict literal allowlists and constant path maps remain supported.
+
+### Checking the default issue list
+
+Set `"scan": {"listing": "primary"}` on a fixture to score the findings shown
+by a default Skylos scan. Each required and forbidden location goes through the
+same listing decision as the CLI. The default benchmark view is `raw` so that
+existing labels continue to measure detector output. The captured JSON and
+the security gate retain the raw findings in either mode.
+
+Run both sets of controls with this command.
+
+```sh
+python scripts/security_benchmark.py --case python-primary-path-controls --case python-primary-compiled-source-controls
+```
+
+The path fixture checks an HTTP-sourced read, a callback with unresolved
+callers, a write to a predictable shared file and exclusive creation. The
+execution fixture checks a local source loader and a request-supplied program.
+The pytest suite runs both and verifies the raw evidence for the secondary
+findings.

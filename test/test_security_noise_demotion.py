@@ -407,3 +407,61 @@ def test_browser_client_module_still_exposes_its_secret():
     secret = "sk_live_" + "51HqLyjWDarjtT1zdp7dcXyZ"
     text = f"const apiToken = '{secret}';\n"
     assert "SKY-S102" in _secret_rules("src/client.js", text)
+
+
+def _compiled_source_finding(tmp_path):
+    return {
+        "rule_id": "SKY-D202",
+        "file": str(tmp_path / "harness.py"),
+        "line": 5,
+        "severity": "HIGH",
+        "message": "Compiled project source",
+        "low_risk_context": {
+            "reason": "compiled-project-source",
+            "scope": "loader-and-imports",
+            "runtime_integrity": "unverified",
+            "source_files": ["lib/schema.py"],
+        },
+        "metadata": {"security_trace": {"status": "partial"}},
+    }
+
+
+def test_compiled_source_evidence_survives_listing_gates_and_upload(tmp_path):
+    from skylos.api._payloads import _compact_upload_finding
+    from skylos.api._scan_coverage import _retained_risk_counts
+    from skylos.reporting.listing import listed_result
+    from skylos.reporting.sarif import SarifExporter
+
+    finding = _compiled_source_finding(tmp_path)
+    result = apply_advice_policy({"danger": [finding]})
+    hidden = result["danger"][0]
+    assert not is_listed(hidden, "security")
+    assert is_listed(hidden, "security", explicit_rules={"SKY-D202"})
+    assert check_gate(result, {"gate": {"max_security": 0}})[0] is False
+    assert sum(_retained_risk_counts(result, listed_result(result)).values()) == 1
+    exported = SarifExporter([{**hidden, "category": "SECURITY"}]).generate()
+    properties = exported["runs"][0]["results"][0]["properties"]
+    compact = _compact_upload_finding({**hidden, "category": "SECURITY"}, include_snippet=False)
+    assert properties["listing"]["listed"] is False
+    assert compact["listing"]["listed"] is False
+    for data in (properties["skylos_metadata"], compact["metadata"]):
+        assert data["compiled_project_source"] == finding["low_risk_context"]
+
+
+@pytest.mark.parametrize("change", [
+    {"source_files": ["../outside.py"]}, {"source_files": []}, {"source_files": ["/absolute.py"]},
+    {"source_files": ["name.py\n"]}, {"source_files": ["other.txt"]}, {"scope": "unknown"},
+    {"runtime_integrity": True}, {"reason": []},
+])
+def test_compiled_source_requires_valid_receipt(tmp_path, change):
+    row = _compiled_source_finding(tmp_path)
+    row["low_risk_context"].update(change)
+    row["listing"] = {"listed": False, "version": 1, "reason": "low-risk-context"}
+    assert is_listed(row, "security")
+
+
+def test_independent_source_trace_keeps_compiled_code_primary(tmp_path):
+    row = _compiled_source_finding(tmp_path)
+    row["metadata"]["security_trace"]["status"] = "source_to_sink"
+    view = apply_advice_policy({"danger": [row]})
+    assert is_listed(view["danger"][0], "security")

@@ -361,6 +361,7 @@ class SarifExporter:
                 ),
             }
             from skylos.reporting.listing import (
+                compiled_source_context,
                 is_listed,
                 listing_decision,
                 map_listing_paths,
@@ -395,7 +396,10 @@ class SarifExporter:
                 )
 
             metadata = finding.get("metadata")
-            if isinstance(metadata, dict) and metadata:
+            local_source = compiled_source_context(finding)
+            if local_source is not None and not isinstance(metadata, dict):
+                metadata = {}
+            if isinstance(metadata, dict) and (metadata or local_source is not None):
                 # Lockfile environment context plus full advisory details can
                 # exceed 32 fields. Keep their locations without changing the
                 # existing total-node, depth, text or redaction safeguards.
@@ -418,6 +422,9 @@ class SarifExporter:
                 safe_metadata = _sanitize_sarif_payload(
                     metadata_input, max_items=metadata_items
                 )
+                safe_metadata.pop("compiled_project_source", None)
+                if local_source is not None:
+                    safe_metadata["compiled_project_source"] = _sanitize_sarif_payload(local_source)
                 if path_proof is not None:
                     # Each provenance class can have four chains of 32 steps.
                     # Reserve space independently of receiver and other evidence.

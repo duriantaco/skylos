@@ -4,7 +4,7 @@ import re
 from .weak_random_context import private_model_slug_evidence
 from skylos.rules.base import SkylosRule
 from .pickle_provenance import safe_pickle_loads
-from .source_owned_code import source_owned_code_calls
+from .source_owned_code import source_code_origins
 from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
 from .untrusted_sources import UntrustedSourceIndex, _unsafe_import_roots
 from .import_proof import provider_binding_is_stable
@@ -3091,6 +3091,7 @@ class DangerousCallsRule(SkylosRule):
         self._parents_annotated = False
         self._safe_pickle_loads = set()
         self._source_owned_code = frozenset()
+        self._local_code_origins = {}
         self._module = None
         self._unpickler_classes = {}
         self._safe_yaml_loaders = None
@@ -3158,7 +3159,7 @@ class DangerousCallsRule(SkylosRule):
             self._annotate_parents(node)
             self._parents_annotated = True
             self._safe_pickle_loads = safe_pickle_loads(node, context.get("filename"))
-            self._source_owned_code = source_owned_code_calls(
+            self._source_owned_code, self._local_code_origins = source_code_origins(
                 node, context.get("filename"), context.get("project_root")
             )
             self._module = node
@@ -3285,6 +3286,8 @@ class DangerousCallsRule(SkylosRule):
                 context.get("filename"),
                 context.get("project_root"),
             )
+            if rule_id == "SKY-D202" and id(node) in self._local_code_origins:
+                low_risk = self._local_code_origins[id(node)]
             if low_risk is not None:
                 finding["low_risk_context"] = low_risk
             if opts and opts.get("weak_random"):

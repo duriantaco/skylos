@@ -27,20 +27,23 @@ module: one ``exec``/``eval`` that is not proved (``exec(user_code, {})``)
 keeps every call in the module reported, because it could patch ``ast`` or
 ``pathlib`` before the others run. A complete, bounded project source snapshot
 must also rule out source-file mutations, escaped filesystem capabilities,
-reader/parser overrides and dynamic loading in other modules. Unknown effects
-in the loader itself leave the call reported. No target code is executed.
+reader/parser overrides and dynamic loading in other modules. When only the
+operand and its loader are established, a raw finding can carry review
+evidence about that narrower proof. No target code is executed.
 """
 
 from __future__ import annotations
 
 import ast
 import os
+from pathlib import Path
 
 from .builtin_bindings import builtin_references
 from .danger_fs.closed_world import _SKIP_DIRS
 from .module_namespace import attribute_write_names, module_name_for, module_rebinding
-from .untrusted_sources import UntrustedSourceIndex
+from .project_imports import project_import_context
 from .project_source import project_source_snapshot
+from .untrusted_sources import UntrustedSourceIndex
 
 _TREE = "tree"
 _MODULE = "module"
@@ -339,13 +342,15 @@ def _binding_counts(tree: ast.Module) -> dict[str, int]:
 
 
 def _fresh_mapping(expr, scope, counts) -> bool:
-    if isinstance(expr, (ast.Dict, ast.DictComp)):
-        return True
+    if isinstance(expr, ast.Dict):
+        return all(_is_str(key) and key.value != "__builtins__" for key in expr.keys)
     if isinstance(expr, ast.Call):
         return (
             isinstance(expr.func, ast.Name)
             and expr.func.id == "dict"
             and not counts.get("dict")
+            and not expr.args
+            and all(item.arg not in {None, "__builtins__"} for item in expr.keywords)
         )
     if not isinstance(expr, ast.Name) or not isinstance(scope, _FUNCTIONS):
         return False
@@ -396,7 +401,11 @@ def _isolated_code_calls(tree, parents, counts) -> frozenset[int]:
             and node.func.id in _CODE_RUNNERS
         ):
             continue
-        if any(isinstance(arg, ast.Starred) for arg in node.args[:2]):
+        if (
+            len(node.args) > 2
+            or any(isinstance(arg, ast.Starred) for arg in node.args)
+            or any(kw.arg != "globals" for kw in node.keywords)
+        ):
             continue
         namespace = _argument(node, 1, "globals")
         if namespace is None:
@@ -404,6 +413,17 @@ def _isolated_code_calls(tree, parents, counts) -> frozenset[int]:
         scope = parents.get(id(node))
         while scope is not None and not isinstance(scope, (*_SCOPES, ast.Module)):
             scope = parents.get(id(scope))
+        # Before execution, even a freshly allocated dict can escape via an
+        # alias, an item store, or an argument to another call.
+        if isinstance(namespace, ast.Name) and any(
+            isinstance(use, ast.Name)
+            and use is not namespace
+            and use.id == namespace.id
+            and isinstance(use.ctx, ast.Load)
+            and (use.lineno, use.col_offset) < (namespace.lineno, namespace.col_offset)
+            for use in ast.walk(scope)
+        ):
+            continue
         if _fresh_mapping(namespace, scope, counts):
             found.add(id(node))
     return frozenset(found)
@@ -537,7 +557,11 @@ class _Proof:
         self.used_globals: set[str] = set()
         self.used_attrs: set[str] = set()
         self.audit_targets = None
+        self.check_relative_writers = False
         self.file_unsafe = False
+        self.opaque_effects = False
+        self.known_source_write = False
+        self.reviewed = {}
         self.steps = 0
 
     def run(self) -> frozenset[int]:
@@ -569,25 +593,103 @@ class _Proof:
             self._run(frame, owner.body)
             if not frame.escaped:
                 proven |= frame.candidates
-        if (
-            proven != runners
-            or not self._names_are_stable()
-            or not self._project_is_stable()
-        ):
+        if proven != runners or not self._names_are_stable():
             return frozenset()
-        return frozenset(proven)
-
-    def _project_is_stable(self):
         trees, complete = project_source_snapshot(self.root)
         if not complete:
-            return False
+            return frozenset()
         targets = frozenset(
             os.path.realpath(path) for path, owned in self.file_checks.items() if owned
         )
+        if not targets:
+            return frozenset()
+        if self._scope_is_stable(trees.items(), targets):
+            return frozenset(proven)
+        # Keep the receipt specific to one source file for each compiled sink.
+        # The strong proof above may support multiple independent artifacts.
+        if len(targets) != 1:
+            return frozenset()
+        source = Path(next(iter(targets))).relative_to(self.root).as_posix()
+        if len(source) > 512 or not source.isprintable() or any(c in source for c in "\\:"):
+            return frozenset()
+        # The exact operand can still have useful provenance when complete
+        # runtime integrity of its file cannot be proved. Retain the raw sink.
+        context = project_import_context(self.tree, self.file, self.root)
+        if (
+            context is not None
+            and self._scope_is_stable(context.entries, targets, review=True)
+            and not self._external_write(trees, context, targets)
+        ):
+            for call in ast.walk(self.tree):
+                if (
+                    id(call) in proven and isinstance(call.func, ast.Name)
+                    and call.func.id == "exec" and call.args
+                    and isinstance(call.args[0], ast.Call)
+                    and isinstance(call.args[0].func, ast.Name)
+                    and call.args[0].func.id == "compile"
+                    and id(call.args[0].func) in self.builtins
+                ):
+                    self.reviewed[id(call)] = {
+                        "reason": "compiled-project-source",
+                        "source_files": [source],
+                        "scope": "loader-and-imports",
+                        "runtime_integrity": "unverified",
+                        "description": (
+                            "The executed operand traces to selected Python source in this repository. "
+                            "The visible loader and its imports show no source or provider replacement. "
+                            "Runtime file integrity and other processes remain unverified."
+                        ),
+                    }
+        return frozenset()
+
+    def _audit(self, path, tree, targets, *, check_relative_writers=False):
+        audit = _Proof(tree, path, self.root)
+        audit.audit_targets = targets
+        audit.check_relative_writers = check_relative_writers
+        module_frame = _Frame(None, frozenset(audit.constants), frozenset(), False)
+        audit._run(module_frame, tree.body)
+        for function in ast.walk(tree):
+            if isinstance(function, _FUNCTIONS):
+                audit._run(audit._top_frame(function), function.body)
+            elif isinstance(function, ast.ClassDef):
+                audit._run(_Frame(None, frozenset(), frozenset(), False), function.body)
+        return audit
+
+    def _external_write(self, trees, context, targets):
+        # Even an independent script can replace the named file. Explicit
+        # substitutions of the loader's bindings also remain primary.
+        imported = {path for path, _ in context.entries}
+        names = {os.path.basename(target) for target in targets}
+        bindings = self.used_globals | (self.used_attrs - _RELIED_DUNDERS) | {
+            "read_text", "read_bytes", "compile", "exec", "parse", "Path",
+            "fix_missing_locations", "Module", "deepcopy", "resolve",
+        }
+        for path, tree in trees.items():
+            if path in imported:
+                continue
+            written, _ = attribute_write_names(tree)
+            if bindings & written:
+                return True
+            parents = {
+                id(child): parent for parent in ast.walk(tree)
+                for child in ast.iter_child_nodes(parent)
+            }
+            patches = _patched_names(tree, parents)
+            if patches and bindings & patches:
+                return True
+            if str(path) in targets or any(
+                _is_str(node) and os.path.basename(node.value) in names
+                for node in ast.walk(tree)
+            ):
+                if self._audit(path, tree, targets, check_relative_writers=True).known_source_write:
+                    return True
+        return False
+
+    def _scope_is_stable(self, entries, targets, *, review=False):
         saw_current = False
         project_written = set()
         project_reads = set(self.used_attrs | self.used_globals)
-        for path, tree in trees.items():
+        for path, tree in entries:
             own = os.path.realpath(path) == os.path.realpath(self.file)
             if own:
                 if ast.dump(tree, include_attributes=False) != ast.dump(
@@ -596,9 +698,7 @@ class _Proof:
                     return False
                 saw_current = True
                 tree = self.tree
-            isolated = frozenset()
-            if own:
-                isolated = self.isolated
+            isolated = self.isolated if own else frozenset()
             dynamic, _ = module_rebinding(
                 tree, module_name_for(path), isolated_code_calls=isolated
             )
@@ -616,18 +716,8 @@ class _Proof:
             project_written.update(written | patched)
             if (self.used_attrs | _RELIED_DUNDERS) & (written | patched):
                 return False
-            audit = _Proof(tree, path, self.root)
-            audit.audit_targets = targets
-            module_frame = _Frame(None, frozenset(audit.constants), frozenset(), False)
-            audit._run(module_frame, tree.body)
-            for function in ast.walk(tree):
-                if isinstance(function, _FUNCTIONS):
-                    audit._run(audit._top_frame(function), function.body)
-                elif isinstance(function, ast.ClassDef):
-                    audit._run(
-                        _Frame(None, frozenset(), frozenset(), False), function.body
-                    )
-            if audit.file_unsafe:
+            audit = self._audit(path, tree, targets)
+            if audit.file_unsafe or (audit.opaque_effects and not (review and own)):
                 return False
             project_reads.update(audit.used_attrs | audit.used_globals)
         return saw_current and not project_reads & project_written
@@ -666,6 +756,8 @@ class _Proof:
             destinations = values[:2]
         else:
             destinations = values[:1]
+        if any(_is_path(value) and self._source_path(value) for value in destinations):
+            self.known_source_write = True
         if not destinations or any(
             not _is_path(value) or self._source_path(value) for value in destinations
         ):
@@ -807,7 +899,13 @@ class _Proof:
                 for target in self.audit_targets:
                     directory = target
                     while _inside(directory, self.root):
-                        if directory.endswith(os.sep + normalized) or normalized == ".":
+                        if directory.endswith(os.sep + normalized):
+                            # For an independent writer, any matching working
+                            # directory is enough to veto a review receipt.
+                            if self.check_relative_writers:
+                                return (_PATH, directory)
+                            return _UNKNOWN_PATH
+                        if normalized == ".":
                             return _UNKNOWN_PATH
                         if directory == self.root:
                             break
@@ -1121,7 +1219,7 @@ class _Proof:
         if self.audit_targets is None:
             frame.escaped = True
         else:
-            self.file_unsafe = True
+            self.opaque_effects = True
         self._consume(frame, node.func)
         for argument in node.args:
             self._consume(frame, argument)
@@ -1458,7 +1556,7 @@ class _Proof:
         if self.audit_targets is None and receiver not in _NODES | {_EMPTY}:
             frame.escaped = True
         elif self.audit_targets is not None and receiver not in _NODES | {_EMPTY}:
-            self.file_unsafe = True
+            self.opaque_effects = True
         if receiver in _NODES | {_EMPTY}:
             if attr in _LIST_GROWTH and node.args and not node.keywords:
                 if not any(isinstance(arg, ast.Starred) for arg in node.args):
@@ -1530,6 +1628,12 @@ class _Proof:
                 return _DATA
             if self._source_path((_PATH, path)):
                 self.file_unsafe = True
+                mode = _argument(node, 0, "mode")
+                if attr in _FILE_WRITES or (
+                    attr == "open" and mode is not None
+                    and not (_is_str(mode) and mode.value in {"r", "rt", "rb"})
+                ):
+                    self.known_source_write = True
         for argument in arguments:
             self._consume(frame, argument)
         return None
@@ -1897,13 +2001,21 @@ def _mentions_code_runner(tree) -> bool:
     return False
 
 
-def source_owned_code_calls(tree, file_path=None, project_root=None) -> frozenset[int]:
-    """Ids of ``exec``/``eval`` calls proved to run the project's own source."""
+def source_code_origins(tree, file_path=None, project_root=None):
+    """Fully proved calls and visible local code origins needing runtime review."""
     if not isinstance(tree, ast.Module) or not file_path or not project_root:
-        return frozenset()
+        return frozenset(), {}
     if not _mentions_code_runner(tree):
-        return frozenset()
+        return frozenset(), {}
     try:
-        return _Proof(tree, file_path, project_root).run()
+        proof = _Proof(tree, file_path, project_root)
+        safe = proof.run()
+        return safe, proof.reviewed
     except (_Unproven, RecursionError, OSError, ValueError):
-        return frozenset()
+        return frozenset(), {}
+
+
+def source_owned_code_calls(tree, file_path=None, project_root=None) -> frozenset[int]:
+    """Ids of calls with the full project-wide safety proof."""
+    safe, _ = source_code_origins(tree, file_path, project_root)
+    return safe

@@ -113,3 +113,28 @@ def test_location_must_identify_existing_source_lines(tmp_path, file, line):
         benchmark.validate_manifest(
             {"version": 1, "cases": [item]}, tmp_path / "manifest.json"
         )
+
+
+@pytest.mark.parametrize(
+    ("case_id", "expected_count"),
+    [("python-primary-path-controls", 3), ("python-primary-compiled-source-controls", 1)],
+)
+def test_primary_controls_grade_default_listing_and_retain_raw_evidence(case_id, expected_count):
+    manifest = Path(__file__).resolve().parents[1] / "benchmarks/security/manifest.json"
+    cases = benchmark.validate_manifest(benchmark.load_manifest(manifest), manifest)
+    controls = next(c for c in cases if c["id"] == case_id)
+    captured = []
+    result = benchmark.run_case(
+        controls, manifest, capture_result=lambda _, raw: captured.append(raw)
+    )
+    assert result["failures"] == []
+    assert result["true_positives"] == result["true_negatives"] == expected_count
+    raw = captured[0]["danger"]
+    if case_id == "python-primary-path-controls":
+        unresolved = [r for r in raw if r["line"] == 18]
+        assert {r["rule_id"] for r in unresolved} == {"SKY-D215", "SKY-D325"}
+        assert all(r["listing"]["listed"] is False for r in unresolved)
+    else:
+        owned = [r for r in raw if r["file"] == "loader.py" and r["rule_id"] == "SKY-D202"]
+        assert len(owned) == 1
+        assert owned[0]["listing"]["listed"] is False

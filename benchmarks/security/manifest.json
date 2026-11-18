@@ -7489,6 +7489,116 @@
         },
         "absent": {}
       }
+    },
+    {
+      "id": "python-primary-path-controls",
+      "path": "fixtures/python_primary_path_controls",
+      "description": "Primary path alerts distinguish request-controlled reads and predictable shared writes from unresolved callback paths and exclusive creation.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "path_traversal",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original static examples of two distinct file operations and two different input sources."
+      },
+      "scan": {
+        "listing": "primary"
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            {
+              "rule_id": "SKY-D215",
+              "file": "app.py",
+              "start_line": 14,
+              "end_line": 14
+            },
+            {
+              "rule_id": "SKY-D325",
+              "file": "app.py",
+              "start_line": 14,
+              "end_line": 14
+            },
+            {
+              "rule_id": "SKY-D324",
+              "file": "app.py",
+              "start_line": 22,
+              "end_line": 22
+            }
+          ]
+        },
+        "absent": {
+          "danger": [
+            {
+              "rule_id": "SKY-D215",
+              "file": "app.py",
+              "start_line": 18,
+              "end_line": 18
+            },
+            {
+              "rule_id": "SKY-D325",
+              "file": "app.py",
+              "start_line": 18,
+              "end_line": 18
+            },
+            {
+              "rule_id": "SKY-D324",
+              "file": "app.py",
+              "start_line": 26,
+              "end_line": 26
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "python-primary-compiled-source-controls",
+      "path": "fixtures/python_primary_exec_controls",
+      "description": "A loader compiling project definitions is distinguishable from compiling a request field.",
+      "languages": [
+        "python"
+      ],
+      "taxonomy": [
+        "precision_guard",
+        "command_injection"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original paired fixtures. The calls are parsed statically."
+      },
+      "scan": {
+        "listing": "primary"
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            {
+              "rule_id": "SKY-D202",
+              "file": "handler.py",
+              "start_line": 9,
+              "end_line": 9
+            }
+          ]
+        },
+        "absent": {
+          "danger": [
+            {
+              "rule_id": "SKY-D202",
+              "file": "loader.py",
+              "start_line": 11,
+              "end_line": 11
+            }
+          ]
+        }
+      }
     }
   ]
 }

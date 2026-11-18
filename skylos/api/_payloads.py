@@ -439,12 +439,17 @@ def _compact_upload_finding(
             if metadata is None:
                 metadata = {}
             metadata["measure"] = measure
-    from skylos.reporting.listing import PATH_REVIEW_REASON, is_listed, listing_decision
+    from skylos.reporting.listing import (
+        LOW_RISK_REASON, PATH_REVIEW_REASON, compiled_source_context, is_listed, listing_decision,
+    )
 
+    context = compiled_source_context(finding)
+    if context is not None:
+        metadata = {**(metadata or {}), "compiled_project_source": context}
     listing = listing_decision(finding)
     if listing is not None:
         compact["listing"] = dict(listing)
-        if listing["reason"] == PATH_REVIEW_REASON:
+        if listing["reason"] in (PATH_REVIEW_REASON, LOW_RISK_REASON):
             # Compaction can discard malformed or conflicting evidence. Carry
             # the listing decision made against the original evidence.
             compact["listing"]["listed"] = is_listed(finding, compact["category"])

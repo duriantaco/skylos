@@ -5076,6 +5076,7 @@ class Skylos:
         all_suppressed = []
         secret_scanned_files = set()
         analysis_errors = list(language_engine_errors)
+        recursive_worker_failures = set()
         credential_source_locations = None
         if enable_quality and "SKY-L014" not in project_ignore:
             from skylos.analysis.credential_sources import (
@@ -5247,6 +5248,12 @@ class Skylos:
                     )
                 if isinstance(file_analysis_error, dict):
                     analysis_errors.append(file_analysis_error)
+                    if (
+                        file_analysis_error.get("kind") == "processing_error"
+                        and file_analysis_error.get("error_type") == "RecursionError"
+                        and str(file).endswith(PYTHON_SIGNATURE_SUFFIXES)
+                    ):
+                        recursive_worker_failures.add(file)
                 elif isinstance(file_analysis_error, list):
                     analysis_errors.extend(
                         error
@@ -5512,6 +5519,13 @@ class Skylos:
         finally:
             if injected:
                 os.environ.pop("SKYLOS_CUSTOM_RULES", None)
+
+        # A file that exhausted the Python worker's stack can also exhaust
+        # project-wide AST visitors. Keep its error and its place in the scan
+        # inventory, but let these visitors process the remaining files.
+        discovered_files = files
+        if recursive_worker_failures:
+            files = [file for file in files if file not in recursive_worker_failures]
 
         if enable_quality:
             if progress_callback:
@@ -7208,7 +7222,7 @@ class Skylos:
                     self._enum_member_findings.append(finding)
                     enum_member_coverage["reported_count"] += 1
         result = self._build_result(
-            files,
+            discovered_files,
             thr,
             exclude_folders,
             enable_secrets,

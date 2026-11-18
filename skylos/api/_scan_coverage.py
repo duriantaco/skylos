@@ -119,7 +119,9 @@ def _retained_risk_counts(
 ) -> dict[str, int]:
     from skylos.reporting.finding_types import get_finding_type, iter_result_findings
     from skylos.reporting.listing import (
+        compiled_source_context,
         is_combined_advisory,
+        is_listed,
         is_path_review,
         listing_decision,
     )
@@ -138,7 +140,10 @@ def _retained_risk_counts(
     counts = {"defect": 0, "review": 0}
     for category, finding in iter_result_findings(result):
         finding_type = get_finding_type(finding, category)
-        if category == "security" and is_path_review(finding) and finding_type in counts:
+        if category == "security" and finding_type in counts and (
+            is_path_review(finding)
+            or (compiled_source_context(finding) is not None and not is_listed(finding, category))
+        ):
             counts[finding_type] += 1
             continue
         if not is_combined_advisory(finding):

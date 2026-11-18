@@ -16,6 +16,7 @@ PATH_REVIEW_REASON = "path-needs-review"
 SCA_RULE_PREFIX = "SKY-SCA-"
 SCA_LOW_RISK_REASONS = frozenset({"dev-only-dependency", "informational-advisory"})
 CONSTANT_ARGUMENT_REASON = "constant-argument"
+COMPILED_PROJECT_SOURCE = "compiled-project-source"
 LOW_RISK_REASONS = {
     "SKY-D292": frozenset({"github-owned-action-tag"}),
     "SKY-D299": frozenset({"non-credential-secret"}),
@@ -114,6 +115,40 @@ def is_demoted_secret(finding):
     return str(finding.get("rule_id") or "").upper() == "SKY-S101"
 
 
+def _compiled_project_source(finding, context):
+    # The loader established repository-relative Python source and a fresh
+    # execution namespace. A conflicting independent source trace stays listed.
+    filename = finding.get("file") or finding.get("file_path")
+    if (
+        finding.get("rule_id") != "SKY-D202"
+        or not isinstance(filename, str)
+        or not filename.lower().endswith((".py", ".pyw"))
+        or context.get("scope") != "loader-and-imports"
+        or context.get("runtime_integrity") != "unverified"
+    ):
+        return False
+    metadata = finding.get("metadata", {})
+    if not isinstance(metadata, Mapping):
+        return False
+    trace = metadata.get("security_trace")
+    if trace is not None and (
+        not isinstance(trace, Mapping) or trace.get("status") not in ("partial", "unknown")
+    ):
+        return False
+    paths = context.get("source_files")
+    if not isinstance(paths, list) or not 1 <= len(paths) <= 16:
+        return False
+    return all(
+        isinstance(path, str)
+        and len(path) <= 512
+        and path.lower().endswith((".py", ".pyw"))
+        and path.isprintable()
+        and not any(char in path for char in ("\\", ":"))
+        and not any(part in ("", ".", "..") for part in path.split("/"))
+        for path in paths
+    )
+
+
 def low_risk_context(finding):
     """The detector's evidence that a true risk finding is low-risk where it
     occurs, or None. Only the reasons a rule's own detector can prove count,
@@ -123,14 +158,27 @@ def low_risk_context(finding):
     context = finding.get("low_risk_context")
     if not isinstance(context, Mapping):
         return None
+    reason = context.get("reason")
+    if not isinstance(reason, str):
+        return None
     rule = str(finding.get("rule_id") or "").upper()
+    if reason == COMPILED_PROJECT_SOURCE:
+        return context if _compiled_project_source(finding, context) else None
     if rule.startswith(SCA_RULE_PREFIX):
         allowed = SCA_LOW_RISK_REASONS
     else:
         allowed = LOW_RISK_REASONS.get(rule, frozenset())
-    if context.get("reason") in allowed:
+    if reason in allowed:
         return context
     return None
+
+
+def compiled_source_context(finding):
+    """The bounded, portable evidence for a loader reading project source."""
+    context = low_risk_context(finding)
+    if context is None or context.get("reason") != COMPILED_PROJECT_SOURCE:
+        return None
+    return {key: context[key] for key in ("reason", "scope", "runtime_integrity", "source_files")}
 
 
 def demotion_reason(finding):

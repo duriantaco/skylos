@@ -142,3 +142,17 @@ JSON stores `metadata.security_trace`. The existing semantic `metadata.security_
 The same selected source snapshot, configuration, analyzer/model version and work limits produce the same trace IDs and ordered steps. Limits count files, bytes, AST nodes, callers, depth and steps rather than wall-clock time. Reaching a limit produces a partial explanation and preserves the finding. `analysis_summary.security_trace_coverage` describes explanation availability separately from detector coverage.
 
 The trace records identifiers and relationships rather than embedding literal values or complete source files. Old reports without located traces remain inspectable, but the viewer does not invent missing steps. Rescan to obtain located explanations.
+
+
+## Repository source passed to Python exec
+
+When Python's native `exec` receives a compiled syntax tree, Skylos follows
+the tree back to its source file. A loader that selects project-owned Python
+source, compiles it and uses a fresh namespace can receive a
+`compiled-project-source` low-risk record. The record names the source files
+and the scope of the static check. Runtime integrity remains unverified.
+External or mixed inputs, a changed compiler, conflicting source evidence,
+or a namespace the analyzer cannot account for keep the alert primary.
+
+The raw security report and strict gate retain low-risk records.
+`--all-advice` or explicit selection of `SKY-D202` lists them individually.

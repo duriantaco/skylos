@@ -841,8 +841,9 @@ def _ssrf_security_evidence(
     sink: str,
     url_arg: ast.AST,
     interpolated: bool,
+    source: str | None = None,
 ) -> dict:
-    source = _source_label(url_arg, interpolated=interpolated)
+    source = source or _source_label(url_arg, interpolated=interpolated)
     expression = _safe_expr_text(url_arg)
     entrypoint = symbol if symbol and symbol != "<module>" else None
 
@@ -2565,6 +2566,24 @@ class _SSRFFlowChecker(TaintVisitor):
         # source set so a later request source cannot hide behind CLI inputs.
         sources = self.untrusted_sources.for_function(func).sources_in(url_arg)
         if evidence is not None:
+            generic_parser = [label for label in sources if label.startswith("parser arguments `")]
+            if generic_parser:
+                independent = [
+                    label for label in sources
+                    if label not in generic_parser and not _only_operator_sources([label])
+                ]
+                if independent:
+                    return {**evidence, "source": independent[0], "parser_input": True}
+                record = self._input_context(url_arg)
+                if record["status"] == "operator":
+                    # The broader project tracer knows the parser's class. The
+                    # argument contract still has an unresolved converter,
+                    # replacement, default, or explicit argument source.
+                    record = {
+                        **record, "status": "unknown",
+                        "unknown": [["The parser argument source or conversion is unresolved."]],
+                    }
+                return {**evidence, "process_context": record, "parser_input": True}
             if not _only_operator_sources(sources):
                 return evidence
             record = self._input_context(url_arg)
@@ -2599,6 +2618,7 @@ class _SSRFFlowChecker(TaintVisitor):
                         sink=sink,
                         url_arg=url_arg,
                         interpolated=interpolated,
+                        source=source_evidence["source"] if source_evidence.get("parser_input") else None,
                     ),
                     "untrusted_source": source_evidence["source"],
                 },
@@ -2612,6 +2632,12 @@ class _SSRFFlowChecker(TaintVisitor):
             if record["status"] in {"unknown", "incomplete"}:
                 finding["message"] = "Needs review: SSRF safety is unresolved because the URL's process input is not proven operator-only."
                 source = "process URL input with unresolved origin"
+                if source_evidence.get("parser_input"):
+                    finding["message"] = (
+                        "Needs review: a parsed argument reaches the HTTP request URL. "
+                        "The scanner could not establish who controls its destination."
+                    )
+                    source = "parser URL input with unresolved origin"
                 evidence["evidence_kind"] = "python_ssrf_process_context_review"
                 evidence["confidence_reason"] = "The static process context remains unresolved; remote control of this URL is not established and operator-only origin is not proven."
                 evidence["test_hint"] = "Add static transport controls that distinguish operator input from remote launcher input."

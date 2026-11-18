@@ -275,6 +275,9 @@ def validate_manifest(
                 f"security benchmark case {case_id} scan config must be an object"
             )
 
+        if isinstance(scan, dict) and scan.get("listing", "raw") not in ("raw", "primary"):
+            raise ValueError(f"security benchmark case {case_id} scan.listing must be raw or primary")
+
         expect = case.get("expect")
         if not isinstance(expect, dict):
             raise ValueError(
@@ -440,6 +443,7 @@ def _scan_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str,
                 enable_ai_defects=False,
                 enable_dependency_hallucinations=False,
                 enable_sca=False,
+                all_advice=scan_cfg.get("listing") != "primary",
             )
         finally:
             analyzer_logger.setLevel(prev_level)
@@ -714,6 +718,7 @@ def run_case(
     if capture_result is not None:
         capture_result(case["id"], deepcopy(result))
 
+    primary = scanner == "skylos" and (case.get("scan") or {}).get("listing") == "primary"
     issues = analysis_issues(result, scanner=scanner)
     if isinstance(result, Mapping):
         categories = {
@@ -734,6 +739,11 @@ def run_case(
                 for finding in findings
             ):
                 issues.append(f"{category} must contain finding objects with rule IDs")
+            elif primary:
+                from skylos.reporting.listing import listing_decision
+
+                if any(listing_decision(row) is None for row in findings):
+                    issues.append(f"{category} is missing a valid primary listing decision")
     if issues:
         return {
             "id": case["id"],
@@ -764,6 +774,12 @@ def run_case(
             ],
         }
 
+    # Grade the same public view the CLI displays, after validating the raw
+    # report. The capture callback above still receives the complete evidence.
+    if primary:
+        from skylos.reporting.listing import listed_result
+
+        result = listed_result(result)
     failures, tp, fp, fn, tn = _evaluate_expectations(case, result)
 
     max_seconds = (case.get("budget") or {}).get("max_seconds")

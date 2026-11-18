@@ -221,3 +221,59 @@ def test_bounded_module_host_tracing_keeps_review(tmp_path):
     )
     rows = _scan(tmp_path, _worker("VALUE299", source))
     assert rows and rows[0]["metadata"]["process_context"]["status"] == "incomplete"
+
+
+def test_unresolved_parser_callback_is_an_origin_review_and_stays_primary(tmp_path):
+    from skylos.reporting.listing import is_listed
+
+    rows = _scan(
+        tmp_path,
+        "import argparse, requests, foreign\n"
+        "def fetch():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        "    parser.add_argument('--url', type=foreign.convert)\n"
+        "    return requests.get(parser.parse_args().url)\n",
+    )
+    [row] = rows
+    context = row["metadata"]["process_context"]
+    assert is_listed(row, "security")
+    assert row["severity"] == "CRITICAL"
+    assert "a parsed argument" in row["message"]
+    assert context["status"] == "unknown"
+    assert context["unknown"]
+    assert row["metadata"]["security_evidence"]["source"] == "parser URL input with unresolved origin"
+
+
+def test_modeled_request_parser_has_remote_source_evidence(tmp_path):
+    rows = _scan(
+        tmp_path,
+        "from flask_restful import reqparse\nimport requests\n"
+        "def fetch():\n"
+        "    parser = reqparse.RequestParser()\n"
+        "    parser.add_argument('url')\n"
+        "    return requests.get(parser.parse_args()['url'])\n",
+    )
+    [row] = rows
+    context = row["metadata"]["process_context"]
+    assert context["status"] == "untrusted"
+    assert context["untrusted"]
+    assert "request arguments" in row["metadata"]["security_evidence"]["source"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["request.args['target'] or parsed.url", "parsed.url or request.args['target']"],
+)
+def test_independent_url_input_takes_precedence_over_unresolved_parser(tmp_path, url):
+    rows = _scan(
+        tmp_path,
+        "from flask import request\nimport arbitrary, requests\n"
+        "def fetch():\n"
+        "    parser = arbitrary.Parser()\n"
+        "    parsed = parser.parse_args()\n"
+        f"    return requests.get({url})\n",
+    )
+    [row] = rows
+    assert "request data" in row["metadata"]["untrusted_source"]
+    assert row["metadata"]["untrusted_source"] == row["metadata"]["security_evidence"]["source"]
+    assert "unresolved" not in row["message"]

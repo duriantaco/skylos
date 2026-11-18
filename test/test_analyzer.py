@@ -3123,6 +3123,34 @@ class TestClass:
             }
         ]
 
+    def test_deep_python_file_keeps_sibling_security_findings(self, tmp_path):
+        deep = tmp_path / "deep.py"
+        deep.write_text("total = " + " + ".join(["term"] * 1400) + "\n")
+        sibling = tmp_path / "sibling.py"
+        sibling.write_text("def read_value(text):\n    return eval(text)\n")
+
+        old_limit = sys.getrecursionlimit()
+        try:
+            sys.setrecursionlimit(1000)
+            result = json.loads(
+                analyze(str(tmp_path), enable_danger=True, grep_verify=False)
+            )
+        finally:
+            sys.setrecursionlimit(old_limit)
+
+        assert result["analysis_summary"]["total_files"] == 2
+        assert result["analysis_summary"]["grade_unavailable_reason"] == (
+            "analysis_incomplete"
+        )
+        assert "grade" not in result
+        assert [(e["file"], e["error_type"]) for e in result["analysis_errors"]] == [
+            (str(deep), "RecursionError")
+        ]
+        assert any(
+            finding["file"] == str(sibling) and finding["rule_id"] == "SKY-D201"
+            for finding in result["danger"]
+        )
+
     def test_analyze_marks_ast_compile_error_incomplete_and_omits_grade(self, tmp_path):
         invalid_file = tmp_path / "duplicate_arguments.py"
         invalid_file.write_text(
