@@ -1,0 +1,336 @@
+{
+  "skylos.entry.main": {
+    "summary": "Starts Skylos. Hook events go straight to the hook handler to keep them fast; other commands go to the full command-line interface.",
+    "steps": [
+      "Read the command-line arguments.",
+      "For a hook event, run the hook handler and use its exit code.",
+      "For other commands, run the CLI through the failure-recording wrapper.",
+      "Handle Ctrl-C as an interrupted run."
+    ],
+    "review": [
+      "Does the hook path avoid importing the full CLI?",
+      "Are command exit codes and Ctrl-C behavior preserved?"
+    ],
+    "codeHash": "510ed54546252bd1",
+    "inputs": "Command-line arguments read from sys.argv.",
+    "result": "Usually no return value. Commands decide their exit status; Ctrl-C exits with code 130."
+  },
+  "skylos.entry._run_recording_failures": {
+    "summary": "Runs the main CLI while remembering serious failures. It restores the normal exception hook after a normal return or explicit exit, and adds a helpful hint after a crash.",
+    "steps": [
+      "Remember the previous exception hook.",
+      "Install a hook that prints the original crash and then a feedback hint.",
+      "Invoke the CLI callback.",
+      "Record explicit exit codes of 2 or higher without changing the exit result."
+    ],
+    "review": [
+      "Is the previous exception hook restored after a normal return and SystemExit?",
+      "Can recording a failure accidentally change the command's result?"
+    ],
+    "codeHash": "dfb2075fcc38b09e",
+    "inputs": "The CLI callback and the original command-line arguments.",
+    "result": "Preserves the callback outcome; explicit SystemExit is re-raised."
+  },
+  "skylos.entry._exit_interrupted": {
+    "summary": "Ends an interrupted command with one short message and exit code 130, rather than a Python traceback.",
+    "review": [
+      "Does a broken output stream still allow the process to exit with code 130?"
+    ],
+    "codeHash": "a18a73ec85f3b0d2"
+  },
+  "skylos.entry._is_help": {
+    "summary": "Recognizes the two-argument hook help request, so help can use the normal CLI instead of the fast hook path.",
+    "codeHash": "58b0161f7265f483"
+  },
+  "skylos.entry._record": {
+    "summary": "Passes a failed command to the local failure recorder when that recorder is available. The recorder is intended to leave command behavior unchanged.",
+    "codeHash": "97a60c0dcdb1e1d5"
+  },
+  "skylos.cli.main": {
+    "summary": "Routes command-line requests to the right Skylos workflow. It first checks named commands, then handles agent workflows or the normal scanning path.",
+    "steps": [
+      "Try the top-level command dispatcher.",
+      "For agent commands, parse the agent options and select the requested operation.",
+      "For a source scan, pass the scan options into the analysis path.",
+      "Coordinate output and optional follow-up actions for the selected workflow."
+    ],
+    "review": [
+      "Does each command reach the intended handler with the correct arguments?",
+      "Do normal scans and agent scans preserve their distinct behavior?",
+      "Do failures reach the caller through the intended exit code?"
+    ],
+    "codeHash": "72a53e6edbd416cf"
+  },
+  "skylos.cli._dispatch_early_command": {
+    "summary": "Hands the command-line arguments and the CLI's available handlers to the shared command dispatcher.",
+    "codeHash": "64216e278c0cf1dc"
+  },
+  "skylos.cli_core.dispatch.dispatch_early_command": {
+    "summary": "Uses the first command-line word to find a command handler. It handles overview and help requests separately, and returns control to the normal parser for an unrecognized command.",
+    "steps": [
+      "Show the overview when there is no command or only a help flag.",
+      "Look up the handler name in EARLY_COMMAND_HANDLERS.",
+      "Route native help to the command's own parser where required.",
+      "Call the selected handler with the remaining arguments."
+    ],
+    "review": [
+      "Does an unknown command return control to the main parser?",
+      "Do help requests avoid accidentally running the command?"
+    ],
+    "codeHash": "5e7583df4c870600"
+  },
+  "skylos.cli.run_analyze": {
+    "summary": "Forwards a scan request to the static analyzer. This wrapper keeps the analyzer import out of the CLI's initial import path.",
+    "codeHash": "243a95c693506fc2"
+  },
+  "skylos.cli.run_pipeline": {
+    "summary": "Forwards an agent scan request to the combined static-analysis and LLM pipeline.",
+    "codeHash": "538b6ccc91d54fc9"
+  },
+  "skylos.cli._run_scan_command": {
+    "summary": "Hands the normal source-scan command to its dedicated command module.",
+    "codeHash": "199c015a24e111d4"
+  },
+  "skylos.commands.scan_cmd.run_scan_command": {
+    "summary": "Coordinates a normal source scan and prepares the resulting findings for the requested output and follow-up actions.",
+    "review": [
+      "Are enabled checks and file filters passed through to the analyzer?",
+      "Do output, upload, and gate failures produce the intended user-visible result?"
+    ],
+    "codeHash": "8d8768d17304d748"
+  },
+  "skylos.analyzer.analyze": {
+    "summary": "Creates a fresh analyzer and passes the requested scan options to it. The result is returned as JSON text.",
+    "steps": [
+      "Create a Skylos analyzer object.",
+      "Translate the public confidence option into the analyzer's threshold argument.",
+      "Forward the selected checks, file scope, configuration, and review options.",
+      "Return the analyzer's result."
+    ],
+    "review": [
+      "Are all public scan options forwarded without being dropped or renamed incorrectly?"
+    ],
+    "codeHash": "3345d5b99611a48c",
+    "inputs": "The path to scan, enabled checks, file filters, and configuration options.",
+    "result": "The analyzer result as JSON text."
+  },
+  "skylos.analyzer.Skylos": {
+    "summary": "Owns the state and coordination for a static scan: discovered files, collected code evidence, analysis passes, and the final result.",
+    "codeHash": "4572f0d4d513c193"
+  },
+  "skylos.analyzer.Skylos.analyze": {
+    "summary": "Coordinates the static scan from source discovery through analysis and result assembly. Language workers collect facts and findings; project-wide passes combine that evidence.",
+    "steps": [
+      "Load scan settings and discover the files in scope.",
+      "Send files through the relevant language workers.",
+      "Combine local findings with project-wide usage and analysis evidence.",
+      "Apply result filtering and assemble the scan output."
+    ],
+    "review": [
+      "Does the scan include the intended files and report incomplete analysis?",
+      "Are findings and usage evidence kept consistent across language workers?",
+      "Do result filters preserve findings that should remain visible?"
+    ],
+    "codeHash": "8bd5e705d147908f"
+  },
+  "skylos.config.load_config": {
+    "summary": "Builds the scan settings from defaults, discovered configuration files, and applicable synced policy. It returns the combined configuration used by the scan.",
+    "steps": [
+      "Resolve the starting directory and any explicitly selected config file.",
+      "Load the applicable configuration and synced-policy layers.",
+      "Merge the layers in the order defined by the implementation.",
+      "Finalize the result while preserving the synced-policy provenance."
+    ],
+    "review": [
+      "Which configuration source wins when two sources set the same value?",
+      "Do explicit-config failures remain visible to the caller?",
+      "Are the base-policy and ordinary loading paths tested separately?"
+    ],
+    "codeHash": "dc66a67417aed872",
+    "inputs": "A starting path and an optional explicitly selected configuration file.",
+    "result": "The combined scan settings as a dictionary."
+  },
+  "skylos.core.file_discovery.discover_source_files": {
+    "summary": "Finds the source files that a scan should read. It filters by extension and include/exclude rules, uses Git-visible files when available, and otherwise walks the directory.",
+    "steps": [
+      "Resolve the requested file or directory and normalize extensions.",
+      "For one file, check whether it is allowed and return it if appropriate.",
+      "For a directory, prefer the Git-visible file list when gitignore rules are enabled.",
+      "Apply containment and include/exclude checks, remove duplicates, and return the selected files."
+    ],
+    "review": [
+      "Are explicit files, Git-based discovery, and directory walking consistent?",
+      "Are include/exclude rules and duplicate paths handled as intended?",
+      "What happens for missing paths and unreadable directories?"
+    ],
+    "codeHash": "403803393cfdaa87"
+  },
+  "skylos.analysis.file_worker.process_file": {
+    "summary": "Processes one source file. It collects worker options, sends Python files through the Python analysis path, and sends other supported files to their language scanner.",
+    "steps": [
+      "Normalize the file and module arguments.",
+      "Collect the enabled checks and worker settings.",
+      "For Python files, read and analyze the file through the Python worker.",
+      "For other files, load the settings and call the non-Python scanner."
+    ],
+    "review": [
+      "Do both language paths receive the correct check flags and project scope?",
+      "Do read or parse failures remain visible in the scan result?"
+    ],
+    "codeHash": "4bd8a1b94ebac406",
+    "inputs": "One source file, its module, enabled checks, and worker settings.",
+    "result": "The worker result returned by the selected Python or non-Python scanner."
+  },
+  "skylos.analysis.file_worker._process_python_entry": {
+    "summary": "Reads a Python source file and loads its settings before analysis. If reading or processing fails, it returns a structured error result.",
+    "steps": [
+      "Read the source through the worker's source-reading helper.",
+      "Load the configuration for that file.",
+      "Ask _process_python_file to analyze the source.",
+      "Convert read or processing exceptions into an error result."
+    ],
+    "review": [
+      "Can a file-read failure still produce a useful error result?",
+      "Are processing errors distinguishable from a clean scan?"
+    ],
+    "codeHash": "def39fdf027d05b5"
+  },
+  "skylos.analysis.file_worker._prepare_python": {
+    "summary": "Prepares Python source for the checks that follow: it parses the syntax tree and collects imports, inline-ignore rules, and masking information.",
+    "steps": [
+      "Read ignore comments from the source text.",
+      "Parse the source and collect import evidence.",
+      "Apply configured masking to the tree.",
+      "Return the prepared source and metadata for the later analysis passes."
+    ],
+    "codeHash": "6f19d5ae43c532bc"
+  },
+  "skylos.analysis.file_worker._process_python_file": {
+    "summary": "Runs the Python analysis passes for one file and packages their findings and evidence into one worker result.",
+    "steps": [
+      "Prepare the parsed source and ignore metadata.",
+      "Run the enabled quality, security, and custom-rule checks.",
+      "Apply inline ignores and collect definition, framework, and test evidence.",
+      "Collect requested clone and architecture information, then build the worker result."
+    ],
+    "review": [
+      "Does a failure in one check remain visible without discarding unrelated results?",
+      "Do inline ignores suppress only the intended findings?",
+      "Are optional metrics collected only when requested?"
+    ],
+    "codeHash": "ae42700ea29d3508"
+  },
+  "skylos.analysis.file_worker._quality_findings": {
+    "summary": "Runs Python quality checks when they are enabled. It returns findings and, if that part of the scan fails, an error record instead of silently treating it as a clean result.",
+    "review": [
+      "Are disabled quality checks skipped?",
+      "Does a quality-rule exception preserve the other scan families' results?"
+    ],
+    "codeHash": "a8d2936cd84662a0"
+  },
+  "skylos.analysis.file_worker._danger_findings": {
+    "summary": "Runs the enabled Python security checks against the prepared syntax tree and combines their findings.",
+    "codeHash": "49440e74e19fdca5"
+  },
+  "skylos.analysis.file_worker._run_visitors": {
+    "summary": "Walks the prepared Python tree to collect test usage, framework usage, definitions, and references. It returns the visitor objects that hold that evidence.",
+    "steps": [
+      "Run the test-aware visitor and attach ignore information.",
+      "Run and finalize the framework-aware visitor.",
+      "Run and finalize the main definition-and-reference visitor.",
+      "Copy framework metadata into the main visitor and return all three."
+    ],
+    "codeHash": "fac4524ed92e53cb"
+  },
+  "skylos.visitors.base.Visitor": {
+    "summary": "Walks parsed Python code to collect definitions, references, calls, and related evidence used by the static analyzer.",
+    "codeHash": "7f6a03845c17468c"
+  },
+  "skylos.visitors.framework_aware.FrameworkAwareVisitor": {
+    "summary": "Collects framework-specific usage evidence so the analyzer can account for code activated by frameworks rather than ordinary direct calls.",
+    "codeHash": "afb16e5145244c1c"
+  },
+  "skylos.visitors.test_aware.TestAwareVisitor": {
+    "summary": "Collects test-related usage evidence from parsed code for the analyzer's later decisions.",
+    "codeHash": "39588c81082f1b4f"
+  },
+  "skylos.core.linter.LinterVisitor": {
+    "summary": "Walks a syntax tree, dispatches each node to the applicable rules, and collects the findings those rules return.",
+    "codeHash": "2d4d6089296ac743"
+  },
+  "skylos.core.linter.LinterVisitor.visit": {
+    "summary": "Applies generic rules and node-type-specific rules to one syntax node, then visits its children while preserving the parent-node context.",
+    "codeHash": "46c533beded0f964"
+  },
+  "skylos.rules.base.SkylosRule": {
+    "summary": "Defines the shared interface used by analyzer rules. Concrete rules implement the checks called by the rule visitor.",
+    "codeHash": "891285c5b9abd120"
+  },
+  "skylos.pipeline.run_pipeline": {
+    "summary": "Coordinates an agent scan across static-analysis and LLM phases, using the requested file scope and model settings.",
+    "review": [
+      "Is the file scope preserved across the static and model-assisted phases?",
+      "Are unavailable analysis phases and incomplete results visible?",
+      "Can returned model findings be checked against source evidence?"
+    ],
+    "codeHash": "a4a0e12800a10d64"
+  },
+  "skylos.pipeline.run_static_on_files": {
+    "summary": "Runs static analysis for a selected collection of files as part of the combined scan pipeline.",
+    "codeHash": "c67ed384ee4b20bd"
+  },
+  "skylos.commands.open_cmd.run_open_command": {
+    "summary": "Chooses the comparison base for the repository and forwards the request to the local code-graph viewer.",
+    "codeHash": "e2c5c8f6dba92255"
+  },
+  "skylos.commands.graph_cmd._run_open": {
+    "summary": "Builds the repository graph and starts its local browser viewer. It can watch source changes and rebuild the graph while the viewer is running.",
+    "codeHash": "877f008477e76797"
+  },
+  "skylos.graph.build.build_graph": {
+    "summary": "Builds or refreshes the code relationship graph. It reuses unchanged file records, resolves links, groups code into areas, and saves the graph cache.",
+    "steps": [
+      "List the source files and compare them with cached file records.",
+      "Parse new or changed files.",
+      "Resolve function and class links and compute code areas.",
+      "Save the graph with coverage and timing information."
+    ],
+    "review": [
+      "Does changing a file invalidate its cached facts?",
+      "Are uncertain name matches kept separate from resolved relationships?"
+    ],
+    "codeHash": "386bc8d403e26b4b"
+  },
+  "scripts.corpus_ci.main": {
+    "summary": "Runs the selected curated corpus cases, prints their result summary, and returns a failing exit code when any case fails.",
+    "steps": [
+      "Parse the manifest path, selected cases, and output format.",
+      "Run the selected cases through the corpus harness.",
+      "Print JSON or a readable summary.",
+      "Return 1 when the summary reports failures, otherwise 0."
+    ],
+    "codeHash": "ac886b71b626791d",
+    "inputs": "Command-line options selecting the manifest, cases, and output format.",
+    "result": "Exit code 1 if cases failed; otherwise 0."
+  },
+  "scripts.build_repo_map.main": {
+    "summary": "Builds the contributor repository navigator, or checks whether the generated page matches the current source.",
+    "codeHash": "aea8dce7d730afd5"
+  },
+  "scripts.build_repo_map.collect_repo_map": {
+    "summary": "Reads the repository's source files and combines module and symbol facts with the curated folder and architecture descriptions.",
+    "codeHash": "3e0f51a192c1eee9"
+  },
+  "scripts.skylos_gate.main": {
+    "summary": "Reads report.json, counts finding entries, and chooses the process exit code using the finding count and the optional soft-gate setting.",
+    "review": [
+      "Is the documented behavior for a missing or invalid report appropriate for the caller?",
+      "Does the soft-gate setting affect only the intended exit behavior?"
+    ],
+    "codeHash": "4049b23e949ffe6b"
+  },
+  "scripts.check_rule_docs_parity.main": {
+    "summary": "Compares rule IDs in the documentation with the rule catalog and reports IDs that appear on only one side.",
+    "codeHash": "ea6d20bd317516ee"
+  }
+}
