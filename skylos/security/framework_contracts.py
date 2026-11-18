@@ -33,7 +33,7 @@ def native_http_pipeline_is_intact(
         return False
     # The context reattests the source snapshot before this lookup. Results
     # belong to that snapshot, rather than merely to a caller's AST identity.
-    cache_key = ("native-http-pipeline-v4", max_work)
+    cache_key = ("native-http-pipeline-v5", max_work)
     if accepts_model_field is None and cache_key in context.provider_results:
         return context.provider_results[cache_key]
 
@@ -45,6 +45,7 @@ def native_http_pipeline_is_intact(
 
 def _pipeline_intact(context, tick, accepts_model_field):
     roots = {"fastapi", "starlette", "pydantic", "pydantic_core", "json"}
+    app_constructors = {"fastapi.FastAPI", "fastapi.applications.FastAPI"}
     reflectors = {
         "exec",
         "eval",
@@ -143,9 +144,12 @@ def _pipeline_intact(context, tick, accepts_model_field):
                 and namespace_value(effects, source, active)
             )
         if isinstance(expression, ast.Call):
-            for source_effects, candidate in namespace_targets(
-                effects.refs(expression.func)
-            ):
+            callees = effects.refs(expression.func)
+            # The application owns route registration and validation. An opaque
+            # consumer of this instance can change subsequent request handling.
+            if callees & app_constructors:
+                return True
+            for source_effects, candidate in namespace_targets(callees):
                 if not tick() or isinstance(candidate, ast.ClassDef):
                     return True
                 if any(
@@ -238,12 +242,10 @@ def _pipeline_intact(context, tick, accepts_model_field):
             return False
         receiver = call.func.value
         constructor = effects.literal_source(receiver)
-        if not (
-            isinstance(receiver, ast.Name)
-            and isinstance(constructor, ast.Call)
-            and effects.refs(constructor.func)
-            in ({"fastapi.FastAPI"}, {"fastapi.applications.FastAPI"})
-        ):
+        if not isinstance(receiver, ast.Name) or not isinstance(constructor, ast.Call):
+            return False
+        callees = effects.refs(constructor.func)
+        if len(callees) != 1 or callees.isdisjoint(app_constructors):
             return False
         receiver_key = (id(effects), id(constructor))
         if receiver_key not in registration_receivers:

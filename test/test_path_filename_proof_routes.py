@@ -166,6 +166,34 @@ def test_validated_request_value_through_a_character_filter_is_traversal_safe(
     assert statuses == ["safe", "safe"]
 
 
+@pytest.mark.parametrize(
+    ("registration", "app_escapes"),
+    [
+        ("foreign.configure('app')", False),
+        ("foreign.configure(app)", True),
+        ("alias = app\nforeign.configure(receiver=alias)", True),
+        ("foreign.configure({'service': app})", True),
+    ],
+)
+def test_external_registration_requires_an_intact_http_receiver(
+    tmp_path, registration, app_escapes
+):
+    source = HEADER + "\nimport foreign\n" + registration + "\n" + START
+    kept, statuses = _scan(tmp_path, source)
+    if app_escapes:
+        assert {(Path(row["file"]).name, row["line"]) for row in kept} == {
+            ("storage.py", 2),
+            ("storage.py", 7),
+        }
+        assert all(
+            row["metadata"]["path_provenance"]["status"] == "untrusted" for row in kept
+        )
+        assert statuses == []
+    else:
+        assert not kept
+        assert statuses == ["safe", "safe"]
+
+
 def test_public_package_importers_stay_unknown_instead_of_safe(tmp_path):
     kept, statuses = _scan(tmp_path, HEADER + START + REPLAY + VIEW, package=True)
     assert len(kept) == 2
