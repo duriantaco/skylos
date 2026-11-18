@@ -612,7 +612,9 @@ def _current_repo_subpath(git_root) -> str:
         return ""
 
 
-def _linked_project_id_for_current_path(link: dict, git_root) -> str | None:
+def _linked_project_id_for_current_path(
+    link: dict, git_root, *, exact_subpath: bool = False
+) -> str | None:
     repo_subpath = _current_repo_subpath(git_root)
     projects = link.get("projects") if isinstance(link, dict) else None
     if isinstance(projects, dict):
@@ -622,6 +624,11 @@ def _linked_project_id_for_current_path(link: dict, git_root) -> str | None:
             if project_id:
                 return str(project_id)
 
+    if exact_subpath:
+        from skylos.cloud.project_context import normalize_repo_subpath
+
+        if normalize_repo_subpath(link.get("repo_subpath")) != repo_subpath:
+            return None
     project_id = link.get("project_id") or link.get("projectId")
     return str(project_id) if project_id else None
 
@@ -1578,6 +1585,7 @@ def _finalize_report_upload(
             trust_notice=data.get("upload_trust_notice"),
             gate_context=gate_context(result, BASE_URL),
             gate_reported=result.get("quality_gate_reported") is not False,
+            upload_trust=result.get("upload_trust"),
         )
     if replayed:
         result["replayed"] = True
@@ -1623,12 +1631,15 @@ def _print_report_upload_success(
     trust_notice=None,
     gate_context=None,
     gate_reported=True,
+    upload_trust=None,
 ) -> None:
     if replayed:
         print(
             " done!\n✓ Scan was already saved by an earlier attempt; "
             "it was not saved twice."
         )
+    elif upload_trust == "unverified":
+        print(" done!\n✓ Scan saved")
     else:
         print(" done!\n✓ Scan uploaded")
     if isinstance(finding_warnings, list) and finding_warnings:
@@ -1650,7 +1661,12 @@ def _print_report_upload_success(
         _print_quality_gate_result(passed, new_violations, plan, gate_message, gate_context)
     else:
         print("No quality gate result was reported for this upload.")
-    _print_upload_trust_notice(trust_notice)
+    if upload_trust == "unverified":
+        from skylos.cloud.upload_status import verification_receipt
+
+        print(verification_receipt({"upload_trust": upload_trust}, BASE_URL)["message"])
+    else:
+        _print_upload_trust_notice(trust_notice)
     if gate_context is not None:
         print(f"\n🔗 View details: {gate_context.details_url}")
     elif scan_id:

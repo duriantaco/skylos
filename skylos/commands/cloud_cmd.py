@@ -23,8 +23,8 @@ Skylos Cloud, then show the quality gate for this branch and one link to it.
           files, lines, sizes, which calls which). Not your repository.
   Login:  opens your browser the first time to pick this repo's project;
           your sign-in is saved. No token to find or copy for local scans.
-  Trust:  browser sign-in saves developer reports. Verified quality gates and
-          checks require CI authentication (follow setup on the saved scan).
+  Reports: saved developer scans are ready to review. Optional CI setup adds
+          automatic repository checks and project verdict updates.
   Gate:   the Skylos Cloud quality gate for this branch. Exit 0 even when it
           fails; add --gate to exit 1 when it fails (use this in CI). Your
           local [tool.skylos.gate] limits are only used by skylos . --gate.
@@ -104,7 +104,7 @@ def _connected(cli_module: ModuleType, project_root) -> bool:
     link = api._read_json(repo_root / api.LINK_FILE) or {}
     if not isinstance(link, dict):
         return False
-    project_id = api._linked_project_id_for_current_path(link, repo_root)
+    project_id = api._linked_project_id_for_current_path(link, repo_root, exact_subpath=True)
     if not project_id:
         return False
     credentials = api._read_json(api.GLOBAL_CREDS_FILE) or {}

@@ -1,33 +1,24 @@
 # Get a first scan
 
-A scan reaches Cloud in one of four ways. They differ in one thing that
-matters: whether Cloud can trust where the scan came from.
+To see findings from your laptop, run `skylos . --upload` in your repository
+and follow the browser prompt. See [the laptop walkthrough](#route-4-a-first-look-from-your-laptop).
+For automated checks or compliance evidence, choose one of the CI or GitHub App routes below.
 
 | Way | Trusted? | Use it for |
 |:--|:--|:--|
 | Let Skylos scan it (GitHub App) | Yes | The fastest first result. Default branch only. |
 | CI with the Skylos workflow (GitHub OIDC) | Yes | Every push and pull request. Checks and comments on pull requests. |
 | CI with a project token marked for CI | Yes | CI systems other than GitHub Actions, or no GitHub App. |
-| `skylos cloud` from a laptop | No: an unverified upload | A first look at your issues. |
+| `skylos . --upload` or `skylos cloud` from a laptop | Report only | Review your findings immediately. |
 
 Uploading a scan never uses credits, on any plan.
 
-## What "unverified upload" means
+## What “report only” means
 
-A scan uploaded from a laptop comes with a personal login token. Cloud
-cannot tell it from a scan of edited code, so it marks it **Unverified
-upload**. You can read the scan and its issues. It does not count for:
-
-- the gate history of the project and the trends;
-- the GitHub check and pull request comments;
-- compliance reports and audit evidence;
-- marking issues as fixed, or being the baseline for later scans;
-- the README badge.
-
-The scan page shows **UNVERIFIED** in place of PASS or FAIL, with "Shown
-here only. Run Skylos in CI to verify it."
-
-![An unverified upload. The gate result is shown on this page only.](img/cloud/first-scan-unverified.png)
+A personal CLI login can upload a scan of your working tree, including
+uncommitted edits. Open the saved scan to review findings and preview the
+project's policy. CI and Cloud-hosted scans establish the shared gate verdict,
+publish repository checks, and provide evidence for compliance reports.
 
 ## Add a repository
 
@@ -141,23 +132,21 @@ primary token now** replaces the first token of the project.
 
 **Who:** a member, admin or owner.
 
-1. On **Get started**, open **Prefer the CLI or CI?**, type a **Project
-   name** and select **Add the repository**.
-2. In your repository folder run:
+From your repository folder, run these commands.
 
 ```bash
 pip install skylos
-skylos cloud
+skylos . --upload
 ```
 
-3. The first run opens your browser to log in. Choose the workspace and the
-   project.
-4. When the command finishes, select **Refresh upload status**.
+1. On first use, sign in through the browser. Review the workspace and project
+   and choose **Save scans here**. You can create the project during this step.
+   Cloud offers an existing match for the same repository and project root.
+2. Open the scan link printed in your terminal to review your findings.
+3. Run the command again after making changes. The CLI reuses the destination.
 
-![After naming the project: the two trusted routes, then the laptop commands.](img/cloud/first-scan-setup.png)
-
-`skylos cloud` runs every check, uploads the findings (not your source
-tree) and prints the gate result with a link. This is an unverified upload.
+For the full set of checks, use `skylos cloud`. A folder without a Git remote
+can save reports to an unlinked project.
 
 ## Where to see the scan
 
@@ -166,6 +155,6 @@ tree) and prints the gate result with a link. This is an unverified upload.
 - The project's **Scans** tab lists every scan of that project.
 - **Pull requests**, then **All uploads**, lists every upload in the
   workspace with who or what uploaded it: "Verified CI project token",
-  "Unverified upload" and so on.
+  "Developer connection · report only" and so on.
 
 ![Home. (1) Repositories that need action. (2) Select a repository to open it.](img/cloud/first-scan-home.png)

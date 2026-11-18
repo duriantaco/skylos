@@ -65,6 +65,7 @@ def scan_repos(monkeypatch, tmp_path):
     target = tmp_path / "target"
     for root in (caller, target):
         _fixture_repo(root)
+        _git(root, "remote", "add", "origin", f"https://github.com/acme/{root.name}")
         make_fixture_directory(tmp_path, (root / ".skylos").relative_to(tmp_path))
         write_fixture(
             tmp_path,
@@ -114,6 +115,7 @@ def scan_repos(monkeypatch, tmp_path):
             "project": {
                 "id": token.removesuffix("-token"),
                 "name": token.removesuffix("-token"),
+                "repo_url": f"https://github.com/acme/{token.removesuffix('-token')}",
             },
         },
     )
