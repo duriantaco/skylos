@@ -535,8 +535,11 @@ When your saved login token belongs to a project connected to a different
 repository than this checkout's `origin` (host and path compared without
 regard to letter case), the upload is refused with exit `1`
 and nothing is sent. Link this repository with `skylos login`, or upload
-with a project token of that project in `SKYLOS_TOKEN`. A linked project or `SKYLOS_TOKEN`
-with a different repository only prints a warning. With `--json` or another
+with a project token of that project in `SKYLOS_TOKEN`. A per-repository login
+also stops the upload if Skylos cannot confirm its Cloud binding or read the
+origin of a bound project. Restore the origin or retry the lookup before
+uploading. An explicitly supplied `SKYLOS_TOKEN` can be used across repositories.
+With `--json` or another
 machine format, the destination line and any refusal go to stderr.
 
 ### Cloud gate result after an upload
@@ -558,7 +561,7 @@ then one link to the scan page:
 | Its failed gate was overridden | `(was OVERRIDDEN on 21 Oct 14:05 UTC, abc1234)` |
 | None | `(first result on this branch)` |
 | Result unknown | nothing |
-| The previous run was an unverified upload | `, unverified upload` at the end, e.g. `(was PASSED on 21 Oct 14:05 UTC, abc1234, unverified upload)` |
+| The previous run used a developer login | `, report only` at the end, e.g. `(was PASSED on 21 Oct 14:05 UTC, abc1234, report only)` |
 
 A failed gate keeps its reasons, for example
 `❌ FAIL Quality gate on main: FAILED (was PASSED on 21 Oct 14:05 UTC, abc1234) because of`
@@ -1297,9 +1300,12 @@ the recorded agent counts.
 --upload` (or only the checks you name, such as `--danger`), prints the
 findings tables like a local scan, and a short receipt instead of the full
 upload output.
-On first use in a terminal, it opens browser sign-in, lets you choose this
-repository's project, and continues the scan and upload automatically. There
-is no token to find or copy. A stale repository link without saved credentials
+On the first interactive `skylos . --upload` or `skylos cloud`, sign in
+in the browser, review the workspace and project, and choose **Save scans here**.
+Cloud offers the project matching the repository and project root or lets
+you create one on the same screen. A folder without a Git remote can save
+to an unlinked project. The CLI continues automatically and remembers the
+destination for the next scan. A stale repository link without saved credentials
 starts sign-in again. Credentials and Git metadata come from PATH, even when
 you run the command from another repository. Explicit output paths stay
 relative to your working directory.
@@ -1309,21 +1315,19 @@ before scanning. Sign in once with `skylos cloud PATH` in a terminal and retry.
 CI uses GitHub Actions/GitLab OIDC or an explicit `SKYLOS_TOKEN` secret.
 `--no-upload` is refused with exit `2`; use `skylos PATH -a` for a local scan.
 
-The receipt separates a successful upload from CI verification:
+After a successful developer upload, the receipt links to the saved report.
 
 ```text
-✓ Scan uploaded — CI verification needed · policy preview: pass
+✓ Scan saved · policy preview: pass
   Open: https://skylos.dev/dashboard/projects/<project>/scans/<scan>
-  Your scan is saved and ready to review. A verified CI scan is needed to set the project verdict and publish repository checks.
-  Sent: findings · developer upload · CI verification needed
-  Next: finish CI setup from the scan above to verify future uploads.
+  Your scan is saved and ready to review. CI adds automatic repository checks and project verdict updates.
+  Sent: findings · report only
+  Optional: connect CI from the saved scan for automatic checks on every pull request.
 ```
 
-The link opens the exact saved result. It includes the same guided setup as
-`/dashboard/projects/<project>/setup`: connect GitHub, add or update the
-workflow on the default branch, then check for its verified upload. Existing
-workflows link to GitHub Actions instead of asking you to add them again.
-Connecting GitHub from this flow does not create a workflow pull request.
+Open the scan link to review the findings immediately. To enable automatic
+pull request checks later, open **Merge blocking on GitHub** in the project's
+settings and follow the CI setup there.
 
 Browser sign-in saves developer reports. Their policy conditions are a
 preview: they do not set the project verdict, publish repository checks,
