@@ -15,6 +15,7 @@ from skylos.rules.danger.import_proof import (
     project_provider_effects_are_stable,
     provider_binding_is_stable,
 )
+from skylos.rules.danger.module_namespace import attribute_write_names
 from skylos.rules.danger.project_imports import project_import_context
 
 
@@ -419,6 +420,114 @@ def _pipeline_intact(context, tick, accepts_model_field):
             "on_event",
         }
 
+    def reads_model_fields(call, argument, effects, source, tree):
+        """A known local method may project native scalar fields from a model."""
+        if not (
+            accepts_model_field
+            and isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and len(call.args) == 1
+            and call.args[0] is argument
+            and not call.keywords
+        ):
+            return False
+        receiver = call.func.value
+        constructor = effects.literal_source(receiver)
+        if (
+            not isinstance(constructor, ast.Call)
+            or not isinstance(constructor.func, ast.Name)
+            or constructor.args
+            or constructor.keywords
+            or effects.lookup_key(receiver) != (None, receiver.id)
+        ):
+            return False
+        bindings = effects.refs(constructor.func)
+        classes = namespace_targets(bindings)
+        if len(bindings) != 1 or len(classes) != 1:
+            return False
+        owner_effects, owner = classes[0]
+        if (
+            owner_effects is not effects
+            or not isinstance(owner, ast.ClassDef)
+            or owner.bases
+            or owner.keywords
+            or owner.decorator_list
+            or any(
+                not isinstance(stmt, ast.FunctionDef) or stmt.name.startswith("__")
+                for stmt in owner.body
+            )
+        ):
+            return False
+        methods = [stmt for stmt in owner.body if stmt.name == call.func.attr]
+        if len(methods) != 1:
+            return False
+        method = methods[0]
+        params = [*method.args.posonlyargs, *method.args.args]
+        if len(params) != 2 or method.decorator_list:
+            return False
+        fields = set()
+        for node in ast.walk(method):
+            if not tick() or (
+                node is not method
+                and isinstance(
+                    node,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef),
+                )
+            ):
+                return False
+            if isinstance(node, ast.Call) and (
+                isinstance(node.func, ast.Name)
+                and node.func.id in {"locals", "globals", "vars"}
+                or effects.refs(node.func)
+                & {
+                    "builtins.locals",
+                    "builtins.globals",
+                    "builtins.vars",
+                    "sys._getframe",
+                    "inspect.currentframe",
+                }
+            ):
+                return False
+            if isinstance(node, ast.Name) and node.id == params[1].arg:
+                read = effects.parents.get(id(node))
+                if (
+                    not isinstance(read, ast.Attribute)
+                    or read.value is not node
+                    or not isinstance(read.ctx, ast.Load)
+                ):
+                    return False
+                fields.add(read.attr)
+        if not fields:
+            return False
+        values = argument.values if isinstance(argument, ast.BoolOp) else (argument,)
+        models = [value for value in values if namespace_value(effects, value)]
+        if not models or not all(
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and accepts_model_field(source, value, field)
+            for value in models
+            for field in fields
+        ):
+            return False
+        # A different method or a dynamic descriptor could capture the original
+        # object. Require an unmodified ordinary class and instance binding.
+        for _path, parsed, _indexed in effect_entries:
+            writes, computed = attribute_write_names(parsed)
+            if computed or writes & {
+                method.name,
+                "__class__",
+                "__getattr__",
+                "__getattribute__",
+            }:
+                return False
+        qualified = next(
+            (name for name, (_, node) in namespace_names.items() if node is owner), None
+        )
+        return bool(qualified) and all(
+            project_provider_effects_are_stable(name, tree, source, context.root)
+            for name in (qualified, qualified.rpartition(".")[0] + "." + receiver.id)
+        )
+
     for source, parsed, effects in effect_entries:
         instance_checks = builtin_references(parsed, {"isinstance"})
         object_refs = builtin_references(parsed, {"object"})
@@ -562,6 +671,8 @@ def _pipeline_intact(context, tick, accepts_model_field):
                         if plain_instance_store(
                             node, argument, object_refs, effects, source, parsed
                         ):
+                            continue
+                        if reads_model_fields(node, argument, effects, source, parsed):
                             continue
                         if accepts_model_field is not None and isinstance(
                             node.func, ast.Name

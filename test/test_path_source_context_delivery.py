@@ -521,6 +521,26 @@ def test_framework_sanitizer_with_public_importer_stays_reviewable_without_false
 
 
 @pytest.mark.parametrize(
+    "change",
+    [
+        ("        name=self.clean", "        foreign.configure(payload)\n        name=self.clean"),
+        ("        name=self.clean", "        foreign.configure(locals().get('payload'))\n        name=self.clean"),
+        ("controller=Controller()", "controller=Controller()\ncontroller.save=foreign.save"),
+        ("controller=Controller()", "controller=Controller()\nController.save=foreign.save"),
+    ],
+)
+def test_local_model_reader_must_preserve_its_binding_and_only_project_fields(
+    tmp_path, change
+):
+    source = "import foreign\n" + HTTP.replace(*change)
+    visible, suppressed = _scan(
+        tmp_path,
+        {"app.py": source, "storage.py": "def _store(path):\n    return open(path, 'w')\n"},
+    )
+    _kept(visible, suppressed, "SKY-D215", "_store")
+
+
+@pytest.mark.parametrize(
     "mutation",
     [
         "payload.name=custom_string(payload.name)",
