@@ -61,17 +61,25 @@ def _scan(
     return [row for row in kept if row["rule_id"] == "SKY-D215"], suppressed
 
 
-def _assert_unverified_check(row):
+def _assert_unverified_check(row, *, declared_http=True):
     assert row["severity"] == "HIGH"
     metadata = row["metadata"]
     assert metadata["path_source"] == "resolved_caller"
-    assert metadata["path_provenance"]["status"] == "untrusted"
+    proof = metadata["path_provenance"]
+    if declared_http:
+        assert proof["status"] == "conditional_http_guard"
+        assert proof["input_trust"] == "untrusted"
+        assert proof["guarded_http"] and not proof.get("untrusted")
+        assert "standard decoded strings" in row["message"]
+    else:
+        assert proof["status"] == "untrusted"
+        assert proof["untrusted"]
+        assert "native-string/runtime assumptions" in row["message"]
     assert (
         metadata["path_provenance"]["validation_uncertainty"]["status"] == "unverified"
     )
     assert metadata["security_evidence"]["source"]
     assert metadata["security_evidence"]["guards_seen"]
-    assert "native-string/runtime assumptions" in row["message"]
     assert "no containment check" not in row["message"]
 
 
@@ -121,7 +129,7 @@ view(FlightRequest.model_construct(flightId=Raw('input')))
     rows = [row for row in rows if row["symbol"] == "load"]
 
     assert len(rows) == 1
-    _assert_unverified_check(rows[0])
+    _assert_unverified_check(rows[0], declared_http=False)
 
 
 def test_proven_native_filter_remains_withheld(tmp_path):
@@ -153,3 +161,21 @@ def unsafe(raw: str):
         not in by_symbol["other"]["metadata"]["path_provenance"]
     )
     assert "filename check body is present" not in by_symbol["other"]["message"]
+
+
+def test_conditional_http_filter_does_not_cover_a_later_reinterpreted_result(tmp_path):
+    helper = FILTER + """
+def choose(name, enabled):
+    if enabled:
+        return name
+    return name.replace('_', '/part/')
+"""
+    rows, _ = _scan(
+        tmp_path, helper=helper, expression="choose(prepare(payload.flightId), payload.flightId)"
+    )
+    [finding] = [row for row in rows if row["symbol"] == "load"]
+    trace = finding["metadata"]["path_provenance"]
+    assert trace["status"] == "untrusted"
+    assert trace["untrusted"]
+    assert "validation_uncertainty" not in trace
+    assert not finding["metadata"]["security_evidence"]["guards_seen"]

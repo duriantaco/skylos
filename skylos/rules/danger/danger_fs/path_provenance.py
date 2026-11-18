@@ -78,6 +78,7 @@ except ImportError:
 PROVENANCE_VERSION = 1
 RESOLVED_CALLER_SOURCE = "resolved_caller"
 UNTRUSTED = "untrusted"
+CONDITIONAL_HTTP_GUARD = "conditional_http_guard"
 OPERATOR = "operator"
 SAFE = "safe"
 UNKNOWN = "unknown"
@@ -113,6 +114,7 @@ _MAX_STEPS = 32
 _MAX_CALLER_DEPTH = 32
 _MAX_SITES = 512
 _MAX_WORK = 400000
+_MAX_MODEL_TYPE_WORK = 500000
 # Shared by every finding of one scan: once spent, every later finding is
 # kept as incomplete without analysis. Blind repositories needed 35k-320k
 # operations for complete caller resolution (a few seconds at most).
@@ -452,13 +454,19 @@ class _HttpFilenameGuardStep(_FilenameGuardStep):
     """A filter on a value covered by a standard HTTP string declaration."""
 
 
+class _PathReinterpretationStep(str):
+    """An operation after a check can produce pathname syntax again."""
+
+
 def _guard_rank(chain):
     """Prefer evidence of unchecked input, including when explanations fill up."""
     rank = 0
     for step in chain:
-        if isinstance(step, _HttpFilenameGuardStep):
-            return 2
-        if isinstance(step, _FilenameGuardStep):
+        if isinstance(step, _PathReinterpretationStep):
+            rank = -1
+        elif isinstance(step, _HttpFilenameGuardStep):
+            rank = 2
+        elif isinstance(step, _FilenameGuardStep):
             rank = 1
     return rank
 
@@ -481,7 +489,15 @@ def _store_chain(chains, chain, kind):
 
 
 def _extend(chain, step):
+    if isinstance(step, _PathReinterpretationStep):
+        # Keep the historical check in the explanation, but a later transform
+        # invalidates its authority over the value now reaching the operation.
+        chain = tuple(str(item) if isinstance(item, _FilenameGuardStep) else item for item in chain)
     if len(chain) >= _MAX_STEPS:
+        # A parameter summary must replay this barrier on its caller's value,
+        # even if later trace steps reach the display limit.
+        if isinstance(chain[-1], _PathReinterpretationStep):
+            return (*chain[: _MAX_STEPS - 2], chain[-1], step)
         return (*chain[: _MAX_STEPS - 1], step)
     return (*chain, step)
 
@@ -3566,8 +3582,7 @@ class _Tracer:
                 from .path_format_proof import fstring_preserves_component
 
                 if not fstring_preserves_component(expr):
-                    facts.add(_Facts.leaf(UNKNOWN, _step(unit, expr,
-                        "format conversion or specification can change pathname component shape")))
+                    facts = _changed_path_component(unit, expr, facts)
             return facts
         if isinstance(expr, ast.BinOp):
             facts = self._union(unit, scope, [expr.left, expr.right], env)
@@ -3575,8 +3590,7 @@ class _Tracer:
                 from .path_format_proof import percent_preserves_component
 
                 if not percent_preserves_component(expr.left):
-                    facts.add(_Facts.leaf(UNKNOWN, _step(unit, expr,
-                        "percent formatting does not preserve a proven pathname component")))
+                    facts = _changed_path_component(unit, expr, facts)
             return facts
         if isinstance(expr, ast.BoolOp):
             return self._union(unit, scope, expr.values, env)
@@ -5007,8 +5021,13 @@ class _Tracer:
                 from .path_format_proof import format_call_preserves_component
 
                 if not format_call_preserves_component(node):
-                    facts.add(_Facts.leaf(UNKNOWN, _step(unit, node,
-                        "format specification does not preserve pathname component shape")))
+                    facts = _changed_path_component(unit, node, facts)
+            if self.rule == TRAVERSAL_RULE and names & {
+                "base64.b64decode", "base64.urlsafe_b64decode", "codecs.decode",
+                "re.sub", "urllib.parse.unquote", "urllib.parse.unquote_plus",
+                "urllib.parse.unquote_to_bytes", "urllib.request.url2pathname",
+            }:
+                facts = _changed_path_component(unit, node, facts, arguments)
             return facts.then(_step(unit, node, f"passes through `{_describe(node)}`"))
         if isinstance(func, ast.Attribute):
             receiver = self.trace(unit, scope, func.value, env)
@@ -5024,8 +5043,9 @@ class _Tracer:
                     from .path_format_proof import format_call_preserves_component
 
                     if not format_call_preserves_component(node):
-                        facts.add(_Facts.leaf(UNKNOWN, _step(unit, node,
-                            "format template does not preserve pathname component shape")))
+                        facts = _changed_path_component(unit, node, facts)
+                if self.rule == TRAVERSAL_RULE and _method_changes_component(node):
+                    facts = _changed_path_component(unit, node, facts, [func.value, *arguments])
                 return facts.then(
                     _step(unit, node, f"passes through `.{func.attr}()`")
                 )
@@ -5586,7 +5606,9 @@ class _Tracer:
         return None
 
     def _http_filename_argument(self, unit, fn_unit, fn, site, parameter, env):
-        if not self.project.complete or not self._filename_runtime_is_stable((unit, fn_unit)):
+        if (not self.project.complete or self.project.truncated
+                or getattr(self, "model_type_work", 0) > _MAX_MODEL_TYPE_WORK
+                or not self._filename_runtime_is_stable((unit, fn_unit))):
             return False
         from .path_http_filename_input import HTTPFilenameInput
 
@@ -6906,7 +6928,7 @@ class _Tracer:
         require a model capability, following local arguments and containers.
         """
         self.model_type_work = getattr(self, "model_type_work", 0) + 1
-        if self.model_type_work > 500000:
+        if self.model_type_work > _MAX_MODEL_TYPE_WORK:
             self.model_effects_incomplete = True
             return frozenset(), False
         key = (id(expr), id(scope))
@@ -7662,6 +7684,33 @@ def _sink_step(unit, finding, operand):
     return _step(unit, operand, f"path `{_describe(operand)}` reaches the {sink}")
 
 
+def _changed_path_component(unit, node, facts, operands=None):
+    """Retain the input origins and record the lost component-shape guarantee."""
+    if operands is not None and all(isinstance(operand, ast.Constant) for operand in operands):
+        return facts
+    step = _PathReinterpretationStep(_step(
+        unit, node, f"`{_describe(node)}` can introduce pathname syntax, so its input checks cannot establish the output shape"
+    ))
+    changed = facts.then(step)
+    changed.add(_Facts.leaf(UNKNOWN, step))
+    return changed
+
+
+def _method_changes_component(node):
+    method = node.func.attr
+    if method == "replace":
+        replacement = next(
+            (keyword.value for keyword in node.keywords if keyword.arg == "new"),
+            node.args[1] if len(node.args) >= 2 else None,
+        )
+        return not (
+            isinstance(replacement, ast.Constant)
+            and isinstance(replacement.value, str)
+            and all(char.isalnum() or char in "-_" for char in replacement.value)
+        )
+    return method in {"translate", "decode"}
+
+
 def _strip_location(step):
     return re.sub(r"^\S+:\d+ ", "", step)
 
@@ -7756,6 +7805,21 @@ def _provenance_record(status, function, facts, project, limits):
         }
         if _guard_rank(witness) == 2:
             record["validation_uncertainty"]["assumption"] = "standard_http_string_decoding"
+    if status == UNTRUSTED:
+        # Source trust and path safety answer different questions. Keep the
+        # HTTP source and its checked path, including in gate inputs. A raw
+        # sibling still takes precedence over any guarded HTTP witnesses.
+        paths = record[UNTRUSTED]
+        checked = [chain for chain in paths if _guard_rank(chain) == 2]
+        if checked:
+            record["guarded_http"] = checked
+            record["input_trust"] = UNTRUSTED
+            unchecked = [chain for chain in paths if _guard_rank(chain) != 2]
+            if unchecked:
+                record[UNTRUSTED] = unchecked
+            else:
+                del record[UNTRUSTED]
+                record["status"] = INCOMPLETE if facts.chains[INCOMPLETE] or limits else CONDITIONAL_HTTP_GUARD
     return record
 
 
@@ -7921,7 +7985,7 @@ def _resolve(findings, root, files, complete, suppressed):
         metadata = dict(updated.get("metadata") or {})
         metadata["path_provenance"] = record
         updated["metadata"] = metadata
-        if status == UNTRUSTED:
+        if status in {UNTRUSTED, CONDITIONAL_HTTP_GUARD}:
             evidence = _evidence(chain, finding)
             metadata["path_source"] = RESOLVED_CALLER_SOURCE
             metadata["security_evidence"] = evidence
@@ -8023,7 +8087,7 @@ def _classify(project, tracers, finding):
     if facts.chains[UNTRUSTED]:
         chain = min(facts.chains[UNTRUSTED], key=_guard_rank)
     record = _provenance_record(status, _function_name(unit, operand), facts, project, limits)
-    return status, record, chain
+    return record["status"], record, chain
 
 
 _HTTP_REQUEST_FIELDS = frozenset(

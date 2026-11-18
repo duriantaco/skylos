@@ -445,3 +445,48 @@ def test_unchecked_route_stays_visible_among_many_guarded_routes(tmp_path, raw_f
         assert "validation_uncertainty" not in proof
         assert any("of `unguarded_route`" in step for step in proof["untrusted"][0])
         assert "unguarded_route" in row["metadata"]["security_evidence"]["source"]
+
+
+@pytest.mark.parametrize("opaque", [False, True])
+@pytest.mark.parametrize(
+    ("helper", "argument"),
+    [
+        ("", 'clean(base).replace("_", "/directory/")'),
+        ("", 'clean(base).translate(table)'),
+        ("", "base64.urlsafe_b64decode(clean(base))"),
+        ("", 'f"{clean(base):/>8}"'),
+        (
+            (
+                "def transform(value, flag):\n"
+                "    if flag:\n        return value\n"
+                '    return value.replace("_", "/directory/")\n'
+            ),
+            "transform(clean(base), request.interval)",
+        ),
+    ],
+    ids=["replacement", "translation", "decoding", "formatting", "return-alternatives"],
+)
+def test_shape_changing_operation_invalidates_earlier_filename_guard(
+    tmp_path, opaque, helper, argument
+):
+    setup = "\nimport base64, foreign\n" + ("foreign.configure(app)\n" if opaque else "")
+    source = HEADER + setup + helper + START.replace("clean(base)", argument)
+    kept, held_back = _scan(tmp_path, source)
+    assert not held_back
+    assert len(kept) == 2
+    for finding in kept:
+        proof = finding["metadata"]["path_provenance"]
+        assert proof["status"] == ("untrusted" if opaque else "unknown")
+        assert "validation_uncertainty" not in proof
+        assert any(
+            "input checks cannot establish the output shape" in step
+            for chain in proof["unknown"]
+            for step in chain
+        )
+
+
+def test_safe_literal_replacement_preserves_filtered_component(tmp_path):
+    source = HEADER + START.replace("clean(base)", 'clean(base).replace("-", "_")')
+    kept, held_back = _scan(tmp_path, source)
+    assert not kept
+    assert held_back == ["safe", "safe"]

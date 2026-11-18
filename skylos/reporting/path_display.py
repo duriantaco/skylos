@@ -44,11 +44,10 @@ def path_review_summary(findings):
         status = provenance.get("status")
         guard = provenance.get("validation_uncertainty")
         if (
-            rule_id == "SKY-D215" and status == "untrusted"
+            rule_id == "SKY-D215" and status == "conditional_http_guard"
             and isinstance(guard, Mapping)
             and guard.get("assumption") == "standard_http_string_decoding"
         ):
-            status = "conditional_http_guard"
             statuses.setdefault(status, 0)
         elif not isinstance(status, str) or status not in _REVIEW_STATUSES:
             continue

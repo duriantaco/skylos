@@ -47,8 +47,10 @@ def _result(*findings):
 def test_standard_http_guard_is_reviewable_in_reports_and_compact_upload():
     from skylos.api._payloads import _compact_provenance
 
-    guarded = _finding("untrusted")
+    guarded = _finding("conditional_http_guard")
     proof = guarded["metadata"]["path_provenance"]
+    proof["input_trust"] = "untrusted"
+    proof["guarded_http"] = [["app.py:4 HTTP input", "app.py:8 filename check"]]
     proof["validation_uncertainty"] = {
         "status": "unverified",
         "check": "filename_filter_body",
@@ -56,6 +58,8 @@ def test_standard_http_guard_is_reviewable_in_reports_and_compact_upload():
         "steps": ["app.py:4 filename filter applied"],
     }
     assert _compact_provenance(proof)["validation_uncertainty"] == proof["validation_uncertainty"]
+    assert _compact_provenance(proof)["guarded_http"] == proof["guarded_http"]
+    assert _compact_provenance(proof)["input_trust"] == "untrusted"
     result = _result(guarded, _finding("untrusted", line=15))
     summary = path_review_summary(result["danger"])
     assert summary["unresolved_count"] == 1

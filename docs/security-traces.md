@@ -54,11 +54,12 @@ whether a candidate can be suppressed:
 | `metadata.path_provenance.status` | Result |
 |---|---|
 | `untrusted` | A modeled input reaches the operation; the finding and its chain remain reported. |
+| `conditional_http_guard` | For D215, each traced HTTP input goes through a filename check that constrains ordinary decoded strings. Runtime validation and unresolved callers still require review. |
 | `safe` | The complete caller analysis proves safe inputs for that particular rule; the candidate is suppressed with its proof. |
 | `unknown` | A caller, source, provider or boundary is unresolved; the candidate stays visible as a review item. |
 | `incomplete` | An analysis limit or error interrupted the trace; the candidate stays reported. |
 
-Unknown and incomplete findings retain their severity and gate behavior.
+Conditional, unknown and incomplete findings retain their severity and gate behavior.
 They are not counted as proven-safe suppressions. Rich, pretty, HTML and
 Markdown output show an unresolved-path review summary with bounded examples;
 JSON exposes `analysis_summary.path_review` and the full per-finding chains.
@@ -69,6 +70,12 @@ Path provenance and explanation status are separate. A partial explanation
 does not refute a finding. A filename sanitizer may protect traversal while
 leaving symlink following or an unbounded read possible; safety evidence is
 specific to the rule and to the checked value before the operation.
+
+In Python D215 reports, `guarded_http` records the checked HTTP paths and
+`input_trust` records the HTTP origin. An unchecked caller takes priority
+in the evidence sent to the terminal and Cloud. If a subsequent operation
+can reintroduce path separators, the earlier filename check no longer
+establishes the shape of the value reaching the filesystem.
 
 Symlink proofs belong to the exact native open operation. A check elsewhere
 in the function, a flag name, or a precheck that can race does not suppress

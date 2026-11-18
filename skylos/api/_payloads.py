@@ -188,7 +188,7 @@ def _compact_verification(value: Any) -> dict[str, Any] | None:
 
 
 _PROVENANCE_KEYS = ("sql_provenance", "redirect_provenance", "path_provenance")
-_PROVENANCE_CHAIN_KINDS = ("untrusted", "unknown", "incomplete", "operator")
+_PROVENANCE_CHAIN_KINDS = ("untrusted", "guarded_http", "unknown", "incomplete", "operator")
 _PROVENANCE_CHAIN_LIMIT = 3
 _PROVENANCE_STEP_LIMIT = 16
 _PROVENANCE_TEXT_LIMIT = 300
@@ -206,7 +206,7 @@ def _compact_provenance(record: Any) -> dict[str, Any] | None:
     if not isinstance(record, dict):
         return None
     compact: dict[str, Any] = {}
-    for key in ("version", "status", "complete_project", "safety_proven"):
+    for key in ("version", "status", "input_trust", "complete_project", "safety_proven"):
         value = record.get(key)
         if isinstance(value, (bool, int)):
             compact[key] = value
