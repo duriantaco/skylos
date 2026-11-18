@@ -31,8 +31,8 @@ def verification_receipt(result: dict, base_url: str) -> dict[str, str]:
         receipt = {
             "status": "needs_ci",
             "message": (
-                "Your scan is saved and ready to review. A verified CI scan is "
-                "needed to set the project verdict and publish repository checks."
+                "Your scan is saved and ready to review. CI adds automatic "
+                "repository checks and project verdict updates."
             ),
         }
     else:
@@ -45,7 +45,7 @@ def verification_receipt(result: dict, base_url: str) -> dict[str, str]:
         project = _clean_project_id(destination.get("project_id"))
         if project:
             receipt["setup_url"] = (
-                f"{base_url.rstrip('/')}/dashboard/projects/{quote(project, safe='')}/setup"
+                f"{base_url.rstrip('/')}/dashboard/projects/{quote(project, safe='')}/settings#merge-blocking"
             )
     return receipt
 
@@ -53,7 +53,7 @@ def verification_receipt(result: dict, base_url: str) -> dict[str, str]:
 def verification_heading(result: dict) -> str:
     trust = upload_trust(result)
     if trust == "unverified":
-        return "Scan uploaded — CI verification needed"
+        return "Scan saved"
     if trust == "unknown":
         return "Scan uploaded — verification status not reported"
     return "Scan uploaded"

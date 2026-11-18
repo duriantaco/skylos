@@ -40,43 +40,14 @@ def _find_free_port():
         return s.getsockname()[1]
 
 
-def _get_repo_name():
-    try:
-        url = (
-            subprocess.check_output(
-                read_only_git_command(["remote", "get-url", "origin"]),
-                stderr=subprocess.DEVNULL,
-                env=read_only_git_environment(),
-            )
-            .decode()
-            .strip()
-        )
-        name = url.rstrip("/").split("/")[-1]
-        if name.endswith(".git"):
-            name = name[:-4]
-        return name
-    except Exception:
-        return None
-
-
 def _get_repo_url():
+    from skylos.cloud.project_context import cloud_origin_identity
+
     try:
-        url = (
-            subprocess.check_output(
-                read_only_git_command(["remote", "get-url", "origin"]),
-                stderr=subprocess.DEVNULL,
-                env=read_only_git_environment(),
-            )
-            .decode()
-            .strip()
-        )
-        if url.startswith("git@github.com:"):
-            url = url.replace("git@github.com:", "https://github.com/")
-        if url.endswith(".git"):
-            url = url[:-4]
-        return url
-    except Exception:
+        identity = cloud_origin_identity()
+    except (OSError, subprocess.SubprocessError):
         return None
+    return f"https://{identity}" if identity else None
 
 
 def _get_repo_subpath():
@@ -161,8 +132,8 @@ def browser_login(console=None, base_url=None):
     _safe_whoami_url(base_url)
 
     port = _find_free_port()
-    repo_name = _get_repo_name() or ""
     repo_url = _get_repo_url() or ""
+    repo_name = repo_url.rsplit("/", 1)[-1]
     repo_path = _get_repo_subpath()
     state = secrets.token_urlsafe(24)
 
@@ -326,8 +297,8 @@ def _print_connected_result(result, console=None, *, continue_scan=False):
         else "Run skylos cloud to scan with every check and upload to this project."
     )
     trust_hint = (
-        "Browser sign-in saves developer reports. Verified quality gates and checks "
-        "require CI authentication; your uploaded scan includes guided CI setup."
+        "Your developer reports are ready to review. Optionally connect CI for "
+        "automatic repository checks and project verdict updates."
     )
 
     if console:

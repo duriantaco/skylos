@@ -19,8 +19,8 @@ LOCAL_NEXT_STEPS = (
 FAILED_NEXT_STEP = (
     "  Next: fix the issues behind the failed gate, then run skylos cloud again."
 )
-CI_NEXT_STEP = "  Next: finish CI setup from the scan above to verify future uploads."
-UNVERIFIED_STANDING = "developer upload · CI verification needed"
+CI_NEXT_STEP = "  Optional: connect CI from the saved scan for automatic checks on every pull request."
+UNVERIFIED_STANDING = "report only"
 VERIFIED_STANDING = "verified CI upload"
 RECEIPT_VERDICTS = {"pass": "pass", "fail": "fail", "incomplete": "unfinished"}
 

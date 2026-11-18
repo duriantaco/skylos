@@ -46,7 +46,7 @@ class GateContext:
             subject = self.subject.replace("Quality gate", "Policy preview", 1)
             condition = "pass" if passed else "fail"
             verification = (
-                "CI verification needed"
+                "report only"
                 if self.upload_trust == "unverified"
                 else "upload verification not reported"
             )
@@ -162,7 +162,7 @@ def history_text(passed: bool, previous: dict | None) -> str | None:
     if previous["commit"]:
         text = f"{text}, {previous['commit'][:7]}"
     if previous.get("trusted") is False:
-        text = f"{text}, unverified upload"
+        text = f"{text}, report only"
     return text
 
 
