@@ -7,12 +7,7 @@ import pytest
 
 import skylos.rules.ai_defect.dependency_hallucination as dep
 from skylos.analyzer import analyze
-
-
-def _write(path: Path, text: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    return path
+from test.fixture_paths import make_fixture_directory, write_fixture
 
 
 def _stub(monkeypatch, statuses=None):
@@ -29,14 +24,14 @@ SCRIPT = "#!/usr/bin/env python3\nfrom flight_common import run\n\nrun()\n"
 
 
 def _plan(tmp_path, script=SCRIPT, extra=None):
-    repo = tmp_path / "repo"
-    _write(repo / "pyproject.toml", '[project]\nname="drone"\ndependencies=[]\n')
-    _write(repo / "fly" / "__init__.py", "")
-    _write(repo / "fly" / "plan" / "__init__.py", "")
-    _write(repo / "fly" / "plan" / "flight_common.py", "def run():\n    pass\n")
-    source = _write(repo / "fly" / "plan" / "flight_test_10.py", script)
+    repo = make_fixture_directory(tmp_path, "repo")
+    write_fixture(repo, "pyproject.toml", '[project]\nname="drone"\ndependencies=[]\n')
+    write_fixture(repo, "fly/__init__.py", "")
+    write_fixture(repo, "fly/plan/__init__.py", "")
+    write_fixture(repo, "fly/plan/flight_common.py", "def run():\n    pass\n")
+    source = write_fixture(repo, "fly/plan/flight_test_10.py", script)
     for name, text in (extra or {}).items():
-        _write(repo / name, text)
+        write_fixture(repo, name, text)
     return repo, source
 
 
@@ -93,7 +88,7 @@ def test_script_sibling_needs_script_only_execution(monkeypatch, tmp_path, case)
 
 def _analyze(tmp_path, files):
     for name, text in files.items():
-        _write(tmp_path / name, text)
+        write_fixture(tmp_path, name, text)
     result = json.loads(
         analyze(str(tmp_path), conf=0, grep_verify=False, enable_ai_defects=True)
     )

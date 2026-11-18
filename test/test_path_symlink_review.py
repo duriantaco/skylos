@@ -9,6 +9,7 @@ import pytest
 from skylos.analyzer import analyze
 from skylos.core.gatekeeper import blocking_gate_issues, check_gate
 from skylos.reporting.listing import is_listed, is_nonblocking_review
+from test.fixture_paths import write_fixture
 
 SYMLINK_RULES = {"SKY-D324", "SKY-D325"}
 
@@ -42,9 +43,11 @@ STORAGE = (
 
 
 def _analyze(tmp_path, files):
-    (tmp_path / "pyproject.toml").write_text('[project]\nname="symlink-review"\n')
+    write_fixture(
+        tmp_path, "pyproject.toml", '[project]\nname="symlink-review"\n', overwrite=True
+    )
     for name, code in files.items():
-        (tmp_path / name).write_text(code)
+        write_fixture(tmp_path, name, code, overwrite=True)
     result = json.loads(
         analyze(
             str(tmp_path),
