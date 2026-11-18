@@ -54,6 +54,7 @@ from skylos.rules.danger.danger_fs.path_flow import (
     polarity_names,
     _commonpath_elements,
 )
+from skylos.rules.danger.danger_fs.shared_paths import shared_file_literal
 from skylos.rules.danger.module_namespace import (
     attribute_write_names,
     has_mock_api_patching,
@@ -522,6 +523,7 @@ class _Facts:
 
     def __init__(self):
         self.chains = {kind: [] for kind in self.KINDS}
+        self.shared_temp_path = False
         self.operator_origins = set()
         self.operator_origins_complete = True
         self.resource_origins = set()
@@ -543,6 +545,7 @@ class _Facts:
         return facts
 
     def add(self, other):
+        self.shared_temp_path |= other.shared_temp_path
         self.parameter_names_complete &= other.parameter_names_complete
         for name in other.parameter_names:
             if len(self.parameter_names) >= _MAX_SITES and name not in self.parameter_names:
@@ -572,6 +575,7 @@ class _Facts:
 
     def then(self, step):
         facts = _Facts()
+        facts.shared_temp_path = self.shared_temp_path
         facts.parameter_names = set(self.parameter_names)
         facts.parameter_names_complete = self.parameter_names_complete
         facts.resource_origins = set(self.resource_origins)
@@ -585,6 +589,7 @@ class _Facts:
     def moved(self, source, target, step):
         """The same facts with ``source`` chains re-filed under ``target``."""
         facts = _Facts()
+        facts.shared_temp_path = self.shared_temp_path
         facts.parameter_names = set(self.parameter_names)
         facts.parameter_names_complete = self.parameter_names_complete
         facts.resource_origins = set(self.resource_origins)
@@ -3393,7 +3398,8 @@ def _default_of(fn, name):
 
 def _same_facts(left, right):
     return (
-        left.parameter_names == right.parameter_names
+        left.shared_temp_path == right.shared_temp_path
+        and left.parameter_names == right.parameter_names
         and left.parameter_names_complete == right.parameter_names_complete
         and left.resource_origins == right.resource_origins
         and left.resource_origins_complete == right.resource_origins_complete
@@ -3568,6 +3574,10 @@ class _Tracer:
 
     def _trace(self, unit, scope, expr, env):
         if isinstance(expr, ast.Constant):
+            if self.rule in {"SKY-D324", "SKY-D325"} and shared_file_literal(expr.value):
+                facts = _Facts.leaf(UNKNOWN, _step(unit, expr, "predictable name in a shared temporary directory"))
+                facts.shared_temp_path = True
+                return facts
             return _Facts.leaf(SAFE, _step(unit, expr, "literal"))
         if isinstance(expr, ast.JoinedStr):
             parts = [value for value in expr.values if isinstance(value, ast.FormattedValue)]
@@ -3595,6 +3605,12 @@ class _Tracer:
         if isinstance(expr, ast.BoolOp):
             return self._union(unit, scope, expr.values, env)
         if isinstance(expr, ast.IfExp):
+            if self.filename_proofs:
+                from .path_conditional_filename import finite_filename_choice
+
+                choice = finite_filename_choice(self, unit, scope, expr, env)
+                if choice is not None:
+                    return choice
             return self._union(unit, scope, [expr.body, expr.orelse], env)
         if isinstance(expr, (ast.Tuple, ast.List, ast.Set)):
             if not expr.elts:
@@ -5355,7 +5371,15 @@ class _Tracer:
                     f"`{name}()` does not establish native private directory ownership or safe reopening"
                 )
                 facts = _Facts.leaf(status, _step(unit, node, description))
-                return facts.add(self._union(unit, scope, [*node.args, *[keyword.value for keyword in node.keywords]], None))
+                facts.add(self._union(unit, scope, [*node.args, *[keyword.value for keyword in node.keywords]], None))
+                if native:
+                    # A fresh private child or an explicitly chosen mktemp
+                    # directory does not inherit its parent's risk by name.
+                    facts.shared_temp_path = (
+                        name in {"tempfile.gettempdir", "tempfile.gettempdirb"}
+                        or (name == "tempfile.mktemp" and not node.args and not node.keywords)
+                    )
+                return facts
         if isinstance(func, ast.Attribute) and func.attr in {"parse_args", "parse_known_args"}:
             return self._parsed_arguments(unit, scope, node)
         dotted = _dotted(func)
@@ -5519,6 +5543,7 @@ class _Tracer:
                     "default native JSON scalar passes a rejecting integer check before filename formatting"))
         summary = self._summary(fn, info[0], element)
         facts = _Facts()
+        facts.shared_temp_path = summary.shared_temp_path
         facts.operator_origins = set(summary.operator_origins)
         facts.operator_origins_complete = summary.operator_origins_complete
         facts.resource_origins = set(summary.resource_origins)
@@ -7992,6 +8017,15 @@ def _resolve(findings, root, files, complete, suppressed):
             updated["message"] = _untrusted_message(updated, evidence["source"])
             kept.append(updated)
             continue
+        if record.get("shared_temp_path"):
+            updated["reason"] = "Predictable name in a shared temporary directory"
+            operation = "write" if updated["rule_id"] == "SKY-D324" else "read"
+            updated["message"] = (
+                f"Possible symlink-following {operation} at a predictable temporary path. "
+                "Check who can create or replace the directory entry before this open."
+            )
+            kept.append(updated)
+            continue
         if status != SAFE:
             kind = {
                 "SKY-D215": "path traversal",
@@ -8060,6 +8094,9 @@ def _classify(project, tracers, finding):
     from skylos.rules.danger.danger_fs.path_process_flow import operator_launch_gap
 
     facts.add(operator_launch_gap(tracer, facts).then(_sink_step(unit, finding, operand)))
+    if metadata.get("predictable_shared_path") is True and rule in {"SKY-D324", "SKY-D325"}:
+        facts.shared_temp_path = True
+        facts.add(_Facts.leaf(UNKNOWN, _step(unit, operand, "fixed file name under a shared temporary root")))
     if not facts.parameter_names_complete:
         facts.add(_Facts.leaf(INCOMPLETE, "parameter-source identities exceeded their bounded capacity"))
     if not facts.resource_origins_complete:
@@ -8087,6 +8124,18 @@ def _classify(project, tracers, finding):
     if facts.chains[UNTRUSTED]:
         chain = min(facts.chains[UNTRUSTED], key=_guard_rank)
     record = _provenance_record(status, _function_name(unit, operand), facts, project, limits)
+    # These are two separate decisions: which sources reach the operand and
+    # whether the rule has a positive match for its alert list. A shared temp
+    # name can matter for symlinks even with no remote input. Keep every
+    # unresolved candidate available to review and to raw security gates.
+    if record["status"] in {UNKNOWN, INCOMPLETE, CONDITIONAL_HTTP_GUARD}:
+        if rule in {"SKY-D324", "SKY-D325"} and facts.shared_temp_path:
+            record["shared_temp_path"] = True
+            record["disposition"] = "alert"
+        elif project.complete and not project.truncated:
+            record["disposition"] = "needs_review"
+    elif record["status"] == UNTRUSTED:
+        record["disposition"] = "alert"
     return record["status"], record, chain
 
 

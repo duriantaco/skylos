@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
+from skylos.cicd.evidence import sanitize_markdown_text
 from skylos.reporting.issue_summary import (
     ISSUE_CATEGORIES,
     count_text,
@@ -21,8 +22,9 @@ from skylos.reporting.issue_summary import (
     listed_severity_counts,
     total_text,
 )
+from skylos.reporting.listing import is_path_review
+from skylos.reporting.path_display import path_review_lines, path_review_summary
 from skylos.reporting.top_risks import rank_risks, scan_verdict, top_risks
-from skylos.reporting.path_display import path_review_lines
 
 REPORT_FORMATS = ("md", "html")
 _GIT_TIMEOUT_SECONDS = 10
@@ -137,7 +139,10 @@ def _coverage_gaps(result, summary, *, project_root=None) -> list[str]:
         gaps.append(
             f"{len(errors)} {noun}: see the scan output for the files affected."
         )
-    gaps.extend(path_review_lines(result, root_path=project_root))
+    legacy_paths = [
+        row for row in result.get("danger") or () if not is_path_review(row)
+    ]
+    gaps.extend(path_review_lines({"danger": legacy_paths}, root_path=project_root))
     gaps.append(_ALWAYS_TRUE)
     return gaps
 
@@ -203,12 +208,23 @@ def build_report(result, *, project_root=None, config=None, now=None) -> dict:
     result = _mapping(result)
     rows = rank_risks(result, project_root=project_root, config=config)
     summary = issue_summary(result)
+    review = path_review_summary(
+        (row for row in result.get("danger") or () if is_path_review(row)),
+        example_limit=None,
+    )["examples"]
+    for entry in review:
+        if project_root is not None:
+            try:
+                entry["file"] = str(Path(entry["file"]).relative_to(project_root))
+            except ValueError:
+                pass
     return {
         "meta": scan_metadata(project_root, now=now),
         "verdict": scan_verdict(result, config=config, rows=rows),
         "top_risks": top_risks(result, rows=rows),
         "risk_count": len(rows),
         "summary": summary,
+        "path_reviews": review,
         "categories": _category_rows(result, summary),
         "gate": _gate_status(result, config),
         "coverage_gaps": _coverage_gaps(result, summary, project_root=project_root),
@@ -320,9 +336,16 @@ def render_markdown(report) -> str:
         "",
         _md(_meta_line(report)),
         "",
-        "## Top risks",
-        "",
     ]
+    reviews = report["path_reviews"]
+    if reviews:
+        lines.extend(
+            [
+                f"[Path findings needing review ({len(reviews)})](#path-findings-needing-review)",
+                "",
+            ]
+        )
+    lines.extend(["## Top risks", ""])
     if report["top_risks"]:
         lines.extend(
             [
@@ -348,7 +371,7 @@ def render_markdown(report) -> str:
                     f"{remaining} more risk {_plural(remaining, 'finding', 'findings')} in the full scan output.",
                 ]
             )
-    else:
+    elif not reviews:
         lines.append("No risk findings.")
     lines.extend(
         [
@@ -362,6 +385,22 @@ def render_markdown(report) -> str:
     for label, text in report["categories"]:
         lines.append(f"| {_md(label)} | {_md(text)} |")
     lines.append(f"| **Total** | **{report['summary']['total']}** |")
+    if reviews:
+        lines.extend(
+            [
+                "",
+                "## Path findings needing review",
+                "",
+                "| File | Line | Rule | Reason |",
+                "|---|---:|---|---|",
+            ]
+        )
+        for entry in reviews:
+            file = sanitize_markdown_text(entry["file"], max_length=300)
+            reason = sanitize_markdown_text(entry["reason"], max_length=300)
+            lines.append(
+                f"| {file} | {entry.get('line', '—')} | {_code(entry['rule_id'])} | {reason} |"
+            )
     lines.extend(["", "## Gate", "", _md(_gate_line(report))])
     lines.extend(["", "## Suppressed and dismissed", ""])
     lines.extend(f"- {line}" for line in _held_back_lines(report["summary"]))
@@ -408,7 +447,7 @@ code{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-b
 a{color:var(--accent)}
 ul{padding-left:20px;margin:6px 0}
 footer{margin-top:32px;color:var(--muted);font-size:12px}
-@media (max-width:640px){th:nth-child(4),td:nth-child(4){display:none}}
+@media (max-width:640px){.risks th:nth-child(4),.risks td:nth-child(4){display:none}}
 @media print{:root{--fg:#000;--muted:#444;--line:#bbb;--bg:#fff;--panel:#f3f3f3}
 main{max-width:none;padding:0}body{font-size:11pt}a{color:#000;text-decoration:none}
 tr,li,.verdict{break-inside:avoid}h2{break-after:avoid}}
@@ -439,11 +478,16 @@ def render_html(report) -> str:
         f'<p class="meta">{_h(_meta_line(report))}</p>',
         f'<div class="verdict {_h(verdict["status"])}"><strong>{_h(verdict["text"])}</strong>'
         f"{_h(_total_line(report))}</div>",
-        "<h2>Top risks</h2>",
     ]
+    reviews = report["path_reviews"]
+    if reviews:
+        parts.append(
+            f'<p><a href="#path-findings-needing-review">Path findings needing review ({len(reviews)})</a></p>'
+        )
+    parts.append("<h2>Top risks</h2>")
     if report["top_risks"]:
         parts.append(
-            "<table><thead><tr><th>#</th><th>Severity</th><th>Issue and fix</th>"
+            '<table class="risks"><thead><tr><th>#</th><th>Severity</th><th>Issue and fix</th>'
             "<th>Location</th></tr></thead><tbody>"
         )
         for index, row in enumerate(report["top_risks"], 1):
@@ -464,7 +508,7 @@ def render_html(report) -> str:
                 f'<p class="meta">{remaining} more risk '
                 f"{_plural(remaining, 'finding', 'findings')} in the full scan output.</p>"
             )
-    else:
+    elif not reviews:
         parts.append("<p>No risk findings.</p>")
     parts.append(
         "<h2>Issues by category</h2><table><thead><tr><th>Category</th>"
@@ -476,6 +520,17 @@ def render_html(report) -> str:
         f"<tr><td><strong>Total</strong></td><td><strong>{report['summary']['total']}"
         "</strong></td></tr></tbody></table>"
     )
+    if reviews:
+        parts.append(
+            '<h2 id="path-findings-needing-review">Path findings needing review</h2>'
+            "<table><thead><tr><th>File</th><th>Line</th><th>Rule</th><th>Reason</th></tr></thead><tbody>"
+        )
+        for entry in reviews:
+            parts.append(
+                f"<tr><td><code>{_h(entry['file'])}</code></td><td>{_h(entry.get('line', '—'))}</td>"
+                f"<td>{_h(entry['rule_id'])}</td><td>{_h(entry['reason'])}</td></tr>"
+            )
+        parts.append("</tbody></table>")
     parts.append(f"<h2>Gate</h2><p>{_h(_gate_line(report))}</p>")
     parts.append("<h2>Suppressed and dismissed</h2><ul>")
     parts.extend(

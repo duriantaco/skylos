@@ -1348,7 +1348,7 @@ def render_results(
         console.print(ADVICE_PRIORITY_NOTE, style="muted")
     for note in scope_note_lines(result):
         console.print(f"[muted]{escape(note)}[/muted]")
-    for note in path_review_lines(result, root_path=root_path):
+    for note in path_review_lines(full_result, root_path=root_path):
         console.print(escape(note), style="warn", soft_wrap=True)
     console.print()
 

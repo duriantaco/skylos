@@ -59,12 +59,24 @@ whether a candidate can be suppressed:
 | `unknown` | A caller, source, provider or boundary is unresolved; the candidate stays visible as a review item. |
 | `incomplete` | An analysis limit or error interrupted the trace; the candidate stays reported. |
 
-Conditional, unknown and incomplete findings retain their severity and gate behavior.
-They are not counted as proven-safe suppressions. Rich, pretty, HTML and
-Markdown output show an unresolved-path review summary with bounded examples;
-JSON exposes `analysis_summary.path_review` and the full per-finding chains.
-A zero review count describes the reported candidates, not complete security
-coverage of every possible runtime path.
+The primary Python path list uses positive matches. An unchecked modeled source
+reaching a filesystem operation stays on the list. A predictable name in a
+shared temporary directory can also establish a symlink alert, even when the
+program supplies the name itself. Skylos checks the actual open mode and read
+or write effect before applying that rule.
+
+When a complete-project scan traces an operand but cannot establish either
+match, the default report places the finding under **Path findings needing
+review**. The HTML and Markdown reports link to every such finding with its
+file, line, rule and reason. A partial project, missing evidence, an analysis
+failure or an independent source-to-sink trace keeps the finding on the
+primary list. The trace describes static evidence. Runtime conditions such as
+directory permissions can still determine whether a link is exploitable.
+
+JSON retains all rows in `danger`, their original severity, and the per-finding
+chains. `issue_summary.path_review_count` counts the separate review list.
+An explicitly selected rule or `--all-advice` includes its review candidates
+in the primary list. Security gate limits still evaluate the raw findings.
 
 Path provenance and explanation status are separate. A partial explanation
 does not refute a finding. A filename sanitizer may protect traversal while

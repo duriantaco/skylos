@@ -8,6 +8,12 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from skylos.cicd.evidence import sanitize_untrusted_text
+from skylos.reporting.listing import (
+    PATH_REVIEW_REASON,
+    demotion_reason,
+    is_path_review,
+    listing_decision,
+)
 
 _RULES = {"SKY-D215", "SKY-D324", "SKY-D325"}
 _SEVERITY = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
@@ -15,11 +21,18 @@ _REVIEW_STATUSES = {"unknown", "incomplete"}
 _MAX_REVIEW_EXAMPLES = 3
 
 
+def path_review_count(result):
+    rows = result.get("danger") if isinstance(result, Mapping) else None
+    if not isinstance(rows, (list, tuple)):
+        return 0
+    return sum(is_path_review(row) for row in rows)
+
+
 def _review_text(value, *, limit=300):
     return sanitize_untrusted_text(value, max_length=limit, neutralize_mentions=False)
 
 
-def path_review_summary(findings):
+def path_review_summary(findings, *, example_limit=_MAX_REVIEW_EXAMPLES):
     """Describe unresolved reported paths without changing any finding or gate.
 
     This receipt covers only findings present in the report. A zero count does
@@ -41,6 +54,12 @@ def path_review_summary(findings):
         )
         if not isinstance(provenance, Mapping):
             continue
+        if "disposition" in provenance:
+            if listing_decision(row) is not None:
+                if not is_path_review(row):
+                    continue
+            elif demotion_reason(row) != PATH_REVIEW_REASON:
+                continue
         status = provenance.get("status")
         guard = provenance.get("validation_uncertainty")
         if (
@@ -53,7 +72,7 @@ def path_review_summary(findings):
             continue
         statuses[status] += 1
         by_rule[rule_id] += 1
-        if len(examples) >= _MAX_REVIEW_EXAMPLES:
+        if example_limit is not None and len(examples) >= example_limit:
             continue
         reason = "The caller or input source could not be established."
         chains = provenance.get(status)

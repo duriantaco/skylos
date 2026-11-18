@@ -335,9 +335,12 @@ def compute_assessment(result: dict, *, scanned_checks=None) -> dict:
     """Summarize canonical observations; do not mutate findings or gate inputs."""
     # The complete report retains unlisted Advice. Repeated assessment calls
     # (including the CLI's final pass) must use the same decision as the gate.
+    path_reviews = 0
     if result.get("listing_policy_version") == 1:
         from skylos.reporting.listing import listed_result
+        from skylos.reporting.path_display import path_review_count
 
+        path_reviews = path_review_count(result)
         result = listed_result(result)
     raw_checks = (
         scanned_checks
@@ -389,6 +392,10 @@ def compute_assessment(result: dict, *, scanned_checks=None) -> dict:
             )
         ):
             category["status"] = "unknown"
+    if path_reviews:
+        risk["path_review_count"] = path_reviews
+        if categories["security"]["status"] == "none":
+            categories["security"]["status"] = "unknown"
     if risk["status"] == "none" and any(
         category["status"] == "unknown" for category in categories.values()
     ):

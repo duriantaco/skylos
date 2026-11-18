@@ -99,7 +99,7 @@ def _complete_assessment(result: dict[str, Any], summary: dict[str, Any]) -> boo
     listed = listed_result(result)
     listed_counts = summarize_finding_types(listed)
     recorded_listed = summary.get("listed_finding_type_counts")
-    combined = _combined_advisory_counts(result, listed)
+    retained = _retained_risk_counts(result, listed)
     return (
         valid_counts(recorded_raw)
         and valid_counts(recorded_listed)
@@ -107,18 +107,22 @@ def _complete_assessment(result: dict[str, Any], summary: dict[str, Any]) -> boo
         and recorded_listed == listed_counts
         and counts == listed_counts
         and all(
-            raw_counts[key] == listed_counts[key] + combined[key]
+            raw_counts[key] == listed_counts[key] + retained[key]
             for key in ("defect", "review")
         )
         and assessment == compute_assessment(result)
     )
 
 
-def _combined_advisory_counts(
+def _retained_risk_counts(
     result: dict[str, Any], listed: dict[str, Any]
 ) -> dict[str, int]:
     from skylos.reporting.finding_types import get_finding_type, iter_result_findings
-    from skylos.reporting.listing import is_combined_advisory, listing_decision
+    from skylos.reporting.listing import (
+        is_combined_advisory,
+        is_path_review,
+        listing_decision,
+    )
 
     leads = set()
     for category, finding in iter_result_findings(listed):
@@ -133,6 +137,10 @@ def _combined_advisory_counts(
         )
     counts = {"defect": 0, "review": 0}
     for category, finding in iter_result_findings(result):
+        finding_type = get_finding_type(finding, category)
+        if category == "security" and is_path_review(finding) and finding_type in counts:
+            counts[finding_type] += 1
+            continue
         if not is_combined_advisory(finding):
             continue
         lead = listing_decision(finding).get("lead")
@@ -143,7 +151,6 @@ def _combined_advisory_counts(
             str(lead.get("file") or ""),
             lead.get("line"),
         )
-        finding_type = get_finding_type(finding, category)
         if key in leads and finding_type in counts:
             counts[finding_type] += 1
     return counts

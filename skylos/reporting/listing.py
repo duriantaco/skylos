@@ -12,6 +12,7 @@ LISTING_VERSION = 1
 COMBINED_REASON = "combined"
 PUBLIC_IDENTIFIER_REASON = "likely-public-identifier"
 LOW_RISK_REASON = "low-risk-context"
+PATH_REVIEW_REASON = "path-needs-review"
 SCA_RULE_PREFIX = "SKY-SCA-"
 SCA_LOW_RISK_REASONS = frozenset({"dev-only-dependency", "informational-advisory"})
 CONSTANT_ARGUMENT_REASON = "constant-argument"
@@ -138,7 +139,61 @@ def demotion_reason(finding):
         return PUBLIC_IDENTIFIER_REASON
     if low_risk_context(finding) is not None:
         return LOW_RISK_REASON
+    if _path_needs_review(finding):
+        return PATH_REVIEW_REASON
     return None
+
+
+def _path_needs_review(finding):
+    if not isinstance(finding, Mapping) or finding.get("rule_id") not in (
+        "SKY-D215", "SKY-D324", "SKY-D325"
+    ):
+        return False
+    file = finding.get("file") or finding.get("file_path")
+    if not isinstance(file, str) or not file.lower().endswith((".py", ".pyw")):
+        return False
+    metadata = finding.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    proof = metadata.get("path_provenance")
+    if not isinstance(proof, Mapping) or (
+        type(proof.get("version")) is not int or proof["version"] != 1
+        or proof.get("complete_project") is not True
+        or proof.get("disposition") != "needs_review" or proof.get("untrusted")
+        or proof.get("shared_temp_path")
+    ):
+        return False
+    trace = metadata.get("security_trace")
+    if isinstance(trace, Mapping) and trace.get("status") == "source_to_sink":
+        return False
+    status = proof.get("status")
+    if status == "conditional_http_guard" and finding["rule_id"] == "SKY-D215":
+        guard = proof.get("validation_uncertainty")
+        if not isinstance(guard, Mapping) or (
+            guard.get("status") != "unverified" or guard.get("check") != "filename_filter_body"
+            or guard.get("assumption") != "standard_http_string_decoding"
+        ):
+            return False
+        chains = proof.get("guarded_http")
+    elif status in ("unknown", "incomplete"):
+        chains = proof.get(status)
+    else:
+        return False
+    return bool(isinstance(chains, list) and chains and all(
+        isinstance(chain, list) and chain and all(
+            isinstance(step, str) and step.strip() for step in chain
+        )
+        for chain in chains
+    ))
+
+
+def is_path_review(finding):
+    """A raw security finding the scan placed in the separate path review list."""
+    mark = listing_decision(finding)
+    return bool(
+        mark and not mark["listed"] and mark["reason"] == PATH_REVIEW_REASON
+        and _path_needs_review(finding)
+    )
 
 
 def is_combined_advisory(finding):

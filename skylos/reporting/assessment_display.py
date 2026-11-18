@@ -18,6 +18,7 @@ def assessment_rows(assessment, *, gate=None) -> list[tuple[str, str]]:
     risk = _mapping(assessment.get("risk"))
     risk_status = str(risk.get("status") or "unknown")
     risk_count = risk.get("finding_count", 0)
+    path_reviews = _count(risk.get("path_review_count"))
     if risk_status in {"critical", "high", "medium", "low"}:
         noun = "finding" if risk_count == 1 else "findings"
         risk_text = (
@@ -31,8 +32,13 @@ def assessment_rows(assessment, *, gate=None) -> list[tuple[str, str]]:
         risk_text = "No risk findings in assessed checks"
     elif risk_status == "not_assessed":
         risk_text = "Not assessed"
+    elif path_reviews and risk_status == "unknown":
+        risk_text = "Unresolved filesystem risk"
     else:
         risk_text = "Unknown · checks are incomplete or coverage is unavailable"
+    if path_reviews:
+        phrase = _plural(path_reviews, "path check needs", "path checks need")
+        risk_text += f" · {path_reviews} {phrase} review"
 
     maintenance = _mapping(assessment.get("maintainability"))
     if maintenance.get("status") == "measured":
@@ -216,6 +222,8 @@ def hidden_advice_text(result) -> str:
 
 def closing_summary(result, *, uncertainty_count=0) -> str:
     """One headline count of listed issues; hidden advice is never added to it."""
+    from skylos.reporting.path_display import path_review_count
+
     counts = listed_issue_counts(result)
     total = sum(counts.values())
     parts = [
@@ -228,6 +236,12 @@ def closing_summary(result, *, uncertainty_count=0) -> str:
     if parts:
         text = f"{text}: {', '.join(parts)}"
     text = f"{text}."
+    pending = path_review_count(result)
+    if pending:
+        phrase = _plural(
+            pending, "additional path check needs", "additional path checks need"
+        )
+        text += f" {pending} {phrase} review."
     uncertain = _count(uncertainty_count)
     if not total and uncertain:
         symbol = _plural(uncertain, "symbol", "symbols")

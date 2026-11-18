@@ -983,3 +983,51 @@ def test_python_security_findings_carry_catalog_cwes_into_sarif():
     taxa = {taxon["id"] for taxon in run["taxonomies"][0]["taxa"]}
     assert [item["target"]["id"] for item in rule["relationships"]] == ["CWE-89"]
     assert "CWE-89" in taxa
+
+
+@pytest.mark.parametrize("conflict", [None, "untrusted", "malformed", "independent-source"])
+def test_cloud_path_listing_survives_saturated_metadata(conflict):
+    from skylos.api._payloads import _compact_upload_finding
+    from skylos.reporting.listing import is_path_review
+
+    chains = [[f"path.py:{i + 1} step {j}" for j in range(32)] for i in range(4)]
+    proof = {
+        "version": 1,
+        "complete_project": True,
+        "status": "unknown",
+        "unknown": chains,
+        "incomplete": chains,
+        "operator": chains,
+        "disposition": "needs_review",
+    }
+    metadata = {f"preceding_{i}": ["a"] * 32 for i in range(32)}
+    metadata["path_provenance"] = proof
+    if conflict == "independent-source":
+        metadata["security_trace"] = {"status": "source_to_sink"}
+    elif conflict == "untrusted":
+        proof["untrusted"] = [["request input", "file operation"]]
+    elif conflict == "malformed":
+        # Compact chains drop non-list values. Preserve the decision from
+        # the original record even when the conflicting evidence is malformed.
+        proof["untrusted"] = ["unrecognized source record"]
+    row = {
+        "file_path": "path.py",
+        "line_number": 3,
+        "rule_id": "SKY-D215",
+        "category": "SECURITY",
+        "severity": "HIGH",
+        "message": "Potential traversal",
+        "listing": {"version": 1, "reason": "path-needs-review", "listed": False},
+        "metadata": metadata,
+    }
+    native = SarifExporter([row]).generate()["runs"][0]["results"][0]["properties"]
+    compact = _compact_upload_finding(row, include_snippet=False)
+    for listing, packet in (
+        (native["listing"], native["skylos_metadata"]),
+        (compact["listing"], compact["metadata"]),
+    ):
+        assert listing["listed"] == (conflict is not None)
+        assert packet["path_provenance"]["disposition"] == "needs_review"
+        assert packet["path_provenance"]["unknown"][0][0] == chains[0][0]
+        assert is_path_review({**row, "metadata": packet, "listing": listing}) == (conflict is None)
+    assert native["skylos_metadata"]["path_provenance"]["unknown"] == chains

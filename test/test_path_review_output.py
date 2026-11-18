@@ -188,3 +188,165 @@ def test_analyzer_json_exposes_unresolved_paths_without_target_execution(
     assert receipt["by_status"]["unknown"] == len(unresolved)
     assert receipt["examples"]
     assert not result.get("analysis_errors")
+
+
+@pytest.mark.parametrize("output", ["html", "md"])
+def test_report_links_all_review_rows_with_their_evidence(tmp_path, output):
+    from skylos.reporting.listing import LISTING_VERSION
+
+    marked = []
+    for number in range(1, 6):
+        path = str(tmp_path / f"review-{number}.py")
+        row = _finding("unknown", line=number + 100, file=path)
+        row["language"] = "python"
+        row["listing"] = {
+            "version": LISTING_VERSION,
+            "listed": False,
+            "reason": "path-needs-review",
+        }
+        row["metadata"]["path_provenance"].update(
+            complete_project=True,
+            disposition="needs_review",
+            unknown=[
+                [
+                    f"review-{number}.py:{number} <script> [link](https://bad.example) | source unresolved"
+                ]
+            ],
+        )
+        marked.append(row)
+    listed = _finding("untrusted", line=10, file=str(tmp_path / "actual.py"))
+    result = _result(*marked, listed)
+    original = copy.deepcopy(result)
+    report = render_report(result, output, project_root=tmp_path)
+    assert result == original
+    assert "Path findings needing review (5)" in report
+    assert "#path-findings-needing-review" in report
+    if output == "html":
+        section = report.partition('id="path-findings-needing-review"')[2].partition(
+            "</table>"
+        )[0]
+        assert "<script>" not in section
+        assert "&lt;script&gt;" in section
+        assert "<th>Reason</th>" in section
+    else:
+        section = report.partition("## Path findings needing review")[2].partition(
+            "## Gate"
+        )[0]
+        assert "[link](" not in section
+        assert "<script>" not in section
+        assert "| Rule | Reason |" in section
+    for number in range(1, 6):
+        assert f"review-{number}.py" in section
+        assert str(number + 100) in section
+    assert "source unresolved" in section
+    assert str(tmp_path) not in section
+    assert "SKY-D215" in section
+    assert "actual.py" not in section
+
+
+def _review_only_report(tmp_path, count=2):
+    from skylos.reporting.advice_policy import apply_advice_policy
+    from skylos.reporting.assessment import compute_assessment
+
+    rows = []
+    for line in range(10, 10 + count):
+        row = _finding(line=line)
+        row["metadata"]["path_provenance"].update(
+            complete_project=True, disposition="needs_review"
+        )
+        rows.append(row)
+    result = _result(*rows)
+    result["suppressed"] = []
+    result["analysis_summary"].update(
+        comparison_scope={
+            "kind": "repository_root",
+            "complete_repository": True,
+            "changed_files_only": False,
+            "excluded_folders": [],
+        },
+        resolution_scope_limited=False,
+        analysis_error_count=0,
+    )
+    result["analysis_errors"] = []
+    result["assessment"] = compute_assessment(result)
+    return apply_advice_policy(result, project_root=tmp_path)
+
+
+def test_path_review_assessment_and_coverage_match_the_retained_scan(tmp_path):
+    from skylos.api._scan_coverage import scan_coverage_receipt
+    from skylos.reporting.assessment import compute_assessment
+    from skylos.reporting.assessment_display import assessment_rows, closing_summary
+    from skylos.reporting.issue_summary import issue_summary
+
+    def coverage(result):
+        return scan_coverage_receipt(
+            result, analyzer_owned=True, analysis_mode="static"
+        )
+
+    result = _review_only_report(tmp_path)
+    assert compute_assessment(result) == result["assessment"]
+    risk = result["assessment"]["risk"]
+    assert risk["status"] == risk["categories"]["security"]["status"] == "unknown"
+    assert risk["finding_count"] == 0
+    assert risk["path_review_count"] == 2
+    assert (
+        "2 path checks need review"
+        in dict(assessment_rows(result["assessment"]))["Risk"]
+    )
+    assert "2 additional path checks need review" in closing_summary(result)
+    assert issue_summary(result)["path_review_count"] == 2
+    assert result["advice_visibility"]["omitted_checks"] == 0
+    assert coverage(result)["complete"] is True
+
+    # Either changing the persisted assessment or losing its raw row invalidates
+    # the coverage proof used when resolving previous findings.
+    changed = copy.deepcopy(result)
+    changed["assessment"]["risk"].pop("path_review_count")
+    assert coverage(changed)["complete"] is False
+    result["danger"].pop()
+    assert coverage(result)["complete"] is False
+
+
+def test_review_gate_and_verdict_use_raw_findings_for_every_limit(tmp_path):
+    from skylos.core.gatekeeper import build_summary_markdown
+    from skylos.reporting.top_risks import scan_verdict
+
+    result = _review_only_report(tmp_path)
+    assert [row["severity"] for row in result["danger"]] == ["HIGH", "HIGH"]
+    for limit, status in ((0, "not_ready"), (1, "not_ready"), (2, "review")):
+        config = {"gate": {"max_security": limit, "max_high": 5}}
+        passed, reasons = check_gate(result, config)
+        assert passed is (limit == 2)
+        assert scan_verdict(result, config=config)["status"] == status
+        summary = build_summary_markdown(result, passed, reasons)
+        assert "The gate includes 2 path findings awaiting review." in summary
+        assert "hidden from the list as low-risk" not in summary
+
+
+@pytest.mark.parametrize("output", ["html", "md", "rich", "pretty", "llm"])
+def test_review_only_human_output_never_claims_absence(tmp_path, output):
+    result = _review_only_report(tmp_path, 1)
+    if output in ("html", "md"):
+        rendered = render_report(result, output, project_root=tmp_path)
+        assert "Path findings needing review (1)" in rendered
+    elif output == "llm":
+        from skylos.reporting.llm_report import _generate_llm_report
+
+        rendered = _generate_llm_report(result, tmp_path)
+        assert "1 additional path check needs review" in rendered
+        assert "No findings." not in rendered
+    else:
+        buffer = StringIO()
+        console = Console(
+            file=buffer, width=160, color_system=None, theme=_skylos_console_theme()
+        )
+        if output == "rich":
+            render_results(console, result, root_path=tmp_path, copy_badge=False)
+        else:
+            render_pretty_results(console, result, root_path=tmp_path)
+        rendered = buffer.getvalue()
+        assert "1 path finding needs review" in rendered
+    if output != "llm":
+        assert "app.py" in rendered and "SKY-D215" in rendered
+    assert "No findings to display" not in rendered
+    assert "No risk findings" not in rendered

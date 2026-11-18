@@ -188,6 +188,52 @@ def test_upload_transports_keep_path_reviews_and_leave_local_examples_local(
     assert result == before
 
 
+def test_review_lane_and_positive_sources_survive_all_upload_formats(
+    tmp_path, monkeypatch
+):
+    from skylos.reporting.advice_policy import apply_advice_policy
+    from skylos.reporting.listing import is_path_review
+
+    report = _report(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    for row in report["danger"]:
+        proof = row["metadata"]["path_provenance"]
+        proof["disposition"] = (
+            "alert" if proof["status"] == "untrusted" else "needs_review"
+        )
+    # A known shared temporary directory can require link protection even if the
+    # trace does not reach a network source.
+    report["danger"][1]["metadata"]["path_provenance"]["shared_temp_path"] = True
+    report = apply_advice_policy(report)
+    expected = {row["rule_id"]: is_path_review(row) for row in report["danger"]}
+    assert expected == {"SKY-D215": True, "SKY-D324": False, "SKY-D325": False}
+    prepared = _prepare(monkeypatch, tmp_path, report)
+
+    for body in (prepared.core_payload, prepared.legacy_payload):
+        decisions = {}
+        for result in body["runs"][0]["results"]:
+            props = result["properties"]
+            artifact = result["locations"][0]["physicalLocation"]["artifactLocation"]
+            decisions[result["ruleId"]] = is_path_review(
+                {
+                    "rule_id": result["ruleId"],
+                    "file": artifact["uri"],
+                    "listing": props["listing"],
+                    "metadata": props["skylos_metadata"],
+                }
+            )
+        assert decisions == expected
+
+    findings = prepared.compatibility_payload["findings"]
+    assert {row["rule_id"]: is_path_review(row) for row in findings} == expected
+    assert (
+        next(row for row in findings if row["rule_id"] == "SKY-D324")["metadata"][
+            "path_provenance"
+        ]["shared_temp_path"]
+        is True
+    )
+
+
 @pytest.mark.parametrize("status", ["untrusted", "unknown", "incomplete"])
 @pytest.mark.parametrize("nested", [False, True])
 def test_compact_upload_preserves_process_source_context(status, nested):

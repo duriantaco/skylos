@@ -1706,6 +1706,15 @@ def _summary_count_notes(summary, gate_extra):
         notes.append(
             f"Not counted: {noun} hidden by default (`--all-advice` lists and counts them)."
         )
+    pending = min(summary.get("path_review_count", 0), gate_extra.get("security", 0))
+    if pending:
+        gate_extra = dict(gate_extra)
+        gate_extra["security"] -= pending
+        if not gate_extra["security"]:
+            del gate_extra["security"]
+        notes.append(
+            f"The gate includes {_count_noun(pending, 'path finding')} awaiting review."
+        )
     if gate_extra:
         labels = dict(ISSUE_CATEGORIES)
         parts = ", ".join(

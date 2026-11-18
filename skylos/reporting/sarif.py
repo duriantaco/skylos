@@ -408,11 +408,24 @@ class SarifExporter:
                 if listing is not None and "listing" in metadata_input:
                     metadata_input["listing"] = dict(properties["listing"])
                 located_trace = metadata_input.pop("security_trace", None)
+                path_proof = None
+                if finding.get("rule_id") in ("SKY-D215", "SKY-D324", "SKY-D325") and isinstance(
+                    metadata_input.get("path_provenance"), dict
+                ):
+                    path_proof = metadata_input.pop("path_provenance")
                 risk_context = metadata_input.pop("risk_context", None)
                 import_usage = metadata_input.pop("import_usage", None)
                 safe_metadata = _sanitize_sarif_payload(
                     metadata_input, max_items=metadata_items
                 )
+                if path_proof is not None:
+                    # Each provenance class can have four chains of 32 steps.
+                    # Reserve space independently of receiver and other evidence.
+                    safe_metadata["path_provenance"] = sanitize_bounded_payload(
+                        path_proof, max_depth=4, max_items=32, max_nodes=2048,
+                        max_text_length=_MAX_SARIF_METADATA_TEXT_LENGTH,
+                        neutralize_mentions=False,
+                    )
                 if risk_context is not None:
                     from skylos.rules.sca.threat_intel import finding_cves, normalize_risk_context
 

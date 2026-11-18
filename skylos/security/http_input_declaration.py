@@ -393,25 +393,29 @@ def _module(tree):
     return index
 
 
-def _providers_declared(tree, filename, project_root, protected):
+def _providers_declared(tree, filename, project_root, protected, *, flask=False):
     """Reject concrete shadowing or provider writes even for a scoped claim."""
-    providers = {
-        "fastapi",
-        "pydantic",
-        "pydantic_core",
-        "starlette",
-        "builtins",
-        "json",
-        "typing",
-        "uvicorn",
-    }
+    providers = (
+        {"builtins", "flask", "werkzeug"}
+        if flask
+        else {
+            "fastapi",
+            "pydantic",
+            "pydantic_core",
+            "starlette",
+            "builtins",
+            "json",
+            "typing",
+            "uvicorn",
+        }
+    )
     watched = {*providers, "os.environ.get"}
     indices = [_module(tree)]
     if filename is not None:
         context = project_import_context(tree, filename, project_root)
         if context is None:
             return False
-        key = ("declared-http-providers", tuple(sorted(protected)))
+        key = ("declared-http-providers", tuple(sorted(protected)), flask)
         if key in context.provider_results:
             return context.provider_results[key]
         if providers.intersection(context.modules) or not all(
@@ -437,6 +441,7 @@ def _providers_declared(tree, filename, project_root, protected):
         idx.effects is not None
         and bool(idx.effects.nodes)
         and not idx.dynamic_namespace_write
+        and (not flask or _ordinary_flask_access(idx))
         and not any(
             name == symbol or name.startswith(symbol + ".")
             for name in idx.writes()
@@ -529,3 +534,99 @@ def declared_http_string_input(
             and _providers_declared(tree, filename, project_root, protected | {ann.id})
         )
     return False
+
+
+def _ordinary_flask_access(module):
+    """Only the app constructor and query-item reads use Flask capabilities.
+
+    Giving request, its storage or a framework module/class to opaque code
+    leaves the decoder assumptions open. Check imports throughout the same
+    dependency context, including aliases.
+    """
+    for node in module.effects.nodes:
+        if not isinstance(node, (ast.Name, ast.Attribute)) or not isinstance(
+            node.ctx, ast.Load
+        ):
+            continue
+        name = module.qualified(node)
+        if not name or name.split(".", 1)[0] not in {"flask", "werkzeug"}:
+            continue
+        parent = module.parent(node)
+        if isinstance(parent, ast.Attribute) and parent.value is node:
+            continue
+        if (
+            name == "flask.Flask"
+            and isinstance(parent, ast.Call)
+            and parent.func is node
+        ):
+            continue
+        if (
+            name == "flask.request.args"
+            and isinstance(parent, ast.Subscript)
+            and parent.value is node
+            and isinstance(parent.ctx, ast.Load)
+            and isinstance(parent.slice, ast.Constant)
+            and isinstance(parent.slice.value, str)
+        ):
+            continue
+        return False
+    return True
+
+
+def declared_flask_query_value(tree, route, value, *, filename, project_root):
+    """A string from the default Flask query decoder, under normal HTTP dispatch."""
+    module = _module(tree)
+    if (
+        module.effects is None
+        or route not in tree.body
+        or len(route.decorator_list) != 1
+        or not isinstance(value, ast.Subscript)
+        or module.qualified(value.value) != "flask.request.args"
+        or not isinstance(value.slice, ast.Constant)
+        or not isinstance(value.slice.value, str)
+    ):
+        return False
+    decorator = route.decorator_list[0]
+    if not (
+        isinstance(decorator, ast.Call)
+        and isinstance(decorator.func, ast.Attribute)
+        and decorator.func.attr in _METHODS | {"route"}
+        and isinstance(decorator.func.value, ast.Name)
+    ):
+        return False
+    app = decorator.func.value.id
+    assignment = module.definition(app)
+    if not (
+        isinstance(assignment, ast.Assign)
+        and assignment in tree.body
+        and len(assignment.targets) == 1
+        and isinstance(assignment.value, ast.Call)
+        and module.qualified(assignment.value.func) == "flask.Flask"
+        and len(assignment.value.args) == 1
+        and isinstance(assignment.value.args[0], ast.Name)
+        and assignment.value.args[0].id == "__name__"
+        and not assignment.value.keywords
+    ):
+        return False
+    for use in module.uses[app]:
+        attr = module.parent(use)
+        call = module.parent(attr)
+        if not (
+            isinstance(attr, ast.Attribute)
+            and attr.attr in _METHODS | {"route"}
+            and isinstance(call, ast.Call)
+            and call.func is attr
+            and len(call.args) == 1
+            and isinstance(call.args[0], ast.Constant)
+            and isinstance(call.args[0].value, str)
+            and not call.keywords
+            and call in getattr(module.parent(call), "decorator_list", ())
+        ):
+            return False
+    return _providers_declared(
+        tree,
+        filename,
+        project_root,
+        {app, route.name},
+        flask=True,
+    )

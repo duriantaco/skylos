@@ -218,12 +218,14 @@ def top_risks(
 
 def scan_verdict(result, *, project_root=None, config=None, rows=None) -> dict:
     """A one-line answer: is anything blocking, and what is left to review."""
-    from skylos.core.gatekeeper import _analysis_blocking_reasons
+    from skylos.core.gatekeeper import _analysis_blocking_reasons, check_gate
+    from skylos.reporting.path_display import path_review_count
 
     if rows is None:
         rows = rank_risks(result, project_root=project_root, config=config)
     blocking = sum(1 for row in rows if row.blocking)
     high = sum(1 for row in rows if row.severity in {"CRITICAL", "HIGH"})
+    pending = path_review_count(result)
     try:
         incomplete = bool(_analysis_blocking_reasons(result or {}, config=config or {}))
     except Exception:
@@ -235,6 +237,11 @@ def scan_verdict(result, *, project_root=None, config=None, rows=None) -> dict:
         status = "not_ready"
         noun = _plural(blocking, "blocking issue", "blocking issues")
         text = f"Not ready: {blocking} {noun}"
+    elif pending and not check_gate(result, config or {})[0]:
+        # Aggregate limits also count the raw path review rows. They may
+        # exceed a positive limit without any single row blocking on its own.
+        status = "not_ready"
+        text = "Gate limits exceeded. See the gate result for details."
     elif high:
         status = "review"
         noun = _plural(high, "high-severity issue", "high-severity issues")
@@ -243,6 +250,9 @@ def scan_verdict(result, *, project_root=None, config=None, rows=None) -> dict:
         status = "review"
         noun = _plural(len(rows), "issue", "issues")
         text = f"Needs review: {len(rows)} {noun} (nothing blocks the gate)"
+    elif pending:
+        status = "review"
+        text = f"{pending} filesystem {_plural(pending, 'check needs', 'checks need')} review"
     else:
         status = "ready"
         text = "No blocking issues or risk findings"

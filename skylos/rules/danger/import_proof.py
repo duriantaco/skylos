@@ -106,6 +106,7 @@ class _Effects:
         self.aliases = {}
         self.alias_work = 0
         self.ref_work = 0
+        self.root_refs = None
         self.stable_results = {}
         self.yaml_builtin_getattrs = None
         self.flag_builtin_getattrs = None
@@ -283,6 +284,10 @@ class _Effects:
                 break
         else:
             self.complete = False
+        # The alias table is final. Rechecking another provider can reuse a
+        # complete root lookup, while nested calls retain their depth budget.
+        if self.complete:
+            self.root_refs = {}
 
     def add_alias(self, key, values):
         self.alias_work += len(values)
@@ -360,6 +365,16 @@ class _Effects:
         return scope
 
     def refs(self, node, depth=0):
+        if depth or self.root_refs is None or node is None:
+            return self._resolve_refs(node, depth)
+        if node not in self.root_refs:
+            value = self._resolve_refs(node, 0)
+            if not self.complete:
+                return value
+            self.root_refs[node] = value
+        return self.root_refs[node]
+
+    def _resolve_refs(self, node, depth):
         if node is None:
             return set()
         if isinstance(node, (ast.BinOp, ast.UnaryOp)) and self.scalar_operator_tree(node):

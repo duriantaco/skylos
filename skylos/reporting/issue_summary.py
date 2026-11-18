@@ -115,6 +115,9 @@ def issue_summary(result) -> dict:
     """The listed total, per-category counts (None when not checked), hidden
     advice and suppressed counts."""
     result = _mapping(result)
+    from skylos.reporting.path_display import path_review_count
+
+    path_review = path_review_count(result)
     counts = listed_issue_counts(result)
     by_category = {}
     missing = not_checked(result, counts)
@@ -130,6 +133,7 @@ def issue_summary(result) -> dict:
         reviewed = ()
     return {
         "total": sum(counts.values()),
+        "path_review_count": path_review,
         "by_category": by_category,
         "not_checked": missing,
         "hidden_advice": _count(visibility.get("omitted_checks")) or 0,
@@ -226,6 +230,9 @@ def total_text(summary) -> str:
     text = f"{total} {noun}"
     if parts:
         text = f"{text}: {', '.join(parts)}"
+    if review_count := summary.get("path_review_count"):
+        label = "path check needs" if review_count == 1 else "path checks need"
+        text += f" · {review_count} additional {label} review"
     return text
 
 

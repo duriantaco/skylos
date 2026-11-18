@@ -210,13 +210,15 @@ def render_pretty_results(
         )
     for note in scope_note_lines(result):
         console.print(Text(f"  {_sanitize_terminal_text(note)}", style="dim"))
-    for note in path_review_lines(result, root_path=root_path):
+    path_reviews = path_review_lines(full_result, root_path=root_path)
+    for note in path_reviews:
         console.print(Text(_sanitize_terminal_text(note), style="yellow"))
     _print_directory_rollups(console, result)
     console.print()
 
     if not findings and not advisory_groups:
-        console.print(Text("  No findings to display.", style="bold green"))
+        if not path_reviews:
+            console.print(Text("  No findings to display.", style="bold green"))
         return
 
     _print_sca_packages(console, advisory_groups, root_path=root_path, limit=limit)

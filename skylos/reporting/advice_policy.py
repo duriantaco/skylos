@@ -533,6 +533,7 @@ def refresh_listing_summary(result, *, preserve_assessment=False):
         LISTING_VERSION,
         is_combined,
         is_listed,
+        is_path_review,
         listed_result,
     )
 
@@ -542,7 +543,11 @@ def refresh_listing_summary(result, *, preserve_assessment=False):
     canonical = list(iter_result_findings(view))
     omitted = []
     for category, row in canonical:
-        if not is_listed(row, category) and not is_combined(row):
+        if (
+            not is_listed(row, category)
+            and not is_combined(row)
+            and not is_path_review(row)
+        ):
             omitted.append((category, row))
     combined = sum(is_combined(row) for _category, row in canonical)
     total = sum(
@@ -576,7 +581,7 @@ def refresh_listing_summary(result, *, preserve_assessment=False):
     if result.get("assessment") and not preserve_assessment:
         from skylos.reporting.assessment import compute_assessment
 
-        view["assessment"] = compute_assessment(selected)
+        view["assessment"] = compute_assessment(view)
     return view
 
 

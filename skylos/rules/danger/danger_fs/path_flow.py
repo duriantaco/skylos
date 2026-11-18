@@ -31,6 +31,7 @@ from skylos.rules.danger.danger_fs.prefix_separator import (
     dotted as prefix_dotted,
 )
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
+from skylos.rules.danger.danger_fs.shared_paths import fixed_shared_file
 from skylos.rules.danger.import_proof import provider_binding_is_stable
 from skylos.rules.danger.module_namespace import (
     attribute_write_names,
@@ -673,6 +674,7 @@ class _PathFlowChecker(TaintVisitor):
             }
         ]
         self._emitted = set()
+        self._shared_file_operands = set()
         self._literal_pytest_paths = {}
         self.import_aliases = {}
         self.untrusted_sources = UntrustedSourceIndex(None)
@@ -1812,7 +1814,32 @@ class _PathFlowChecker(TaintVisitor):
     def _has_archive_guard(self):
         return self._current_safety()["archive_member_guard"]
 
-    def _path_needs_symlink_protection(self, node):
+    def _shared_path_constructor(self, call):
+        name = self._canonical_call_name(call)
+        if name in {
+            "pathlib.Path", "pathlib.PosixPath",
+            "os.path.join", "tempfile.gettempdir",
+        } and self._native_atomic_expression(call.func, name):
+            return name
+        return None
+
+    def _path_needs_symlink_protection(self, node, call):
+        bound = isinstance(call.func, ast.Attribute) and call.func.value is node
+        if self.path_open_modes is not None and fixed_shared_file(
+            node, self._shared_path_constructor, self.path_open_modes._binding, require_path=bound
+        ):
+            if bound:
+                # fixed_shared_file proved the concrete pathlib receiver.
+                native = self._sanitizer_is_unpatched("pathlib.Path." + call.func.attr) and (
+                    self._native_atomic_provider("pathlib.io.open") and self._native_atomic_provider("io.open")
+                )
+            else:
+                native = any(self._native_atomic_expression(call.func, provider) for provider in (
+                    "builtins.open", "io.open", "_io.open", "os.open"
+                ))
+            if native:
+                self._shared_file_operands.add(id(node))
+                return True
         return (
             _is_interpolated_string(node)
             or self.is_tainted(node)
@@ -1932,6 +1959,8 @@ class _PathFlowChecker(TaintVisitor):
         if evidence:
             finding["metadata"] = {"security_evidence": evidence}
         _mark_helper_parameter(finding, evidence, path_expr)
+        if rule_id in {SYMLINK_WRITE_RULE, SYMLINK_READ_RULE} and id(path_expr) in self._shared_file_operands:
+            finding.setdefault("metadata", {})["predictable_shared_path"] = True
         self._attach_receiver_proof(node, finding)
         self.findings.append(finding)
 
@@ -2243,7 +2272,7 @@ class _PathFlowChecker(TaintVisitor):
         return False
 
     def _flag_symlink_write_if_unsafe(self, node, path_expr):
-        if not self._path_needs_symlink_protection(path_expr):
+        if not self._path_needs_symlink_protection(path_expr, node):
             return
         if self._has_symlink_write_guard(node):
             return
@@ -2279,7 +2308,7 @@ class _PathFlowChecker(TaintVisitor):
                 self._bounded_opens.add(id(item.context_expr))
 
     def _flag_symlink_read_if_unsafe(self, node, path_expr):
-        if not self._path_needs_symlink_protection(path_expr):
+        if not self._path_needs_symlink_protection(path_expr, node):
             return
         bounded = id(node) in self._bounded_opens
         if self._has_symlink_read_guard(node):

@@ -206,7 +206,10 @@ def _compact_provenance(record: Any) -> dict[str, Any] | None:
     if not isinstance(record, dict):
         return None
     compact: dict[str, Any] = {}
-    for key in ("version", "status", "input_trust", "complete_project", "safety_proven"):
+    for key in (
+        "version", "status", "input_trust", "complete_project", "safety_proven",
+        "disposition", "shared_temp_path",
+    ):
         value = record.get(key)
         if isinstance(value, (bool, int)):
             compact[key] = value
@@ -436,11 +439,15 @@ def _compact_upload_finding(
             if metadata is None:
                 metadata = {}
             metadata["measure"] = measure
-    from skylos.reporting.listing import listing_decision
+    from skylos.reporting.listing import PATH_REVIEW_REASON, is_listed, listing_decision
 
     listing = listing_decision(finding)
     if listing is not None:
         compact["listing"] = dict(listing)
+        if listing["reason"] == PATH_REVIEW_REASON:
+            # Compaction can discard malformed or conflicting evidence. Carry
+            # the listing decision made against the original evidence.
+            compact["listing"]["listed"] = is_listed(finding, compact["category"])
     dead_code_evidence = dead_code_finding_evidence_payload(
         finding,
         max_events=8,

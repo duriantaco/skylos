@@ -198,6 +198,9 @@ def _generate_llm_report(
     expand_advice: bool = False,
     all_advice: bool = False,
 ) -> str:
+    from skylos.reporting.path_display import path_review_count
+
+    pending = 0 if all_advice else path_review_count(result)
     result, visibility = prepare_advice_view(
         result, project_root=project_root, all_advice=all_advice
     )
@@ -234,10 +237,18 @@ def _generate_llm_report(
         label = "Assessment" if result.get("assessment") else "Grade"
         assessment_text += f"{label} includes all analyzed findings, including those outside this display.\n\n"
     visibility_text = visibility.message + "\n\n" if visibility.message else ""
+    if pending:
+        checks = "path check needs" if pending == 1 else "path checks need"
+        visibility_text += (
+            f"{pending} additional {checks} review. The JSON report records "
+            "the evidence for each check in `metadata.path_provenance`.\n\n"
+        )
     if not all_findings:
         empty_text = (
             "No findings to display.\n" if visibility.message else "No findings.\n"
         )
+        if pending:
+            empty_text = ""
         return (
             "# Skylos Report\n\n"
             + assessment_text
