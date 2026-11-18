@@ -106,7 +106,6 @@ def test_browser_login_rejects_unverified_callback(monkeypatch):
             pass
 
     monkeypatch.setattr(loginmod, "_find_free_port", lambda: 8123)
-    monkeypatch.setattr(loginmod, "_get_repo_name", lambda: "repo")
     monkeypatch.setattr(loginmod, "_get_repo_url", lambda: "")
     monkeypatch.setattr(loginmod, "_get_repo_subpath", lambda: "")
     monkeypatch.setattr(loginmod.webbrowser, "open", lambda _url: True)
@@ -160,7 +159,7 @@ def test_print_connected_result_plain_output_omits_raw_token(capsys):
     assert raw_token not in output
     assert "export SKYLOS_API_KEY=" not in output
     assert "Sign-in saved locally. No token to find or copy." in output
-    assert "Verified quality gates and checks" in output
+    assert "Optionally connect CI" in output
     assert "SKYLOS_API_KEY" not in output
 
 
@@ -188,7 +187,7 @@ def test_print_connected_result_console_output_omits_raw_token():
     assert raw_token not in output
     assert "export SKYLOS_API_KEY=" not in output
     assert "Sign-in saved locally. No token to find or copy." in output
-    assert "Verified quality gates and checks" in output
+    assert "Optionally connect CI" in output
     assert "SKYLOS_API_KEY" not in output
 
 
@@ -294,7 +293,6 @@ def test_browser_login_persists_the_selected_server_through_environment_changes(
 
     monkeypatch.setattr(syncmod, "get_token", current_token)
     monkeypatch.setattr(loginmod, "_find_free_port", lambda: 8123)
-    monkeypatch.setattr(loginmod, "_get_repo_name", lambda: "fixture-repo")
     monkeypatch.setattr(loginmod, "_get_repo_url", lambda: "")
     monkeypatch.setattr(loginmod, "_get_repo_subpath", lambda: "")
     browser_urls = []

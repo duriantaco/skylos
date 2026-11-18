@@ -363,7 +363,7 @@ def test_formatted_line_needs_a_reported_gate_but_not_previous_history(
     "trust, heading",
     [
         (None, "Scan uploaded — verification status not reported"),
-        ("unverified", "Scan uploaded — CI verification needed"),
+        ("unverified", "Scan saved"),
     ],
 )
 def test_formatted_policy_preview_without_history_does_not_claim_a_pass(trust, heading):
@@ -483,7 +483,7 @@ def test_json_upload_from_old_cloud_reports_unknown_verification_with_a_results_
 
 @pytest.mark.parametrize(
     "trusted,suffix",
-    [(False, ", unverified upload"), (True, ""), (None, ""), ("false", ""), (0, "")],
+    [(False, ", report only"), (True, ""), (None, ""), ("false", ""), (0, "")],
 )
 def test_unverified_previous_run_is_named_in_the_history(
     capsys, machine_zone_not_utc, trusted, suffix
@@ -515,11 +515,11 @@ def test_unverified_previous_run_is_named_for_every_history_state(machine_zone_n
     }
     assert (
         history_text(True, {**base, "passed": True, "overridden": False})
-        == "same as last run on 21 Oct 14:05 UTC, unverified upload"
+        == "same as last run on 21 Oct 14:05 UTC, report only"
     )
     assert (
         history_text(True, {**base, "passed": False, "overridden": True})
-        == "was OVERRIDDEN on 21 Oct 14:05 UTC, unverified upload"
+        == "was OVERRIDDEN on 21 Oct 14:05 UTC, report only"
     )
     assert history_text(True, {**base, "passed": None, "overridden": False}) is None
 

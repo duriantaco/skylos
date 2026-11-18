@@ -1,6 +1,35 @@
 from __future__ import annotations
 
+import re
+import subprocess
 from pathlib import Path
+
+from skylos.cloud.shadow_upload import _cloud_repository_identity
+from skylos.core.git_safety import read_only_git_command, read_only_git_environment
+
+
+def cloud_origin_identity(repo: str | Path = ".") -> str | None:
+    """Read only the provider and repository path that Cloud can safely bind."""
+    result = subprocess.run(
+        read_only_git_command(["-C", str(repo), "remote", "get-url", "origin"]),
+        capture_output=True, text=True, errors="replace", timeout=5,
+        env=read_only_git_environment(), check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        identity = _cloud_repository_identity(result.stdout)
+    except ValueError:
+        identity = ""
+    # Match only Cloud-supported paths. In particular, an scp-style path
+    # with a query, local filesystem path or unsupported host never goes into
+    # the browser query, terminal text, or server request logs.
+    path_segment = r"[a-zA-Z0-9_.-]+"
+    if re.fullmatch(rf"github\.com/{path_segment}/{path_segment}", identity):
+        return identity
+    if re.fullmatch(rf"gitlab\.com/(?:{path_segment}/)+{path_segment}", identity):
+        return identity
+    raise ValueError("Cloud repository linking supports GitHub and GitLab.com origins.")
 
 
 def normalize_repo_subpath(value) -> str | None:

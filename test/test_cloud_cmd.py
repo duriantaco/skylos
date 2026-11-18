@@ -118,7 +118,7 @@ def test_unverified_default_branch_upload_says_it_does_not_mark_issues_fixed():
         _dest(key_source="saved"), response, BASE, ci_configured=True
     )
 
-    assert lines[0] == "✓ Scan uploaded — CI verification needed · policy preview: pass"
+    assert lines[0] == "✓ Scan saved · policy preview: pass"
     assert "saved and ready to review" in lines[2]
     assert "project verdict" in lines[2]
     assert lines[3] == CI_NEXT_STEP
@@ -566,13 +566,13 @@ def test_in_ci_the_workflow_owns_done(repo, monkeypatch):
             {"verdict": "fail"},
             {"upload_trust": "unverified"},
             None,
-            "Sent: findings and the Done receipt (fail) · developer upload · CI verification needed",
+            "Sent: findings and the Done receipt (fail) · report only",
         ),
         (
             None,
             {"upload_trust": "unverified"},
             cloud_cmd.NO_DONE_TABLE,
-            "Sent: findings · developer upload · CI verification needed",
+            "Sent: findings · report only",
         ),
         (
             {"verdict": "pass"},
@@ -665,7 +665,7 @@ def test_cloud_scan_ends_with_what_was_sent(monkeypatch, capsys, tmp_path):
     assert _main_exit() == 0
 
     lines = capsys.readouterr().out.splitlines()
-    sent = lines.index("  Sent: findings · developer upload · CI verification needed")
+    sent = lines.index("  Sent: findings · report only")
     assert "saved and ready to review" in lines[sent - 1]
     assert lines[sent + 1] == CI_NEXT_STEP
     assert lines[sent + 2] == FAILED_NEXT_STEP
@@ -697,7 +697,7 @@ def test_cloud_scan_sends_the_receipt_of_this_commit(monkeypatch, capsys, tmp_pa
 
     assert uploaded[0]["done_receipt"]["verdict"] == "pass"
     assert (
-        "  Sent: findings and the Done receipt (pass) · developer upload · CI verification needed"
+        "  Sent: findings and the Done receipt (pass) · report only"
         in capsys.readouterr().out.splitlines()
     )
 
