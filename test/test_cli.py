@@ -2739,7 +2739,7 @@ def test_main_json_upload_calls_upload_report_quiet(
         for call in mock_print.call_args_list
         if call.kwargs.get("file") is sys.stderr
     ] == [
-        "Scan uploaded — verification status not reported · policy preview: pass — "
+        "Scan uploaded — verification status not reported · gate (not blocking): pass — "
         f"Results: {BASE_URL.rstrip('/')}/dashboard/scans/fixture-scan"
     ]
     printed_payload = json.loads(stdout_calls[0].args[0])
@@ -3681,7 +3681,7 @@ def test_main_json_sca_operational_status_controls_exit_and_upload(
         []
         if expected_exit
         else [
-            "Scan uploaded — verification status not reported · policy preview: pass — "
+            "Scan uploaded — verification status not reported · gate (not blocking): pass — "
             f"Results: {BASE_URL.rstrip('/')}/dashboard/scans/fixture-sca-scan"
         ]
     )

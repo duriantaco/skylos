@@ -67,7 +67,7 @@ Pull requests
   Skylos Done             runs your tests (pytest project found)
                           installs: python -I -m pip install -e . pytest
                           edit that step in the workflow if your tests need more
-Cloud upload: off (not logged in to Skylos Cloud). To add it: skylos login, then skylos cicd init --upload
+Cloud upload: off (not signed in to Skylos Cloud). To add it: skylos cicd init --upload (signs you in in the browser)
 ```
 
 If this machine is already logged in to Skylos Cloud (`skylos login`,
@@ -97,8 +97,10 @@ compiler, only when the repository has Dart files.
 Two choices to make here:
 
 - **Logged in but not using Skylos Cloud for this repository?** Run
-  `skylos cicd init --no-upload`. Otherwise the upload jobs fail until step 7
-  is done.
+  `skylos cicd init --no-upload`. Otherwise the upload job skips its upload
+  with a warning until step 7 is done; the pull request gate does not depend
+  on it. With upload on, the printed **Next** steps include the link to
+  install the Skylos GitHub App before you merge.
 - **"Skylos Done: not added"?** Skylos found no pytest tests and no
   `test_command`. For a Vitest or Jest project, the message prints the exact
   `[tool.skylos.done]` settings to add. Continue without it, or see
@@ -337,7 +339,7 @@ those; add yourself to the ruleset's bypass list to do it.
 
 **2. Skylos Cloud upload fails on the default branch.**
 
-- `Skylos Cloud policy unavailable` on the `Pull Skylos Cloud Policy` step
+- `Skylos Cloud upload skipped` on the `Pull Skylos Cloud Policy` step
   (above it, `404 Client Error` for `/api/sync/whoami`), or
   `No verified GitHub App project is linked to owner/repo`: Skylos Cloud does
   not know this repository yet. Do step 7, or run

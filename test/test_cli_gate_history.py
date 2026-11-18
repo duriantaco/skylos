@@ -161,7 +161,7 @@ def test_old_cloud_without_trust_or_history_reports_a_policy_preview(
     capsys, extra, expected_url
 ):
     result, out = _finalize(capsys, _body(PASS, upload_trust=None, **extra))
-    assert "Policy preview" in out
+    assert "(not blocking)" in out
     assert "pass · upload verification not reported\n" in out
     assert f"🔗 View details: {expected_url}\n" in out
     assert "✅ PASS" not in out and "PASSED" not in out
@@ -174,7 +174,7 @@ def test_old_cloud_failed_policy_is_a_preview_when_trust_is_not_reported(capsys)
     _result, out = _finalize(
         capsys, _body({"passed": False, "new_violations": 2}, upload_trust=None)
     )
-    assert "Policy preview: fail · upload verification not reported\n" in out
+    assert "(not blocking): fail · upload verification not reported\n" in out
     assert "❌ FAIL Quality gate" not in out
 
 
@@ -379,7 +379,7 @@ def test_formatted_policy_preview_without_history_does_not_claim_a_pass(trust, h
 
     line = formatted_gate_line(response, BASE)
 
-    assert line == f"{heading} · policy preview: pass — Results: {PROJECT_SCAN_URL}"
+    assert line == f"{heading} · gate (not blocking): pass — Results: {PROJECT_SCAN_URL}"
     assert "PASSED" not in line
     assert gate_context(response, BASE).upload_trust == (trust or "unknown")
 
@@ -470,7 +470,7 @@ def test_json_upload_from_old_cloud_reports_unknown_verification_with_a_results_
     assert _run_exit() == 0
     captured = capsys.readouterr()
     assert captured.err.splitlines()[0] == (
-        "Scan uploaded — verification status not reported · policy preview: pass"
+        "Scan uploaded — verification status not reported · gate (not blocking): pass"
         f" — Results: {BASE}/dashboard/scans/scan-1"
     )
     receipt = json.loads(captured.out)["upload"]

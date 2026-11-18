@@ -37,10 +37,10 @@ def test_developer_receipt_confirms_saved_scan_and_explains_next_step(passed):
     )
     lines = cloud_receipt_lines(None, result, BASE, ci_configured=True)
     assert "Scan saved" in lines[0]
-    assert f"policy preview: {'pass' if passed else 'fail'}" in lines[0]
+    assert f"gate (not blocking): {'pass' if passed else 'fail'}" in lines[0]
     assert lines[1] == f"  Open: {BASE}/dashboard/projects/project-1/scans/saved-scan"
-    assert "saved and ready to review" in lines[2]
-    assert any("Optional: connect CI" in line for line in lines)
+    assert "Only verified CI scans block merges" in lines[2]
+    assert any("The Skylos workflow checks pull requests" in line for line in lines)
     assert not any("verification needed" in line or "finish CI setup" in line for line in lines)
     assert not any("Quality gate:" in line or ": PASSED" in line for line in lines)
 
@@ -143,12 +143,12 @@ def test_plain_upload_confirms_saved_developer_report_without_repeating_setup(
     )
     output = capsys.readouterr().out
     assert "Scan saved" in output
-    assert "saved and ready to review" in output
-    assert "CI adds automatic" in output
+    assert "Only verified CI scans block merges" in output
+    assert "skylos cicd init" in output
     assert "Unverified upload" not in output
     assert "finish CI setup" not in output
     assert "verification needed" not in output
-    assert "Policy preview" in output
+    assert "(not blocking)" in output
     assert "PASSED" not in output
     assert "https://skylos.dev/dashboard/projects/project-1/scans/saved-scan" in output
     assert result["upload_trust"] == "unverified"

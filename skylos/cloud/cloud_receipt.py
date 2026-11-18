@@ -19,7 +19,6 @@ LOCAL_NEXT_STEPS = (
 FAILED_NEXT_STEP = (
     "  Next: fix the issues behind the failed gate, then run skylos cloud again."
 )
-CI_NEXT_STEP = "  Optional: connect CI from the saved scan for automatic checks on every pull request."
 UNVERIFIED_STANDING = "report only"
 VERIFIED_STANDING = "verified CI upload"
 RECEIPT_VERDICTS = {"pass": "pass", "fail": "fail", "incomplete": "unfinished"}
@@ -68,7 +67,7 @@ def _gate_line(upload_resp: dict, base_url: str) -> str:
     if upload_trust(upload_resp) not in TRUSTED_UPLOADS:
         line = f"✓ {verification_heading(upload_resp)}"
         if reported:
-            line += f" · policy preview: {'pass' if passed else 'fail'}"
+            line += f" · gate (not blocking): {'pass' if passed else 'fail'}"
         return line
     if upload_resp.get("quality_gate_reported") is False or not isinstance(
         passed, bool
@@ -144,6 +143,7 @@ def cloud_receipt_lines(
         lines.append(f"  Open: {url}")
     from skylos.cloud.upload_status import (
         TRUSTED_UPLOADS,
+        local_scan_next_step,
         upload_trust,
         verification_receipt,
     )
@@ -155,7 +155,7 @@ def cloud_receipt_lines(
         lines.append(f"  {sent}")
     passed = upload_resp.get("quality_gate_passed")
     if trust == "unverified":
-        lines.append(CI_NEXT_STEP)
+        lines.append(f"  {local_scan_next_step(ci_configured=ci_configured)}")
     if upload_resp.get("quality_gate_reported") is False:
         return [_printable(line) for line in lines]
     if passed is False:

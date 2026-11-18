@@ -258,8 +258,12 @@ def print_init_next_steps(
     risk_review: bool = False,
     pr_upload: bool = False,
     upload_note: str | None = None,
+    app_setup_url: str | None = None,
 ) -> None:
-    """Say what each generated job does and how to open the first gated PR."""
+    """Say what each generated job does and how to open the first gated PR.
+
+    With Cloud upload, installing the Skylos GitHub App is a numbered step
+    before the merge: the upload job signs in through it, with no token."""
     pr = "pull_request" in triggers
     done = pr and done_setup.enabled
     branch_text = escape(" or ".join(push_branches))
@@ -357,9 +361,18 @@ def print_init_next_steps(
     console.print('     git commit -m "Add Skylos pull request gate"')
     console.print("     git push -u origin add-skylos-gate")
     console.print("     gh pr create --fill")
-    console.print("  2. Wait for: " + ", ".join(required))
+    step = 2
+    if upload and app_setup_url:
+        console.print(
+            f"  {step}. Before you merge, install the Skylos GitHub App on this "
+            "repository so the upload job signs in without a token:",
+            soft_wrap=True,
+        )
+        console.print(f"     {escape(app_setup_url)}", soft_wrap=True)
+        step += 1
+    console.print(f"  {step}. Wait for: " + ", ".join(required))
     console.print(
-        "  3. After the merge, run skylos setup: it makes those checks required "
+        f"  {step + 1}. After the merge, run skylos setup: it makes those checks required "
         "on your default branch (needs gh; the guide has the manual command)."
     )
     console.print(f"  Guide: {FIRST_GATED_PR_GUIDE_URL}", soft_wrap=True)

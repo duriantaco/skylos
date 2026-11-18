@@ -1318,16 +1318,18 @@ CI uses GitHub Actions/GitLab OIDC or an explicit `SKYLOS_TOKEN` secret.
 After a successful developer upload, the receipt links to the saved report.
 
 ```text
-✓ Scan saved · policy preview: pass
+✓ Scan saved · gate (not blocking): pass
   Open: https://skylos.dev/dashboard/projects/<project>/scans/<scan>
-  Your scan is saved and ready to review. CI adds automatic repository checks and project verdict updates.
+  Saved for review. Only verified CI scans block merges and update the project verdict.
   Sent: findings · report only
-  Optional: connect CI from the saved scan for automatic checks on every pull request.
+  Next: to block pull requests, run skylos cicd init and merge the workflow it writes.
 ```
 
-Open the scan link to review the findings immediately. To enable automatic
-pull request checks later, open **Merge blocking on GitHub** in the project's
-settings and follow the CI setup there.
+Open the scan link to review the findings immediately. To block pull
+requests, run `skylos cicd init`: it writes the workflow and lists, in order,
+opening its pull request, installing the Skylos GitHub App (no token or
+secret), and merging. Once `.github/workflows/skylos.yml` exists, the last
+line says the workflow checks pull requests instead.
 
 Browser sign-in saves developer reports. Their policy conditions are a
 preview: they do not set the project verdict, publish repository checks,

@@ -297,8 +297,8 @@ def _print_connected_result(result, console=None, *, continue_scan=False):
         else "Run skylos cloud to scan with every check and upload to this project."
     )
     trust_hint = (
-        "Your developer reports are ready to review. Optionally connect CI for "
-        "automatic repository checks and project verdict updates."
+        "Scans from this machine are saved for review; only verified CI scans "
+        "block merges. To block pull requests: skylos cicd init."
     )
 
     if console:
