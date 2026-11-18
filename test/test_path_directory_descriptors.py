@@ -137,3 +137,66 @@ def test_write_flags_keep_existing_write_check(tmp_path):
     rules = _scan(tmp_path, "os.O_WRONLY | os.O_DIRECTORY")
 
     assert "SKY-D324" in rules
+
+
+_IDENTITY_READER = """def current_owner():
+    query = getattr(os, 'geteuid', None)
+    return int(query()) if query is not None else None
+"""
+
+
+@pytest.mark.parametrize(
+    ("flags", "operation", "expected"),
+    [
+        ("os.O_RDONLY", "os.read(descriptor, 16)", {"SKY-D325"}),
+        ("os.O_WRONLY", "os.write(descriptor, b'entry')", {"SKY-D324"}),
+        ("os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0)", "os.fsync(descriptor)", set()),
+    ],
+)
+def test_optional_native_identity_reader_preserves_descriptor_effects(
+    tmp_path, flags, operation, expected
+):
+    rules = _scan(tmp_path, flags, extra=_IDENTITY_READER, operation=operation)
+    assert rules & {"SKY-D324", "SKY-D325"} == expected
+    assert "SKY-D215" in rules
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "import os\nos.O_RDONLY = os.O_RDWR\n",
+        "import os\nos.geteuid = unknown_query\n",
+        "import builtins\nbuiltins.getattr = unknown_getter\n",
+        "import builtins\nbuiltins.int = unknown_converter\n",
+    ],
+)
+def test_optional_identity_reader_with_imported_provider_writes_stays_reviewable(
+    tmp_path, mutation
+):
+    write_fixture(tmp_path, "prepare.py", mutation, overwrite=True)
+    rules = _scan(
+        tmp_path,
+        "os.O_RDONLY",
+        extra="import prepare\n" + _IDENTITY_READER,
+        operation="os.read(descriptor, 16)",
+    )
+    assert {"SKY-D324", "SKY-D325"} <= rules
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [
+        _IDENTITY_READER.replace("int(query())", "register(query)"),
+        _IDENTITY_READER.replace("int(query())", "query"),
+        _IDENTITY_READER.replace("os, 'geteuid'", "os, field"),
+        _IDENTITY_READER.replace("os, 'geteuid'", "os, '__getattribute__'"),
+        _IDENTITY_READER.replace("getattr(os", "lookup(os"),
+    ],
+)
+def test_optional_lookup_with_unproven_receiver_or_callable_escape_keeps_warning(
+    tmp_path, reader
+):
+    rules = _scan(
+        tmp_path, "os.O_RDONLY", extra=reader, operation="os.read(descriptor, 16)"
+    )
+    assert {"SKY-D324", "SKY-D325"} <= rules

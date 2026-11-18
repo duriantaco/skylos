@@ -75,6 +75,9 @@ _MODELED_CAPABILITY_CALLS = {
     "builtins.isinstance",
     "builtins.issubclass",
 }
+_OS_SCALAR_QUERIES = frozenset(
+    {"getuid", "geteuid", "getgid", "getegid", "getpid", "getppid"}
+)
 _YAML_DATA_ONLY_LOADERS = frozenset(
     {
         "yaml.SafeLoader",
@@ -107,6 +110,7 @@ class _Effects:
         self.yaml_builtin_getattrs = None
         self.flag_builtin_getattrs = None
         self.optional_flag_reads = None
+        self.optional_os_queries = None
         self.generic_builtin_refs = None
         self.generic_dependencies = set()
         self.generic_global_names = set()
@@ -578,6 +582,8 @@ class _Effects:
             return False
         if isinstance(node, ast.Attribute):
             return self.canonical_reference(node.value, seen, depth + 1)
+        if isinstance(node, ast.Call) and self.optional_scalar_query(node):
+            return True
         if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
             container = self.native_container(node.value)
             if not isinstance(container, (ast.List, ast.Tuple)) or any(
@@ -656,8 +662,14 @@ class _Effects:
             and self.canonical_reference(default)
         )
 
-    def safe_reader_call(self, node):
+    def safe_reader_call(self, node, callable_names=()):
         if self.safe_yaml_loader_getattr(node) or self.safe_optional_flag_getattr(node):
+            return True
+        if (
+            "builtins.getattr" in callable_names
+            and "builtins.int" in callable_names
+            and self.optional_scalar_query(node) in callable_names
+        ):
             return True
         if not self.safe_reader(node.func):
             return False
@@ -711,6 +723,86 @@ class _Effects:
                 self.safe_optional_flag_getattr(node) for node in self.nodes
             )
         return self.optional_flag_reads
+
+    def optional_scalar_query(self, node):
+        """Recognize an optional native scalar query consumed inside one helper."""
+        if not (
+            isinstance(node, ast.Call)
+            and len(node.args) == 3
+            and not node.keywords
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+            and node.args[1].value in _OS_SCALAR_QUERIES
+            and isinstance(node.args[2], ast.Constant)
+            and node.args[2].value is None
+            and isinstance(node.args[0], ast.Name)
+            and self.refs(node.args[0]) == {"os"}
+            and self.canonical_reference(node.args[0])
+        ):
+            return None
+        if self.flag_builtin_getattrs is None:
+            self.flag_builtin_getattrs = builtin_references(self.nodes[0], {"getattr"})
+        if id(node.func) not in self.flag_builtin_getattrs:
+            return None
+        binding = self.parents.get(id(node))
+        owner = self.parents.get(id(binding))
+        if not (
+            isinstance(binding, ast.Assign)
+            and binding.value is node
+            and len(binding.targets) == 1
+            and isinstance(binding.targets[0], ast.Name)
+            and isinstance(owner, ast.FunctionDef)
+            and len(owner.body) == 2
+            and owner.body[0] is binding
+            and isinstance(owner.body[-1], ast.Return)
+        ):
+            return None
+        name = binding.targets[0].id
+        result = owner.body[-1].value
+        if not (
+            isinstance(result, ast.IfExp)
+            and isinstance(result.test, ast.Compare)
+            and isinstance(result.test.left, ast.Name)
+            and result.test.left.id == name
+            and len(result.test.ops) == 1
+            and isinstance(result.test.ops[0], ast.IsNot)
+            and isinstance(result.test.comparators[0], ast.Constant)
+            and result.test.comparators[0].value is None
+            and isinstance(result.orelse, ast.Constant)
+            and result.orelse.value is None
+        ):
+            return None
+        query = result.body
+        if (
+            isinstance(query, ast.Call)
+            and isinstance(query.func, ast.Name)
+            and query.func.id == "int"
+        ):
+            if (
+                len(query.args) != 1
+                or query.keywords
+                or id(query.func) not in builtin_references(self.nodes[0], {"int"})
+            ):
+                return None
+            query = query.args[0]
+        if (
+            isinstance(query, ast.Call)
+            and isinstance(query.func, ast.Name)
+            and query.func.id == name
+            and not query.args
+            and not query.keywords
+        ):
+            return "os." + node.args[1].value
+        return None
+
+    def scalar_query_dependencies(self):
+        if self.optional_os_queries is None:
+            self.optional_os_queries = frozenset(
+                qualified for node in self.nodes if (qualified := self.optional_scalar_query(node))
+            )
+        return self.optional_os_queries
 
     def native_argv_item(self, node, bases=None):
         if not isinstance(node, ast.Subscript) or not isinstance(node.ctx, ast.Load):
@@ -1060,11 +1152,11 @@ class _Effects:
                 )
                 if (
                     escaped
-                    and not self.safe_reader_call(node)
+                    and not self.safe_reader_call(node, callable_names)
                     and not functions <= _MODELED_CAPABILITY_CALLS
                 ):
                     return False
-                if escaped and not functions and not self.safe_reader_call(node):
+                if escaped and not functions and not self.safe_reader_call(node, callable_names):
                     return False
             elif isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom, ast.Lambda)):
                 if any(
@@ -3023,6 +3115,12 @@ def project_provider_effects_are_stable(qualified, tree, filename, project_root=
         if effects is None or not effects.complete:
             return False
         dependencies, global_names = effects.native_generic_dependencies()
+        if qualified.startswith("os.") and (queries := effects.scalar_query_dependencies()):
+            # The locally consumed optional callable is an integer query only
+            # while both its provider and its lookup remain native everywhere
+            # in this source-bound import context.
+            dependencies = dependencies | queries | {"builtins.getattr", "builtins.int"}
+            global_names = global_names | {"getattr", "int"}
         for dependency in dependencies:
             if (
                 dependency.split(".", 1)[0] in context.modules
