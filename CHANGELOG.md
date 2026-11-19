@@ -22,6 +22,61 @@
 * **cicd:** only treat a real YAML comment as an inline ignore for D340 and for shell-command findings on a one-line `run:`, so a marker inside a quoted step value no longer hides a publish or exfiltration finding.
 * **cicd:** locate each shell-command finding inside its own `run:` value, so repeating the command next to an ignore marker elsewhere in the workflow no longer hides it and identical steps are each reported.
 
+## [5.7.0](https://github.com/duriantaco/skylos/compare/v5.6.0...v5.7.0) (2026-11-19)
+
+
+### Features
+
+* **analysis:** close frontend usage gaps and expand corpus coverage ([bea91bd](https://github.com/duriantaco/skylos/commit/bea91bd7931877add57e673f3005e8bbe7718c7b))
+* **output:** send evidence for why each finding was flagged ([#1226](https://github.com/duriantaco/skylos/issues/1226)) ([f9c1782](https://github.com/duriantaco/skylos/commit/f9c17829552108202ccae648f4c85550877228c0))
+* **quality:** flag tests that run no project code or cannot fail ([#1231](https://github.com/duriantaco/skylos/issues/1231)) ([a60801c](https://github.com/duriantaco/skylos/commit/a60801c3260e7ec8ac8148520a45718251e1a52b))
+* **sca:** verify public npm packages behind private mirrors ([#1216](https://github.com/duriantaco/skylos/issues/1216)) ([8199421](https://github.com/duriantaco/skylos/commit/8199421635cf88042d4ffea4b40e43fd49cc74a8))
+* **sca:** warn when a package is new ([bda82d7](https://github.com/duriantaco/skylos/commit/bda82d7e0eb84519c49d4114bd10fcf0af010513))
+* **security:** catch slow regexes and weak path checks ([#1230](https://github.com/duriantaco/skylos/issues/1230)) ([31d7e3d](https://github.com/duriantaco/skylos/commit/31d7e3d54439cb0ec2fb5c8aa0130257f8292f8a))
+* **typescript:** flag re-exports that nothing imports ([#1238](https://github.com/duriantaco/skylos/issues/1238)) ([e876df1](https://github.com/duriantaco/skylos/commit/e876df16e8852782ec8c3b2b71d36a9f2afcb8a4))
+
+
+### Bug Fixes
+
+* **cicd:** locate unsafe environment writes by step ([#1219](https://github.com/duriantaco/skylos/issues/1219)) ([629f7df](https://github.com/duriantaco/skylos/commit/629f7df0132b0a0c8d48a17c4d24b568b490fe1a))
+* **cicd:** only treat real YAML comments as D340 ignores ([#1225](https://github.com/duriantaco/skylos/issues/1225)) ([1a105bd](https://github.com/duriantaco/skylos/commit/1a105bdc3227b0dce8507a19da9f69fcf90eade2))
+* **cicd:** recognize release-only publish context ([#1218](https://github.com/duriantaco/skylos/issues/1218)) ([01bb700](https://github.com/duriantaco/skylos/commit/01bb70024049f7b2aa38294740f81732df7edf6a))
+* **ci:** demonstrate Actions-generated PR summary and report button ([6dc244e](https://github.com/duriantaco/skylos/commit/6dc244e853e5a26c984313a1a3a310b20ce87299))
+* **ci:** print scan progress stacks without crashing the scan ([#1245](https://github.com/duriantaco/skylos/issues/1245)) ([fe34ed9](https://github.com/duriantaco/skylos/commit/fe34ed9096432a0009691a6a86086a6c6c01268c))
+* **ci:** stop default-branch and first-PR gate noise ([2f9fe7b](https://github.com/duriantaco/skylos/commit/2f9fe7b21924b162251c12694a5e5670eeb389ed))
+* **cloud:** simplify the first scan upload and verify saved project links ([68d0b55](https://github.com/duriantaco/skylos/commit/68d0b55b00266a71f9d6744e9db35b26546d35ad))
+* **cloud:** tell users the next onboarding step in order ([3f89b5b](https://github.com/duriantaco/skylos/commit/3f89b5b8088adcba2971a5c2c675281cb7b63110))
+* **danger:** fewer false alarms in the zip extraction check ([#1244](https://github.com/duriantaco/skylos/issues/1244)) ([554ae6d](https://github.com/duriantaco/skylos/commit/554ae6daa3e49a4a1331954d894e7fdf37b5868a))
+* **danger:** fewer wrong path and dependency warnings ([7443acb](https://github.com/duriantaco/skylos/commit/7443acbf2f9a683bfcaef0220c79e837cd98a07a))
+* **danger:** keep the path-prefix separator proof consistent ([#1235](https://github.com/duriantaco/skylos/issues/1235)) ([79840ba](https://github.com/duriantaco/skylos/commit/79840ba6795025eb19dc32c29d74ec58f0004568))
+* **danger:** run the graph query check when the keyword has no space ([#1228](https://github.com/duriantaco/skylos/issues/1228)) ([017365e](https://github.com/duriantaco/skylos/commit/017365e64b19109199fc9d037c80b7f795e2087b))
+* **deadcode:** stop flagging code that is actually used ([68ac79f](https://github.com/duriantaco/skylos/commit/68ac79f5cb3918eac64eac49f1ed4fdbc0ed5fe3))
+* **deps:** update Laravel corpus fixture to patched 12.71.0 ([9039dce](https://github.com/duriantaco/skylos/commit/9039dceff26a5aa02c0a9eed324e62b93c5814ad))
+* **deps:** update Rust crates with security advisories ([#1243](https://github.com/duriantaco/skylos/issues/1243)) ([fa017f0](https://github.com/duriantaco/skylos/commit/fa017f037285d3b468bc6e52478ecbc034cb30be))
+* **deps:** update vulnerable benchmark fixture dependencies ([#1241](https://github.com/duriantaco/skylos/issues/1241)) ([a3885dc](https://github.com/duriantaco/skylos/commit/a3885dc4c26771bcd7f3057a5031de51646a78f1))
+* **report:** honour [tool.skylos].ignore for SKY-E004 unused exports ([#1221](https://github.com/duriantaco/skylos/issues/1221)) ([7372b5f](https://github.com/duriantaco/skylos/commit/7372b5f2572e7e32491b5362ddf952af3a6cba70))
+* **sca:** keep the npm mirror identity cache usable ([#1224](https://github.com/duriantaco/skylos/issues/1224)) ([89b8873](https://github.com/duriantaco/skylos/commit/89b88730c8c2c6fe952c8d61d06975f8422a9925))
+* **scan:** fewer false alarms in dead code and security checks ([#1237](https://github.com/duriantaco/skylos/issues/1237)) ([ab09dfd](https://github.com/duriantaco/skylos/commit/ab09dfdbdebe3ef95100363ff9fb5285ce3bc70c))
+* **scan:** fewer wrong path and import warnings ([79f2929](https://github.com/duriantaco/skylos/commit/79f29296dbca7833ba4ebd1164b90f3524ad65a6))
+* **scan:** reduce false alarms and catch missed findings ([094d5ae](https://github.com/duriantaco/skylos/commit/094d5ae4ae589600b0d0f35d90c9c43e42ae7381))
+* **security:** catch more Python flaws, faster scans, upgrade notice ([#1227](https://github.com/duriantaco/skylos/issues/1227)) ([a5024d7](https://github.com/duriantaco/skylos/commit/a5024d78565de6ed5840fa3e0c96c8ab6db27c00))
+* **security:** distinguish remote-code settings from model loaders ([#1222](https://github.com/duriantaco/skylos/issues/1222)) ([3f47e36](https://github.com/duriantaco/skylos/commit/3f47e36da352caae19acd789690094ce9e372fd0))
+* **security:** only trust a path prefix check that ends with a separator ([#1233](https://github.com/duriantaco/skylos/issues/1233)) ([3c62928](https://github.com/duriantaco/skylos/commit/3c629289f2c5384102c4258064cae150fcbf7189))
+
+
+### Performance Improvements
+
+* **analyzer:** reduce repeated Python analysis work ([#1214](https://github.com/duriantaco/skylos/issues/1214)) ([3b50dc0](https://github.com/duriantaco/skylos/commit/3b50dc04656f287434a3a18cad28d824708550a6))
+
+
+### Documentation
+
+* **cloud:** describe yearly Workspace and Growth plans ([#1223](https://github.com/duriantaco/skylos/issues/1223)) ([d938873](https://github.com/duriantaco/skylos/commit/d9388732296a4b8de5faaa66d22322c224987bfd))
+* **contributing:** add REQUESTS.md for contributors ([0763291](https://github.com/duriantaco/skylos/commit/0763291c346cbe9dd1e721b285fd74995ef2496c))
+* **handbook:** rule handbook with verified examples and a Skylos Cloud guide ([#1232](https://github.com/duriantaco/skylos/issues/1232)) ([2e2a2ea](https://github.com/duriantaco/skylos/commit/2e2a2eae52c0197ebd1c92e2e437212a6b03aade))
+* **readme:** cut the README and move details into guides ([#1234](https://github.com/duriantaco/skylos/issues/1234)) ([20f5a15](https://github.com/duriantaco/skylos/commit/20f5a15139ab637d176bcb383df13957e725400e))
+* **readme:** list the key commands and skylos cloud in 3 steps ([cee5690](https://github.com/duriantaco/skylos/commit/cee5690042f8be235c067991869f74ed041851c8))
+
 ## [5.6.0](https://github.com/duriantaco/skylos/compare/v5.5.0...v5.6.0) (2026-11-11)
 
 
