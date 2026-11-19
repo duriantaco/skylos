@@ -43,14 +43,13 @@ class GateContext:
         from skylos.cloud.upload_status import TRUSTED_UPLOADS
 
         if self.upload_trust not in TRUSTED_UPLOADS:
-            subject = self.subject.replace("Quality gate", "Policy preview", 1)
             condition = "pass" if passed else "fail"
             verification = (
                 "report only"
                 if self.upload_trust == "unverified"
                 else "upload verification not reported"
             )
-            return f"{subject}: {condition} · {verification}"
+            return f"{self.subject} (not blocking): {condition} · {verification}"
         word = "FAILED"
         if passed:
             word = "PASSED"
@@ -218,7 +217,7 @@ def formatted_gate_line(result: dict, base_url: str) -> str | None:
         return None
     if upload_trust(result) not in TRUSTED_UPLOADS:
         condition = "pass" if passed else "fail"
-        return f"{verification_heading(result)} · policy preview: {condition} — Results: {context.details_url}"
+        return f"{verification_heading(result)} · gate (not blocking): {condition} — Results: {context.details_url}"
     return f"{context.status(passed)} — View details: {context.details_url}"
 
 

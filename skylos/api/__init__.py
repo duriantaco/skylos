@@ -1662,9 +1662,18 @@ def _print_report_upload_success(
     else:
         print("No quality gate result was reported for this upload.")
     if upload_trust == "unverified":
-        from skylos.cloud.upload_status import verification_receipt
+        from skylos.cloud.upload_status import (
+            ci_workflow_present,
+            local_scan_next_step,
+            verification_receipt,
+        )
 
         print(verification_receipt({"upload_trust": upload_trust}, BASE_URL)["message"])
+        try:
+            ci_configured = ci_workflow_present(_get_repo_root_for_link())
+        except Exception:
+            ci_configured = False
+        print(local_scan_next_step(ci_configured=ci_configured))
     else:
         _print_upload_trust_notice(trust_notice)
     if gate_context is not None:

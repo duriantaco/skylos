@@ -5,10 +5,15 @@ from pathlib import Path
 
 import pytest
 
+from skylos.cloud.upload_status import (
+    BLOCK_PULL_REQUESTS_NEXT,
+    CI_BLOCKS_PULL_REQUESTS,
+    LOCAL_SCAN_NOTE,
+)
+
 import skylos.api as api
 import skylos.cli as cli
 from skylos.cloud.cloud_receipt import (
-    CI_NEXT_STEP,
     FAILED_NEXT_STEP,
     cloud_receipt_lines,
     local_next_steps,
@@ -118,10 +123,10 @@ def test_unverified_default_branch_upload_says_it_does_not_mark_issues_fixed():
         _dest(key_source="saved"), response, BASE, ci_configured=True
     )
 
-    assert lines[0] == "✓ Scan saved · policy preview: pass"
-    assert "saved and ready to review" in lines[2]
+    assert lines[0] == "✓ Scan saved · gate (not blocking): pass"
+    assert LOCAL_SCAN_NOTE in lines[2]
     assert "project verdict" in lines[2]
-    assert lines[3] == CI_NEXT_STEP
+    assert lines[3] == f"  {CI_BLOCKS_PULL_REQUESTS}"
     assert not any("Quality gate" in line for line in lines)
 
 
@@ -666,8 +671,8 @@ def test_cloud_scan_ends_with_what_was_sent(monkeypatch, capsys, tmp_path):
 
     lines = capsys.readouterr().out.splitlines()
     sent = lines.index("  Sent: findings · report only")
-    assert "saved and ready to review" in lines[sent - 1]
-    assert lines[sent + 1] == CI_NEXT_STEP
+    assert LOCAL_SCAN_NOTE in lines[sent - 1]
+    assert lines[sent + 1].startswith("  ") and lines[sent + 1].strip() in {BLOCK_PULL_REQUESTS_NEXT, CI_BLOCKS_PULL_REQUESTS}
     assert lines[sent + 2] == FAILED_NEXT_STEP
 
 

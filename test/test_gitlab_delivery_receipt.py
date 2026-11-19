@@ -179,7 +179,7 @@ def test_saved_upload_receipt_handles_legacy_trust_notice(capsys, has_trust_meta
     if has_trust_metadata:
         assert result["upload_trust"] == "unverified"
         assert "Scan saved" in out
-        assert "Policy preview: pass" in out
+        assert "(not blocking): pass" in out
         assert notice not in out
     else:
         assert "upload_trust" not in result

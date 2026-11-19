@@ -159,7 +159,7 @@ def test_print_connected_result_plain_output_omits_raw_token(capsys):
     assert raw_token not in output
     assert "export SKYLOS_API_KEY=" not in output
     assert "Sign-in saved locally. No token to find or copy." in output
-    assert "Optionally connect CI" in output
+    assert "only verified CI scans" in output
     assert "SKYLOS_API_KEY" not in output
 
 
@@ -187,7 +187,7 @@ def test_print_connected_result_console_output_omits_raw_token():
     assert raw_token not in output
     assert "export SKYLOS_API_KEY=" not in output
     assert "Sign-in saved locally. No token to find or copy." in output
-    assert "Optionally connect CI" in output
+    assert "only verified CI scans" in output
     assert "SKYLOS_API_KEY" not in output
 
 

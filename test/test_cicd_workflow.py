@@ -415,16 +415,23 @@ def test_workflow_uploads_through_oidc_by_default():
         "Scan and Upload to Skylos Cloud"
     )
     sync_step = steps[names.index("Pull Skylos Cloud Policy")]
-    # Fail closed, but say what to do: the CLI's own error can be a traceback.
+    # Nothing is uploaded without the Cloud policy, but a repository that is
+    # not connected yet gets a warning that says what to do, not a red build:
+    # the pull request gate does not depend on the upload.
     sync_lines = sync_step["run"].splitlines()
-    assert sync_lines[0] == "if ! skylos sync pull; then"
-    assert sync_lines[1].startswith(
-        '  echo "::error title=Skylos Cloud policy unavailable::'
+    assert sync_step["id"] == "cloud_policy"
+    assert sync_lines[0] == "if skylos sync pull; then"
+    assert sync_lines[1] == '  echo "ready=true" >> "$GITHUB_OUTPUT"'
+    assert sync_lines[2] == "else"
+    assert sync_lines[3].startswith(
+        '  echo "::warning title=Skylos Cloud upload skipped::'
     )
-    assert "skylos cicd init --no-upload" in sync_lines[1]
-    assert sync_lines[2:] == ["  exit 1", "fi"]
+    assert "install the Skylos GitHub App" in sync_lines[3]
+    assert "skylos cicd init --no-upload" in sync_lines[3]
+    assert sync_lines[4:] == ["fi"]
     assert "continue-on-error" not in sync_step
     upload_step = steps[names.index("Scan and Upload to Skylos Cloud")]
+    assert upload_step["if"] == "steps.cloud_policy.outputs.ready == 'true'"
     assert _upload_command(upload_step).startswith("skylos cloud ")
     args = build_main_parser(version="test").parse_args(
         [*shlex.split(_upload_command(upload_step))[2:], "--upload"]
@@ -1071,8 +1078,8 @@ def test_cicd_init_risk_review_flag(tmp_path, monkeypatch):
 
 
 NOT_LOGGED_IN_NOTE = (
-    "Cloud upload: off (not logged in to Skylos Cloud). "
-    "To add it: skylos login, then skylos cicd init --upload"
+    "Cloud upload: off (not signed in to Skylos Cloud). "
+    "To add it: skylos cicd init --upload (signs you in in the browser)"
 )
 
 

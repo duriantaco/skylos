@@ -136,8 +136,12 @@ def _repo_root() -> Path:
 
 
 UPLOAD_OFF_NOT_LOGGED_IN = (
-    "Cloud upload: off (not logged in to Skylos Cloud). "
-    "To add it: skylos login, then skylos cicd init --upload"
+    "Cloud upload: off (not signed in to Skylos Cloud). "
+    "To add it: skylos cicd init --upload (signs you in in the browser)"
+)
+UPLOAD_SIGN_IN_SKIPPED = (
+    "Not signed in to Skylos Cloud: the upload job is in the workflow but "
+    "fails until this repository is connected. Run skylos cloud once to connect it."
 )
 
 
@@ -159,17 +163,53 @@ def _cloud_login_found(repo_root: Path) -> bool:
         return False
 
 
-def _init_upload_choice(cicd_args, repo_root: Path) -> tuple[bool, str | None]:
+def _init_upload_choice(
+    cicd_args, repo_root: Path, console=None, *, cloud_connected: bool | None = None
+) -> tuple[bool, str | None]:
     """Whether `cicd init` adds the Cloud upload jobs, and the note to print.
 
     --upload and --no-upload decide; without either, uploads are added only
-    for a machine that is logged in to Skylos Cloud.
+    for a machine that is signed in to Skylos Cloud. --upload on a machine
+    that is not signed in opens the same browser sign-in as skylos cloud, so
+    the repository has a Cloud project before the workflow runs.
     """
-    if cicd_args.upload is not None:
-        return cicd_args.upload, None
-    if _cloud_login_found(repo_root):
+    if cicd_args.upload is False:
+        return False, None
+    if cloud_connected is None:
+        cloud_connected = _cloud_login_found(repo_root)
+    if cloud_connected:
         return True, None
-    return False, UPLOAD_OFF_NOT_LOGGED_IN
+    if cicd_args.upload is None:
+        return False, UPLOAD_OFF_NOT_LOGGED_IN
+    if console is None or not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return True, UPLOAD_SIGN_IN_SKIPPED
+    from skylos.cloud.login import run_login
+
+    console.print(
+        "Signing in to Skylos Cloud in your browser so CI can upload "
+        "(no token to copy)…",
+        soft_wrap=True,
+    )
+    if run_login(console=console, allow_manual=False, keep_existing=False) is None:
+        return True, UPLOAD_SIGN_IN_SKIPPED
+    return True, None
+
+
+def _cloud_setup_url(repo_root: Path) -> str:
+    """Where to install the Skylos GitHub App for this repository's project."""
+    from urllib.parse import quote
+
+    try:
+        from skylos import api
+
+        base = api.BASE_URL
+        link = api._read_json(repo_root / api.LINK_FILE) or {}
+        project_id = api._linked_project_id_for_current_path(link, repo_root)
+    except Exception:
+        return "https://skylos.dev/dashboard"
+    if not project_id:
+        return f"{base}/dashboard"
+    return f"{base}/dashboard/projects/{quote(project_id, safe='')}/settings#merge-blocking"
 
 
 def _scan_has_dart_files(repo_root: Path, scan_path: str) -> bool:
@@ -343,7 +383,7 @@ def _review_sidecar_path(raw_path: str, *, label: str) -> Path:
     return path
 
 
-def _run_cicd_init(cicd_args, console) -> int:
+def _run_cicd_init(cicd_args, console, *, cloud_connected: bool | None = None) -> int:
     """
     Write the workflow for `skylos cicd init` and print the next steps.
 
@@ -369,7 +409,9 @@ def _run_cicd_init(cicd_args, console) -> int:
     if platform.key != "github":
         return _run_platform_init(cicd_args, console, platform, platform_name)
     repo_root = _repo_root()
-    use_upload, upload_note = _init_upload_choice(cicd_args, repo_root)
+    use_upload, upload_note = _init_upload_choice(
+        cicd_args, repo_root, console, cloud_connected=cloud_connected
+    )
 
     done_setup = detect_done_setup(repo_root)
     use_done = done_setup.enabled if cicd_args.done is None else cicd_args.done
@@ -442,6 +484,7 @@ def _run_cicd_init(cicd_args, console) -> int:
         risk_review=cicd_args.risk_review and "pull_request" in cicd_args.triggers,
         pr_upload=pr_upload,
         upload_note=upload_note,
+        app_setup_url=_cloud_setup_url(repo_root) if use_upload else None,
     )
     if (
         use_upload
@@ -659,6 +702,7 @@ def run_cicd_command(
     load_config_func,
     run_gate_interaction_func,
     emit_github_annotations_func,
+    cloud_connected: bool | None = None,
 ) -> int:
     """
     Run the CI/CD subcommands for workflow generation, gates, annotations, and reviews.
@@ -914,7 +958,7 @@ def run_cicd_command(
     console = console_factory()
 
     if cicd_args.cicd_cmd == "init":
-        return _run_cicd_init(cicd_args, console)
+        return _run_cicd_init(cicd_args, console, cloud_connected=cloud_connected)
 
     if cicd_args.cicd_cmd == "agent-review":
         from skylos.cicd.agent_review import run_agent_review_command

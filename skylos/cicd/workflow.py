@@ -600,6 +600,7 @@ def _build_upload_job(
     if use_defend:
         defend_step = f"""
       - name: AI app safety check and upload
+        if: steps.cloud_policy.outputs.ready == 'true'
         run: skylos defend {scan_target} --fail-on critical --min-score 70 --json -o {SKYLOS_DEFENSE_RESULTS_SHELL_PATH} --upload
 {_upload_env_block()}
 """
@@ -628,13 +629,16 @@ def _build_upload_job(
         run: {install_command}
 
       - name: Pull Skylos Cloud Policy
+        id: cloud_policy
         run: |
-          if ! skylos sync pull; then
-            echo "::error title=Skylos Cloud policy unavailable::Skylos Cloud did not accept this workflow. If this repository is not connected yet, install the Skylos GitHub App on it (step 7 of {FIRST_GATED_PR_GUIDE_URL}), or regenerate the workflow with: skylos cicd init --no-upload"
-            exit 1
+          if skylos sync pull; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Skylos Cloud upload skipped::Skylos Cloud did not accept this workflow, so this scan was not uploaded. The pull request gate does not depend on it. To connect this repository, install the Skylos GitHub App on it (step 7 of {FIRST_GATED_PR_GUIDE_URL}); to stop uploading, regenerate the workflow with: skylos cicd init --no-upload"
           fi
 
       - name: Scan and Upload to Skylos Cloud
+        if: steps.cloud_policy.outputs.ready == 'true'
         run: {_ai_review_upload_run(upload_command)}
 {_upload_env_block(ai_review=True)}
 {defend_step}"""
