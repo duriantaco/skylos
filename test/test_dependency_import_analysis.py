@@ -221,12 +221,19 @@ def test_strict_and_uncertain_optional_paths_stay_distinct():
 
 @pytest.mark.parametrize("mode", ["full", "diff"])
 @pytest.mark.parametrize("main_guard", [False, True])
-def test_script_fallback_requires_the_existing_main_guard_proof(
-    tmp_path, offline_registry, mode, main_guard
+@pytest.mark.parametrize("sibling_imports_cleanly", [True, False])
+def test_relative_fallback_needs_script_evidence_or_a_cleanly_importing_sibling(
+    tmp_path, offline_registry, mode, main_guard, sibling_imports_cleanly
 ):
+    # In package mode the relative form loads the sibling. It can only fall
+    # through to the absolute form when the sibling raises ImportError, which
+    # a sibling importing a third-party module can do.
     _write(tmp_path / "requirements.txt", "")
     _write(tmp_path / "pkg/__init__.py", "")
-    _write(tmp_path / "pkg/helper.py", "value = 1\n")
+    _write(
+        tmp_path / "pkg/helper.py",
+        "value = 1\n" if sibling_imports_cleanly else "import yaml\nvalue = 1\n",
+    )
     source = (
         "try:\n    from .helper import value\n"
         "except ImportError:\n    from helper import value\n"
@@ -243,7 +250,7 @@ def test_script_fallback_requires_the_existing_main_guard_proof(
         assert unreachable is False
 
     expected = [("helper", "SKY-D222")]
-    if main_guard:
+    if main_guard or sibling_imports_cleanly:
         expected = []
     assert [(finding["symbol"], finding["rule_id"]) for finding in findings] == expected
 

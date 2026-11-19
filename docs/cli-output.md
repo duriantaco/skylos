@@ -1115,6 +1115,17 @@ from network or stdin input. They keep
 `"original_severity": "HIGH"` with `"severity_reason": "test_only_module"`,
 stay listed, and are counted in
 `analysis_summary.test_only_code_execution_lowered`.
+When a test extracts a function from a repository Python file, Skylos can
+trace the parsed nodes through `ast.Module` and `compile` to execution in a
+fresh namespace. A complete source proof suppresses that finding. Nodes from
+an unknown caller or downloaded text still produce a finding. Calling a
+function returned from a dynamically populated namespace can also leave the
+finding visible because Skylos cannot establish the effects of that call.
+
+For SKY-D324 and SKY-D325, `review_item.blocking: false` marks a validated
+filename with an unresolved directory-permissions question. When the
+validator and directory match, the listed finding references the other
+sites in `listing.combines`. Sites whose directory is unknown stay separate.
 
 ### Architecture advisories in full scans
 

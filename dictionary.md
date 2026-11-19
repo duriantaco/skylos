@@ -416,6 +416,25 @@ read. D215 still checks its path; unknown flags and a fallback such as
 Caller provenance establishes which inputs reach a path, not whether an
 attacker can create or replace filesystem entries. Symlink findings state
 that additional prerequisite; a filename filter alone does not reject links.
+When the traversal proofs (a body-proven filename filter or reject-on-change
+guard, a full-match filename pattern, a constant allowlist) show that request
+input selects only one filename component, the D324/D325 finding stays reported
+as a review item: `review_item.blocking` is `false`,
+`metadata.path_provenance.component_review` names the validators and the open
+prerequisite. Findings share a `review_item.group` when the analyzer can
+establish both a common directory and the same validators. If the directory
+is unresolved, each site stays listed separately. A grouped finding names the rest in
+`listing.combines`; the others are `combined` under its `listing.lead`. Review
+items do not count toward gates. Close the group for a deployment where only
+trusted writers control the directory and its parents. A path in a shared
+temporary directory never becomes a review item.
+A helper-parameter path that resolves to a fixed name in a shared temporary
+directory (`tempfile.gettempdir()`, `tempfile.mktemp()`, or a `/tmp`,
+`/var/tmp` or `/dev/shm` literal, including an environment variable's
+default) is reported by D324/D325 with reason "Predictable name in a shared
+temporary directory", whoever chooses the name: any local user can create that
+entry first. Names that include `uuid.uuid4()`, `secrets` tokens or `random`
+values, and private `mkstemp`/`mkdtemp` paths, are not reported this way.
 D326 needs an `extract` call that can pass a member (BeautifulSoup's `tag.extract()`
 cannot) and reports `shutil.unpack_archive` without `filter="data"`. Test
 files are scanned too; the literal pytest parameter proof below still applies.
@@ -1523,6 +1542,26 @@ hallucinated import still is. Automatic discovery, glob patterns, a requirements
 file, `setup.py`/`setup.cfg` or an environment definition in scope keep the
 normal check, and so does unshipped code outside test, example and benchmark
 directories (a root-level `app.py`).
+
+A full scan reports each missing or unknown package once per declaration scope
+(files checked against the same manifest and environment declarations): the
+first import site is the finding, `metadata.import_site_count` counts every
+site and `metadata.other_import_sites` lists the rest (up to 50). The merge
+runs after inline and config suppression, so an ignored site never hides
+another. Diff scans (`--diff`) still report each added import, and
+sibling-provider findings stay per file.
+
+Two local import shapes resolve to the file beside the importer and are not
+dependency findings. The first is a `try: from .x import ...` /
+`except ImportError: from x import ...` pair whose sibling `x.py` imports only
+the standard library or `__future__` at import time and raises nothing, so
+package mode loads it through the relative form; with a sibling that imports
+anything else, the pair still needs a shebang or `__main__` guard as before.
+The second is an absolute import of a sibling module file from a `#!` script
+that needs no submodule, has no `x/` directory beside it, uses no relative
+import or `__package__`, and that no other project Python file names and no
+launcher or config runs with `-m` or as an entry point. A `__main__` guard
+alone does not qualify, because `python -m pkg.script` keeps package mode.
 
 SKY-D224 rejects explicit keyword arguments that are not parameters of the
 installed API's known signature (for example `jwt.encode(..., expires_in=...)`

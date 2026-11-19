@@ -2,6 +2,8 @@
 
 import ast
 
+import pytest
+
 from skylos.rules.danger.danger_fs.path_flow import scan
 from skylos.rules.danger.danger_fs.path_provenance import (
     resolve_helper_parameter_findings,
@@ -12,8 +14,10 @@ FILTER = """def prepare(raw):
     cleaned = ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in raw)
     return cleaned or 'flight'
 """
-OPAQUE = """def background():
-    pass
+# Opaque code may call ``background`` with any object, and ``background``
+# hands that object to more opaque code, so no model write is ruled out.
+OPAQUE = """def background(item):
+    foreign.consume(item)
 foreign.register(background)
 """
 
@@ -25,12 +29,15 @@ def _scan(
     opaque=OPAQUE,
     expression="prepare(payload.flightId)",
     extra="",
+    model_fields="",
 ):
     app = (
         "from pathlib import Path\nfrom fastapi import FastAPI\n"
-        "from pydantic import BaseModel\nfrom storage import load, other\n"
+        "from pydantic import BaseModel, Field\nfrom storage import load, other\n"
+        "DEFAULT_INTERVAL = 2.0\nRECORD = True\n"
         "app = FastAPI()\n"
         "class FlightRequest(BaseModel):\n    flightId: str\n"
+        + model_fields
         + helper
         + opaque
         + "@app.post('/read')\ndef view(payload: FlightRequest):\n"
@@ -127,6 +134,51 @@ def test_proven_native_filter_remains_withheld(tmp_path):
     assert any(row["rule_id"] == "SKY-D215" for row in suppressed)
 
 
+@pytest.mark.parametrize(
+    "opaque",
+    [
+        # A sort key and a zero-argument callback cannot receive or rewrite a
+        # model, so they no longer withhold the filter proof.
+        "def ordered(items):\n    return sorted(items, key=lambda item: item.score)\n",
+        "def background():\n    pass\nforeign.register(background)\n",
+        "import threading\nclass Worker:\n    def loop(self, stop):\n        stop.wait()\n"
+        "    def start(self):\n        stop = threading.Event()\n"
+        "        threading.Thread(target=self.loop, args=(stop,)).start()\n",
+    ],
+)
+def test_inert_escaping_functions_keep_the_filter_proof(tmp_path, opaque):
+    rows, suppressed = _scan(tmp_path, opaque=opaque)
+
+    assert not rows
+    assert any(row["rule_id"] == "SKY-D215" for row in suppressed)
+
+
+def test_unrelated_model_cycle_and_copy_keep_the_filter_proof(tmp_path):
+    # A self-referencing local and ``model_copy`` of a different model used
+    # to mark every model in the process as possibly rewritten.
+    opaque = (
+        "class Status(BaseModel):\n    state: str = 'idle'\n"
+        "def walk(node):\n    while node:\n        node = node.parent\n    return node\n"
+        "def status():\n    return Status().model_copy(update={'state': walk(None)})\n"
+    )
+    rows, suppressed = _scan(tmp_path, opaque=opaque)
+
+    assert not rows
+    assert any(row["rule_id"] == "SKY-D215" for row in suppressed)
+
+
+def test_non_literal_default_of_another_field_keeps_the_filter_proof(tmp_path):
+    rows, suppressed = _scan(
+        tmp_path,
+        opaque="",
+        model_fields="    interval: float = Field(default=DEFAULT_INTERVAL, ge=0.5)\n"
+        "    record: bool = RECORD\n",
+    )
+
+    assert not rows
+    assert any(row["rule_id"] == "SKY-D215" for row in suppressed)
+
+
 def test_unrelated_later_sink_does_not_inherit_the_note(tmp_path):
     extra = """@app.get('/unsafe/{raw}')
 def unsafe(raw: str):
@@ -141,3 +193,30 @@ def unsafe(raw: str):
         not in by_symbol["other"]["metadata"]["path_provenance"]
     )
     assert "filename check body is present" not in by_symbol["other"]["message"]
+
+
+def test_dropping_filter_form_is_a_filename_proof(tmp_path):
+    helper = """def prepare(raw):
+    return ''.join(c for c in raw if c.isalnum() or c in '-_')
+"""
+    rows, suppressed = _scan(tmp_path, helper=helper, opaque="")
+
+    assert not rows
+    assert any(row["rule_id"] == "SKY-D215" for row in suppressed)
+
+
+@pytest.mark.parametrize(
+    "helper",
+    [
+        # Two conditions, a different element, or a dot in the allowed set
+        # are not the proven form.
+        "def prepare(raw):\n    return ''.join(c for c in raw if c.isalnum() if c)\n",
+        "def prepare(raw):\n    return ''.join(c.upper() for c in raw if c.isalnum())\n",
+        "def prepare(raw):\n    return ''.join(c for c in raw if c.isalnum() or c in '-_.')\n",
+    ],
+    ids=["two-conditions", "transformed-element", "dot-allowed"],
+)
+def test_dropping_filter_variants_outside_the_proof_stay_reported(tmp_path, helper):
+    rows, _ = _scan(tmp_path, helper=helper, opaque="")
+
+    assert len(rows) == 1

@@ -25,7 +25,11 @@ def _write(root, name, text):
 
 def _fixture(root):
     _write(root, "pyproject.toml", '[project]\nname="fixture"\ndependencies=[]\n')
-    entry = _write(root, "sim/app.py", "import fastapi\nimport uvicorn\n")
+    entry = _write(
+        root,
+        "sim/app.py",
+        "import fastapi\nimport uvicorn\nfrom fastapi.middleware.cors import CORSMiddleware\n",
+    )
     _write(root, "sim/sibling.py", "import fastapi\n")
     _write(root, "backend/api.py", "import fastapi\n")
     _write(
@@ -60,7 +64,7 @@ def _fixture(root):
     return entry, data, dockerfile
 
 
-def _stub(monkeypatch, *, missing=()):
+def _stub(monkeypatch, *, missing=(), default_status="exists"):
     monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: {"os", "sys"})
     monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
     monkeypatch.setattr(dep, "installed_module_mapping", lambda builder: {})
@@ -68,14 +72,17 @@ def _stub(monkeypatch, *, missing=()):
     monkeypatch.setattr(
         dep,
         "_check_pypi_status",
-        lambda name, cache: "missing" if name in missing else "exists",
+        lambda name, cache: "missing" if name in missing else default_status,
     )
     monkeypatch.setattr(dep, "_fetch_dist_modules", lambda *args, **kwargs: None)
 
 
-def test_bound_command_file_clears_only_its_declaration_findings(tmp_path, monkeypatch):
+@pytest.mark.parametrize("registry_status", ["exists", "unknown"])
+def test_bound_command_file_clears_only_its_declaration_findings(
+    tmp_path, monkeypatch, registry_status
+):
     entry, _, _ = _fixture(tmp_path)
-    _stub(monkeypatch)
+    _stub(monkeypatch, default_status=registry_status)
     files = [entry, tmp_path / "sim/sibling.py", tmp_path / "backend/api.py"]
     findings = dep.scan_python_dependency_hallucinations(tmp_path, files)
     assert sorted(
@@ -85,6 +92,14 @@ def test_bound_command_file_clears_only_its_declaration_findings(tmp_path, monke
         ("SKY-D223", "backend/api.py", "fastapi"),
         ("SKY-D223", "sim/sibling.py", "fastapi"),
     ]
+    assert findings.unverified_imports == (
+        {
+            "fastapi": "declared_environment_registry_unavailable",
+            "uvicorn": "declared_environment_registry_unavailable",
+        }
+        if registry_status == "unknown"
+        else {}
+    )
 
 
 def test_same_directory_cache_cannot_leak_entrypoint_declarations(tmp_path):
@@ -102,11 +117,12 @@ def test_same_directory_cache_cannot_leak_entrypoint_declarations(tmp_path):
     )
 
 
+@pytest.mark.parametrize("registry_status", ["exists", "unknown"])
 def test_diff_mode_uses_exact_entry_file_without_sibling_cache_leak(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, registry_status
 ):
     _fixture(tmp_path)
-    _stub(monkeypatch)
+    _stub(monkeypatch, default_status=registry_status)
     findings, unreachable = dep.scan_diff_added_imports(
         tmp_path,
         [
@@ -116,7 +132,7 @@ def test_diff_mode_uses_exact_entry_file_without_sibling_cache_leak(
             ("backend/api.py", 1, "fastapi"),
         ],
     )
-    assert not unreachable
+    assert unreachable is (registry_status == "unknown")
     assert sorted((f["rule_id"], f["file"], f["symbol"]) for f in findings) == [
         ("SKY-D223", "backend/api.py", "fastapi"),
         ("SKY-D223", "sim/sibling.py", "fastapi"),

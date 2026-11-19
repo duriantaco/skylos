@@ -1582,7 +1582,9 @@ def test_ros_core_import_requires_manifest_dependency(monkeypatch, tmp_path):
         "<exec_depend>nav_msgs</exec_depend></package>",
     )
     source = _write_py(
-        repo / "ros2" / "robot" / "node.py", "import nav_msgs\nimport rclpy\n"
+        repo / "ros2" / "robot" / "node.py",
+        "import nav_msgs\nimport rclpy\n"
+        "rclpy.init()\nrclpy.shutdown()\n",
     )
     _stub_dependency_registry(monkeypatch, {})
 
@@ -1591,6 +1593,76 @@ def test_ros_core_import_requires_manifest_dependency(monkeypatch, tmp_path):
     assert [(f["rule_id"], f["symbol"]) for f in findings] == [
         (dep.RULE_ID_UNDECLARED, "rclpy")
     ]
+
+
+@pytest.mark.parametrize(
+    ("name", "source", "ros_imports"),
+    [
+        (
+            "node.py",
+            "import rclpy\nfrom sensor_msgs.msg import Image\nimport requests\n"
+            "rclpy.init()\nrclpy.shutdown()\n",
+            {"rclpy", "sensor_msgs"},
+        ),
+        (
+            "robot.launch.py",
+            "from launch import LaunchDescription\nimport launch_ros\nimport requests\n"
+            "def generate_launch_description():\n    return LaunchDescription([])\n",
+            {"launch", "launch_ros"},
+        ),
+    ],
+)
+def test_external_ros_entrypoint_reports_unverified_environment(
+    tmp_path, monkeypatch, name, source, ros_imports
+):
+    _write_py(tmp_path / "pyproject.toml", '[project]\nname="tools"\ndependencies=[]\n')
+    entry = _write_py(tmp_path / name, source)
+    _stub_dependency_registry(monkeypatch, {"requests": "exists"})
+
+    findings = dep.scan_python_dependency_hallucinations(tmp_path, [entry])
+    diff_findings, _ = dep.scan_diff_added_imports(
+        tmp_path, [(name, 1, mod) for mod in sorted(ros_imports | {"requests"})]
+    )
+
+    expected = [(dep.RULE_ID_UNDECLARED, "requests")]
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == expected
+    assert [(f["rule_id"], f["symbol"]) for f in diff_findings] == expected
+    assert findings.unverified_imports == {
+        mod: "ros_external_environment_unverified" for mod in ros_imports
+    }
+
+
+@pytest.mark.parametrize(
+    ("name", "source", "known_import"),
+    [
+        ("plain.py", "import rclpy\nimport sensor_msgs\n", "rclpy"),
+        (
+            "lookalike.py",
+            "import rclpy\nimport sensor_msgs\n"
+            "rclpy = other_api\nrclpy.init()\nrclpy.shutdown()\n",
+            "rclpy",
+        ),
+        (
+            "ordinary.launch.py",
+            "from launch import LaunchDescription\nimport launch_ros\n"
+            "def create_ui():\n    return LaunchDescription([])\n",
+            "launch_ros",
+        ),
+    ],
+)
+def test_ros_import_names_without_entrypoint_proof_are_still_reported(
+    tmp_path, monkeypatch, name, source, known_import
+):
+    _write_py(tmp_path / "pyproject.toml", '[project]\nname="tools"\ndependencies=[]\n')
+    entry = _write_py(tmp_path / name, source)
+    _stub_dependency_registry(monkeypatch, {"launch": "exists"})
+
+    findings = dep.scan_python_dependency_hallucinations(tmp_path, [entry])
+
+    assert (dep.RULE_ID_UNDECLARED, known_import) in {
+        (f["rule_id"], f["symbol"]) for f in findings
+    }
+    assert not findings.unverified_imports
 
 
 def test_ros_manifest_declared_custom_import_is_scoped_to_its_package(
@@ -1733,10 +1805,20 @@ def test_paired_relative_import_fallback_is_local_without_hiding_other_imports(
         source_text.replace("#!/usr/bin/env python3\n", "", 1),
         encoding="utf-8",
     )
+    # Without script evidence the pair still loads the sibling in package
+    # mode, because the sibling itself cannot raise ImportError...
+    findings = dep.scan_python_dependency_hallucinations(repo, [detection, source])
+    assert (dep.RULE_ID_UNDECLARED, "detection") not in [
+        (f["rule_id"], f["symbol"]) for f in findings
+    ]
+    # ...but a sibling that imports a third-party module can, so the absolute
+    # fallback is reachable in package mode and stays reported.
+    detection.write_text("import yaml\nPinStore = object\n", encoding="utf-8")
     findings = dep.scan_python_dependency_hallucinations(repo, [detection, source])
     assert (dep.RULE_ID_UNDECLARED, "detection") in [
         (f["rule_id"], f["symbol"]) for f in findings
     ]
+    detection.write_text("PinStore = object\n", encoding="utf-8")
 
     source.write_text(
         source_text + "from detection import PinStore\n",
@@ -1786,6 +1868,66 @@ def test_ambiguous_sibling_provider_adds_context_without_clearing_finding(
     assert [(row["rule_id"], row["symbol"]) for row in diff] == [
         (dep.RULE_ID_UNDECLARED, "helper")
     ]
+
+
+@pytest.mark.parametrize(
+    ("case", "reports_helper"),
+    [
+        ("paired", False),
+        ("missing_provider", True),
+        ("shadowed_namespace", True),
+        ("unpaired_import", True),
+        ("unmatched_members", True),
+        ("rebound_package", True),
+    ],
+)
+def test_package_guard_proves_the_absolute_script_provider(
+    monkeypatch, tmp_path, case, reports_helper
+):
+    repo = tmp_path / "repo"
+    _write_py(repo / "pyproject.toml", '[project]\nname="app"\ndependencies=[]\n')
+    _write_py(repo / "tools" / "__init__.py", "")
+    helper = repo / "tools" / "helper" / "graph.py"
+    if case != "missing_provider":
+        _write_py(helper, "def write_graph():\n    pass\n")
+    if case == "shadowed_namespace":
+        _write_py(helper.parent.with_suffix(".py"), "VALUE = 1\n")
+
+    relative_member = "draw_graph" if case == "unmatched_members" else "write_graph"
+    extra_import = "import helper.other\n" if case == "unpaired_import" else ""
+    assignment = "__package__ = None\n" if case == "rebound_package" else ""
+    source = _write_py(
+        repo / "tools" / "generate.py",
+        "#!/usr/bin/env python3\n"
+        f"{assignment}{extra_import}"
+        "def main():\n"
+        "    if __package__:\n"
+        f"        from .helper.graph import {relative_member}\n"
+        "    else:\n"
+        "        from helper.graph import write_graph\n"
+        "    write_graph()\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+        "\n"
+        "import missing_dependency\n",
+    )
+    _stub_dependency_registry(monkeypatch, {"helper": "exists"})
+
+    expected = {(dep.RULE_ID_HALLUCINATION, "missing_dependency")}
+    if reports_helper:
+        expected.add((dep.RULE_ID_UNDECLARED, "helper"))
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [source])
+    diff_findings, _ = dep.scan_diff_added_imports(
+        repo,
+        [
+            ("tools/generate.py", 6, "helper.graph"),
+            ("tools/generate.py", 13, "missing_dependency"),
+        ],
+    )
+    assert {(row["rule_id"], row["symbol"]) for row in findings} == expected
+    assert {(row["rule_id"], row["symbol"]) for row in diff_findings} == expected
 
 
 def test_scan_registry_status_is_not_persisted(monkeypatch, tmp_path):
