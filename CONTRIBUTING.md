@@ -7,6 +7,9 @@ Start with the smallest change that proves the behavior. A narrow rule with a
 strong regression test is better than a broad heuristic that creates false
 positives. If you are unsure, please refer to `ROADMAP.md`
 
+Looking for something to work on? [REQUESTS.md](./REQUESTS.md) lists what we
+need and which files to start in.
+
 ## Ways To Contribute
 
 Useful contributions include:
@@ -55,19 +58,19 @@ Use this map to keep changes in the right part of the repo.
 | CLI command parsing or dispatch | `skylos/cli.py`, `skylos/commands/*.py` | `test/test_cli*.py`, command-specific tests |
 | GitHub Actions workflow generation | `skylos/cicd/workflow.py`, `action.yml` | `test/test_cicd_workflow.py` |
 | PR review comments and summaries | `skylos/cicd/review.py` | `test/test_cicd_review.py`, `test/test_regression.py` |
-| CI gate behavior | `skylos/gatekeeper.py`, `skylos/cicd/*`, `scripts/skylos_gate.py` | `test/test_cicd_gate.py`, `test/test_gatekeeper.py` |
-| Python dead-code precision | `skylos/analyzer.py`, `skylos/dead_code.py`, `skylos/visitors/*.py`, `skylos/*reachability*.py` | `test/test_dead_code*.py`, `test/test_framework_aware.py`, corpus tests |
+| CI gate behavior | `skylos/core/gatekeeper.py`, `skylos/cicd/*`, `scripts/skylos_gate.py` | `test/test_cicd_gate.py`, `test/test_gatekeeper.py` |
+| Python dead-code precision | `skylos/analyzer.py`, `skylos/deadcode/*.py`, `skylos/visitors/*.py` | `test/test_dead_code*.py`, `test/test_framework_aware.py`, corpus tests |
 | TypeScript/JavaScript support | `skylos/visitors/languages/typescript/*.py` | `test/test_typescript*.py`, relevant language tests |
 | Java support | `skylos/visitors/languages/java/*.py` | `test/test_java*.py` |
 | Go support | `skylos/visitors/languages/go/*.py`, `skylos/engines/go_*.py` | `test/test_go*.py` |
 | PHP support | `skylos/visitors/languages/php/*.py` | `test/test_php*.py` |
 | Rust support | `skylos/visitors/languages/rust/*.py` | `test/test_rust*.py` |
-| Python security rules | `skylos/rules/danger/**/*.py`, `skylos/security_contracts.py` | `test/test_*flow.py`, `test/test_security*.py` |
-| Secrets rules | `skylos/rules/secrets.py`, `skylos/credentials.py` | `test/test_credentials.py`, secrets tests |
-| Quality rules | `skylos/rules/quality/*.py`, `skylos/linter.py` | `test/test_complexity.py`, `test/test_*quality*.py` |
+| Python security rules | `skylos/rules/danger/**/*.py` | `test/test_*flow.py`, `test/test_security*.py` |
+| Secrets rules | `skylos/rules/secrets.py`, `skylos/rules/secret_*.py` | `test/test_secrets.py`, `test/test_secret_*.py` |
+| Quality rules | `skylos/rules/quality/*.py`, `skylos/core/linter.py` | `test/test_complexity.py`, `test/test_*quality*.py` |
 | Technical debt reports | `skylos/debt/*.py`, `skylos/commands/debt_cmd.py` | `test/test_debt.py` |
 | AI defense checks | `skylos/defend/*.py`, `skylos/commands/defend_cmd.py` | `test/test_defend*.py` |
-| Agent and verifier workflows | `skylos/llm/*.py`, `skylos/agent_*.py` | `test/test_agent*.py`, `test/test_*verifier.py` |
+| Agent and verifier workflows | `skylos/llm/*.py`, `skylos/agents/*.py` | `test/test_agent*.py`, `test/test_*verifier.py` |
 | VS Code extension | `editors/vscode/src/*.ts`, `editors/vscode/package.json` | extension build/lint commands |
 | MCP server | `skylos_mcp/*.py` | MCP-related tests |
 | Benchmarks | `benchmarks/**`, `scripts/*benchmark*.py` | benchmark scripts and focused unit tests |
