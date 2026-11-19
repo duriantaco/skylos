@@ -1,26 +1,32 @@
 # Skylos Cloud
 
-To use Skylos Cloud, you need one command:
-
-```bash
-skylos cloud
-```
-
-It runs every check, shows the findings, uploads them to Skylos Cloud, then
-prints this branch's quality gate and one link to it.
-
-## The whole path
+Skylos Cloud tracks every branch and blocks pull requests from one dashboard.
+It takes three steps and no token:
 
 ```bash
 pip install skylos
-skylos .            # find problems; your code and findings stay on your machine
-skylos cloud        # optional: track results per branch on Skylos Cloud
-skylos cicd init    # add a Skylos check to every pull request
+skylos cloud        # 1. sign in once in your browser; connects this repo, scans and uploads
+skylos cicd init    # 2. writes .github/workflows/skylos.yml and prints what to do next
+                    # 3. open its pull request, install the Skylos GitHub App, merge
 ```
 
-`skylos .` finds dead code. `skylos . -a` runs every check (security, secrets,
-quality, AI-code defects, dependencies) and still sends no findings; the
-dependency check asks OSV.dev about package names and versions.
+1. **`skylos cloud`** opens your browser the first time: sign in and pick or
+   create this repo's project. It then scans with every check and uploads.
+   This scan is saved for review, but a scan from your machine never blocks a
+   merge, so the gate line says `(not blocking)` and the last line tells you
+   the next step.
+2. **`skylos cicd init`** writes the workflow. Its **Next** steps list, in
+   order: open a pull request that adds the file, install the Skylos GitHub
+   App on the repository (the link is printed), wait for the checks. If you
+   skipped step 1, `skylos cicd init --upload` signs you in the same way.
+3. **Merge.** From then on every pull request is checked and can be blocked,
+   and each push to the default branch uploads a verified scan. CI signs in
+   with its GitHub identity (OIDC), so you never create or paste a secret.
+
+Without Skylos Cloud, `skylos .` finds dead code and `skylos . -a` runs every
+check (security, secrets, quality, AI-code defects, dependencies); neither
+sends findings anywhere. The dependency check asks OSV.dev about package names
+and versions.
 
 ## What `skylos cloud` does
 
@@ -55,14 +61,20 @@ skylos cloud src --exclude build
 
 ## What you see
 
-Failed gate on a branch:
+A scan from your machine, before CI is set up:
 
 ```text
-✗ Quality gate on feat/login: FAILED (was PASSED on 24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue
-  Open: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Flogin
-  Sent: findings and the Done receipt (fail) · laptop upload, unverified until CI runs the workflow
+✓ Scan saved · gate (not blocking): fail
+  Open: https://skylos.dev/dashboard/projects/<project>/scans/<scan>
+  Saved for review. Only verified CI scans block merges and update the project verdict.
+  Sent: findings and the Done receipt (fail) · report only
+  Next: to block pull requests, run skylos cicd init and merge the workflow it writes.
   Next: fix the issues behind the failed gate, then run skylos cloud again.
 ```
+
+Once `.github/workflows/skylos.yml` exists, the `Next: … skylos cicd init`
+line reads `The Skylos workflow checks pull requests in CI; this upload does
+not block them.` instead.
 
 The issues are in the findings tables printed above these lines.
 
@@ -70,21 +82,17 @@ The issues are in the findings tables printed above these lines.
 with its verdict (`pass`, `fail` or `unfinished`) when one went along. Without
 a Done table it reads `Sent: findings · no Done table in this repo (skylos
 setup adds one)`; with a table that is not committed yet it names the file.
-After the `·`, the standing: an upload from your laptop is `unverified until
-CI runs the workflow`. It is shown in Skylos Cloud, but it does not publish a
-GitHub check or set the project verdict; uploads from CI (GitHub OIDC) do.
-
-Passed gate on `main`, no CI yet:
+After the `·`, the standing: a scan from your machine is `report only`. It is
+shown in Skylos Cloud, but it does not publish a GitHub check, set the project
+verdict or mark issues fixed. Scans that CI uploads with its GitHub identity
+do, and they show the real gate:
 
 ```text
-✓ Quality gate on main: PASSED (was FAILED on 24 Oct 15:38 UTC, 1ba9895)
-  Open: https://skylos.dev/dashboard/projects/<project>
-  Next: skylos cicd init — adds a Skylos check to every pull request.
+✗ Quality gate on feat/login: FAILED (was PASSED on 24 Oct 15:38 UTC, 1ba9895) · 1 critical security issue
+  Open: https://skylos.dev/dashboard/projects/<project>?branch=feat%2Flogin
+  Sent: findings · verified CI upload
+  Next: fix the issues behind the failed gate, then run skylos cloud again.
 ```
-
-When you upload `main` from your laptop with your `skylos login` token, one
-more line says the upload is unverified: it is shown in Skylos Cloud but does
-not set the project verdict or mark issues fixed. Uploads from CI do.
 
 The link opens the project Overview for that branch: the gate, why it failed,
 and how it changed since the last run.
@@ -104,16 +112,18 @@ skylos cloud --gate
 
 ## Without a terminal
 
-With no terminal and no login, `skylos cloud` stops before scanning and exits
-`1`:
+With no terminal and no sign-in, `skylos cloud` stops before scanning and
+exits `1`:
 
 ```text
-Not connected to Skylos Cloud. Run skylos login in a terminal, or set SKYLOS_TOKEN to a project token (create one in your project's Settings on skylos.dev).
+Skylos Cloud sign-in required. Run skylos cloud PATH in a terminal without output-format flags to sign in in your browser, then retry. For unattended CI, use GitHub Actions/GitLab OIDC or a SKYLOS_TOKEN secret.
 ```
 
-In GitHub Actions and GitLab CI it uses the CI identity (OIDC) or
-`SKYLOS_TOKEN`. `skylos cicd init` writes a CI setup that does this for you;
-see [Your first gated PR](./first-gated-pr.md).
+In GitHub Actions and GitLab CI it uses the CI identity (OIDC); other CI
+systems need a `SKYLOS_TOKEN` secret. `skylos cicd init` writes a CI setup
+that does this for you; see [Your first gated PR](./first-gated-pr.md). If a
+CI job has no way to sign in, the upload says so: install the Skylos GitHub
+App on the repository and keep `permissions: id-token: write`.
 
 ## Do I need a key to pass the gate?
 
@@ -129,6 +139,7 @@ You only need `skylos cloud`. The rest are for control:
 | Command | Use it to |
 |:---|:---|
 | `skylos cloud` | scan, upload, see the gate (the one to remember) |
+| `skylos cicd init` | write the CI workflow that blocks pull requests and uploads from CI |
 | `skylos login` | switch to another project |
 | `skylos whoami` | see which account and project you are connected to |
 | `skylos project <command>` | manage the project linked to this repo |

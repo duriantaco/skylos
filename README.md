@@ -71,23 +71,40 @@ evidence.
 
 ```bash
 pip install skylos
-skylos . -a               # run every check on this repo
-skylos done --base main   # did the agent really finish? runs your tests, compares with main
-skylos cicd init          # add a Skylos check to every pull request
 ```
 
-Working with a coding agent? Two commands:
+### Key commands
+
+No account needed. Your code and findings stay on your machine.
+
+| To | Run |
+|:---|:---|
+| Find dead code | `skylos .` |
+| Run every check: security, secrets, dependencies, quality, AI-code mistakes | `skylos . -a` |
+| Check only what your branch changed | `skylos . -a --diff origin/main` |
+| Fail the build when the gate fails | `skylos . --gate` |
+| Check the agent really finished (runs your tests) | `skylos done --base main` |
+| Check every pull request in CI | `skylos cicd init` |
+| Set up Claude Code and Codex in this repo | `skylos setup` |
+
+### Skylos Cloud in three steps
+
+Optional. Track every branch and block pull requests from one dashboard. No
+token to copy.
 
 ```bash
-skylos setup   # once per repo: connects Claude Code and Codex, installs their hooks, lets Done run your tests, writes the PR check
-skylos open    # every day: diagram of your code, what changed in plain English, every check run
+skylos cloud        # 1. sign in once in your browser; connects this repo, scans and uploads
+skylos cicd init    # 2. writes .github/workflows/skylos.yml and prints what to do next
+                    # 3. open its pull request, install the Skylos GitHub App (link printed), merge
 ```
 
-The [tutorial](./docs/workflow.md) walks through a real session: the agent
-makes a change, gets blocked, and fixes it from Skylos's fix brief.
+Scans from your machine are saved for review but never block a merge. After
+step 3, every pull request is checked, and CI uploads with its GitHub identity
+(OIDC), so you never add a secret. Details: [Skylos Cloud](./docs/skylos-cloud.md).
 
-`skylos .` on its own runs the fast dead-code scan. `skylos cloud` uploads
-results to track each branch on Skylos Cloud; it is optional.
+Working with a coding agent? `skylos setup` once per repo, then `skylos open`
+every day for a diagram of your code, what changed, and every check run. The
+[tutorial](./docs/workflow.md) walks through a real session.
 
 ## Check every agent edit
 
