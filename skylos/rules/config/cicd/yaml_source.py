@@ -7,6 +7,7 @@ from typing import Any
 
 try:
     import yaml
+    from yaml.constructor import ConstructorError
     from yaml.events import AliasEvent
     from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 except ImportError:  # pragma: no cover - PyYAML is a runtime dependency.
@@ -27,6 +28,55 @@ if yaml is not None:
             self.max_nodes = max_nodes
             self._depth = -1
             self._nodes = 0
+
+        def flatten_mapping(self, node):
+            """Apply ``<<`` merges by the YAML merge spec on every PyYAML.
+
+            An explicit key wins over a merged one, and in ``<<: [*a, *b]``
+            the first mapping wins a key both define. PyYAML 6.0.4 drops
+            repeated merge keys by the identity of their string objects, so
+            the winner there depends on the key's spelling; the locations
+            below assume the spec order, so construction must use it too.
+            """
+            merge = []
+            index = 0
+            while index < len(node.value):
+                key_node, value_node = node.value[index]
+                if key_node.tag == _MERGE_TAG:
+                    del node.value[index]
+                    if isinstance(value_node, MappingNode):
+                        self.flatten_mapping(value_node)
+                        merge.extend(value_node.value)
+                    elif isinstance(value_node, SequenceNode):
+                        submerge = []
+                        for subnode in value_node.value:
+                            if not isinstance(subnode, MappingNode):
+                                raise ConstructorError(
+                                    "while constructing a mapping",
+                                    node.start_mark,
+                                    "expected a mapping for merging, "
+                                    f"but found {subnode.id}",
+                                    subnode.start_mark,
+                                )
+                            self.flatten_mapping(subnode)
+                            submerge.append(subnode.value)
+                        for value in reversed(submerge):
+                            merge.extend(value)
+                    else:
+                        raise ConstructorError(
+                            "while constructing a mapping",
+                            node.start_mark,
+                            "expected a mapping or list of mappings for merging, "
+                            f"but found {value_node.id}",
+                            value_node.start_mark,
+                        )
+                elif key_node.tag == "tag:yaml.org,2002:value":
+                    key_node.tag = "tag:yaml.org,2002:str"
+                    index += 1
+                else:
+                    index += 1
+            if merge:
+                node.value = merge + node.value
 
         def compose_node(self, parent, index):
             self._depth += 1
