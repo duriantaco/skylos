@@ -35,6 +35,7 @@ def _identities(report, category):
     return {
         (Path(row["file"]).name, row.get("simple_name", row.get("name")))
         for row in report.get(category, [])
+        if not row.get("folded_into")
     }
 
 
@@ -535,7 +536,9 @@ def test_dead_consumer_demand_keeps_file_evidence_and_architecture_edges(tmp_pat
     # an unused file and its symbols fold into that finding.
     assert ("helpers.ts", "calculate") not in _identities(report, "unused_functions")
     assert ("helpers.ts", "modes") not in _identities(report, "unused_variables")
-    assert report["analysis_summary"]["dead_code_folded_into_unused_files"]["count"] >= 2
+    assert (
+        report["analysis_summary"]["dead_code_folded_into_unused_files"]["count"] >= 2
+    )
     assert ("active.ts", "format") not in _identities(report, "unused_functions")
     files = {Path(row["file"]).name: row for row in report.get("unused_files", [])}
     assert files["orphan.ts"]["confidence"] == 80

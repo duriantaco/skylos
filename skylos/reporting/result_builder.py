@@ -251,10 +251,6 @@ def build_analysis_result(
     return result
 
 
-
-
-
-
 def _hidden_parameter_count(analyzer, thr, evidence, project_cfg) -> int:
     """Unused parameters the threshold hides, counted as the report would list
     them at the parameter cap (same decisions, same report-scope filtering)."""
@@ -650,7 +646,10 @@ def fold_findings_into_unused_files(result) -> int:
                 "confidence": item.get("confidence"),
             }
         )
-        return False
+        # The row stays in its section (Done, cleanup, PR impact and editor
+        # integrations read it there); reports group it under the file.
+        item["folded_into"] = unused[os.path.realpath(str(path))]["file"]
+        return True
 
     for section in _FILE_CONTENT_SECTIONS:
         items = result.get(section)
@@ -687,12 +686,30 @@ def with_folded_findings(result):
     if not isinstance(result, dict):
         return result
     expanded = dict(result)
+    present = {
+        (
+            section,
+            str(item.get("file")),
+            item.get("line"),
+            item.get("name") or item.get("simple_name"),
+        )
+        for section in _FILE_CONTENT_SECTIONS
+        for item in result.get(section) or ()
+        if isinstance(item, dict)
+    }
     for row in result.get("unused_files") or ():
         if not isinstance(row, dict):
             continue
         for folded in row.get("folded_findings") or ():
             section = folded.get("rule_id")
             if section not in _FILE_CONTENT_SECTIONS:
+                continue
+            if (
+                section,
+                str(row.get("file")),
+                folded.get("line"),
+                folded.get("name"),
+            ) in present:
                 continue
             if expanded.get(section) is result.get(section):
                 expanded[section] = list(result.get(section) or ())

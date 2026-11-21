@@ -32,7 +32,11 @@ def _scan(root: Path, conf: int = 60, **kwargs) -> dict:
 
 
 def _by_name(result: dict, key: str) -> dict[str, dict]:
-    return {item.get("name"): item for item in result.get(key) or []}
+    return {
+        item.get("name"): item
+        for item in result.get(key) or []
+        if not item.get("folded_into")
+    }
 
 
 def _definition(name, kind, filename, **attrs) -> Definition:
@@ -108,11 +112,11 @@ def test_deprecated_functions_are_hidden_by_default(tmp_path):
         "    warnings.warn('use other()', DeprecationWarning, stacklevel=2)\n\n\n"
         "@deprecated('use other()')\n"
         "def decorated():\n    return 1\n\n\n"
-        "def documented():\n    \"\"\"Deprecated, does nothing.\"\"\"\n\n\n"
+        'def documented():\n    """Deprecated, does nothing."""\n\n\n'
         "def compatibility():\n"
-        "    \"\"\"Old entry point kept for backwards compatibility.\"\"\"\n\n\n"
+        '    """Old entry point kept for backwards compatibility."""\n\n\n'
         "def replacement():\n"
-        "    \"\"\"Replaces the deprecated documented().\"\"\"\n    return 2\n",
+        '    """Replaces the deprecated documented()."""\n    return 2\n',
     )
 
     shown = _by_name(_scan(tmp_path), "unused_functions")

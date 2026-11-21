@@ -1444,9 +1444,7 @@ class TestMixedRepoIntegration:
 
         result = json.loads(analyze(str(source), conf=0))
 
-        unused_functions = {
-            item["name"] for item in result.get("unused_functions", [])
-        }
+        unused_functions = {item["name"] for item in result.get("unused_functions", [])}
         unused_imports = {item["name"] for item in result.get("unused_imports", [])}
         unused_classes = {item["name"] for item in result.get("unused_classes", [])}
         # unused.ts is an unused file: its symbols fold into that finding.
@@ -1526,9 +1524,7 @@ class TestMixedRepoIntegration:
             tmp_path / "pyproject.toml",
             '[tool.skylos]\nignore = ["SKY-E003"]\n',
         )
-        _write(
-            tmp_path / "package.json", '{"name":"app","main":"src/main.js"}'
-        )
+        _write(tmp_path / "package.json", '{"name":"app","main":"src/main.js"}')
         src = tmp_path / "src"
         src.mkdir()
         _write(src / "main.js", "console.log('main');\n")
@@ -1560,16 +1556,13 @@ class TestMixedRepoIntegration:
     def test_inline_ignore_suppresses_e003_and_records_decision(self, tmp_path):
         from skylos.analyzer import analyze
 
-        _write(
-            tmp_path / "package.json", '{"name":"app","main":"src/main.js"}'
-        )
+        _write(tmp_path / "package.json", '{"name":"app","main":"src/main.js"}')
         src = tmp_path / "src"
         src.mkdir()
         _write(src / "main.js", "console.log('main');\n")
         _write(
             src / "unused.js",
-            "// skylos: ignore[SKY-E003] retained script\n"
-            "console.log('unused');\n",
+            "// skylos: ignore[SKY-E003] retained script\nconsole.log('unused');\n",
         )
 
         result = json.loads(analyze(str(tmp_path), conf=0))
@@ -1695,9 +1688,7 @@ class TestTSMonorepoReachability:
         engine_dir = src_dir / "engine"
         engine_dir.mkdir(parents=True)
         (tmp_path / "package.json").write_text(
-            json.dumps(
-                {"name": "reexport-repro", "main": "dist/src/index.js"}
-            ),
+            json.dumps({"name": "reexport-repro", "main": "dist/src/index.js"}),
             encoding="utf-8",
         )
         (src_dir / "index.ts").write_text(
@@ -1782,7 +1773,11 @@ class TestTSMonorepoReachability:
         unused_files = {
             Path(item["file"]).name for item in result.get("unused_files", [])
         }
-        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+        unused_exports = {
+            item["name"]
+            for item in result.get("unused_exports", [])
+            if not item.get("folded_into")
+        }
 
         assert "public-api.ts" not in unused_files
         assert "makeLabel" not in unused_exports
@@ -1819,7 +1814,11 @@ class TestTSMonorepoReachability:
         unused_files = {
             Path(item["file"]).name for item in result.get("unused_files", [])
         }
-        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+        unused_exports = {
+            item["name"]
+            for item in result.get("unused_exports", [])
+            if not item.get("folded_into")
+        }
 
         assert "extension.ts" not in unused_files
         assert "activate" not in unused_functions
@@ -1973,7 +1972,11 @@ class InternalTaskProvider implements vscode.TaskProvider<vscode.Task> {
         unused_files = {
             Path(item["file"]).name for item in result.get("unused_files", [])
         }
-        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+        unused_exports = {
+            item["name"]
+            for item in result.get("unused_exports", [])
+            if not item.get("folded_into")
+        }
 
         assert "public-api.ts" not in unused_files
         assert "makeLabel" not in unused_exports
@@ -2018,7 +2021,11 @@ class InternalTaskProvider implements vscode.TaskProvider<vscode.Task> {
         unused_files = {
             Path(item["file"]).name for item in result.get("unused_files", [])
         }
-        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+        unused_exports = {
+            item["name"]
+            for item in result.get("unused_exports", [])
+            if not item.get("folded_into")
+        }
 
         assert "public-api.ts" in unused_files
         # The unused file's export findings fold into its SKY-E003 finding.
@@ -2078,7 +2085,11 @@ class InternalTaskProvider implements vscode.TaskProvider<vscode.Task> {
         unused_files = {
             Path(item["file"]).name for item in result.get("unused_files", [])
         }
-        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+        unused_exports = {
+            item["name"]
+            for item in result.get("unused_exports", [])
+            if not item.get("folded_into")
+        }
 
         assert "public-api.ts" in unused_files
         # The unused file's export findings fold into its SKY-E003 finding.
@@ -2136,7 +2147,11 @@ class InternalTaskProvider implements vscode.TaskProvider<vscode.Task> {
         unused_files = {
             Path(item["file"]).name for item in result.get("unused_files", [])
         }
-        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+        unused_exports = {
+            item["name"]
+            for item in result.get("unused_exports", [])
+            if not item.get("folded_into")
+        }
 
         assert "public-api.ts" in unused_files
         # The unused file's export findings fold into its SKY-E003 finding.
@@ -2180,7 +2195,11 @@ class InternalTaskProvider implements vscode.TaskProvider<vscode.Task> {
         unused_files = {
             Path(item["file"]).name for item in result.get("unused_files", [])
         }
-        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+        unused_exports = {
+            item["name"]
+            for item in result.get("unused_exports", [])
+            if not item.get("folded_into")
+        }
 
         assert "public-api.ts" not in unused_files
         assert "makeLabel" not in unused_exports
@@ -2972,7 +2991,9 @@ class TestTimingUnsafeComparison:
         assert "SKY-D253" in ids
 
     def test_string_null_is_a_literal(self, tmp_path):
-        _, _, _, danger = _scan_ts(tmp_path, 'if (req.body.digest === "null") { proceed(); }\n')
+        _, _, _, danger = _scan_ts(
+            tmp_path, 'if (req.body.digest === "null") { proceed(); }\n'
+        )
         assert "SKY-D253" not in {f["rule_id"] for f in danger}
 
     def test_shadowed_undefined_remains_timing_comparison(self, tmp_path):

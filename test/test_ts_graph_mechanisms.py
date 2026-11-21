@@ -74,6 +74,8 @@ def _reported(result: dict, root: Path) -> set[tuple[str, str, str]]:
         "unused_exports",
     ):
         for item in result.get(key) or []:
+            if item.get("folded_into"):
+                continue  # reported inside its unused file's finding
             found.add((key, _rel(root, item["file"]), item.get("name") or ""))
     return found
 
@@ -198,9 +200,22 @@ def test_fold_keeps_findings_of_files_that_are_not_reported_unused():
         "analysis_summary": {},
     }
     assert fold_findings_into_unused_files(result) == 3
-    assert [item["name"] for item in result["unused_functions"]] == ["b", "c"]
-    assert result["unused_exports"] == []
-    assert [item["rule_id"] for item in result["quality"]] == ["SKY-C303"]
+    # Rows stay in their sections (other features read them there); only the
+    # ones inside the unused file are tagged and listed on its finding.
+    tagged = {
+        item["name"]
+        for key in ("unused_functions", "unused_exports", "quality")
+        for item in result[key]
+        if item.get("folded_into")
+    }
+    assert tagged == {"a", "d", "pkg"}
+    assert [item["name"] for item in result["unused_functions"]] == ["a", "b", "c"]
+    assert {f["name"] for f in result["unused_files"][0]["folded_findings"]} == {
+        "a",
+        "d",
+        "pkg",
+    }
+    assert "folded_findings" not in result["unused_files"][1]
     assert result["analysis_summary"]["dead_code_folded_into_unused_files"] == {
         "count": 3,
         "by_rule": {"SKY-E004": 1, "SKY-Q408": 1, "unused_functions": 1},
