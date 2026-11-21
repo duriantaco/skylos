@@ -187,3 +187,27 @@ def test_inline_ignore_on_one_site_does_not_hide_the_others(tmp_path):
     )
     cv2 = [row for row in rows if row["symbol"] == "cv2"]
     assert [Path(row["file"]).name for row in cv2] == ["b.py"]
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        ".github/workflows/ci.yml",
+        "makefile",
+        "jenkinsfile",
+        "deploy/pipeline.yaml",
+    ],
+)
+def test_module_run_by_a_launcher_disables_the_sibling_exemption(
+    monkeypatch, tmp_path, launcher
+):
+    """A launcher can run the script as a module, where the absolute sibling
+    import fails; CI workflows and lowercase launcher names count too."""
+    _stub(monkeypatch)
+    repo, source = _plan(
+        tmp_path, extra={launcher: "python -m fly.plan.flight_test_10\n"}
+    )
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [source])
+
+    assert [symbol for _rule, symbol in _symbols(findings)] == ["flight_common"]

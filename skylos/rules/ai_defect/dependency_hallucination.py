@@ -1091,7 +1091,9 @@ _LAUNCHER_SUFFIXES = frozenset(
     {".sh", ".bash", ".zsh", ".service", ".yml", ".yaml", ".toml", ".cfg",
      ".ini", ".json", ".conf", ".txt", ".md"}
 )  # fmt: skip
-_LAUNCHER_NAMES = frozenset({"Makefile", "Dockerfile", "Procfile", "Justfile"})
+_LAUNCHER_NAMES = frozenset(
+    {"makefile", "dockerfile", "procfile", "justfile", "jenkinsfile"}
+)
 
 
 def _script_loaded_as_module(ctx, importer):
@@ -1132,13 +1134,14 @@ def _launchers_name_module(ctx, module_run, entry_point):
     budget = 2000
     for directory, folders, files in os.walk(root):
         folders[:] = [
-            folder
-            for folder in folders
-            if not folder.startswith(".") and folder not in DEFAULT_EXCLUDE_FOLDERS
+            folder for folder in folders if folder not in DEFAULT_EXCLUDE_FOLDERS
         ]
         for name in files:
             path = Path(directory) / name
-            if path.suffix not in _LAUNCHER_SUFFIXES and name not in _LAUNCHER_NAMES:
+            if (
+                path.suffix not in _LAUNCHER_SUFFIXES
+                and name.lower() not in _LAUNCHER_NAMES
+            ):
                 continue
             budget -= 1
             if budget < 0:
