@@ -538,6 +538,8 @@ class _XSSFlowChecker(TaintVisitor):
         if isinstance(node, (ast.Attribute, ast.Subscript)):
             if _chain_root(node) == self.request_obj:
                 return RAW
+            if self._is_module_request_proxy(node):
+                return RAW
             return self._level(node.value, scope)
         if isinstance(node, ast.Name):
             return scope.lookup(node.id)

@@ -163,7 +163,6 @@ accuracy percentage.
 
 | Analyzer | Mechanism to adopt |
 | --- | --- |
-| Knip and Fallow | Resolved bindings, traversal from entries, component consumers and scoped framework contracts |
 | rustc and Staticcheck | Definition/object identities, typed method targets and usage graphs |
 | Dart analyzer and detekt | Resolved element/descriptor references, library or lexical scope and conservative handling when binding information is unavailable |
 | PHPStan and ShipMonk | Typed receivers, namespace aliases, qualified class/member graph keys and separate framework usage providers |

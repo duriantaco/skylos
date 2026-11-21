@@ -1,0 +1,22 @@
+{
+  "name": "component-catalog-contract",
+  "private": true,
+  "main": "src/main.ts",
+  "dependencies": {
+    "chart-lib": "1.0.0",
+    "mdx-lib": "1.0.0",
+    "css-lib": "1.0.0",
+    "unused-lib": "1.0.0",
+    "lodash": "catalog:"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true }
+  },
+  "scripts": {
+    "build": "bundle-it src/main.ts",
+    "db": "psql -f schema.sql"
+  }
+}

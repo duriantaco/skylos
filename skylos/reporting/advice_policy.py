@@ -64,6 +64,7 @@ class AdviceVisibility:
             "generated": "generated files",
             "tooling": "docs, scripts and tooling folders",
             "measurement": "measurements outside the default advice set",
+            "unproven-source": "security sinks with no proven untrusted source",
         }
         detail = ", ".join(
             f"{count} {labels.get(reason, 'other optional advice')}"

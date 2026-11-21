@@ -1,0 +1,6 @@
+{
+  "name": "export-types-contract",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts"
+}

@@ -1,9 +1,10 @@
-"""Files that static-site generators load by convention.
+"""Files that static-site generators load by convention, and their aliases.
 
-Astro, Docusaurus and Jekyll read some files because of where they live, not
-because another module imports them. Each generator is recognised only from
-its own evidence (a dependency in the enclosing ``package.json``, its config
-file, or for Jekyll an ``{% include %}`` that names the file), so a folder
+Astro and Docusaurus page, endpoint and config conventions are rows of the
+plugin table (``plugin_facts``). This module keeps what is not a glob
+pattern: Jekyll ``_includes`` named by an ``{% include %}`` tag, and the
+Docusaurus ``@site``/``@theme`` alias resolution with webpack's extension
+order. Each is recognised only from the generator's own evidence, so a folder
 that merely shares a name with a convention is still checked normally.
 """
 
@@ -13,35 +14,9 @@ import os
 import re
 from functools import lru_cache
 
-from .conventions import (
-    _depends_on,
-    _enclosing_package_roots,
-    _normalized,
-    _package_data,
-)
+from .conventions import _normalized
 
-_SCRIPT_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".cjs", ".cts")
 _CONFIG_STEMS_EXTENSIONS = (".ts", ".js", ".mjs", ".mts", ".cjs", ".cts")
-
-ASTRO_ENDPOINT_EXPORTS = frozenset(
-    {
-        "default",
-        "GET",
-        "POST",
-        "PUT",
-        "PATCH",
-        "DELETE",
-        "ALL",
-        "HEAD",
-        "OPTIONS",
-        "getStaticPaths",
-        "prerender",
-        "partial",
-    }
-)
-ASTRO_CONTENT_CONFIG_EXPORTS = frozenset({"collections"})
-ASTRO_MIDDLEWARE_EXPORTS = frozenset({"onRequest"})
-ASTRO_ACTIONS_EXPORTS = frozenset({"server"})
 DEFAULT_EXPORT = frozenset({"default"})
 
 _JEKYLL_CONFIGS = ("_config.yml", "_config.yaml", "_config.toml")
@@ -62,79 +37,6 @@ _JEKYLL_SKIP_DIRS = frozenset(
     {"_site", "node_modules", ".git", "vendor", ".jekyll-cache"}
 )
 _MAX_JEKYLL_PAGE_BYTES = 2_000_000
-
-
-def _relative(path: str, root: str) -> str | None:
-    prefix = root.rstrip(os.sep) + os.sep
-    if not path.startswith(prefix):
-        return None
-    return path[len(prefix) :].replace(os.sep, "/")
-
-
-def _has_config(root: str, stem: str) -> bool:
-    return any(
-        os.path.isfile(os.path.join(root, stem + extension))
-        for extension in _CONFIG_STEMS_EXTENSIONS
-    )
-
-
-def _is_config(relative: str, stem: str) -> bool:
-    return any(relative == stem + extension for extension in _CONFIG_STEMS_EXTENSIONS)
-
-
-def _astro_entry(relative: str) -> tuple[str, frozenset[str]] | None:
-    if relative.startswith("src/pages/") and relative.endswith(_SCRIPT_EXTENSIONS):
-        return "astro-route", ASTRO_ENDPOINT_EXPORTS
-    if _is_config(relative, "src/content.config") or _is_config(
-        relative, "src/content/config"
-    ):
-        return "astro-content-config", ASTRO_CONTENT_CONFIG_EXPORTS
-    if _is_config(relative, "src/middleware") or _is_config(
-        relative, "src/middleware/index"
-    ):
-        return "astro-middleware", ASTRO_MIDDLEWARE_EXPORTS
-    if _is_config(relative, "src/actions/index"):
-        return "astro-actions", ASTRO_ACTIONS_EXPORTS
-    return None
-
-
-def _docusaurus_entry(
-    relative: str, *, classic: bool
-) -> tuple[str, frozenset[str]] | None:
-    if not relative.endswith(_SCRIPT_EXTENSIONS):
-        return None
-    if classic:
-        if relative == "siteConfig.js":
-            return "docusaurus-site-config", DEFAULT_EXPORT
-        if relative.startswith(("core/", "pages/")):
-            return "docusaurus-component", DEFAULT_EXPORT
-        return None
-    if _is_config(relative, "docusaurus.config") or _is_config(relative, "sidebars"):
-        return "docusaurus-config", DEFAULT_EXPORT
-    if relative.startswith(("src/pages/", "src/theme/")):
-        return "docusaurus-component", DEFAULT_EXPORT
-    return None
-
-
-def _package_entry(path: str) -> tuple[str, frozenset[str]] | None:
-    for root in _enclosing_package_roots(path):
-        relative = _relative(path, root)
-        if relative is None:
-            continue
-        data = _package_data(root)
-        if _depends_on(data, "astro") or _has_config(root, "astro.config"):
-            entry = _astro_entry(relative)
-            if entry is not None:
-                return entry
-        if _depends_on(data, "@docusaurus/core"):
-            entry = _docusaurus_entry(relative, classic=False)
-            if entry is not None:
-                return entry
-        if _depends_on(data, "docusaurus"):
-            entry = _docusaurus_entry(relative, classic=True)
-            if entry is not None:
-                return entry
-    return None
 
 
 @lru_cache(maxsize=64)
@@ -185,4 +87,78 @@ def site_generator_entry(
     absolute = _normalized(path)
     if absolute.endswith(".d.ts"):
         return None
-    return _package_entry(absolute) or _jekyll_entry(absolute)
+    return _jekyll_entry(absolute)
+
+
+# --------------------------------------------------------------- Docusaurus
+
+_DOCUSAURUS_CONFIGS = tuple(
+    "docusaurus.config" + extension for extension in _CONFIG_STEMS_EXTENSIONS
+)
+# ``resolve.extensions`` of @docusaurus/core's webpack config
+# (``['.wasm', '.mjs', '.js', '.jsx', '.ts', '.tsx', '.json']``): plain
+# webpack 5 defaults to ``['.js', '.json', '.wasm']`` and TypeScript tries
+# ``.ts``/``.tsx`` before ``.js``, but a Docusaurus build loads ``index.js``
+# when both ``index.js`` and ``index.tsx`` sit in one folder.
+DOCUSAURUS_EXTENSIONS = (".mjs", ".js", ".jsx", ".ts", ".tsx")
+
+
+@lru_cache(maxsize=4096)
+def docusaurus_site_root(directory: str) -> str | None:
+    """The Docusaurus site (folder with ``docusaurus.config.*``) holding
+    ``directory``; the search stops at the first enclosing ``package.json``."""
+    current = os.path.abspath(directory)
+    while True:
+        if any(os.path.isfile(os.path.join(current, name)) for name in _DOCUSAURUS_CONFIGS):
+            return current
+        if os.path.isfile(os.path.join(current, "package.json")):
+            return None
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
+def resolve_with_extensions(base: str, extensions=DOCUSAURUS_EXTENSIONS) -> str | None:
+    """Webpack-style lookup: the file, ``base<ext>``, then ``base/index<ext>``."""
+    if os.path.isfile(base):
+        return base
+    for extension in extensions:
+        if os.path.isfile(base + extension):
+            return base + extension
+    for extension in extensions:
+        candidate = os.path.join(base, "index" + extension)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def resolve_docusaurus_alias(source: str, importer: str) -> str | None:
+    """Resolve ``@site/...`` (the site root) and ``@theme/...`` (a swizzled
+    component in ``src/theme``) for an importer inside a Docusaurus site.
+
+    ``@theme/X`` without a swizzled file, ``@theme-original/``,
+    ``@docusaurus/`` and ``@generated/`` name theme or core package modules,
+    not project files.
+    """
+    aliases = _docusaurus_aliases()
+    alias = next((key for key in aliases if source.startswith(key + "/")), None)
+    if alias is None:
+        return None
+    site = docusaurus_site_root(os.path.dirname(os.path.abspath(importer)))
+    if site is None:
+        return None
+    relative = source[len(alias) + 1 :]
+    if not relative or ".." in relative.split("/"):
+        return None
+    base = os.path.join(site, aliases[alias], relative)
+    return resolve_with_extensions(os.path.normpath(base))
+
+
+@lru_cache(maxsize=1)
+def _docusaurus_aliases() -> dict[str, str]:
+    """``@site`` -> the site root, ``@theme`` -> ``src/theme`` (plugin table)."""
+    from .plugin_facts import plugin_named
+
+    row = plugin_named("docusaurus")
+    return dict((row.skylos.get("aliases") or {}) if row is not None else {})

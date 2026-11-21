@@ -14,12 +14,14 @@ from skylos.constants import (
     MIN_SECRET_LENGTH,
     get_non_library_dir_kind,
 )
+from skylos.core.test_paths import is_test_source_file
 from skylos.rules.secrets import (
     _looks_like_ordered_character_set,
     encodes_public_text,
     is_client_exposure_context,
     is_public_client_env_name,
     iter_sensitive_client_env_references,
+    matches_provider_pattern,
 )
 from skylos.rules import secret_shapes
 from skylos.security.sensitive_data import first_sensitive_name
@@ -34,6 +36,10 @@ from skylos.visitors.languages.typescript.archive_guard import (
     archive_path_validators,
     archive_startswith_guards,
 )
+from skylos.visitors.languages.typescript.angular_sanitizer import (
+    check_angular_sanitizer_bypass,
+)
+from skylos.visitors.languages.typescript.library_sinks import check_library_sinks
 from skylos.visitors.languages.typescript.express_taint import (
     merge_express_taint_findings,
     safe_redirect_prefix,
@@ -100,6 +106,14 @@ _DATABASE_MODULE_LITERAL_RE = re.compile(
     r"""|mysql2?|mssql|oracledb|duckdb|knex|sequelize|typeorm|@prisma/client"""
     r"""|@libsql/client|@neondatabase/serverless|@vercel/postgres|mongodb)"""
     r"""(?:/[^'"`]*)?\1"""
+)
+# Packages whose ``exec`` runs SQL. A receiver imported or required from one
+# of them (``const { R } = require("redbean-node")``) is a database client.
+_DATABASE_EXEC_PACKAGE_RE = re.compile(
+    r"(?:sqlite3|better-sqlite3|bun:sqlite|node:sqlite|sql\.js|pg|postgres"
+    r"|mysql2?|mssql|oracledb|duckdb|knex|sequelize|typeorm|@prisma/client"
+    r"|@libsql/client|@neondatabase/serverless|@vercel/postgres|mongodb"
+    r"|redbean-node|kysely|drizzle-orm|@mikro-orm/[\w-]+|pg-promise|slonik)(?:/.*)?\Z"
 )
 _COMMAND_MODULE_LITERAL_RE = re.compile(
     r"""(['"`])((?:node:)?child_process|shelljs|ssh2|node-ssh|dockerode)\1"""
@@ -205,6 +219,8 @@ _COMPLEX_PATTERN = """
 (template_string) @template_node
 (call_expression function: (identifier) @fetch_fn (#eq? @fetch_fn "fetch") arguments: (arguments) @fetch_args)
 (call_expression function: (member_expression object: (identifier) @axios_obj (#eq? @axios_obj "axios")) arguments: (arguments) @axios_args)
+(call_expression function: (await_expression (identifier) @fetch_fn (#eq? @fetch_fn "fetch")) type_arguments: (type_arguments) arguments: (arguments) @fetch_args)
+(call_expression function: (await_expression (member_expression object: (identifier) @axios_obj (#eq? @axios_obj "axios"))) type_arguments: (type_arguments) arguments: (arguments) @axios_args)
 (call_expression function: (member_expression property: (property_identifier) @create_hash (#eq? @create_hash "createHash")) arguments: (arguments) @hash_args)
 (call_expression function: (member_expression property: (property_identifier) @redirect_prop (#eq? @redirect_prop "redirect")) arguments: (arguments) @redirect_args)
 (call_expression function: (member_expression property: (property_identifier) @sql_query (#eq? @sql_query "query")) arguments: (arguments (template_string) @sql_query_tpl))
@@ -321,41 +337,6 @@ _LOG_AUTH_SESSION_NEGATIONS = {"no", "non", "not", "un"}
 _LOG_REQUEST_OBJECTS = {"req", "request"}
 _LOG_IDENTIFIER_WORD_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+")
 
-_TIMING_SENSITIVE_SUFFIXES = (
-    "password",
-    "passwd",
-    "pwd",
-    "secret",
-    "token",
-    "hash",
-    "digest",
-    "hmac",
-    "signature",
-    "apikey",
-)
-_TIMING_PASSWORD_WORDS = ("password", "passwd", "pwd", "passphrase")
-_TIMING_CONFIRMATION_WORDS = (
-    "confirm",
-    "repeat",
-    "retype",
-    "reenter",
-    "again",
-    "verify",
-    "verification",
-)
-_TIMING_STORED_WORDS = (
-    "hash",
-    "digest",
-    "hmac",
-    "signature",
-    "stored",
-    "expected",
-    "saved",
-    "secret",
-    "token",
-    "salt",
-    "encrypted",
-)
 
 _STORAGE_SENSITIVE_SUFFIXES = (
     "token",
@@ -524,14 +505,6 @@ def _is_sensitive_name(name: str) -> bool:
     return _has_auth_session_context(name)
 
 
-def _is_timing_sensitive(name: str) -> bool:
-    normalized = name.lower().replace("_", "")
-    for suffix in _TIMING_SENSITIVE_SUFFIXES:
-        if normalized == suffix or normalized.endswith(suffix):
-            return True
-    return False
-
-
 def _is_environment_lookup(node, source_bytes: bytes, bindings) -> bool:
     """``process.env.X``, ``process.env["X"]``, ``import.meta.env.X``,
     ``Bun.env.X``, ``Deno.env.get("X")``, or a ``??``/``||`` chain of them."""
@@ -642,6 +615,91 @@ def _environment_provider_intact(provider: str, bindings) -> bool:
     return True
 
 
+def _is_url_parse_base(node, source_bytes: bytes) -> bool:
+    """``new URL(path, 'https://localhost')`` only parses a relative path; the
+    placeholder base is never contacted. Also a ``const base = cond ? ... :
+    'https://localhost'`` whose every use is that second argument."""
+    current = node
+    while current.parent is not None and current.parent.type in {
+        "parenthesized_expression",
+        "ternary_expression",
+    }:
+        condition = current.parent.child_by_field_name("condition")
+        if (
+            current.parent.type == "ternary_expression"
+            and condition is not None
+            and condition.id == current.id
+        ):
+            return False
+        current = current.parent
+    if _is_new_url_base_argument(current, source_bytes):
+        return True
+    declarator = current.parent
+    if (
+        declarator is None
+        or declarator.type != "variable_declarator"
+        or declarator.child_by_field_name("value") is None
+        or declarator.child_by_field_name("value").id != current.id
+    ):
+        return False
+    name_node = declarator.child_by_field_name("name")
+    declaration = declarator.parent
+    if (
+        name_node is None
+        or name_node.type != "identifier"
+        or declaration is None
+        or declaration.type != "lexical_declaration"
+        or not _get_text(source_bytes, declaration).startswith("const")
+    ):
+        return False
+    scope = declaration.parent
+    name = _get_text(source_bytes, name_node)
+    uses = []
+    stack = [scope] if scope is not None else []
+    while stack:
+        candidate = stack.pop()
+        stack.extend(candidate.children)
+        if (
+            candidate.type == "identifier"
+            and candidate.id != name_node.id
+            and _get_text(source_bytes, candidate) == name
+        ):
+            uses.append(candidate)
+    return bool(uses) and all(
+        _is_new_url_base_argument(use, source_bytes) for use in uses
+    )
+
+
+def _is_new_url_base_argument(node, source_bytes: bytes) -> bool:
+    while node.parent is not None and node.parent.type in {
+        "parenthesized_expression",
+        "ternary_expression",
+    }:
+        if node.parent.type == "ternary_expression" and (
+            node.parent.child_by_field_name("condition") is not None
+            and node.parent.child_by_field_name("condition").id == node.id
+        ):
+            return False
+        node = node.parent
+    arguments = node.parent
+    call = arguments.parent if arguments is not None else None
+    if (
+        arguments is None
+        or arguments.type != "arguments"
+        or call is None
+        or call.type != "new_expression"
+    ):
+        return False
+    constructor = call.child_by_field_name("constructor")
+    values = _html_call_arguments(call)
+    return (
+        constructor is not None
+        and _get_text(source_bytes, constructor) == "URL"
+        and len(values) == 2
+        and values[1].id == node.id
+    )
+
+
 def _is_environment_default(node, source_bytes: bytes, bindings) -> bool:
     """The literal is the fallback in ``process.env.X ?? "http://localhost"``
     (or ``||``): the host is already configured through the environment."""
@@ -665,462 +723,6 @@ def _is_environment_default(node, source_bytes: bytes, bindings) -> bool:
     return _is_environment_lookup(
         parent.child_by_field_name("left"), source_bytes, bindings
     )
-
-
-def _timing_field_word(name: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", name.lower())
-
-
-def _is_password_confirmation_pair(first: str, second: str) -> bool:
-    words = (_timing_field_word(first), _timing_field_word(second))
-    if words[0] == words[1]:
-        return False
-    if not all(any(part in word for part in _TIMING_PASSWORD_WORDS) for word in words):
-        return False
-    if any(any(part in word for part in _TIMING_STORED_WORDS) for word in words):
-        return False
-    return any(
-        any(part in word for part in _TIMING_CONFIRMATION_WORDS) for word in words
-    )
-
-
-def _enclosing_ts_function(node):
-    current = node.parent
-    while current is not None:
-        if current.type in _TS_FUNCTION_NODE_TYPES:
-            return current
-        current = current.parent
-    return None
-
-
-def _ts_parameter_patterns(function_node) -> list:
-    single = function_node.child_by_field_name("parameter")
-    if single is not None:
-        return [single]
-    parameters = function_node.child_by_field_name("parameters")
-    if parameters is None:
-        return []
-    patterns = []
-    for parameter in parameters.named_children:
-        if parameter.type in {"required_parameter", "optional_parameter"}:
-            pattern = parameter.child_by_field_name("pattern")
-            if pattern is not None:
-                patterns.append(pattern)
-        else:
-            patterns.append(parameter)
-    return patterns
-
-
-def _destructured_field_names(pattern, source_bytes: bytes) -> dict[str, str]:
-    fields: dict[str, str] = {}
-    for child in pattern.named_children:
-        if child.type == "shorthand_property_identifier_pattern":
-            name = _get_text(source_bytes, child)
-            fields[name] = name
-        elif child.type == "object_assignment_pattern":
-            left = child.child_by_field_name("left")
-            if (
-                left is not None
-                and left.type == "shorthand_property_identifier_pattern"
-            ):
-                name = _get_text(source_bytes, left)
-                fields[name] = name
-        elif child.type == "pair_pattern":
-            key = child.child_by_field_name("key")
-            value = child.child_by_field_name("value")
-            if (
-                key is not None
-                and value is not None
-                and key.type == "property_identifier"
-                and value.type == "identifier"
-            ):
-                fields[_get_text(source_bytes, value)] = _get_text(source_bytes, key)
-    return fields
-
-
-def _ts_name_rebound(
-    function_node, pattern, names: set[str], source_bytes: bytes
-) -> bool:
-    """A binding of one of ``names`` anywhere in the function other than the
-    parameter ``pattern`` itself: assignment, declaration, loop or catch
-    variable, update, destructuring, or a shadowing parameter."""
-    stack = [function_node]
-    while stack:
-        node = stack.pop()
-        stack.extend(node.children)
-        if node.type not in {"identifier", "shorthand_property_identifier_pattern"}:
-            continue
-        if _get_text(source_bytes, node) not in names:
-            continue
-        if pattern.start_byte <= node.start_byte and node.end_byte <= pattern.end_byte:
-            continue
-        if node.type == "shorthand_property_identifier_pattern":
-            return True
-        parent = node.parent
-        if parent is None:
-            continue
-        if parent.type in {
-            "assignment_expression",
-            "augmented_assignment_expression",
-            "for_in_statement",
-        }:
-            left = parent.child_by_field_name("left")
-            if left is not None and left.start_byte == node.start_byte:
-                return True
-        if parent.type == "variable_declarator":
-            declared = parent.child_by_field_name("name")
-            if declared is not None and declared.start_byte == node.start_byte:
-                return True
-        if parent.type in {
-            "update_expression",
-            "required_parameter",
-            "optional_parameter",
-            "formal_parameters",
-            "catch_clause",
-            "pair_pattern",
-            "array_pattern",
-            "object_assignment_pattern",
-            "assignment_pattern",
-            "rest_pattern",
-        }:
-            return True
-        if parent.type == "arrow_function":
-            single = parent.child_by_field_name("parameter")
-            if single is not None and single.start_byte == node.start_byte:
-                return True
-    return False
-
-
-def _imported_form_api(node, bindings, package: str, imported: str) -> bool:
-    if node is None or node.type != "identifier":
-        return False
-    name = _get_text(bindings.source_bytes, node)
-    binding = bindings.only_binding(name, node)
-    if not (binding and binding[0] == "import" and binding[2:] == (package, imported)):
-        return False
-    if (package, imported) != ("zod", "z"):
-        return True
-    for use in bindings.nodes:
-        if (
-            use.type not in {"identifier", "shorthand_property_identifier"}
-            or _get_text(bindings.source_bytes, use) != name
-        ):
-            continue
-        parent = use.parent
-        current = parent
-        while current is not None and current.type not in {
-            "program",
-            "import_statement",
-        }:
-            current = current.parent
-        if current is not None and current.type == "import_statement":
-            continue
-        if parent is not None and parent.type == "nested_type_identifier":
-            continue
-        if (
-            parent is None
-            or parent.type != "member_expression"
-            or parent.child_by_field_name("object") != use
-        ):
-            return False
-        call = parent.parent
-        if (
-            call is None
-            or call.type != "call_expression"
-            or call.child_by_field_name("function") != parent
-        ):
-            return False
-    return True
-
-
-def _zod_input_field(node, source_bytes: bytes, zod_name: str) -> bool:
-    """Only validation chains that preserve the supplied string value."""
-    while node is not None and node.type == "call_expression":
-        function = node.child_by_field_name("function")
-        if function is None or function.type != "member_expression":
-            return False
-        owner = function.child_by_field_name("object")
-        prop = function.child_by_field_name("property")
-        if owner is None or prop is None:
-            return False
-        method = _get_text(source_bytes, prop)
-        if owner.type == "identifier" and _get_text(source_bytes, owner) == zod_name:
-            return method == "string"
-        if method == "or":
-            arguments = _html_call_arguments(node)
-            if len(arguments) != 1:
-                return False
-            alternative = arguments[0]
-            if alternative.type != "call_expression":
-                return False
-            literal = alternative.child_by_field_name("function")
-            values = _html_call_arguments(alternative)
-            if (
-                literal is None
-                or _get_text(source_bytes, literal) != f"{zod_name}.literal"
-                or len(values) != 1
-                or _string_literal_value(values[0], source_bytes) != ""
-            ):
-                return False
-        elif method not in {
-            "min",
-            "max",
-            "length",
-            "nonempty",
-            "optional",
-            "nullable",
-            "nullish",
-        }:
-            return False
-        node = owner
-    return False
-
-
-def _local_form_refinement(
-    function_node, fields, bound, source_bytes, bindings
-) -> bool:
-    """A private Zod schema consumed only by React Hook Form's resolver.
-
-    A parameter record alone says nothing about who supplied its values. Keep
-    server helpers, exported schemas, transforms and arbitrary consumers visible.
-    """
-    for pattern in _ts_parameter_patterns(function_node):
-        pending = [pattern]
-        while pending:
-            child = pending.pop()
-            if child.type in {"object_assignment_pattern", "assignment_pattern"}:
-                default = child.child_by_field_name("right")
-                if (
-                    default is None
-                    or _string_literal_value(default, source_bytes) != ""
-                ):
-                    return False
-            pending.extend(child.named_children)
-    body = function_node.child_by_field_name("body")
-    if body is None:
-        return False
-    if body.type == "statement_block":
-        statements = [n for n in body.named_children if n.type != "comment"]
-        if len(statements) != 1 or statements[0].type != "return_statement":
-            return False
-        body = statements[0]
-    allowed = {
-        "return_statement",
-        "binary_expression",
-        "unary_expression",
-        "parenthesized_expression",
-        "member_expression",
-        "identifier",
-        "property_identifier",
-        "true",
-        "false",
-        "null",
-        "comment",
-    }
-    pending = [body]
-    while pending:
-        child = pending.pop()
-        if child.type not in allowed:
-            return False
-        if child.type == "identifier" and _get_text(source_bytes, child) not in bound:
-            return False
-        pending.extend(child.named_children)
-    arguments = function_node.parent
-    refinement = arguments.parent if arguments is not None else None
-    if (
-        arguments is None
-        or arguments.type != "arguments"
-        or refinement is None
-        or refinement.type != "call_expression"
-    ):
-        return False
-    refinement_args = _html_call_arguments(refinement)
-    if not refinement_args or refinement_args[0] != function_node:
-        return False
-    function = refinement.child_by_field_name("function")
-    if function is None or function.type != "member_expression":
-        return False
-    method = function.child_by_field_name("property")
-    object_call = function.child_by_field_name("object")
-    if (
-        method is None
-        or _get_text(source_bytes, method) != "refine"
-        or object_call is None
-        or object_call.type != "call_expression"
-    ):
-        return False
-    constructor = object_call.child_by_field_name("function")
-    if constructor is None or constructor.type != "member_expression":
-        return False
-    zod = constructor.child_by_field_name("object")
-    method = constructor.child_by_field_name("property")
-    if (
-        not _imported_form_api(zod, bindings, "zod", "z")
-        or method is None
-        or _get_text(source_bytes, method) != "object"
-    ):
-        return False
-    shape = _html_call_arguments(object_call)
-    if len(shape) != 1 or shape[0].type != "object":
-        return False
-    entries = {}
-    for entry in shape[0].named_children:
-        if entry.type == "comment":
-            continue
-        key = entry.child_by_field_name("key")
-        value = entry.child_by_field_name("value")
-        if (
-            entry.type != "pair"
-            or key is None
-            or value is None
-            or key.type != "property_identifier"
-        ):
-            return False
-        name = _get_text(source_bytes, key)
-        if name in entries:
-            return False
-        entries[name] = value
-    if any(
-        not _zod_input_field(
-            entries.get(name), source_bytes, _get_text(source_bytes, zod)
-        )
-        for name in fields
-    ):
-        return False
-    declaration = refinement.parent
-    if declaration is None or declaration.type != "variable_declarator":
-        return False
-    name_node = declaration.child_by_field_name("name")
-    if name_node is None or name_node.type != "identifier":
-        return False
-    name = _get_text(source_bytes, name_node)
-    binding = bindings.only_binding(name, refinement)
-    if binding is None or binding[0] != "const" or binding[1] != refinement:
-        return False
-    statement = declaration.parent
-    if (
-        statement is not None
-        and statement.parent is not None
-        and statement.parent.type == "export_statement"
-    ):
-        return False
-    consumers = 0
-    for use in bindings.nodes:
-        if (
-            use.type not in {"identifier", "shorthand_property_identifier"}
-            or _get_text(source_bytes, use) != name
-            or use.id == name_node.id
-        ):
-            continue
-        parent = use.parent
-        if parent is not None and parent.type == "type_query":
-            continue
-        call = parent.parent if parent is not None else None
-        if (
-            parent is None
-            or parent.type != "arguments"
-            or call is None
-            or call.type != "call_expression"
-        ):
-            return False
-        if _html_call_arguments(call) != [use] or not _imported_form_api(
-            call.child_by_field_name("function"),
-            bindings,
-            "@hookform/resolvers/zod",
-            "zodResolver",
-        ):
-            return False
-        pair = call.parent
-        key = pair.child_by_field_name("key") if pair is not None else None
-        if (
-            pair is None
-            or pair.type != "pair"
-            or key is None
-            or _get_text(source_bytes, key) != "resolver"
-        ):
-            return False
-        options = pair.parent
-        args = options.parent if options is not None else None
-        hook = args.parent if args is not None else None
-        if (
-            options is None
-            or options.type != "object"
-            or args is None
-            or args.type != "arguments"
-            or hook is None
-            or hook.type != "call_expression"
-        ):
-            return False
-        if _html_call_arguments(hook) != [options] or not _imported_form_api(
-            hook.child_by_field_name("function"), bindings, "react-hook-form", "useForm"
-        ):
-            return False
-        consumers += 1
-    return consumers > 0
-
-
-def _compares_one_form_entry_twice(
-    node, left, right, source_bytes: bytes, bindings
-) -> bool:
-    """``data.password === data.confirm_password`` inside ``(data) => ...``, or a
-    destructured ``({ password, confirmPassword }) => password === confirmPassword``:
-    a password and its confirmation in a proven local browser form resolver.
-    A matching pair of field names alone is not a trust-boundary proof."""
-    left = _unwrap_ts_expression(left)
-    right = _unwrap_ts_expression(right)
-    if left is None or right is None:
-        return False
-    function_node = _enclosing_ts_function(node)
-    if function_node is None:
-        return False
-    patterns = _ts_parameter_patterns(function_node)
-    if left.type == "member_expression" and right.type == "member_expression":
-        receivers = [operand.child_by_field_name("object") for operand in (left, right)]
-        properties = [
-            operand.child_by_field_name("property") for operand in (left, right)
-        ]
-        if any(
-            receiver is None or receiver.type != "identifier" for receiver in receivers
-        ):
-            return False
-        if any(
-            prop is None or prop.type != "property_identifier" for prop in properties
-        ):
-            return False
-        record = _get_text(source_bytes, receivers[0])
-        if record != _get_text(source_bytes, receivers[1]):
-            return False
-        pattern = next(
-            (
-                candidate
-                for candidate in patterns
-                if candidate.type == "identifier"
-                and _get_text(source_bytes, candidate) == record
-            ),
-            None,
-        )
-        bound = {record}
-        fields = [_get_text(source_bytes, prop) for prop in properties]
-    elif left.type == "identifier" and right.type == "identifier":
-        names = [_get_text(source_bytes, operand) for operand in (left, right)]
-        pattern = None
-        fields = []
-        for candidate in patterns:
-            if candidate.type != "object_pattern":
-                continue
-            destructured = _destructured_field_names(candidate, source_bytes)
-            if all(name in destructured for name in names):
-                pattern = candidate
-                fields = [destructured[name] for name in names]
-                break
-        bound = set(names)
-    else:
-        return False
-    if pattern is None or not _is_password_confirmation_pair(*fields):
-        return False
-    return not _ts_name_rebound(
-        function_node, pattern, bound, source_bytes
-    ) and _local_form_refinement(function_node, fields, bound, source_bytes, bindings)
 
 
 def _extract_var_name(node, source_bytes: bytes) -> str | None:
@@ -1268,6 +870,16 @@ class _JsBindings:
             child = stack.pop()
             if child.type in {"identifier", "shorthand_property_identifier_pattern"}:
                 names.append(_get_text(self.source_bytes, child))
+            elif child.type in {"object_assignment_pattern", "assignment_pattern"}:
+                # ``{ a = process.env.A }``: only ``a`` is bound; the default
+                # value is an ordinary expression.
+                left = child.child_by_field_name("left")
+                if left is not None:
+                    stack.append(left)
+            elif child.type in {"required_parameter", "optional_parameter"}:
+                pattern = child.child_by_field_name("pattern")
+                if pattern is not None:
+                    stack.append(pattern)
             else:
                 stack.extend(child.children)
         return names
@@ -1747,6 +1359,306 @@ def _html_literal_can_execute(value: str) -> bool:
     return parser.executable
 
 
+# Placeholders for interpolated values that cannot carry markup. A number
+# (or a string made from one) is digits; an escaped value can still hold the
+# characters its escaper leaves alone, so where it may sit is checked below.
+_NUMBER_TEXT = "0"
+_HTML_ESCAPED = "\ue001"
+_URI_COMPONENT = "\ue002"
+_URI_ENCODED = "\ue003"
+_ESCAPED_PLACEHOLDERS = (_HTML_ESCAPED, _URI_COMPONENT, _URI_ENCODED)
+_NUMERIC_OPERATORS = frozenset(
+    {"-", "*", "/", "%", "**", "&", "|", "^", "<<", ">>", ">>>"}
+)
+_NUMBER_FUNCTIONS = frozenset({"Number", "parseInt", "parseFloat"})
+_NUMBER_TEXT_METHODS = frozenset({"toFixed", "toPrecision", "toExponential", "toString"})
+_TEXT_METHODS = frozenset(
+    {"slice", "substring", "substr", "toUpperCase", "toLowerCase", "trim"}
+)
+# (package, imported name) of HTML-escaping functions; "*" is a namespace or
+# default import whose ``escape``/``encode`` member is the escaper.
+_HTML_ESCAPER_IMPORTS = {
+    "escape-html": {"default"},
+    "lodash.escape": {"default"},
+    "lodash": {"escape"},
+    "lodash-es": {"escape"},
+    "underscore": {"escape"},
+    "html-escaper": {"escape"},
+    "he": {"escape", "encode"},
+    "validator": {"escape"},
+}
+_HTML_ESCAPER_NAMESPACES = {
+    "lodash": {"escape"},
+    "lodash-es": {"escape"},
+    "underscore": {"escape"},
+    "he": {"escape", "encode"},
+    "validator": {"escape"},
+}
+_URL_ATTRIBUTES = frozenset(
+    {
+        "href", "src", "action", "formaction", "xlink:href", "data",
+        "background", "poster", "cite", "longdesc", "lowsrc", "dynsrc",
+        "codebase", "manifest", "ping", "srcset",
+    }
+)  # fmt: skip
+
+
+def _escaper_kind(call, source_bytes: bytes, bindings: _JsBindings, depth: int = 0):
+    """The placeholder for a call to a known escaping function: the global
+    ``encodeURIComponent``/``encodeURI``, an imported HTML escaper, or a
+    same-file function whose only statement returns one of those."""
+    call = _unwrap_ts_expression(call)
+    if call is None or call.type != "call_expression" or depth > 2:
+        return None
+    if not _html_call_arguments(call):
+        return None
+    function = _unwrap_ts_expression(call.child_by_field_name("function"))
+    if function is None:
+        return None
+    if function.type == "identifier":
+        name = _get_text(source_bytes, function)
+        if name in {"encodeURIComponent", "encodeURI"} and bindings.unbound(name):
+            return _URI_COMPONENT if name == "encodeURIComponent" else _URI_ENCODED
+        binding = bindings.only_binding(name, function)
+        if binding is None:
+            return None
+        kind, _value, source, imported = binding
+        if kind == "import":
+            return (
+                _HTML_ESCAPED
+                if imported in _HTML_ESCAPER_IMPORTS.get(source or "", ())
+                else None
+            )
+        if kind == "declaration":
+            return _wrapper_escaper_kind(name, source_bytes, bindings, depth)
+        return None
+    if function.type == "member_expression":
+        owner = _unwrap_ts_expression(function.child_by_field_name("object"))
+        prop = function.child_by_field_name("property")
+        if owner is None or owner.type != "identifier" or prop is None:
+            return None
+        binding = bindings.only_binding(_get_text(source_bytes, owner), owner)
+        if binding is None or binding[0] != "import" or binding[3] not in {"default", "*"}:
+            return None
+        members = _HTML_ESCAPER_NAMESPACES.get(binding[2] or "", ())
+        if _get_text(source_bytes, prop) in members:
+            return _HTML_ESCAPED
+    return None
+
+
+def _wrapper_escaper_kind(name: str, source_bytes: bytes, bindings: _JsBindings, depth: int):
+    declared = bindings.declaration_nodes.get(name, [None])[0]
+    function = declared.parent if declared is not None else None
+    if function is None or function.type != "function_declaration":
+        return None
+    body = function.child_by_field_name("body")
+    if body is None:
+        return None
+    statements = [child for child in body.named_children if child.type != "comment"]
+    if len(statements) != 1 or statements[0].type != "return_statement":
+        return None
+    returned = next(
+        (child for child in statements[0].named_children if child.type != "comment"),
+        None,
+    )
+    return _escaper_kind(returned, source_bytes, bindings, depth + 1)
+
+
+def _number_valued(node, source_bytes: bytes, bindings: _JsBindings, depth: int = 0) -> bool:
+    """``node`` always evaluates to a number, a boolean, or a string made from
+    one: no character of it can open markup."""
+    node = _unwrap_ts_expression(node)
+    if node is None or depth > _MAX_HTML_ALIAS_DEPTH:
+        return False
+    kind = node.type
+    if kind in {"number", "true", "false"}:
+        return True
+    if kind == "unary_expression":
+        operator = node.child_by_field_name("operator")
+        return operator is not None and _get_text(source_bytes, operator) in {
+            "-", "+", "~", "!",
+        }
+    if kind == "binary_expression":
+        operator = node.child_by_field_name("operator")
+        text = _get_text(source_bytes, operator) if operator is not None else ""
+        if text in _NUMERIC_OPERATORS:
+            return True
+        if text == "+":
+            return all(
+                _number_valued(node.child_by_field_name(side), source_bytes, bindings, depth + 1)
+                for side in ("left", "right")
+            )
+        return text in {"<", ">", "<=", ">=", "==", "===", "!=", "!==", "instanceof", "in"}
+    if kind == "ternary_expression":
+        return all(
+            _number_valued(node.child_by_field_name(field), source_bytes, bindings, depth + 1)
+            for field in ("consequence", "alternative")
+        )
+    if kind == "identifier":
+        binding = bindings.only_binding(_get_text(source_bytes, node), node)
+        if binding is None or binding[0] != "const" or binding[1] is None:
+            return False
+        return _number_valued(binding[1], source_bytes, bindings, depth + 1)
+    if kind != "call_expression":
+        return False
+    function = _unwrap_ts_expression(node.child_by_field_name("function"))
+    if function is None:
+        return False
+    if function.type == "identifier":
+        name = _get_text(source_bytes, function)
+        return name in _NUMBER_FUNCTIONS and bindings.unbound(name)
+    if function.type != "member_expression":
+        return False
+    owner = _unwrap_ts_expression(function.child_by_field_name("object"))
+    prop = function.child_by_field_name("property")
+    if owner is None or prop is None:
+        return False
+    method = _get_text(source_bytes, prop)
+    if owner.type == "identifier" and _get_text(source_bytes, owner) in {"Math", "Date"}:
+        owner_name = _get_text(source_bytes, owner)
+        return bindings.unbound(owner_name) and (owner_name == "Math" or method == "now")
+    if method in _NUMBER_TEXT_METHODS:
+        return _number_valued(owner, source_bytes, bindings, depth + 1)
+    if method in _TEXT_METHODS:
+        return _number_valued(owner, source_bytes, bindings, depth + 1)
+    return False
+
+
+def _html_template_values(node, source_bytes: bytes, bindings: _JsBindings, depth: int = 0):
+    """Like ``_html_static_values``, but an interpolated number or escaped
+    value contributes a placeholder instead of making the value unknown."""
+    node = _unwrap_ts_expression(node)
+    if node is None or depth > _MAX_HTML_ALIAS_DEPTH:
+        return None
+    static = _html_static_values(node, source_bytes, bindings, depth)
+    if static is not None:
+        return static
+    if _number_valued(node, source_bytes, bindings):
+        return [_NUMBER_TEXT]
+    escaped = _escaper_kind(node, source_bytes, bindings)
+    if escaped is not None:
+        return [escaped]
+    if node.type == "template_string":
+        values = [""]
+        for child in node.children:
+            if child.type == "`":
+                continue
+            if child.type == "template_substitution":
+                inner = next((c for c in child.named_children), None)
+                parts = _html_template_values(inner, source_bytes, bindings, depth + 1)
+            else:
+                value = _decode_html_js_piece(_get_text(source_bytes, child))
+                parts = [value] if value is not None else None
+            values = _combine_html_values(values, parts)
+            if values is None:
+                return None
+        return values
+    if node.type == "binary_expression":
+        operator = node.child_by_field_name("operator")
+        if operator is None or _get_text(source_bytes, operator) != "+":
+            return None
+        return _combine_html_values(
+            _html_template_values(node.child_by_field_name("left"), source_bytes, bindings, depth + 1),
+            _html_template_values(node.child_by_field_name("right"), source_bytes, bindings, depth + 1),
+        )
+    if node.type == "ternary_expression":
+        branches = [
+            _html_template_values(node.child_by_field_name(field), source_bytes, bindings, depth + 1)
+            for field in ("consequence", "alternative")
+        ]
+        if any(branch is None for branch in branches):
+            return None
+        values = branches[0] + branches[1]
+        return values if len(values) <= _MAX_HTML_VALUES else None
+    if node.type == "identifier":
+        binding = bindings.only_binding(_get_text(source_bytes, node), node)
+        if binding is None or binding[0] != "const" or binding[1] is None:
+            return None
+        return _html_template_values(binding[1], source_bytes, bindings, depth + 1)
+    return None
+
+
+class _EscapedValuePositions(HTMLParser):
+    """Where escaped placeholders landed: element text and quoted, non-script,
+    non-URL-scheme attribute values are inert; anything else is not."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.unsafe = False
+
+    def handle_starttag(self, tag, attrs):
+        raw = self.get_starttag_text() or ""
+        if any(marker in tag for marker in _ESCAPED_PLACEHOLDERS):
+            self.unsafe = True
+            return
+        for name, value in attrs:
+            if any(marker in name for marker in _ESCAPED_PLACEHOLDERS):
+                self.unsafe = True
+                return
+            if value is None or not any(marker in value for marker in _ESCAPED_PLACEHOLDERS):
+                continue
+            if name.startswith("on") or name in {"style", "srcdoc"}:
+                self.unsafe = True
+                return
+            if name in _URL_ATTRIBUTES:
+                first = min(
+                    value.index(marker) for marker in _ESCAPED_PLACEHOLDERS if marker in value
+                )
+                prefix = value[:first]
+                fixed = any(mark in prefix for mark in "/?#") or bool(
+                    re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", prefix)
+                )
+                if not fixed and value[first] != _URI_COMPONENT:
+                    self.unsafe = True
+                    return
+        if not _placeholders_quoted(raw):
+            self.unsafe = True
+
+    handle_startendtag = handle_starttag
+
+    def handle_comment(self, data):
+        if any(marker in data for marker in _ESCAPED_PLACEHOLDERS):
+            self.unsafe = True
+
+    def unknown_decl(self, data):
+        self.unsafe = True
+
+
+def _placeholders_quoted(raw_tag: str) -> bool:
+    """Every escaped placeholder in a start tag sits inside a quoted value;
+    URL encoders leave ``'`` alone, so they need double quotes."""
+    quote = None
+    for char in raw_tag:
+        if quote is None:
+            if char in {"\"", "'"}:
+                quote = char
+            elif char in _ESCAPED_PLACEHOLDERS:
+                return False
+            continue
+        if char == quote:
+            quote = None
+        elif char in {_URI_COMPONENT, _URI_ENCODED} and quote != '"':
+            return False
+    return True
+
+
+def _html_template_can_execute(value: str) -> bool:
+    if _html_literal_can_execute(value):
+        return True
+    if not any(marker in value for marker in _ESCAPED_PLACEHOLDERS):
+        return False
+    # An escaper leaves spaces and ``=`` alone: right after ``<`` it names a tag.
+    if re.search("</?[" + "".join(_ESCAPED_PLACEHOLDERS) + "]", value):
+        return True
+    parser = _EscapedValuePositions()
+    try:
+        parser.feed(value)
+        parser.close()
+    except (AssertionError, ValueError, RecursionError):
+        return True
+    return parser.unsafe
+
+
 def _html_assignment_rhs_requires_finding(
     rhs_node, source_bytes: bytes, bindings: _JsBindings
 ) -> bool:
@@ -1756,6 +1668,10 @@ def _html_assignment_rhs_requires_finding(
     values = _html_static_values(rhs_node, source_bytes, bindings)
     if values is not None:
         return any(_html_literal_can_execute(value) for value in values)
+
+    values = _html_template_values(rhs_node, source_bytes, bindings)
+    if values is not None:
+        return any(_html_template_can_execute(value) for value in values)
 
     if _is_safe_html_sanitizer_call(rhs_node, source_bytes, bindings):
         return False
@@ -1982,11 +1898,25 @@ def _node_name_text(node, source_bytes: bytes) -> str | None:
     return None
 
 
-def _math_random_requires_finding(prop_node, source_bytes: bytes) -> bool:
+_DATA_GENERATOR_PATH_RE = re.compile(
+    r"(?:^|/)(?:seeds?|seeders?|fixtures?|__mocks__|mocks?|fakes?|faker)(?:/|$)",
+    re.IGNORECASE,
+)
+
+
+def _math_random_requires_finding(
+    prop_node, source_bytes: bytes, file_path: str = ""
+) -> bool:
     statement_text = _nearest_statement_text(prop_node, source_bytes)
     if _text_has_random_security_context(statement_text):
         return True
+    if _DATA_GENERATOR_PATH_RE.search(file_path.replace("\\", "/")):
+        # Seed and fixture generators make demo data, not secrets.
+        return False
 
+    # The value's role is the variable it initializes and the function that
+    # computes it; an outer function (``SessionHandler``) around a helper that
+    # rolls demo numbers does not make them session tokens.
     current = prop_node.parent
     while current is not None:
         if current.type in {
@@ -1998,9 +1928,193 @@ def _math_random_requires_finding(prop_node, source_bytes: bytes) -> bool:
             name = _node_name_text(current, source_bytes)
             if name and _text_has_random_security_context(name):
                 return True
+        if current.type in {
+            "function_declaration",
+            "function_expression",
+            "method_definition",
+            "arrow_function",
+            "generator_function_declaration",
+        }:
+            if current.type in {"arrow_function", "function_expression"}:
+                declarator = current.parent
+                if declarator is not None and declarator.type == "variable_declarator":
+                    name = _node_name_text(declarator, source_bytes)
+                    return bool(name and _text_has_random_security_context(name))
+            return False
         current = current.parent
 
     return False
+
+
+def _enclosing_const_value(identifier, source_bytes: bytes):
+    """The initializer of the nearest enclosing ``const`` declaration of this
+    name made before the use. A ``const`` cannot be reassigned, and no ``var``
+    or ``eval`` can redeclare it in the same scope."""
+    name = _get_text(source_bytes, identifier)
+    current = identifier.parent
+    while current is not None:
+        if current.type in {"statement_block", "program", "switch_case"}:
+            for statement in current.named_children:
+                if statement.start_byte >= identifier.start_byte:
+                    break
+                if statement.type != "lexical_declaration":
+                    continue
+                kind = statement.child_by_field_name("kind")
+                if kind is None or _get_text(source_bytes, kind) != "const":
+                    continue
+                for declarator in statement.named_children:
+                    target = declarator.child_by_field_name("name")
+                    if (
+                        declarator.type == "variable_declarator"
+                        and target is not None
+                        and target.type == "identifier"
+                        and _get_text(source_bytes, target) == name
+                    ):
+                        return declarator.child_by_field_name("value")
+        if current.type in _TS_FUNCTION_NODE_TYPES:
+            for pattern in _function_parameter_names(current, source_bytes):
+                if pattern == name:
+                    return None
+        current = current.parent
+    return None
+
+
+def _function_parameter_names(function, source_bytes: bytes) -> set[str]:
+    names = set()
+    single = function.child_by_field_name("parameter")
+    params = [single] if single is not None else []
+    container = function.child_by_field_name("parameters")
+    if container is not None:
+        params.extend(container.named_children)
+    for param in params:
+        stack = [param]
+        while stack:
+            node = stack.pop()
+            if node.type in {"identifier", "shorthand_property_identifier_pattern"}:
+                names.add(_get_text(source_bytes, node))
+            else:
+                stack.extend(node.children)
+    return names
+
+
+_CONSTANT_MATH_CALLS = frozenset(
+    {"random", "floor", "ceil", "round", "abs", "min", "max", "trunc", "pow"}
+)
+
+
+def _code_arguments_are_constant(node, source_bytes: bytes, bindings) -> bool:
+    """``eval(expression)`` / ``new Function('a', 'return a')`` whose code is
+    built only from literals, numbers (``Math.random()`` arithmetic) and
+    elements of literal arrays: there is no input to inject."""
+    call = node.parent
+    if node.type == "identifier" and call is not None and call.type == "call_expression":
+        pass
+    elif call is not None and call.type == "new_expression":
+        pass
+    else:
+        return False
+    arguments = _html_call_arguments(call)
+    return bool(arguments) and all(
+        _constant_code_value(argument, source_bytes, bindings, 0)
+        for argument in arguments
+    )
+
+
+def _constant_code_value(node, source_bytes: bytes, bindings, depth: int) -> bool:
+    node = _unwrap_ts_expression(node)
+    if node is None or depth > 40:
+        return False
+    if node.type in {"string", "number", "true", "false"}:
+        return True
+    if node.type == "template_string":
+        return all(
+            _constant_code_value(
+                next(iter(child.named_children), None), source_bytes, bindings, depth + 1
+            )
+            for child in node.named_children
+            if child.type == "template_substitution"
+        )
+    if node.type in {"binary_expression", "unary_expression"}:
+        return all(
+            _constant_code_value(child, source_bytes, bindings, depth + 1)
+            for child in node.named_children
+        )
+    if node.type == "parenthesized_expression":
+        return _constant_code_value(
+            next(iter(node.named_children), None), source_bytes, bindings, depth + 1
+        )
+    if node.type == "identifier":
+        value = _enclosing_const_value(node, source_bytes)
+        if value is None:
+            return False
+        return _constant_code_value(value, source_bytes, bindings, depth + 1)
+    if node.type == "array":
+        return all(
+            _constant_code_value(child, source_bytes, bindings, depth + 1)
+            for child in node.named_children
+        )
+    if node.type == "subscript_expression":
+        # ``operators[i]`` of a literal array: any element is a constant.
+        return _constant_code_value(
+            node.child_by_field_name("object"), source_bytes, bindings, depth + 1
+        )
+    if node.type == "call_expression":
+        callee = _unwrap_ts_expression(node.child_by_field_name("function"))
+        if callee is None or callee.type != "member_expression":
+            return False
+        obj = _unwrap_ts_expression(callee.child_by_field_name("object"))
+        prop = callee.child_by_field_name("property")
+        method = _get_text(source_bytes, prop) if prop is not None else ""
+        if (
+            obj is not None
+            and obj.type == "identifier"
+            and _get_text(source_bytes, obj) == "Math"
+            and bindings.unbound("Math")
+            and method in _CONSTANT_MATH_CALLS
+        ):
+            return all(
+                _constant_code_value(arg, source_bytes, bindings, depth + 1)
+                for arg in _html_call_arguments(node)
+            )
+        if method == "toString" and not _html_call_arguments(node):
+            return _constant_code_value(obj, source_bytes, bindings, depth + 1)
+    return False
+
+
+def _receiver_package(obj_node, source_bytes: bytes, bindings) -> str | None:
+    """The package an ``exec`` receiver comes from, when the name is bound
+    exactly once by an import or a ``require("pkg")`` declaration (plain or
+    destructured) and never reassigned."""
+    obj_node = _unwrap_ts_expression(obj_node)
+    if obj_node is None or obj_node.type != "identifier":
+        return None
+    name = _get_text(source_bytes, obj_node)
+    binding = bindings.only_binding(name, obj_node)
+    if binding is None:
+        return None
+    kind, _value, source, _imported = binding
+    if kind == "import":
+        return source or None
+    if kind not in {"const", "let", "var"}:
+        return None
+    declared = bindings.declaration_nodes[name][0]
+    declarator = declared
+    while declarator is not None and declarator.type != "variable_declarator":
+        declarator = declarator.parent
+    if declarator is None:
+        return None
+    value = _unwrap_ts_expression(declarator.child_by_field_name("value"))
+    if value is None or value.type != "call_expression":
+        return None
+    function = value.child_by_field_name("function")
+    if (
+        function is None
+        or function.type != "identifier"
+        or _get_text(source_bytes, function) != "require"
+        or not bindings.unbound("require")
+    ):
+        return None
+    return _first_static_call_arg(value, source_bytes)
 
 
 def _child_process_aliases(
@@ -2669,9 +2783,43 @@ _AXIOS_REQUEST_METHODS = frozenset(
 )
 
 
+_UNPROVEN_SSRF_MESSAGE = (
+    "Review (not listed, not blocking): {call} sends a request to a URL held "
+    "in a variable, but no request data was traced into it; configuration, "
+    "stored settings, constants and callers outside this handler choose it. "
+    "If untrusted input can pick the host, check it against an allowlist."
+)
+
+
+def _mark_unproven_request_urls(findings) -> None:
+    """The ``fetch()``/axios pattern (SKY-D216) fires on any variable URL.
+
+    Request taint (``express_taint``) adds ``security_evidence`` when request
+    data chooses the URL. Without it the destination is chosen by the
+    operator, an admin setting, a constant or an unseen caller, so the finding
+    stays in the report as a review signal that is not listed and does not
+    fail gates (``reporting.listing.is_unproven_source_review``)."""
+    for finding in findings:
+        if finding.get("rule_id") != "SKY-D216" or "security_evidence" in finding:
+            continue
+        message = str(finding.get("message") or "")
+        if message.startswith("fetch()"):
+            call = "fetch()"
+        elif message.startswith("axios"):
+            call = "an axios call"
+        else:
+            continue
+        finding["review_item"] = {"kind": "unproven_source", "blocking": False}
+        finding["message"] = _UNPROVEN_SSRF_MESSAGE.format(call=call)
+
+
 def _axios_call_sends_request(args_node, source_bytes: bytes) -> bool:
     call = args_node.parent
     function = call.child_by_field_name("function") if call is not None else None
+    if function is not None and function.type == "await_expression":
+        # ``await axios.get<T>(url)``: tree-sitter parses the awaited member
+        # as the callee of a call that carries type arguments.
+        function = next(iter(function.named_children), None)
     if function is None or function.type != "member_expression":
         return True
     member = function.child_by_field_name("property")
@@ -2739,6 +2887,31 @@ def _resolved_template_prefix(node, source_bytes: bytes, bindings, depth: int):
     return prefix, False
 
 
+def _imported_project_constant(identifier, source_bytes: bytes, bindings) -> str | None:
+    """``import { UPDATES_URL } from '@/lib/constants'`` where that project
+    file declares ``export const UPDATES_URL = 'https://...'``: the literal,
+    read through ``project_helpers`` (bounded, never ``node_modules``)."""
+    file_path = getattr(bindings, "file_path", None)
+    if not file_path:
+        return None
+    binding = bindings.only_binding(_get_text(source_bytes, identifier), identifier)
+    if binding is None or binding[0] != "import" or not binding[2]:
+        return None
+    imported = binding[3]
+    if not imported or imported in {"default", "*"}:
+        return None
+    from skylos.visitors.languages.typescript.project_helpers import (
+        exported_constant_string,
+        nearest_project_root,
+    )
+
+    importer = os.path.realpath(file_path)
+    root = nearest_project_root(importer)
+    if root is None:
+        return None
+    return exported_constant_string(root, importer, binding[2], imported)
+
+
 def _strict_static_prefix(node, source_bytes: bytes, bindings, depth: int):
     """The known prefix of a value read through a binding or a template
     substitution. Only literals, names that can hold one value and ``+``
@@ -2758,6 +2931,9 @@ def _strict_static_prefix(node, source_bytes: bytes, bindings, depth: int):
         if value is None:
             if _is_bundled_asset_url(node, source_bytes, bindings):
                 return "", False
+            imported = _imported_project_constant(node, source_bytes, bindings)
+            if imported is not None:
+                return imported, False
             return "", True
         return _strict_static_prefix(value, source_bytes, bindings, depth + 1)
     if node.type == "template_string":
@@ -2822,10 +2998,18 @@ def _static_prefix_until_dynamic(
 
 def _redirect_target_is_same_origin(node, source_bytes: bytes) -> bool:
     """A literal relative path (``/users/`` + id) or fixed ``scheme://host/``
-    prefix, or ``new URL('/path', request.url)``, cannot leave the site."""
+    prefix, or ``new URL('/path', request.url)``, cannot leave the site; a
+    conditional between such targets cannot either."""
     node = _unwrap_ts_expression(node)
     if node is None:
         return False
+    if node.type == "ternary_expression":
+        return all(
+            _redirect_target_is_same_origin(
+                node.child_by_field_name(field), source_bytes
+            )
+            for field in ("consequence", "alternative")
+        )
     if node.type == "new_expression":
         constructor = node.child_by_field_name("constructor")
         arguments = _html_call_arguments(node)
@@ -2960,6 +3144,13 @@ def _url_arg_is_ssrf_relevant(
 
     return True
 
+
+# Test-runner configuration (``cypress.config.ts``, ``playwright.config.ts``,
+# ``jest.config.js``, ``karma.conf.js``): it points the runner at a local app.
+_TEST_RUNNER_CONFIG_RE = re.compile(
+    r"(?:cypress|playwright|jest|vitest|karma|protractor|wdio|nightwatch)"
+    r"(?:\.[\w-]+)?\.(?:config|conf)\.[cm]?[jt]s"
+)
 
 _SECRET_PREFIXES = (
     "sk-",
@@ -3363,9 +3554,14 @@ def scan_danger(
             ):
                 continue
             if cap_name == "math_random" and not _math_random_requires_finding(
-                node, source_bytes
+                node, source_bytes, str(file_path)
             ):
                 continue
+            if cap_name in {"eval", "new_func"}:
+                if html_bindings is None:
+                    html_bindings = _JsBindings(root_node, source_bytes)
+                if _code_arguments_are_constant(node, source_bytes, html_bindings):
+                    continue
             findings.append(
                 {
                     "rule_id": rule_id,
@@ -3377,6 +3573,7 @@ def scan_danger(
                 }
             )
 
+    exec_bindings = None
     for prop_node in exec_prop_nodes:
         member_node = prop_node.parent
         if member_node is None:
@@ -3395,6 +3592,12 @@ def scan_danger(
             and database_names_exempt
         ):
             continue
+        if not is_command_module:
+            if exec_bindings is None:
+                exec_bindings = _JsBindings(root_node, source_bytes)
+            package = _receiver_package(obj_node, source_bytes, exec_bindings)
+            if package is not None and _DATABASE_EXEC_PACKAGE_RE.match(package):
+                continue
         if not is_command_module and not command_module_loaded:
             continue
         call_expr = member_node.parent
@@ -3408,19 +3611,32 @@ def scan_danger(
                 )
             )
         command_kind = child_process_aliases.get(obj_name, default_command_kind)
-        findings.append(
-            {
-                "rule_id": "SKY-D212",
-                "severity": "HIGH",
-                "message": _COMMAND_EXEC_MESSAGES[command_kind],
-                "file": str(file_path),
-                "line": prop_node.start_point[0] + 1,
-                "col": 0,
+        exec_finding = {
+            "rule_id": "SKY-D212",
+            "severity": "HIGH",
+            "message": _COMMAND_EXEC_MESSAGES[command_kind],
+            "file": str(file_path),
+            "line": prop_node.start_point[0] + 1,
+            "col": 0,
+        }
+        if command is not None:
+            # The whole command line is a literal: no caller value reaches
+            # the shell, as for the constant SKY-D203/D209 calls.
+            exec_finding["low_risk_context"] = {
+                "reason": "constant-argument",
+                "detail": "the command is a string literal",
             }
-        )
+        findings.append(exec_finding)
 
     # (SKY-S101) via batched string captures
     is_test_file = get_non_library_dir_kind(file_path) == "test"
+    test_runner_config = bool(
+        _TEST_RUNNER_CONFIG_RE.fullmatch(os.path.basename(str(file_path)).lower())
+    )
+    # Test code (``*.spec.ts``, ``__tests__/``, Cypress and e2e suites, judged
+    # from the nearest package root) follows the secrets scanner's policy for
+    # tests: only provider-shaped tokens.
+    in_test_code = is_test_source_file(file_path)
     for cap_name in ("string_node", "template_node"):
         for node in complex_captures.get(cap_name, []):
             text = _get_text(source_bytes, node)
@@ -3428,7 +3644,9 @@ def scan_danger(
                 text = text[1:]
             if text and text[-1] in ("'", '"', "`"):
                 text = text[:-1]
-            if len(text) >= MIN_SECRET_LENGTH:
+            if len(text) >= MIN_SECRET_LENGTH and (
+                not in_test_code or matches_provider_pattern(text)
+            ):
                 found_prefix = False
                 for prefix in _SECRET_PREFIXES:
                     if text.startswith(prefix) or text.lower().startswith(
@@ -3454,6 +3672,7 @@ def scan_danger(
                     and not _looks_like_ordered_character_set(
                         text, min_entropy=ENTROPY_THRESHOLD
                     )
+                    and not secret_shapes.is_crypto_address(text)
                 ):
                     entropy_finding = {
                         "rule_id": "SKY-S101",
@@ -3477,7 +3696,7 @@ def scan_danger(
 
             # Hardcoded internal URL (SKY-D248)
             if (
-                not is_test_file
+                not (is_test_file or in_test_code or test_runner_config)
                 and len(text) >= MIN_SECRET_LENGTH
             ):
                 text_lower = text.lower()
@@ -3486,6 +3705,8 @@ def scan_danger(
                         if environment_bindings is None:
                             environment_bindings = _JsBindings(root_node, source_bytes)
                         if _is_environment_default(node, source_bytes, environment_bindings):
+                            break
+                        if _is_url_parse_base(node, source_bytes):
                             break
                         findings.append(
                             {
@@ -3499,6 +3720,9 @@ def scan_danger(
                         )
                         break
 
+    if not in_test_code:
+        _check_hardcoded_signing_secrets(root_node, source_bytes, file_path, findings)
+
     # --- fetch SSRF (SKY-D216) ---
     url_bindings = None
     request_calls = {"fetch_args": [], "axios_args": []}
@@ -3511,6 +3735,8 @@ def scan_danger(
                 for node in complex_captures.get("axios_args", [])
                 if _axios_call_sends_request(node, source_bytes)
             ]
+    if url_bindings is not None:
+        url_bindings.file_path = str(file_path)
     for node in request_calls["fetch_args"]:
         first_arg = _first_real_arg(node)
         if first_arg and _url_arg_is_ssrf_relevant(
@@ -3565,6 +3791,12 @@ def scan_danger(
                             "reason": "non-sensitive-hash-input",
                             "detail": "the hashed data is not a credential, identity or certificate",
                         }
+                        helper = _hash_helper_parameters(node, source_bytes, hashed)
+                        if helper is not None:
+                            # The name of a parameter says nothing about what
+                            # callers pass; the project pass reads the calls
+                            # (``list_weak_hashes_of_credentials``).
+                            weak_hash["low_risk_context"]["caller_supplied"] = helper
                     findings.append(weak_hash)
                 break
 
@@ -3786,11 +4018,14 @@ def scan_danger(
     _check_timing_comparison(root_node, source_bytes, file_path, findings)
 
     # --- Sensitive data in localStorage/sessionStorage (SKY-D270) ---
+    # Web storage is read by script in a user's browser; a test that seeds a
+    # token to sign in its fixture user ships to no browser (``production
+    # only``, like TLS verification off in a Python test).
     for cap_name, storage_name in (
         ("ls_set_args", "localStorage"),
         ("ss_set_args", "sessionStorage"),
     ):
-        for args_node in complex_captures.get(cap_name, []):
+        for args_node in () if in_test_code else complex_captures.get(cap_name, []):
             first_arg = _first_real_arg(args_node)
             if not first_arg or first_arg.type != "string":
                 continue
@@ -3832,6 +4067,10 @@ def scan_danger(
     _check_archive_extraction_path_traversal(
         root_node, source_bytes, file_path, findings
     )
+    # XXE parser options and function-rebuilding deserializers (SKY-D236,
+    # SKY-D233); request data raises these to CRITICAL in the merge below.
+    check_library_sinks(root_node, source_bytes, str(file_path), findings)
+    check_angular_sanitizer_bypass(root_node, source_bytes, str(file_path), findings)
     request_taint = scan_request_taint(
         root_node,
         source_bytes,
@@ -3847,6 +4086,7 @@ def scan_danger(
             or finding.get("line")
             not in request_taint.safe_sink_lines.get(finding.get("rule_id"), ())
         ]
+    _mark_unproven_request_urls(findings)
 
     # D281 is the framework-specific taint proof for this exact SQL sink. Keep
     # one actionable result without hiding a different generic sink that happens
@@ -12692,56 +12932,23 @@ class _ServerActionSQLTaint:
 def _check_timing_comparison(
     root_node, source_bytes: bytes, file_path: str, findings: list[dict]
 ) -> None:
-    """SKY-D253: Detect == or === comparisons with sensitive variable names."""
-    bindings = _JsBindings(root_node, source_bytes)
-    stack = [root_node]
-    while stack:
-        node = stack.pop()
-        if node.type == "binary_expression":
-            operator = None
-            for child in node.children:
-                if not child.is_named and child.type in ("==", "===", "!=", "!=="):
-                    operator = child.type
-                    break
-            if operator:
-                left = node.child_by_field_name("left")
-                right = node.child_by_field_name("right")
-                # Strict equality against a boolean checks type/value, never
-                # a variable-length secret's contents. Loose equality can
-                # coerce an operand, so it keeps the existing audit behavior.
-                boolean_literal = operator in {"===", "!=="} and any(
-                    value is not None and value.type in {"true", "false"}
-                    for value in (
-                        _unwrap_ts_expression(left),
-                        _unwrap_ts_expression(right),
-                    )
-                )
-                if not (
-                    _is_null_literal_expression(left)
-                    or _is_null_literal_expression(right)
-                    or _is_global_undefined(left, source_bytes, bindings)
-                    or _is_global_undefined(right, source_bytes, bindings)
-                    or boolean_literal
-                    or _compares_one_form_entry_twice(node, left, right, source_bytes, bindings)
-                ):
-                    for operand in (left, right):
-                        if operand is None:
-                            continue
-                        name = _extract_var_name(operand, source_bytes)
-                        if name and _is_timing_sensitive(name):
-                            findings.append(
-                                {
-                                    "rule_id": "SKY-D253",
-                                    "severity": "MEDIUM",
-                                    "message": f"Timing-unsafe comparison of '{name}'. Use crypto.timingSafeEqual() for constant-time comparison.",
-                                    "file": str(file_path),
-                                    "line": node.start_point[0] + 1,
-                                    "col": 0,
-                                }
-                            )
-                            break
-        for child in node.children:
-            stack.append(child)
+    """SKY-D253: a server secret compared with request input using ``==``.
+
+    The operand classification lives in ``timing_compare``: a name that only
+    ends in token/hash, a literal, a digest or two request fields compared
+    with each other is not a timing oracle."""
+    from skylos.visitors.languages.typescript.timing_compare import (
+        check_timing_comparison,
+    )
+
+    check_timing_comparison(
+        root_node,
+        source_bytes,
+        file_path,
+        findings,
+        _JsBindings(root_node, source_bytes),
+        _is_environment_lookup,
+    )
 
 
 def _check_error_disclosure(
@@ -12821,6 +13028,76 @@ def _declared_value_names(name: str, source_bytes) -> list[str]:
     return names
 
 
+def _enclosing_ts_function(node):
+    current = node.parent
+    while current is not None:
+        if current.type in _TS_FUNCTION_NODE_TYPES:
+            return current
+        current = current.parent
+    return None
+
+
+def _ts_parameter_patterns(function_node) -> list:
+    single = function_node.child_by_field_name("parameter")
+    if single is not None:
+        return [single]
+    parameters = function_node.child_by_field_name("parameters")
+    if parameters is None:
+        return []
+    patterns = []
+    for parameter in parameters.named_children:
+        if parameter.type in {"required_parameter", "optional_parameter"}:
+            pattern = parameter.child_by_field_name("pattern")
+            if pattern is not None:
+                patterns.append(pattern)
+        else:
+            patterns.append(parameter)
+    return patterns
+
+
+def _hash_helper_parameters(hash_args, source_bytes, hashed) -> dict | None:
+    """``export const hash = (data) => createHash('md5').update(data)``: the
+    module-level function that hashes its own parameters, as
+    {"function": name, "parameters": [...]}, else None."""
+    function = _enclosing_ts_function(hash_args)
+    if function is None or function.type == "method_definition":
+        return None
+    name_node = function.child_by_field_name("name")
+    holder = function
+    if (
+        name_node is None
+        and function.parent is not None
+        and function.parent.type == "variable_declarator"
+    ):
+        holder = function.parent
+        name_node = holder.child_by_field_name("name")
+    if name_node is None or name_node.type != "identifier":
+        return None
+    statement = holder if holder.type != "variable_declarator" else holder.parent
+    if (
+        statement is not None
+        and statement.parent is not None
+        and statement.parent.type == "export_statement"
+    ):
+        statement = statement.parent
+    if (
+        statement is None
+        or statement.parent is None
+        or statement.parent.type != "program"
+    ):
+        return None
+    parameters = []
+    for pattern in _ts_parameter_patterns(function):
+        parameters.extend(_identifiers_in(pattern, source_bytes))
+    hashed_parameters = [name for name in parameters if name in set(hashed)]
+    if not hashed_parameters:
+        return None
+    return {
+        "function": _get_text(source_bytes, name_node),
+        "parameters": hashed_parameters,
+    }
+
+
 def _chained_hash_input_names(hash_args, source_bytes) -> list[str] | None:
     """``createHash('md5').update(data)``: the names that feed the hash,
     with one step back through ``const data = ...``. None when the data is
@@ -12848,3 +13125,255 @@ def _first_real_arg(args_node) -> object | None:
         if child.type not in ("(", ")", ","):
             return child
     return None
+
+
+# ---------------------------------------------------------------------------
+# Hardcoded signing secrets (SKY-S101)
+# ---------------------------------------------------------------------------
+
+# (module, export) -> (what the secret protects, where the call takes it):
+# an int is a positional argument, a str an option of the first argument.
+_SIGNING_SECRET_SINKS: dict[tuple[str, str], tuple[str, tuple]] = {
+    ("express-session", "default"): ("express-session secret", ("secret",)),
+    ("cookie-session", "default"): ("cookie-session key", ("secret", "keys")),
+    ("cookie-parser", "default"): ("cookie-parser secret", (0,)),
+    ("jsonwebtoken", "sign"): ("JWT signing key", (1,)),
+    ("jsonwebtoken", "verify"): ("JWT verification key", (1,)),
+    ("express-jwt", "expressjwt"): ("express-jwt secret", ("secret",)),
+    ("express-jwt", "default"): ("express-jwt secret", ("secret",)),
+    ("crypto", "createHmac"): ("HMAC key", (1,)),
+    ("hashids", "default"): ("Hashids salt", (0,)),
+    ("passport-jwt", "Strategy"): ("passport-jwt secretOrKey", ("secretOrKey",)),
+}
+_MODULE_ALIASES = {"node:crypto": "crypto", "hashids/cjs": "hashids"}
+# ``only_binding`` already proves the name is bound once and never assigned.
+_SINGLE_ASSIGNMENT_KINDS = frozenset({"const", "let", "var"})
+_MAX_SECRET_BINDING_DEPTH = 3
+
+
+def _normalized_module(name: str | None) -> str | None:
+    return _MODULE_ALIASES.get(name, name) if name else name
+
+
+def _require_target(node, source_bytes: bytes, bindings) -> tuple[str, str] | None:
+    """``require("m")`` -> (m, "default"); ``require("m").x`` -> (m, "x")."""
+    node = _unwrap_ts_expression(node)
+    if node is None:
+        return None
+    if node.type == "member_expression":
+        inner = _require_target(
+            node.child_by_field_name("object"), source_bytes, bindings
+        )
+        prop = node.child_by_field_name("property")
+        if inner is None or prop is None or inner[1] != "default":
+            return None
+        return inner[0], _get_text(source_bytes, prop)
+    if node.type != "call_expression":
+        return None
+    function = node.child_by_field_name("function")
+    if (
+        function is None
+        or function.type != "identifier"
+        or _get_text(source_bytes, function) != "require"
+        or not bindings.unbound("require")
+    ):
+        return None
+    module = _first_static_call_arg(node, source_bytes)
+    return (_normalized_module(module), "default") if module else None
+
+
+def _destructured_require_export(name: str, declared, source_bytes, bindings):
+    """``const { sign: signToken } = require("jsonwebtoken")``: ``declared``
+    is the object pattern the name is bound in."""
+    declarator = declared.parent
+    if (
+        declared.type != "object_pattern"
+        or declarator is None
+        or declarator.type != "variable_declarator"
+    ):
+        return None
+    target = _require_target(
+        declarator.child_by_field_name("value"), source_bytes, bindings
+    )
+    if target is None or target[1] != "default":
+        return None
+    for child in declared.named_children:
+        if child.type == "shorthand_property_identifier_pattern":
+            if _get_text(source_bytes, child) == name:
+                return target[0], name
+        elif child.type == "pair_pattern":
+            key = child.child_by_field_name("key")
+            value = child.child_by_field_name("value")
+            if (
+                key is not None
+                and value is not None
+                and value.type == "identifier"
+                and _get_text(source_bytes, value) == name
+            ):
+                return target[0], _get_text(source_bytes, key).strip("'\"")
+    return None
+
+
+def _module_export(node, source_bytes: bytes, bindings) -> tuple[str, str] | None:
+    """The (module, export) an expression names: ``session`` imported from
+    ``express-session`` is (express-session, default); ``jwt.sign`` with
+    ``jwt`` from ``jsonwebtoken`` is (jsonwebtoken, sign)."""
+    node = _unwrap_ts_expression(node)
+    if node is None:
+        return None
+    if node.type == "identifier":
+        name = _get_text(source_bytes, node)
+        binding = bindings.only_binding(name)
+        if binding is None:
+            return None
+        kind, value, source, imported = binding
+        if kind == "import":
+            return _normalized_module(source), (
+                "default" if imported == "*" else imported
+            )
+        if kind not in _SINGLE_ASSIGNMENT_KINDS:
+            return None
+        if value is not None:
+            return _require_target(value, source_bytes, bindings)
+        declared = bindings.declaration_nodes[name][0]
+        return _destructured_require_export(name, declared, source_bytes, bindings)
+    if node.type == "member_expression":
+        prop = node.child_by_field_name("property")
+        owner = _module_export(
+            node.child_by_field_name("object"), source_bytes, bindings
+        )
+        if owner is None or prop is None or owner[1] != "default":
+            return _require_target(node, source_bytes, bindings)
+        return owner[0], _get_text(source_bytes, prop)
+    return _require_target(node, source_bytes, bindings)
+
+
+def _secret_literals(node, source_bytes: bytes, bindings, depth: int = 0):
+    """(literal node, is_fallback) for each string literal a secret argument
+    evaluates to: the literal itself, each literal of an array, the literal
+    after ``process.env.X ||``/``??``, or the value of a ``const`` it names."""
+    node = _unwrap_ts_expression(node)
+    if node is None or depth > _MAX_SECRET_BINDING_DEPTH:
+        return []
+    if node.type in {"string", "template_string"}:
+        value = _static_string_value(node, source_bytes)
+        return [(node, False)] if value else []
+    if node.type == "array":
+        found = []
+        for element in node.named_children:
+            found.extend(_secret_literals(element, source_bytes, bindings, depth + 1))
+        return found
+    if node.type == "binary_expression":
+        operator = node.child_by_field_name("operator")
+        if operator is None or operator.type not in _ENV_DEFAULT_OPERATORS:
+            return []
+        right = _unwrap_ts_expression(node.child_by_field_name("right"))
+        if right is None or right.type not in {"string", "template_string"}:
+            return []
+        if not _static_string_value(right, source_bytes):
+            return []
+        return [(right, True)]
+    if node.type == "identifier":
+        binding = bindings.only_binding(_get_text(source_bytes, node))
+        if (
+            binding is None
+            or binding[0] not in _SINGLE_ASSIGNMENT_KINDS
+            or binding[1] is None
+        ):
+            return []
+        return _secret_literals(binding[1], source_bytes, bindings, depth + 1)
+    return []
+
+
+def _option_value(object_node, key: str, source_bytes: bytes):
+    object_node = _unwrap_ts_expression(object_node)
+    if object_node is None or object_node.type != "object":
+        return None
+    for child in object_node.named_children:
+        if child.type == "pair":
+            name = child.child_by_field_name("key")
+            if name is not None and _get_text(source_bytes, name).strip("'\"") == key:
+                return child.child_by_field_name("value")
+        elif (
+            child.type == "shorthand_property_identifier"
+            and _get_text(source_bytes, child) == key
+        ):
+            return child
+    return None
+
+
+def _check_hardcoded_signing_secrets(root_node, source_bytes, file_path, findings):
+    """A literal passed where a library takes the key that signs or salts
+    what it issues (express-session ``secret``, ``jwt.sign(x, key)``,
+    ``cookieParser(secret)``, ``createHmac(alg, key)``, the Hashids salt),
+    directly, through a variable bound once or as the fallback of an
+    environment variable. A short or common value (``'keyboard cat'``) is the weakest
+    case: whoever reads the source can forge what it signs."""
+    if (
+        not any(module.encode() in source_bytes for module, _ in _SIGNING_SECRET_SINKS)
+        and b"crypto" not in source_bytes
+    ):
+        return
+    bindings = None
+    reported = {
+        (finding.get("line"), finding.get("rule_id"))
+        for finding in findings
+        if finding.get("rule_id") == "SKY-S101"
+    }
+    for node in _iter_nodes(root_node):
+        if node.type not in {"call_expression", "new_expression"}:
+            continue
+        callee = node.child_by_field_name(
+            "function" if node.type == "call_expression" else "constructor"
+        )
+        if callee is None:
+            continue
+        if bindings is None:
+            bindings = _JsBindings(root_node, source_bytes)
+        target = _module_export(callee, source_bytes, bindings)
+        sink = _SIGNING_SECRET_SINKS.get(target) if target else None
+        if sink is None:
+            continue
+        role, places = sink
+        arguments = _html_call_arguments(node)
+        for place in places:
+            if isinstance(place, int):
+                argument = arguments[place] if len(arguments) > place else None
+            else:
+                argument = _option_value(
+                    arguments[0] if arguments else None, place, source_bytes
+                )
+            if argument is None:
+                continue
+            for literal, fallback in _secret_literals(argument, source_bytes, bindings):
+                line = literal.start_point[0] + 1
+                if (line, "SKY-S101") in reported or matches_provider_pattern(
+                    _get_text(source_bytes, literal)
+                ):
+                    # A private key or provider token: the secrets scanner
+                    # reports it by its shape.
+                    continue
+                reported.add((line, "SKY-S101"))
+                if fallback:
+                    message = (
+                        f"Hardcoded fallback {role}: when the environment "
+                        "variable is unset, a literal from the source signs "
+                        "the tokens. Fail at startup instead."
+                    )
+                else:
+                    message = (
+                        f"Hardcoded {role}: anyone who reads the source can "
+                        "forge what it signs. Load it from the environment or "
+                        "a secret manager."
+                    )
+                findings.append(
+                    {
+                        "rule_id": "SKY-S101",
+                        "severity": "HIGH" if fallback else "CRITICAL",
+                        "message": message,
+                        "file": str(file_path),
+                        "line": line,
+                        "col": literal.start_point[1],
+                        "secret_sink": role,
+                    }
+                )

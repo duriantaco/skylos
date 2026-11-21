@@ -222,6 +222,10 @@ def package_export_pattern_files(package_root, exports):
     for key in list(exports)[:_MAX_PATTERNS]:
         if not _safe_relative(key) or key.count("*") != 1:
             continue
+        if _is_types_only(exports[key]):
+            # Declarations only: the modules' types are public, their values
+            # are not importable (see ``types_only_pattern_files``).
+            continue
         for target in list(_target_strings(exports[key]))[:_MAX_PATTERNS]:
             if not _safe_relative(target) or target.count("*") != 1:
                 continue
@@ -281,4 +285,113 @@ def package_export_pattern_files(package_root, exports):
                     exports, key, key.replace("*", captured)
                 ):
                     result.add(str(source.resolve()))
+    return result
+
+
+_DECLARATION_SUFFIXES = (".d.ts", ".d.mts", ".d.cts")
+_TYPE_CONDITIONS = frozenset({"types", "typings"})
+
+
+def _capturing_targets(value, condition=None):
+    """``(condition, target)`` for every target with one ``*`` capture."""
+    if isinstance(value, str):
+        if value.count("*") == 1:
+            yield condition, value
+    elif isinstance(value, dict):
+        for key, target in value.items():
+            if isinstance(key, str) and not key.startswith("."):
+                yield from _capturing_targets(target, key if condition is None else condition)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _capturing_targets(item, condition)
+
+
+def _is_types_only(value):
+    targets = list(_capturing_targets(value))
+    return bool(targets) and all(
+        condition in _TYPE_CONDITIONS or target.endswith(_DECLARATION_SUFFIXES)
+        for condition, target in targets
+    )
+
+
+def _types_only_targets(exports):
+    """Declaration targets of wildcard keys that expose types, not values.
+
+    ``"./*": {"types": "./dist/types/*.d.ts"}`` publishes one declaration file
+    per module; a runtime target that does not capture the module
+    (``"default": "./dist/index.js"``) does not expose its values either.
+    """
+    if not isinstance(exports, dict):
+        return []
+    found = []
+    for key in list(exports)[:_MAX_PATTERNS]:
+        if not isinstance(key, str) or not key.startswith("./") or key.count("*") != 1:
+            continue
+        if not _is_types_only(exports[key]):
+            continue
+        targets = list(_capturing_targets(exports[key]))
+        found.extend(
+            target
+            for _condition, target in targets
+            if _safe_relative(target) and target.split("*")[1].endswith(_DECLARATION_SUFFIXES)
+        )
+    return found
+
+
+def _within(path, directory):
+    return path == directory or path.startswith(directory.rstrip(os.sep) + os.sep)
+
+
+def _declaration_source_bases(package_root, prefix, analysed, project_root):
+    """Source folders whose modules a declaration prefix (``dist/types/x/``)
+    publishes: the tsconfig ``outDir``→``rootDir`` layout when the package
+    states one, else the nearest existing folder named by the prefix's tail
+    (``x``) beside the package or one of its parents in the project."""
+    root = Path(package_root).resolve()
+    project = Path(project_root).resolve()
+    parts = [part for part in prefix.strip("/").split("/") if part]
+    for name in ("tsconfig.build.json", "tsconfig.json"):
+        config = _config(root / name, project) if (root / name).is_file() else None
+        if config is None:
+            continue
+        options = config[0]
+        out_dir, root_dir = options.get("declarationDir", options.get("outDir")), options.get("rootDir")
+        if not isinstance(out_dir, Path) or not isinstance(root_dir, Path):
+            continue
+        emitted = root.joinpath(*parts)
+        if emitted == out_dir or emitted.is_relative_to(out_dir):
+            base = root_dir / emitted.relative_to(out_dir)
+            if any(_within(path, str(base)) for path in analysed):
+                return [str(base)]
+    ancestors = [root, *(parent for parent in root.parents if parent.is_relative_to(project))]
+    for start in range(len(parts) + 1):
+        tail = parts[start:]
+        if not tail:
+            break
+        for ancestor in ancestors:
+            base = str(ancestor.joinpath(*tail))
+            if any(_within(path, base) for path in analysed):
+                return [base]
+    return []
+
+
+def types_only_pattern_files(package_root, exports, analysed, project_root):
+    """Analysed sources published only as declarations by a wildcard export.
+
+    Their type exports are public API; their values are not importable
+    through that subpath, so value checks still apply.
+    """
+    targets = _types_only_targets(exports)
+    if not targets:
+        return set()
+    result = set()
+    for target in targets:
+        prefix = target[2:].split("*")[0]
+        directory = prefix if prefix.endswith("/") else prefix.rsplit("/", 1)[0] + "/"
+        for base in _declaration_source_bases(package_root, directory, analysed, project_root):
+            result.update(
+                path
+                for path in analysed
+                if _within(path, base) and not path.endswith(_DECLARATION_SUFFIXES)
+            )
     return result

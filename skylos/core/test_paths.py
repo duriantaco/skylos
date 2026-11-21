@@ -18,6 +18,9 @@ _JS_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", 
 _JVM_SUFFIXES = frozenset({".java", ".kt", ".kts"})
 # File-based routers turn a ``test`` folder into a deployable URL segment.
 _JS_ROUTE_DIRS = frozenset({"app", "pages", "routes", "api"})
+# Browser-test suites (Cypress, Playwright and Protractor end-to-end specs)
+# live in these folders at any depth; ``*.cy.ts`` is a Cypress spec.
+_JS_TEST_SUITE_DIRS = frozenset({"__tests__", "cypress", "e2e"})
 # A ``test_*.py`` outside a test folder is a test module only if it uses a
 # test framework; otherwise it is app code that happens to be named test_.
 _PYTHON_TEST_MODULES = (
@@ -54,11 +57,17 @@ def _relative_parts(text: str, project_root: Any) -> tuple[str, ...] | None:
 
 
 def _is_js_route_path(parts: tuple[str, ...]) -> bool:
+    name = parts[-1].lower()
+    test_named = ".test." in name or ".spec." in name or ".cy." in name
     for part in parts[:-1]:
         lowered = part.lower()
+        if lowered == "app" and test_named:
+            # The App Router serves only ``page``/``route`` files; an Angular
+            # or Next.js ``app/`` folder holds its ``*.spec.ts`` beside code.
+            continue
         if lowered in _JS_ROUTE_DIRS:
             return True
-        if lowered in {"test", "tests", "__tests__"}:
+        if lowered in {"test", "tests"} or lowered in _JS_TEST_SUITE_DIRS:
             return False
     return False
 
@@ -145,7 +154,8 @@ def _is_test_parts(parts: tuple[str, ...], path: Path | None = None) -> bool:
         is_test = (
             ".test." in name
             or ".spec." in name
-            or "__tests__" in dirs
+            or ".cy." in name
+            or any(folder in _JS_TEST_SUITE_DIRS for folder in dirs)
             or bool(dirs and dirs[0] in {"test", "tests"})
         )
         return is_test and not _is_js_route_path(parts)

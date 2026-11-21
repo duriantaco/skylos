@@ -197,6 +197,10 @@ how_skylos_decides:
     Options held in a variable in the same function are followed. Reports
     MEDIUM unless both `httpOnly` and `secure` are known to be `true`, so a
     call with no options, or with options it cannot follow, is reported.
+    `express-session` and `cookie-session` middleware is reported when the
+    session cookie's `secure` is missing or `false` (both default to false)
+    or `httpOnly` is `false`; `'auto'` or a computed value counts as set,
+    and a call inside a development or test branch is skipped.
   - >-
     Java: follows a `Cookie` made with `new Cookie(...)`. When
     `setSecure(...)` receives a value known to be `false` (a literal or a

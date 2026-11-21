@@ -224,6 +224,25 @@ def _script_of(char: str) -> str | None:
     return None
 
 
+def written_in_script_of(text: str, char: str) -> bool:
+    """``text`` is written in the script ``char`` belongs to: it has letters
+    of that script with no Latin twin (Greek ``Παρακαλώ``)."""
+    script = _script_of(char)
+    if script is None:
+        return False
+    count = 0
+    for letter in text:
+        if (
+            letter not in _CONFUSABLES
+            and letter.isalpha()
+            and _script_of(letter) == script
+        ):
+            count += 1
+            if count >= _NATIVE_SCRIPT_LETTERS:
+                return True
+    return False
+
+
 def _is_native_script(text: str, word: str, cache: dict[str, bool]) -> bool:
     """The text holds letters of the word's script that have no Latin twin:
     it is written in that script, so a short all-lookalike word is one of

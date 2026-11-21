@@ -57,6 +57,33 @@ PATH_SANITIZERS = {
 }
 
 
+# Web frameworks whose module exports a context-local request object.
+REQUEST_PROXY_MODULES = frozenset({"flask", "quart", "bottle"})
+# Request fields the server fills from its own routing table, not from text
+# the client sends: the matched endpoint and blueprint names and URL rule.
+_SERVER_DEFINED_REQUEST_FIELDS = frozenset(
+    {"endpoint", "blueprint", "blueprints", "url_rule"}
+)
+
+
+def _reads_server_defined_request_field(node) -> bool:
+    """``request.endpoint`` (or ``flask.request.endpoint``) and what is read
+    from it: a route name chosen by the application, not attacker text."""
+    fields = []
+    current = node
+    while isinstance(current, (ast.Attribute, ast.Subscript)):
+        if isinstance(current, ast.Attribute):
+            fields.append(current.attr)
+        else:
+            fields.append(None)
+        current = current.value
+    fields.reverse()
+    # [request, field, ...] for a bare proxy; [request, field] after a module.
+    if fields and fields[0] == "request":
+        fields = fields[1:]
+    return bool(fields) and fields[0] in _SERVER_DEFINED_REQUEST_FIELDS
+
+
 def _resolve_call_name(node: ast.Call):
     func = node.func
     parts = []
@@ -197,6 +224,29 @@ class TaintVisitor(ast.NodeVisitor):
             kw.arg == keyword or kw.arg is None for kw in node.keywords
         )
 
+    def _is_module_request_proxy(self, node) -> bool:
+        """``flask.request.form[...]``: the request proxy read through its
+        module (``import flask`` or ``import flask as f``) is the same source
+        as ``from flask import request``. Only a proven import of a module
+        that exports a request-local proxy counts; ``urllib.request`` and a
+        local object that happens to have a ``request`` attribute do not."""
+        current = node
+        while isinstance(current, (ast.Attribute, ast.Subscript)):
+            inner = current.value
+            if isinstance(current, ast.Attribute) and isinstance(inner, ast.Name):
+                if current.attr != "request":
+                    return False
+                sources = self.untrusted_sources
+                if sources is None:
+                    return False
+                module = sources.resolved_import(self._current_function(), inner.id)
+                return (
+                    module in REQUEST_PROXY_MODULES
+                    and self._import_names_are_stable(f"{inner.id}.request")
+                )
+            current = inner
+        return False
+
     def is_tainted(self, node):
         if node is None:
             return False
@@ -234,7 +284,9 @@ class TaintVisitor(ast.NodeVisitor):
             while isinstance(base, (ast.Attribute, ast.Subscript)):
                 base = base.value
             if isinstance(base, ast.Name) and base.id == self.request_obj:
-                return True
+                return not _reads_server_defined_request_field(node)
+            if self._is_module_request_proxy(node):
+                return not _reads_server_defined_request_field(node)
             return self.is_tainted(node.value)
 
         if isinstance(node, ast.Name):

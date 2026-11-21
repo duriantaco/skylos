@@ -33,6 +33,7 @@ It also reports ``process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'`` and
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -154,6 +155,33 @@ _REDIRECT_IMPORT_MODULES = frozenset(
         "@sveltejs/kit",
     }
 )
+_MATHJS_EVALUATORS = frozenset({"eval", "evaluate", "compile", "parse"})
+_VM_MODULES = frozenset({"vm", "node:vm"})
+_VM_CODE_FUNCS = frozenset(
+    {"runInContext", "runInNewContext", "runInThisContext", "compileFunction"}
+)
+# Library evaluators that run attacker-chosen expressions. notevil and
+# safe-eval are sandboxes with published escapes and no loop limit.
+_LIBRARY_EVALUATORS = frozenset(
+    {
+        ("notevil", "eval"),
+        ("notevil", "Function"),
+        ("safe-eval", "default"),
+        ("safe-eval", "*"),
+        ("static-eval", "default"),
+        ("static-eval", "*"),
+    }
+)
+# Deserializers that rebuild functions from their input.
+_UNSAFE_DESERIALIZERS = frozenset(
+    {
+        ("node-serialize", "unserialize"),
+        ("serialize-to-js", "deserialize"),
+        ("funcster", "deepDeserialize"),
+    }
+)
+_XML_ENTITY_PARSERS = frozenset({"parseXml", "parseXmlString", "parseXmlAsync"})
+_XML_ENTITY_MODULES = frozenset({"libxmljs", "libxmljs2"})
 _MONGO_MODULES = frozenset(
     {
         "mongoose",
@@ -185,6 +213,7 @@ _MONGO_FILTER_METHODS = frozenset(
         "where",
     }
 )
+_COLLECTION_NAME_RE = re.compile(r"(?:^|[a-z_])(?:[Cc]ollection|Col)$|^col$")
 _ORM_OPTION_KEYS = frozenset(
     {"where", "select", "include", "relations", "order", "orderBy", "data"}
 )
@@ -423,6 +452,7 @@ _SOURCE_HINT_RE = re.compile(
     rb"\b(?:req|request|ctx|context)\b|@(?:Body|Query|Param|Params|Headers|Req|Request"
     rb"|UploadedFiles?|HostParam|QueryParams?|BodyParam|HeaderParam|CookieParam)\b"
     rb"|\b(?:loader|action)\b"
+    rb"|\}\s*:\s*(?:Request|FastifyRequest)\b"
 )
 _HOST_CHECK_RE = re.compile(r"\.(?:hostname|host|origin)\b")
 _HOST_COMPARE_RE = re.compile(
@@ -1227,6 +1257,23 @@ class _ChildProcessNames:
     def _require(self, source: bytes, node) -> None:
         value = _unwrap(node.child_by_field_name("value"))
         name = node.child_by_field_name("name")
+        if (
+            value is not None
+            and name is not None
+            and name.type == "identifier"
+            and value.type == "member_expression"
+        ):
+            # ``const exec = require('child_process').exec``
+            prop = value.child_by_field_name("property")
+            if (
+                prop is not None
+                and _text(source, prop) in _EXEC_FUNCS
+                and _is_child_process_require(
+                    source, _unwrap(value.child_by_field_name("object"))
+                )
+            ):
+                self.functions.add(_text(source, name))
+            return
         if value is None or name is None or not _is_child_process_require(
             source, value
         ):
@@ -1435,12 +1482,66 @@ def _remix_spec(ctx: _FileContext, func) -> _HandlerSpec | None:
     return spec
 
 
+def _destructured_express_spec(ctx: _FileContext, func, params) -> _HandlerSpec | None:
+    """``({ body, file }: Request, res: Response) => ...``: an Express-style
+    handler whose request parameter is destructured. Each request field the
+    pattern takes (``body``, ``query``, ``params``, ``file``, ...) is request
+    data under its local name."""
+    first = params[0]
+    pattern = first.child_by_field_name("pattern")
+    if pattern is None or pattern.type != "object_pattern":
+        return None
+    type_node = first.child_by_field_name("type")
+    req_type = _text(ctx.source, type_node) if type_node is not None else ""
+    res_name = None
+    res_type = ""
+    if len(params) > 1:
+        res_name, res_type = _param_name_and_type(ctx.source, params[1])
+    typed = bool(_REQUEST_TYPE_RE.search(req_type)) and "NextRequest" not in req_type
+    response_shaped = res_name in _RESPONSE_NAMES or bool(
+        re.search(r"\b(?:Response|FastifyReply)\b", res_type or "")
+    )
+    if not (typed and (response_shaped or len(params) == 1)) and not (
+        response_shaped and _is_route_callback(ctx.source, func)
+    ):
+        return None
+    framework = "fastify" if "FastifyRequest" in req_type or res_name == "reply" else "express"
+    spec = _HandlerSpec(func=func, framework=framework)
+    if res_name:
+        spec.response_names.add(res_name)
+    for child in pattern.named_children:
+        if child.type == "shorthand_property_identifier_pattern":
+            field_name = local = _text(ctx.source, child)
+        elif child.type == "pair_pattern":
+            key = child.child_by_field_name("key")
+            value = child.child_by_field_name("value")
+            if key is None or value is None or value.type != "identifier":
+                continue
+            field_name = _text(ctx.source, key)
+            local = _text(ctx.source, value)
+        else:
+            continue
+        shape = _EXPRESS_FIELDS.get(field_name)
+        if shape is None:
+            continue
+        if framework in _STRING_QUERY_FRAMEWORKS and field_name in {
+            "query",
+            "cookies",
+            "signedCookies",
+        }:
+            shape = TEXT
+        spec.seeded[local] = _Taint(f"request data {field_name}", shape)
+    return spec if spec.seeded else None
+
+
 def _express_spec(ctx: _FileContext, func) -> _HandlerSpec | None:
     params = _param_nodes(func)
     if not params:
         return None
     req_name, req_type = _param_name_and_type(ctx.source, params[0])
     if not req_name:
+        if params[0].type in {"required_parameter", "optional_parameter"}:
+            return _destructured_express_spec(ctx, func, params)
         return None
     if req_name in _CONTEXT_PARAM_NAMES or _CONTEXT_TYPE_RE.search(req_type or ""):
         spec = _HandlerSpec(func=func, framework="koa")
@@ -1795,10 +1896,16 @@ class _HandlerTaint:
                 return _join(left, right)
             return None
         if t == "ternary_expression":
-            return _join(
-                self.taint(node.child_by_field_name("consequence"), kind),
-                self.taint(node.child_by_field_name("alternative"), kind),
-            )
+            condition = node.child_by_field_name("condition")
+            consequence = node.child_by_field_name("consequence")
+            alternative = node.child_by_field_name("alternative")
+            # ``['jpg', 'png'].includes(ext) ? ext : 'jpg'``: the branch that
+            # repeats the checked value only runs when it is an allowed literal.
+            if self._branch_allowlisted(condition, consequence, True):
+                return self.taint(alternative, kind)
+            if self._branch_allowlisted(condition, alternative, False):
+                return self.taint(consequence, kind)
+            return _join(self.taint(consequence, kind), self.taint(alternative, kind))
         if t == "array":
             result = None
             for child in node.named_children:
@@ -1880,6 +1987,8 @@ class _HandlerTaint:
             binding = self.ctx.named_import(name)
             if binding is not None and binding[0] in _PATH_MODULES:
                 return self._path_call(binding[1], args, kind)
+            if binding is not None:
+                return self._project_helper_taint(binding[0], binding[1], args, kind)
             return None
         if callee.type != "member_expression":
             return None
@@ -1929,6 +2038,11 @@ class _HandlerTaint:
             method_function = self.ctx.object_method(_text(self.source, obj), method)
             if method_function is not None:
                 return self._summary_taint(method_function, args, kind)
+            namespace = self.ctx.named_import(_text(self.source, obj))
+            if namespace is not None and namespace[1] == "*":
+                helper = self._project_helper_taint(namespace[0], method, args, kind)
+                if helper is not None:
+                    return helper
         receiver = self.taint(obj, kind)
         if method in _STRING_METHODS:
             if method in {"replace", "replaceAll"} and kind == "xss":
@@ -1949,6 +2063,28 @@ class _HandlerTaint:
                 return receiver
             return _as_text(receiver)
         return None
+
+    def _project_helper_taint(self, module: str, exported: str, args, kind: str):
+        """``utils.trunc(req.params.id, 40)``: a project helper (another file)
+        that returns a transformed copy of an argument keeps that argument's
+        taint (``project_helpers.helper_returned_parameters``)."""
+        from skylos.visitors.languages.typescript.project_helpers import (
+            _is_project_module,
+            helper_returned_parameters,
+            nearest_project_root,
+        )
+
+        if not args or not _is_project_module(module):
+            return None
+        importer = os.path.realpath(self.ctx.file_path)
+        root = nearest_project_root(importer)
+        if root is None:
+            return None
+        result = None
+        for index in helper_returned_parameters(root, importer, module, exported):
+            if index < len(args):
+                result = _join(result, self.taint(args[index], kind))
+        return _as_text(result)
 
     def _path_call(self, method: str, args, kind: str) -> _Taint | None:
         if method == "basename":
@@ -2076,6 +2212,45 @@ class _HandlerTaint:
                 break
         return names
 
+    def _branch_allowlisted(self, condition, branch, truth: bool) -> bool:
+        if condition is None or branch is None:
+            return False
+        subject = _subject(self.source, branch)
+        return any(
+            fact.subject == subject
+            and (
+                fact.kind == "strict"
+                or (fact.kind == "in_list" and _safe_path_values(fact.data))
+            )
+            for fact in self._condition_facts(condition, truth, 0)
+        )
+
+    def _membership_result_facts(self, subject, guard_end: int) -> list[_Fact]:
+        """``const r = await lookup(key); if (r == null) return 404;`` where the
+        same-file ``lookup`` returns a non-null value only inside
+        ``if (known.has(param))``: past the guard, ``key`` is a member of a
+        server-side collection (``in_set``)."""
+        subject = _unwrap(subject)
+        if subject is None or subject.type != "identifier":
+            return []
+        selected, _ = self._selected_events(_text(self.source, subject), subject)
+        if len(selected) != 1 or selected[0].mode not in {"decl", "assign"}:
+            return []
+        value = _unwrap(selected[0].value)
+        if value is None or value.type != "call_expression":
+            return []
+        callee = _unwrap(value.child_by_field_name("function"))
+        if callee is None or callee.type != "identifier":
+            return []
+        function = self.ctx.functions.get(_text(self.source, callee))
+        args = _call_args(value)
+        if function is None:
+            return []
+        index = _membership_lookup_parameter(self.ctx, function)
+        if index is None or index >= len(args):
+            return []
+        return [_Fact(_subject(self.source, args[index]), "in_set", guard_end)]
+
     def facts_at(self, sink) -> list[_Fact]:
         if sink.id in self._fact_memo:
             return self._fact_memo[sink.id]
@@ -2100,7 +2275,7 @@ class _HandlerTaint:
                 and _always_exits(consequence)
                 and node.parent is not None
                 and node.parent.type in _BLOCK_TYPES
-                and _contains(node.parent, sink)
+                and _contains(_exit_scope(node.parent), sink)
             ):
                 facts.extend(self._condition_facts(condition, False, node.end_byte))
                 guarded = True
@@ -2141,6 +2316,8 @@ class _HandlerTaint:
             return []
         if node.type == "call_expression":
             return self._call_facts(node, truth, guard_end)
+        if node.type == "identifier" and truth:
+            return self._membership_result_facts(node, guard_end)
         return []
 
     def _comparison_facts(self, left, right, equal: bool, guard_end: int) -> list[_Fact]:
@@ -2148,6 +2325,12 @@ class _HandlerTaint:
         right = _unwrap(right)
         if left is None or right is None:
             return []
+        if not equal:
+            for subject, other in ((left, right), (right, left)):
+                if other.type in {"null", "undefined"}:
+                    facts = self._membership_result_facts(subject, guard_end)
+                    if facts:
+                        return facts
         for subject, other in ((left, right), (right, left)):
             literal = self.ctx.const_string(other)
             if subject.type == "unary_expression" and literal is not None:
@@ -2207,6 +2390,8 @@ class _HandlerTaint:
         needle = self.ctx.const_string(args[0])
         if needle is not None and ".." in needle and not present:
             return [_Fact(_subject(self.source, obj), "no_dotdot", guard_end)]
+        if needle == "/" and not present:
+            return [_Fact(_subject(self.source, obj), "one_segment", guard_end)]
         values = self.ctx.string_list(obj)
         if values is not None and present:
             return [_Fact(_subject(self.source, args[0]), "in_list", guard_end, set(values))]
@@ -2277,6 +2462,8 @@ class _HandlerTaint:
             needle = self.ctx.const_string(args[0])
             if needle is not None and ".." in needle and not truth:
                 return [_Fact(_subject(self.source, obj), "no_dotdot", guard_end)]
+            if needle == "/" and not truth:
+                return [_Fact(_subject(self.source, obj), "one_segment", guard_end)]
             values = self.ctx.string_list(obj)
             if values is not None and truth:
                 return [_Fact(_subject(self.source, args[0]), "in_list", guard_end, set(values))]
@@ -2401,13 +2588,19 @@ class _HandlerTaint:
         own = [f for f in facts if f.subject == subject]
         if any(f.kind == "strict" for f in own):
             return True
-        if kind in {"sql", "cmd", "xss", "nosql", "redirect"} and any(
+        if kind in {"sql", "cmd", "xss", "nosql", "redirect", "code", "deser"} and any(
             f.kind == "in_list" for f in own
         ):
             return True
         if kind == "nosql" and any(f.kind == "typed" for f in own):
             return True
         if kind == "path" and self._path_fact_safe(leaf, own, sink_expr):
+            return True
+        if kind == "path" and any(
+            f.kind == "in_set"
+            or (f.kind == "in_list" and _safe_path_values(f.data))
+            for f in own
+        ):
             return True
         if kind in {"ssrf", "redirect"}:
             for base in self._url_bases(leaf):
@@ -2457,9 +2650,129 @@ class _HandlerTaint:
             ):
                 if fact.data.get("normalized") or self._is_normalized(leaf):
                     return True
+            if (
+                fact.kind == "starts"
+                and not fact.data.get("prefix_tainted")
+                and fact.data.get("prefix") not in {"", "/", "."}
+                and self._joins_rooted_normalized(leaf)
+            ):
+                # A prefix without a trailing separator is weak in general:
+                # '/srv/files-old/x' starts with '/srv/files'. It holds here
+                # because the request part went through path.normalize() while
+                # rooted (it starts with '/'), which resolves every '..' at
+                # the root, so nothing joined under the base can climb out of
+                # it into a sibling such as '/srv/files-old'.
+                return True
             if fact.kind == "no_dotdot" and self._joined_under_prefix(leaf, sink_expr):
                 return True
+            if fact.kind == "one_segment" and self._segment_under_directory(leaf, sink_expr):
+                # Without '/', the value is one path segment: under a fixed
+                # directory it names an entry of that directory, or with '..'
+                # the parent directory itself, which no file read returns.
+                # Windows '\\' separators are outside this proof.
+                return True
         return False
+
+    def _segment_under_directory(self, leaf, sink_expr) -> bool:
+        """The leaf is the last argument of ``path.join/resolve`` whose
+        earlier arguments are untainted and not empty."""
+        parent = leaf.parent
+        if parent is None or parent.type != "arguments":
+            return False
+        call = parent.parent
+        if call is None or call.type != "call_expression":
+            return False
+        callee = _unwrap(call.child_by_field_name("function"))
+        args = _call_args(call)
+        if (
+            callee is None
+            or callee.type != "member_expression"
+            or not self.ctx.is_path_module(callee.child_by_field_name("object"))
+            or _text(self.source, callee.child_by_field_name("property"))
+            not in {"join", "resolve"}
+            or len(args) < 2
+            or _unwrap(args[-1]) is None
+            or _unwrap(args[-1]).id != leaf.id
+        ):
+            return False
+        bases = args[:-1]
+        return all(self.taint(base, "raw") is None for base in bases) and any(
+            self.ctx.const_string(base) not in {None, "", "/", "."} for base in bases
+        )
+
+    def _joins_rooted_normalized(self, leaf) -> bool:
+        """``path.resolve(base, path.normalize(req.path).replace(/^\\/+/, ''))``:
+        an untainted base joined with a request part that was normalized while
+        it started with '/'."""
+        if leaf.type != "identifier":
+            return False
+        selected, _ = self._selected_events(_text(self.source, leaf), leaf)
+        if len(selected) != 1 or selected[0].mode != "decl":
+            return False
+        value = _unwrap(selected[0].value)
+        if value is None or value.type != "call_expression":
+            return False
+        callee = _unwrap(value.child_by_field_name("function"))
+        args = _call_args(value)
+        if (
+            callee is None
+            or callee.type != "member_expression"
+            or not self.ctx.is_path_module(callee.child_by_field_name("object"))
+            or _text(self.source, callee.child_by_field_name("property"))
+            not in {"resolve", "join"}
+            or len(args) < 2
+        ):
+            return False
+        if any(self.taint(arg, "raw") is not None for arg in args[:-1]):
+            return False
+        part = _unwrap(args[-1])
+        for _ in range(4):
+            if part is None or part.type != "call_expression":
+                return False
+            inner_callee = _unwrap(part.child_by_field_name("function"))
+            inner_args = _call_args(part)
+            if inner_callee is None or inner_callee.type != "member_expression":
+                return False
+            method = _text(self.source, inner_callee.child_by_field_name("property"))
+            receiver = _unwrap(inner_callee.child_by_field_name("object"))
+            if method == "normalize" and inner_args and self._is_path_namespace(receiver):
+                return self._rooted(inner_args[0])
+            if method not in {"replace", "replaceAll"} or len(inner_args) != 2:
+                return False
+            replacement = self.ctx.const_string(inner_args[1])
+            if replacement is None or ".." in replacement:
+                return False
+            part = receiver
+        return False
+
+    def _is_path_namespace(self, node) -> bool:
+        node = _unwrap(node)
+        if node is None:
+            return False
+        if self.ctx.is_path_module(node):
+            return True
+        return (
+            node.type == "member_expression"
+            and _text(self.source, node.child_by_field_name("property"))
+            in {"posix", "win32"}
+            and self.ctx.is_path_module(node.child_by_field_name("object"))
+        )
+
+    def _rooted(self, node) -> bool:
+        """The value starts with '/': Express ``req.path``, or a literal,
+        template or ``+`` chain whose fixed start is '/'."""
+        node = _unwrap(node)
+        if node is None:
+            return False
+        path = _member_path(self.source, node)
+        if (
+            path is not None
+            and len(path) == 2
+            and path[1] == "path"
+            and self.spec.request_names.get(path[0]) in {"express", _LONE_REQUEST}
+        ):
+            return True
+        return self.static_prefix(node).startswith("/")
 
     def _is_normalized(self, leaf) -> bool:
         if leaf.type != "identifier":
@@ -2717,6 +3030,169 @@ def _check_reject_unauthorized(
     return findings
 
 
+def _exit_scope(block):
+    """The block an early exit in ``block`` guards. An exit inside a ``try``
+    body also guards the statements after the ``try`` when every ``catch``
+    exits too and there is no ``finally``."""
+    for _ in range(4):
+        statement = block.parent
+        if (
+            statement is None
+            or statement.type != "try_statement"
+            or statement.child_by_field_name("finalizer") is not None
+        ):
+            return block
+        body = statement.child_by_field_name("body")
+        handler = statement.child_by_field_name("handler")
+        if body is None or body.id != block.id:
+            return block
+        if handler is not None:
+            handler_body = handler.child_by_field_name("body")
+            if handler_body is None or not _always_exits(handler_body):
+                return block
+        outer = statement.parent
+        if outer is None or outer.type not in _BLOCK_TYPES:
+            return block
+        block = outer
+    return block
+
+
+def _safe_path_values(values) -> bool:
+    """Allowlisted literals that cannot leave a directory."""
+    return bool(values) and all(
+        isinstance(value, str)
+        and ".." not in value
+        and not value.startswith(("/", "\\"))
+        and ":" not in value
+        for value in values
+    )
+
+
+def _membership_lookup_parameter(ctx: _FileContext, function) -> int | None:
+    """The parameter a same-file lookup checks for membership before it
+    returns anything but null: every non-null ``return`` sits inside
+    ``if (collection.has(param))`` (or a literal-list ``includes``)."""
+    source = ctx.source
+    params = []
+    for param in _param_nodes(function):
+        pattern = _param_pattern(param)
+        params.append(_text(source, pattern) if pattern is not None else None)
+    body = function.child_by_field_name("body")
+    if body is None or body.type != "statement_block":
+        return None
+    checked: set[int] = set()
+    found_guarded_return = False
+    for node in _iter_nodes(body):
+        if node is not body and node.type in _FUNCTION_TYPES:
+            continue
+        if node.type != "return_statement":
+            continue
+        value = _unwrap(next(iter(node.named_children), None))
+        if value is None or value.type in {"null", "undefined", "false"}:
+            continue
+        guard = node.parent
+        index = None
+        while guard is not None and guard.id != body.id:
+            if guard.type == "if_statement":
+                consequence = guard.child_by_field_name("consequence")
+                if consequence is not None and _contains(consequence, node):
+                    index = _membership_test_parameter(
+                        source, ctx, guard.child_by_field_name("condition"), params
+                    )
+                    if index is not None:
+                        break
+            guard = guard.parent
+        if index is None:
+            return None
+        checked.add(index)
+        found_guarded_return = True
+    if not found_guarded_return or len(checked) != 1:
+        return None
+    return checked.pop()
+
+
+def _membership_test_parameter(source: bytes, ctx: _FileContext, condition, params):
+    condition = _unwrap(condition)
+    if condition is None or condition.type != "call_expression":
+        return None
+    callee = _unwrap(condition.child_by_field_name("function"))
+    args = _call_args(condition)
+    if callee is None or callee.type != "member_expression" or len(args) != 1:
+        return None
+    method = _text(source, callee.child_by_field_name("property"))
+    receiver = _unwrap(callee.child_by_field_name("object"))
+    if method == "includes" and ctx.string_list(receiver) is None:
+        return None
+    if method not in {"has", "includes"}:
+        return None
+    root = _chain_root(source, receiver)
+    if root is not None and _text(source, root) in params:
+        # A collection the caller passes in proves nothing.
+        return None
+    name = _text(source, _unwrap(args[0]))
+    return params.index(name) if name in params else None
+
+
+def _object_option_true(source: bytes, node, key: str) -> bool:
+    node = _unwrap(node)
+    if node is None or node.type != "object":
+        return False
+    for child in node.named_children:
+        if child.type != "pair":
+            continue
+        name = child.child_by_field_name("key")
+        value = _unwrap(child.child_by_field_name("value"))
+        if (
+            name is not None
+            and _text(source, name).strip("'\"") == key
+            and value is not None
+            and value.type == "true"
+        ):
+            return True
+    return False
+
+
+def _calls_in_code(code: str) -> list[tuple[list[str], list[str]]]:
+    """``[(callee path, identifier arguments)]`` for the calls in a short
+    JavaScript code string (``'safeEval(orderLinesData)'`` gives
+    ``[(['safeEval'], ['orderLinesData'])]``)."""
+    from skylos.visitors.languages.typescript.core import TypeScriptCore
+
+    source = code.encode("utf-8", errors="replace")
+    core = TypeScriptCore("sandbox.js", source)
+    root = core.root_node
+    if root is None or root.has_error:
+        return []
+    calls = []
+    for node in _iter_nodes(root):
+        if node.type != "call_expression":
+            continue
+        path = _member_path(source, node.child_by_field_name("function"))
+        if path is None or len(path) > 2:
+            continue
+        arguments = [
+            _text(source, arg)
+            for arg in _call_args(node)
+            if _unwrap(arg) is not None and _unwrap(arg).type == "identifier"
+        ]
+        calls.append((path, arguments))
+    return calls
+
+
+def _js_yaml_load_is_unsafe(file_path: str) -> bool:
+    """js-yaml before 4 resolves ``!!js/function`` in ``load`` (the full
+    schema); 4 removed it. Only a declared major version below 4 counts."""
+    from skylos.visitors.languages.typescript.conventions import (
+        declared_dependency_version,
+    )
+
+    spec = declared_dependency_version("js-yaml", file_path)
+    if spec is None:
+        return False
+    match = re.search(r"(\d+)", spec)
+    return match is not None and int(match.group(1)) < 4
+
+
 class _SinkChecker:
     def __init__(self, ctx: _FileContext, taint: _HandlerTaint, file_path: str):
         self.ctx = ctx
@@ -2767,8 +3243,274 @@ class _SinkChecker:
         for node in self.taint.nodes:
             if node.type == "call_expression":
                 self._call(node)
+            elif node.type == "new_expression":
+                self._new(node)
             elif node.type == "assignment_expression":
                 self._assignment(node)
+
+    def _render(self, node, callee, args) -> None:
+        """``res.render(view, locals)``: request data that names the view, or
+        a request object spread into the locals, chooses which template file
+        the view engine reads (``layout``, ``settings``, ``filename``)."""
+        if callee.type != "member_expression":
+            return
+        prop = callee.child_by_field_name("property")
+        obj = _unwrap(callee.child_by_field_name("object"))
+        if (
+            prop is None
+            or _text(self.source, prop) != "render"
+            or obj is None
+            or obj.type != "identifier"
+            or _text(self.source, obj) not in self.taint.spec.response_names
+        ):
+            return
+        view_taint = self._unguarded(args[0], "path", node)
+        if view_taint is not None:
+            self._report(
+                node,
+                "SKY-D215",
+                "HIGH",
+                "Path traversal: request data chooses the template that "
+                "res.render() reads. Map the input to a fixed view name.",
+                args[0],
+                view_taint.label,
+                "path",
+                "res.render() view name",
+                "a fixed view name or an allowlist",
+            )
+            return
+        if len(args) < 2:
+            return
+        locals_node = _unwrap(args[1])
+        candidates = []
+        if locals_node is not None and locals_node.type == "object":
+            for child in locals_node.named_children:
+                if child.type == "spread_element":
+                    candidates.append(next(iter(child.named_children), None))
+                elif child.type == "pair":
+                    key = child.child_by_field_name("key")
+                    if key is not None and _text(self.source, key).strip(
+                        "'\""
+                    ) in {"layout", "settings", "filename", "root", "views"}:
+                        candidates.append(child.child_by_field_name("value"))
+        elif locals_node is not None:
+            candidates.append(locals_node)
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            found = self.taint.taint(candidate, "path")
+            if found is None:
+                continue
+            spread = candidate.parent is not None and candidate.parent.type == "spread_element"
+            # Only a request object brings its own keys; a local object
+            # literal of request values (`{ userName, email }`) has fixed keys
+            # and cannot set `layout`.
+            if (spread or candidate is locals_node) and (
+                found.shape != OBJECT or self._built_object_literal(candidate)
+            ):
+                continue
+            self._report(
+                node,
+                "SKY-D215",
+                "HIGH",
+                "Path traversal: request data sets res.render() locals, so a "
+                "field such as `layout` makes the view engine read any file. "
+                "Pass only the fields the template needs.",
+                candidate,
+                found.label,
+                "path",
+                "res.render() view options",
+                "copy named fields instead of spreading the request",
+            )
+            return
+
+    def _built_object_literal(self, node) -> bool:
+        node = _unwrap(node)
+        if node is None:
+            return False
+        if node.type == "object":
+            return True
+        if node.type != "identifier":
+            return False
+        selected, _ = self.taint._selected_events(_text(self.source, node), node)
+        values = [_unwrap(event.value) for event in selected]
+        return bool(values) and all(
+            value is not None and value.type == "object" for value in values
+        )
+
+    def _library_target(self, callee) -> tuple[str, str] | None:
+        """(module, function) of ``mod.fn(...)`` through a default, namespace
+        or ``require`` binding, or of ``fn(...)`` through a named import."""
+        callee = _unwrap(callee)
+        if callee is None:
+            return None
+        if callee.type in {"identifier", "shorthand_property_identifier"}:
+            return self.ctx.named_import(_text(self.source, callee))
+        path = _member_path(self.source, callee)
+        if path is None or len(path) != 2:
+            return None
+        module = self.ctx.module_of(path[0])
+        if module is None:
+            return None
+        return module, path[1]
+
+    def _new(self, node) -> None:
+        """``new vm.Script(code)``."""
+        ctor = node.child_by_field_name("constructor")
+        target = self._library_target(ctor)
+        args = _call_args(node)
+        if target is None or not args:
+            return
+        module, name = target
+        if module in _VM_MODULES and name == "Script":
+            self._code_sink(node, args[0], "SKY-D202", "CRITICAL", "vm.Script()")
+
+    def _library(self, node, callee, args) -> None:
+        target = self._library_target(callee)
+        if target is None:
+            return
+        module, name = target
+        if module == "mathjs" and name in _MATHJS_EVALUATORS:
+            self._code_sink(node, args[0], "SKY-D201", "CRITICAL", f"mathjs.{name}()")
+        elif module in _VM_MODULES and name in _VM_CODE_FUNCS:
+            if _string_value(self.source, _unwrap(args[0])) is not None:
+                self._vm_sandbox_code(node, args)
+            else:
+                self._code_sink(node, args[0], "SKY-D202", "CRITICAL", f"vm.{name}()")
+        elif (module, name) in _LIBRARY_EVALUATORS:
+            self._code_sink(node, args[0], "SKY-D201", "HIGH", f"{module} {name}()")
+        elif (module, name) in _UNSAFE_DESERIALIZERS:
+            self._deserialize_sink(node, args[0], "CRITICAL", f"{module} {name}()")
+        elif module == "js-yaml" and name in {"load", "loadAll"}:
+            if _js_yaml_load_is_unsafe(self.file_path):
+                self._deserialize_sink(
+                    node, args[0], "HIGH", f"js-yaml 3 {name}() (full schema)"
+                )
+        elif (
+            module in _XML_ENTITY_MODULES
+            and name in _XML_ENTITY_PARSERS
+            and len(args) > 1
+            and _object_option_true(self.source, args[1], "noent")
+        ):
+            found = self._unguarded(args[0], "deser", node)
+            if found is not None:
+                self._report(
+                    node,
+                    "SKY-D236",
+                    "CRITICAL",
+                    f"XML external entity (XXE): request data is parsed by "
+                    f"{module}.{name}() with noent: true, which substitutes "
+                    "external entities. Remove noent.",
+                    args[0],
+                    found.label,
+                    "deser",
+                    f"{module}.{name}() with noent",
+                    "parse without noent (entity substitution off)",
+                )
+
+    def _code_sink(self, node, code, rule_id, severity, sink_label) -> None:
+        found = self._unguarded(code, "code", node)
+        if found is None:
+            return
+        self._report(
+            node,
+            rule_id,
+            severity,
+            f"Code injection: request data is evaluated as code by {sink_label}.",
+            code,
+            found.label,
+            "code",
+            sink_label,
+            "never evaluate request data; parse it with a fixed grammar",
+        )
+
+    def _deserialize_sink(self, node, data, severity, sink_label) -> None:
+        found = self._unguarded(data, "deser", node)
+        if found is None:
+            return
+        self._report(
+            node,
+            "SKY-D233",
+            severity,
+            f"Unsafe deserialization: request data reaches {sink_label}, which "
+            "can rebuild and run functions.",
+            data,
+            found.label,
+            "deser",
+            sink_label,
+            "JSON.parse or a safe schema loader",
+        )
+
+    def _vm_sandbox_code(self, node, args) -> None:
+        """``vm.runInContext('safeEval(input)', { safeEval, input })``: the
+        code is a fixed string, but it calls a sandbox function on sandbox
+        data. Each call in the code is checked as if written in the handler,
+        with sandbox names mapped to the values the sandbox object holds."""
+        if len(args) < 2:
+            return
+        sandbox = self._object_literal(args[1])
+        code = _string_value(self.source, _unwrap(args[0]))
+        if sandbox is None or not code or len(code) > 2000:
+            return
+        for callee_names, arg_names in _calls_in_code(code):
+            if not callee_names or callee_names[0] not in sandbox:
+                continue
+            holder = _unwrap(sandbox[callee_names[0]])
+            if len(callee_names) == 1:
+                target = self._library_target(holder)
+            elif holder is not None and holder.type in {
+                "identifier",
+                "shorthand_property_identifier",
+            }:
+                module = self.ctx.module_of(_text(self.source, holder))
+                target = (module, callee_names[1]) if module else None
+            else:
+                target = None
+            if target is None:
+                continue
+            for arg_name in arg_names:
+                value = sandbox.get(arg_name)
+                if value is None:
+                    continue
+                module, name = target
+                label = f"{module} {name}() inside vm sandbox code"
+                if (module, name) in _LIBRARY_EVALUATORS or (
+                    module == "mathjs" and name in _MATHJS_EVALUATORS
+                ):
+                    self._code_sink(node, value, "SKY-D201", "HIGH", label)
+                elif (module, name) in _UNSAFE_DESERIALIZERS or (
+                    module == "js-yaml"
+                    and name in {"load", "loadAll"}
+                    and _js_yaml_load_is_unsafe(self.file_path)
+                ):
+                    self._deserialize_sink(node, value, "HIGH", label)
+
+    def _object_literal(self, node, depth: int = 0) -> dict[str, Any] | None:
+        node = _unwrap(node)
+        if node is None or depth > 2:
+            return None
+        if node.type == "identifier":
+            name = _text(self.source, node)
+            if name in self.ctx.mutated or name in self.ctx.assigned:
+                return None
+            selected, _ = self.taint._selected_events(name, node)
+            if len(selected) != 1 or selected[0].value is None:
+                return None
+            return self._object_literal(selected[0].value, depth + 1)
+        if node.type != "object":
+            return None
+        values: dict[str, Any] = {}
+        for child in node.named_children:
+            if child.type == "shorthand_property_identifier":
+                values[_text(self.source, child)] = child
+            elif child.type == "pair":
+                key = child.child_by_field_name("key")
+                value = child.child_by_field_name("value")
+                if key is not None and value is not None:
+                    values[_text(self.source, key).strip("'\"")] = value
+            elif child.type == "spread_element":
+                return None
+        return values
 
     def _call(self, node) -> None:
         callee = _unwrap(node.child_by_field_name("function"))
@@ -2800,6 +3542,8 @@ class _SinkChecker:
         self._response(node, callee, args)
         self._nosql(node, callee, args)
         self._merge(node, callee, args)
+        self._library(node, callee, args)
+        self._render(node, callee, args)
 
     def _command(self, node, first, method: str = "exec") -> None:
         found = self._unguarded(first, "cmd", node)
@@ -3673,7 +4417,7 @@ class _SinkChecker:
         return True
 
     def _nosql(self, node, callee, args) -> None:
-        if not self.ctx.mongo or self.ctx.mongo_sanitized:
+        if self.ctx.mongo_sanitized:
             return
         if callee.type != "member_expression":
             return
@@ -3682,6 +4426,15 @@ class _SinkChecker:
         if prop is None or obj is None or obj.type == "array":
             return
         if self._receiver_is_http_object(obj):
+            return
+        if not (
+            self.ctx.mongo
+            or self._collection_receiver(obj)
+            or self._has_where_key(args[0])
+        ):
+            # Without a Mongo driver import, a query needs a collection-shaped
+            # receiver (``db.ordersCollection``, ``db.collection('x')``, a DAO's
+            # ``usersCol``) or Mongo-only ``$where`` syntax.
             return
         method = _text(self.source, prop)
         if method in {"$where"}:
@@ -3706,6 +4459,36 @@ class _SinkChecker:
             return
         found, why = result
         self._nosql_report(node, target, found, method, why)
+
+    def _collection_receiver(self, obj) -> bool:
+        current = _unwrap(obj)
+        for _ in range(8):
+            if current is None:
+                return False
+            if current.type == "member_expression":
+                prop = current.child_by_field_name("property")
+                if prop is not None and _COLLECTION_NAME_RE.search(_text(self.source, prop)):
+                    return True
+                current = _unwrap(current.child_by_field_name("object"))
+            elif current.type == "call_expression":
+                current = _unwrap(current.child_by_field_name("function"))
+            elif current.type == "identifier":
+                return bool(_COLLECTION_NAME_RE.search(_text(self.source, current)))
+            else:
+                return False
+        return False
+
+    def _has_where_key(self, expr, depth: int = 0) -> bool:
+        node = _unwrap(expr)
+        if node is None or depth > 2:
+            return False
+        if node.type == "identifier":
+            selected, _ = self.taint._selected_events(_text(self.source, node), node)
+            return any(
+                event.value is not None and self._has_where_key(event.value, depth + 1)
+                for event in selected
+            )
+        return node.type == "object" and _object_has_key(self.source, node, "$where")
 
     def _match_stage(self, pipeline):
         pipeline = _unwrap(pipeline)
@@ -3791,13 +4574,23 @@ class _SinkChecker:
         return found
 
     def _nosql_report(self, node, expr, found: _Taint, method: str, why: str) -> None:
+        if "$where" in why:
+            detail = (
+                f"NoSQL injection: request data is built into the $where "
+                f"JavaScript of the {method}() query, so it can run code in the "
+                "database. Use query operators with typed values instead."
+            )
+        else:
+            detail = (
+                f"NoSQL injection: request data reaches the {method}() query ({why}); "
+                "a JSON body such as {\"$ne\": null} becomes a query operator. "
+                "Cast values to strings or validate them first."
+            )
         self._report(
             node,
             "SKY-D238",
             "HIGH",
-            f"NoSQL injection: request data reaches the {method}() query ({why}); "
-            "a JSON body such as {\"$ne\": null} becomes a query operator. "
-            "Cast values to strings or validate them first.",
+            detail,
             expr,
             found.label,
             "nosql",

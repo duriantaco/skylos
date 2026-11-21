@@ -287,6 +287,112 @@ _RUST_EXTERNAL_TRAIT_IMPORTS = {
     },
 }
 
+# Test and bench harnesses register functions by attribute: libtest's
+# `#[test]`/`#[bench]`, and `#[tokio::test]`, `#[divan::bench]`,
+# `#[sqlx::test]`... all end in `test` or `bench`. These frameworks use other
+# names for the same role.
+_HARNESS_ATTRIBUTE_NAMES = frozenset(
+    {"test", "bench", "rstest", "test_case", "test_matrix", "wasm_bindgen_test"}
+)
+_ATTRIBUTE_PATH_RE = re.compile(
+    r"#\[\s*((?:r#)?[A-Za-z_][A-Za-z0-9_]*(?:\s*::\s*(?:r#)?[A-Za-z_][A-Za-z0-9_]*)*)"
+)
+_USE_TOKEN_RE = re.compile(r"::|[{}*,;]|(?:r#)?[A-Za-z_][A-Za-z0-9_]*")
+_FORMAT_MACRO_ARGUMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def is_harness_attribute(text: str) -> bool:
+    """An outer attribute whose path's last segment names a test harness."""
+    match = _ATTRIBUTE_PATH_RE.match(text.strip())
+    if match is None:
+        return False
+    last = match.group(1).split("::")[-1].strip().removeprefix("r#")
+    return last in _HARNESS_ATTRIBUTE_NAMES
+
+
+def use_tree_leaves(text: str) -> list[tuple[str, str, tuple[str, ...]]]:
+    """Every binding of a `use` tree as (local name, original name, full path).
+
+    `crate::{a::{self, b as c}, d::E}` gives `a` -> crate::a,
+    `c` -> crate::a::b and `E` -> crate::d::E. Globs bind no name.
+    """
+    text = re.sub(r"//[^\n]*|/\*.*?\*/", " ", text, flags=re.DOTALL)
+    tokens = _USE_TOKEN_RE.findall(text)
+    leaves: list[tuple[str, str, tuple[str, ...]]] = []
+    position = 0
+
+    def parse_tree(prefix: tuple[str, ...]) -> None:
+        nonlocal position
+        path = list(prefix)
+        while position < len(tokens):
+            token = tokens[position]
+            if token in {",", "}", ";"}:
+                break
+            position += 1
+            if token == "::":
+                continue
+            if token == "*":
+                return
+            if token == "{":
+                while position < len(tokens) and tokens[position] != "}":
+                    if tokens[position] == ",":
+                        position += 1
+                        continue
+                    parse_tree(tuple(path))
+                position += 1
+                return
+            if token == "as":
+                alias = tokens[position] if position < len(tokens) else ""
+                position += 1
+                leaf = _use_leaf(path)
+                if leaf is not None and alias:
+                    leaves.append((alias, leaf[1], leaf[2]))
+                return
+            path.append(token)
+        leaf = _use_leaf(path)
+        if leaf is not None and len(path) > len(prefix):
+            leaves.append(leaf)
+
+    while position < len(tokens):
+        if tokens[position] in {",", ";", "}"}:
+            position += 1
+            continue
+        parse_tree(())
+    return leaves
+
+
+def _format_argument_names(literal: str) -> list[str]:
+    """Names a format string reads: `{name}`, `{name:?}`, `{:width$}`."""
+    names: list[str] = []
+    index = 0
+    while index < len(literal):
+        if literal.startswith("{{", index):
+            index += 2
+            continue
+        if literal[index] != "{":
+            index += 1
+            continue
+        end = literal.find("}", index)
+        if end < 0:
+            break
+        argument, _, spec = literal[index + 1 : end].partition(":")
+        argument = argument.strip()
+        if _FORMAT_MACRO_ARGUMENT_RE.fullmatch(argument):
+            names.append(argument)
+        names.extend(
+            match.group(1) for match in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*)\$", spec)
+        )
+        index = end + 1
+    return names
+
+
+def _use_leaf(path: list[str]) -> tuple[str, str, tuple[str, ...]] | None:
+    if path and path[-1] == "self":
+        path = path[:-1]
+    if not path or path[-1] in {"crate", "super", "self"}:
+        return None
+    return path[-1], path[-1], tuple(path)
+
 
 def _get_parser(lang: Language) -> Parser:
     lang_id = id(lang)
@@ -360,6 +466,9 @@ class RustCore:
         self._parameter_value_bindings: dict[int, frozenset[str]] = {}
         self._local_trait_imports = None
         self._semantic_import_uses = None
+        # The project trait closure re-scans whole crates only for trait
+        # proofs; it does not need per-import scope facts.
+        self.collect_scope_members = True
 
         if self.lang:
             self.parser = _get_parser(self.lang)
@@ -427,7 +536,10 @@ class RustCore:
                         attr.start_byte + text.find(name),
                         current_callable=current_callable,
                     )
-            if text.startswith("#[serde"):
+            if text.startswith("#[serde") or (
+                text.startswith("#[cfg_attr") and "serde" in text
+            ):
+                # Also `#[cfg_attr(feature = "full", serde(with = "LtreeDef"))]`.
                 for path in _ATTR_PATH_REF_RE.findall(text):
                     self._add_ref(
                         path,
@@ -435,6 +547,14 @@ class RustCore:
                         current_callable=current_callable,
                         preserve_qualified=True,
                     )
+                    if "::" not in path:
+                        # `default = "f"` names `f` in this scope, so it also
+                        # reaches an imported `f`'s qualified target.
+                        self._add_ref(
+                            path,
+                            attr.start_byte + text.find(path),
+                            current_callable=current_callable,
+                        )
             self._add_attribute_expression_refs(attr, current_callable=current_callable)
 
     def _add_attribute_expression_refs(
@@ -484,7 +604,15 @@ class RustCore:
                     )
                     # `help = ...` and `action(...)` are metadata keys, while
                     # `Mode::Enabled` and `format_value!(...)` are expressions.
-                    if before == "::" or after in {"=", "token_tree"}:
+                    # A call after `=` (`select_expression = f()`) or any call
+                    # in a non-metadata attribute (`#[default(f())]`) reads `f`.
+                    call = (
+                        after == "token_tree"
+                        and children[index + 1].children
+                        and children[index + 1].children[0].type == "("
+                        and (before == "=" or not metadata_attribute)
+                    )
+                    if before == "::" or (after in {"=", "token_tree"} and not call):
                         continue
                     if (
                         metadata_attribute
@@ -504,6 +632,8 @@ class RustCore:
     def _is_test_function(self, name: str, attrs: list, line: int) -> bool:
         if self._has_attr_prefix(
             attrs, ("#[test", "#[tokio::test", "#[async_std::test")
+        ) or any(
+            is_harness_attribute(attribute) for attribute in self._attrs_text(attrs)
         ):
             self.test_decorated_lines.add(line)
             return True
@@ -534,17 +664,23 @@ class RustCore:
         )
         if not ref_name or ref_name in {"self", "Self", "crate", "super"}:
             return
-        if current_callable and (
-            ref_name == current_callable
-            or (
-                not preserve_qualified
-                and current_callable in self._module_scoped_callables
-                and self._qualified_symbol(
-                    ref_name, self._callable_context[current_callable][0]
+        if (
+            current_callable
+            and (
+                ref_name == current_callable
+                or (
+                    not preserve_qualified
+                    and current_callable in self._module_scoped_callables
+                    and self._qualified_symbol(
+                        ref_name, self._callable_context[current_callable][0]
+                    )
+                    == current_callable
                 )
-                == current_callable
             )
+            and ref_name not in self._callable_imports(current_callable)
         ):
+            # `fn escape() { use super::escape; escape(..) }` calls the
+            # import, not itself.
             self._self_reference_events.append((ref_name, start_byte, current_callable))
             return
         from .import_bindings import ImportBindings
@@ -573,6 +709,184 @@ class RustCore:
                 start_byte,
                 current_callable=current_callable,
             )
+        elif current_callable is None and "." not in ref_name and self.root_namespace:
+            # A module-level read (a macro argument such as `make_error! {
+            # Empty: no_source, serialize }`) names this module's function,
+            # never a same-named method.
+            qualified = self._qualified_symbol(ref_name, self.root_namespace)
+            context = self._callable_context.get(qualified)
+            if context is not None and context[1] is None:
+                self._record_ref(qualified, start_byte, current_callable=None)
+
+    def _scope_member_names(self, scope, identity) -> frozenset[str]:
+        """Member names an import's scope calls or names, and its macros.
+
+        `use` paths themselves, child modules (their own import scope) and
+        inner blocks that import the same item again do not count. Calls
+        proven to reach an inherent method of a local type do not count.
+        """
+        root = scope if scope is not None else self.root_node
+        owners = self._reimporting_blocks().get(identity, ())
+        skipped = frozenset(
+            block
+            for block in owners
+            if block.id != root.id
+            and root.start_byte <= block.start_byte < root.end_byte
+        )
+        cache = self.__dict__.setdefault("_scope_member_cache", {})
+        key = (root.id, frozenset(block.id for block in skipped))
+        names = cache.get(key)
+        if names is not None:
+            return names
+        skipped_ids = {block.id for block in skipped}
+        found: set[str] = set()
+        pending = [root]
+        while pending:
+            node = pending.pop()
+            kind = node.type
+            if kind == "use_declaration" or node.id in skipped_ids:
+                continue
+            if kind == "mod_item" and node is not root:
+                continue
+            if kind == "token_tree":
+                current = self._enclosing_callable(node)
+                for receiver, member in self._token_tree_method_calls(node):
+                    name = self._node_name_text(member)
+                    owner = self._receiver_type(receiver, current)
+                    if not self._is_inherent_target(self._member_target(owner, name)):
+                        found.add(name)
+                # `vec![OsString::from_vec(..)]`: paths inside macro arguments.
+                children = node.children
+                for index, child in enumerate(children[:-1]):
+                    if child.type == "::" and children[index + 1].type == "identifier":
+                        found.add(self._node_name_text(children[index + 1]))
+            elif kind == "field_expression":
+                method = self._trait_method_name_from_node(node)
+                if (
+                    method
+                    and method not in found
+                    and not self._known_inherent_method(node)
+                ):
+                    found.add(method)
+            elif kind == "scoped_identifier":
+                associated = self._trait_associated_call_from_node(node)
+                if (
+                    associated is not None
+                    and associated[1] not in found
+                    and not self._known_inherent_method(node)
+                ):
+                    found.add(associated[1])
+            elif kind == "macro_invocation":
+                path = self._node_name_text(node.child_by_field_name("macro"))
+                macro = path.rsplit("::", 1)[-1]
+                if path in {
+                    "std::write",
+                    "std::writeln",
+                    "core::write",
+                    "core::writeln",
+                } or (
+                    path in {"write", "writeln"}
+                    and path not in self._local_macro_names()
+                ):
+                    member = self._writer_macro_member(node)
+                    if member:
+                        found.add(member)
+                if "::" not in path:
+                    # A local macro's body is part of the scope where it is
+                    # invoked: `write!` wrapping `std::write!(..)` reaches
+                    # `write_fmt`.
+                    found.update(self._local_macro_members().get(macro, ()))
+                found.add(f"{macro}!")
+            pending.extend(node.children)
+        names = frozenset(found)
+        cache[key] = names
+        return names
+
+    def _reimporting_blocks(self) -> dict[str, list]:
+        """Blocks and module bodies by the item identity they import, each
+        `use` qualified in its own module."""
+        blocks = getattr(self, "_reimporting_block_map", None)
+        if blocks is None:
+            blocks = {}
+            pending = [(self.root_node, self.root_namespace)]
+            while pending:
+                node, namespace = pending.pop()
+                if node.type == "mod_item":
+                    namespace = self._qualified_symbol(
+                        self._node_name_text(node.child_by_field_name("name")),
+                        namespace,
+                    )
+                elif node.type == "use_declaration":
+                    source = self._node_name_text(node.child_by_field_name("argument"))
+                    for local, original in self._extract_use_bindings(node):
+                        identity = self._import_identity(
+                            source, local, original, namespace
+                        )
+                        blocks.setdefault(identity, []).append(node.parent)
+                    continue
+                pending.extend((child, namespace) for child in node.named_children)
+            self._reimporting_block_map = blocks
+        return blocks
+
+    def _import_identity(self, source, local, original, namespace) -> str:
+        """The item a `use` leaf names, through a module alias such as
+        `use std::io as io; use io::Write;` -> std.io.Write."""
+        for leaf_local, leaf_original, path in use_tree_leaves(source):
+            if leaf_local != local or leaf_original != original:
+                continue
+            head = path[0] if path else ""
+            aliases = self.import_aliases.get(head, ())
+            if head not in {"crate", "self", "super"} and len(aliases) == 1:
+                target = next(iter(aliases))
+                if target != ".".join(path):
+                    return ".".join([target, *path[1:]])
+            break
+        return (
+            self._qualify_use_import(
+                source, local_name=local, original_name=original, namespace=namespace
+            )
+            or f"{source}::{original}"
+        )
+
+    def _writer_macro_member(self, node) -> str | None:
+        """`write!(buffer, ..)` calls `buffer.write_fmt(..)`: `write_fmt@io`
+        for a byte buffer, `write_fmt@fmt` for a String, nothing for a local
+        type's inherent `write_fmt`, else `write_fmt`."""
+        if self._semantic_import_uses is None:
+            from .import_uses import SemanticImportUses
+
+            self._semantic_import_uses = SemanticImportUses(self)
+        uses = self._semantic_import_uses
+        tree = self._child_by_type(node, "token_tree")
+        groups = uses._groups(tree) if tree is not None else []
+        target = [
+            token
+            for token in (groups[0] if groups else ())
+            if token.type not in {"&", "mutable_specifier"}
+        ]
+        if len(target) == 1 and target[0].type == "identifier":
+            name = self._node_name_text(target[0])
+            kind = uses._binding_kind(name, target[0])
+            if kind in {"io", "fmt"}:
+                return f"write_fmt@{kind}"
+            owner = self._receiver_type(target[0], self._enclosing_callable(node))
+            if self._is_inherent_target(self._member_target(owner, "write_fmt")):
+                return None
+        return "write_fmt"
+
+    def _callable_imports(self, callable_name: str) -> frozenset[str]:
+        cache = self.__dict__.setdefault("_callable_import_cache", {})
+        names = cache.get(callable_name)
+        if names is None:
+            node = self._callable_nodes.get(callable_name)
+            names = frozenset(
+                local
+                for child in (self._iter_nodes(node) if node is not None else ())
+                if child.type == "use_declaration"
+                for local, _ in self._extract_use_bindings(child)
+            )
+            cache[callable_name] = names
+        return names
 
     def _record_ref(
         self,
@@ -1181,6 +1495,10 @@ class RustCore:
             if child.type == "attribute_item":
                 attrs.append(child)
                 continue
+            if attrs and child.type in {"line_comment", "block_comment"}:
+                # A doc comment between `#[tokio::test]` and `fn` keeps the
+                # attributes on the item.
+                continue
 
             if child.type == "use_declaration":
                 self._scan_use_imports(child, namespace=namespace, attrs=attrs)
@@ -1308,6 +1626,9 @@ class RustCore:
             decl_list = self._child_by_type(node, "field_declaration_list")
         if decl_list is None:
             decl_list = self._child_by_type(node, "enum_variant_list")
+        if decl_list is None:
+            # Tuple struct: `struct TempDir(PathBuf);` reads `PathBuf`.
+            decl_list = self._child_by_type(node, "ordered_field_declaration_list")
         if decl_list is not None and node.type == "trait_item":
             self._scan_trait_members(decl_list, current_type=qualified)
         elif decl_list is not None:
@@ -1329,6 +1650,8 @@ class RustCore:
                 continue
             if child.type == ";":
                 break
+            # A bare `type Range = Match;` has no children to recurse into.
+            self._scan_refs_in_node(child, current_callable=None)
             self._scan_block(
                 child,
                 namespace=namespace,
@@ -1342,6 +1665,8 @@ class RustCore:
         for child in node.children:
             if child.type == "attribute_item":
                 attrs.append(child)
+                continue
+            if attrs and child.type in {"line_comment", "block_comment"}:
                 continue
             if child.type not in {"function_signature_item", "function_item"}:
                 attrs = []
@@ -1406,6 +1731,8 @@ class RustCore:
             if child.type == "attribute_item":
                 inner_attrs.append(child)
                 continue
+            if inner_attrs and child.type in {"line_comment", "block_comment"}:
+                continue
             if child.type == "function_item":
                 self._scan_function(
                     child,
@@ -1417,6 +1744,31 @@ class RustCore:
                 inner_attrs = []
                 continue
             self._scan_refs_in_node(child, current_callable=None)
+            # Associated types and constants read their right-hand side:
+            # `type InsertForm = CustomEmojiInsertForm;`, `const X: T = f();`.
+            if child.type in {"type_item", "const_item"}:
+                if inner_attrs:
+                    self._add_attr_refs(inner_attrs, current_callable=None)
+                for field in ("type", "value"):
+                    part = child.child_by_field_name(field)
+                    if part is None:
+                        continue
+                    self._scan_refs_in_node(part, current_callable=None)
+                    self._scan_block(
+                        part,
+                        namespace=namespace,
+                        current_type=None,
+                        current_callable=None,
+                        pending_attrs=[],
+                    )
+            elif child.type == "macro_invocation":
+                self._scan_block(
+                    child,
+                    namespace=namespace,
+                    current_type=None,
+                    current_callable=None,
+                    pending_attrs=[],
+                )
             inner_attrs = []
 
     def _impl_header_type_names(self, node) -> list[tuple[str, int]]:
@@ -1584,11 +1936,23 @@ class RustCore:
             if not hasattr(self, "_import_bindings"):
                 self._import_bindings = ImportBindings(self)
             d.rust_reference_facts = self._import_bindings.facts(node, local_name)
+            # Member names the import's scope calls or names (`x.m()`,
+            # `T::m`, `write!` -> write_fmt) and the macros it invokes
+            # (`name!`): the project pass reports a trait import only when
+            # none of the trait's members can be reached through it.
+            if self.collect_scope_members:
+                d.rust_reference_facts["scope_members"] = self._scope_member_names(
+                    node.parent,
+                    self._import_identity(source, local_name, original_name, namespace),
+                )
             d.is_exported = is_public_reexport
-            self.defs.append(d)
-            self.imports.append(
-                {"name": local_name, "file": str(self.file_path), "line": line}
-            )
+            if local_name != "_":
+                # `use Trait as _;` binds no name: it only brings the trait's
+                # methods into scope, so there is nothing to report.
+                self.defs.append(d)
+                self.imports.append(
+                    {"name": local_name, "file": str(self.file_path), "line": line}
+                )
             names.append(local_name)
             qualified_import = self._qualify_use_import(
                 source,
@@ -1698,6 +2062,14 @@ class RustCore:
         original_name: str,
         namespace: str | None = None,
     ) -> str | None:
+        # Each leaf keeps every segment above it, also inside nested groups:
+        # `crate::{pathutil::{is_hidden_entry}}` -> crate::pathutil::is_hidden_entry.
+        for local, original, path in use_tree_leaves(source):
+            if local != local_name or original != original_name:
+                continue
+            if len(path) < 2:
+                return None
+            return self._resolve_rust_path(list(path), namespace=namespace)
         target = source.strip()
         if "{" in target:
             base = target.split("{", 1)[0].rstrip(":").strip()
@@ -2011,6 +2383,14 @@ class RustCore:
             # Rust leaves macro arguments as tokens. Keep obvious method-call
             # receivers without interpreting or executing the macro itself.
             children = node.children
+            for index, child in enumerate(children[:-1]):
+                # A nested macro named like a primitive: `str![..]` (snapbox).
+                if child.type == "primitive_type" and children[index + 1].type == "!":
+                    self._add_ref(
+                        self._node_name_text(child),
+                        child.start_byte,
+                        current_callable=current_callable,
+                    )
             for index in range(2, len(children) - 1):
                 member = children[index]
                 if (
@@ -2039,6 +2419,9 @@ class RustCore:
 
         if node.type == "macro_invocation":
             name_node = self._child_by_type(node, "identifier")
+            if name_node is None:
+                # `str![...]` (snapbox): the macro name parses as a primitive.
+                name_node = self._child_by_type(node, "primitive_type")
             macro_name = self._node_name_text(name_node)
             self._add_ref(
                 macro_name,
@@ -2050,6 +2433,12 @@ class RustCore:
                     node,
                     current_callable=current_callable,
                 )
+            self._add_format_argument_refs(node, current_callable=current_callable)
+            # A local `macro_rules!` body resolves its item paths where it is
+            # invoked: `create_app!()` inside `mod startup` reads that
+            # module's `use super::Command`.
+            for name in self._local_macro_names().get(macro_name, ()):
+                self._add_ref(name, node.start_byte, current_callable=current_callable)
             return
 
         if node.type == "struct_expression":
@@ -2234,9 +2623,108 @@ class RustCore:
             return False
         return True
 
+    def _add_format_argument_refs(self, node, *, current_callable: str | None) -> None:
+        """Inline format arguments: `format!("sendmail{EXE_SUFFIX}")` reads
+        `EXE_SUFFIX`, and `{x:>width$}` reads `width`. Locals are skipped."""
+        tree = self._child_by_type(node, "token_tree")
+        if tree is None:
+            return
+        for literal in self._iter_nodes(tree):
+            if literal.type not in {"string_literal", "raw_string_literal"}:
+                continue
+            for name in _format_argument_names(self._get_text(literal)):
+                if name in _RUST_KEYWORDS or self._locally_bound(
+                    name, literal, through_macros=True
+                ):
+                    continue
+                self._add_ref(
+                    name, literal.start_byte, current_callable=current_callable
+                )
+
+    def _local_macro_names(self) -> dict[str, frozenset[str]]:
+        names = getattr(self, "_local_macro_name_map", None)
+        if names is not None:
+            return names
+        collected: dict[str, set[str]] = {}
+        for definition in self._iter_nodes(self.root_node):
+            if definition.type != "macro_definition":
+                continue
+            macro = self._node_name_text(definition.child_by_field_name("name"))
+            body_names = collected.setdefault(macro, set())
+            for rule in definition.named_children:
+                if rule.type != "macro_rule":
+                    continue
+                expansion = rule.child_by_field_name("right")
+                if expansion is None:
+                    continue
+                for token in self._iter_nodes(expansion):
+                    if token.type != "identifier":
+                        continue
+                    previous = token.prev_sibling
+                    if previous is not None and previous.type in {".", "::", "$"}:
+                        continue
+                    name = self._node_name_text(token)
+                    if name and name not in _RUST_KEYWORDS and name != macro:
+                        body_names.add(name)
+        names = {macro: frozenset(found) for macro, found in collected.items()}
+        self._local_macro_name_map = names
+        return names
+
+    def _local_macro_members(self) -> dict[str, frozenset[str]]:
+        members = getattr(self, "_local_macro_member_map", None)
+        if members is not None:
+            return members
+        collected: dict[str, set[str]] = {}
+        for definition in self._iter_nodes(self.root_node):
+            if definition.type != "macro_definition":
+                continue
+            macro = self._node_name_text(definition.child_by_field_name("name"))
+            found = collected.setdefault(macro, set())
+            for node in self._iter_nodes(definition):
+                if node.type != "token_tree":
+                    continue
+                children = node.children
+                for index, child in enumerate(children[:-1]):
+                    following = children[index + 1]
+                    if child.type in {".", "::"} and following.type == "identifier":
+                        found.add(self._node_name_text(following))
+                    if (
+                        child.type == "identifier"
+                        and following.type == "!"
+                        and self._node_name_text(child) in {"write", "writeln"}
+                    ):
+                        found.add("write_fmt")
+        members = {macro: frozenset(found) for macro, found in collected.items()}
+        self._local_macro_member_map = members
+        return members
+
+    def _imported_names(self) -> frozenset[str]:
+        """Local names of imports whose item is capitalised (a type, variant
+        or constant). `use std::mem::drop as Release` imports a function."""
+        names = getattr(self, "_imported_name_set", None)
+        if names is None:
+            names = frozenset(
+                local
+                for node in self._iter_nodes(self.root_node)
+                if node.type == "use_declaration"
+                for local, original in self._extract_use_bindings(node)
+                if local and local != "_" and original[:1].isupper()
+            )
+            self._imported_name_set = names
+        return names
+
+    def _names_imported_item(self, node) -> bool:
+        name = self._node_name_text(node)
+        return bool(name[:1].isupper()) and name in self._imported_names()
+
     def _pattern_bindings(self, pattern):
         """Yield value bindings without treating pattern constructors as locals."""
         if pattern is None:
+            return
+        if pattern.type == "identifier" and self._names_imported_item(pattern):
+            # rustc resolves a bare pattern name to a unit variant, unit
+            # struct or constant in scope before binding: `Unit => ...`
+            # after `use syn::Fields::Unit` reads the import.
             return
         if pattern.type in {"identifier", "shorthand_field_identifier"}:
             yield pattern
@@ -2330,8 +2818,9 @@ class RustCore:
         on their RHS still provide normal reachability; this does not resolve the
         local's runtime value or expand macros.
         """
-        name = self._node_name_text(node)
+        return self._locally_bound(self._node_name_text(node), node)
 
+    def _locally_bound(self, name: str, node, *, through_macros: bool = False) -> bool:
         def binds(pattern):
             return name in self._pattern_binding_names(pattern)
 
@@ -2342,7 +2831,7 @@ class RustCore:
 
         scope = node.parent
         while scope is not None:
-            if scope.type == "token_tree":
+            if scope.type == "token_tree" and not through_macros:
                 return False
             if scope.type == "block":
                 binding_end = self._earliest_block_bindings(scope).get(name)

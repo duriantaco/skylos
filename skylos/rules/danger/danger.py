@@ -52,6 +52,8 @@ from .calls import (
     _weak_random_call_name,
     _client_nonce_material_reaches_return,
     _yaml_load_without_safeloader,
+    mark_yaml_loader_review,
+    yaml_loader_unproven_for_project_size,
     _ruamel_unsafe_type,
     track_import_aliases,
     unpickler_load_name,
@@ -203,18 +205,25 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 if rule_key == "pickle.loads" and id(node) in self._safe_pickle_loads:
                     continue
 
-                if rule_key in {
-                    "yaml.load",
-                    "yaml.load_all",
-                } and not _yaml_load_without_safeloader(
-                    node,
-                    self.aliases,
-                    self._yaml_loader_classes(),
-                    self.file_path,
-                    self._project_root,
-                    self._module,
-                ):
-                    continue
+                yaml_review = False
+                if rule_key in {"yaml.load", "yaml.load_all"}:
+                    if not _yaml_load_without_safeloader(
+                        node,
+                        self.aliases,
+                        self._yaml_loader_classes(),
+                        self.file_path,
+                        self._project_root,
+                        self._module,
+                    ):
+                        continue
+                    yaml_review = yaml_loader_unproven_for_project_size(
+                        node,
+                        self.aliases,
+                        self._yaml_loader_classes(),
+                        self.file_path,
+                        self._project_root,
+                        self._module,
+                    )
 
                 if (
                     opts
@@ -271,6 +280,8 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     evidence = private_model_slug_evidence(node)
                     if evidence:
                         finding["security_evidence"] = evidence
+                if yaml_review:
+                    mark_yaml_loader_review(finding)
                 self.findings.append(finding)
                 break
             else:
@@ -771,6 +782,63 @@ def scan_file_with_tree(
 
 _SEVERITY_RANK = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
 
+# Sinks: the call is the risk, so code that can never run carries none.
+# Text checks (secrets, invisible characters) still apply to dead lines.
+_UNREACHABLE_SINK_RULES = frozenset(
+    {
+        "SKY-D201", "SKY-D202", "SKY-D203", "SKY-D204", "SKY-D205",
+        "SKY-D206", "SKY-D209", "SKY-D211", "SKY-D212", "SKY-D213",
+        "SKY-D215", "SKY-D216", "SKY-D217", "SKY-D226", "SKY-D227",
+        "SKY-D228", "SKY-D230", "SKY-D233", "SKY-D245", "SKY-D265",
+        "SKY-D324", "SKY-D325", "SKY-D326", "SKY-D357",
+    }
+)  # fmt: skip
+_TERMINATORS = (ast.Return, ast.Raise, ast.Continue, ast.Break)
+
+
+def unreachable_line_ranges(tree) -> list[tuple[int, int]]:
+    """Line ranges of statements that follow an unconditional ``return``,
+    ``raise``, ``continue`` or ``break`` in the same block of a function.
+    Module and class bodies are left alone: a top-level ``raise`` is how a
+    file marks itself as not to be imported, not dead code."""
+    ranges = []
+    blocks = [
+        node
+        for function in ast.walk(tree)
+        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for node in ast.walk(function)
+    ]
+    for node in blocks:
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(node, field, None)
+            if not isinstance(block, list):
+                continue
+            for index, statement in enumerate(block[:-1]):
+                if isinstance(statement, _TERMINATORS):
+                    for dead in block[index + 1 :]:
+                        start = getattr(dead, "lineno", None)
+                        end = getattr(dead, "end_lineno", start)
+                        if isinstance(start, int):
+                            ranges.append((start, end or start))
+                    break
+    return ranges
+
+
+def drop_unreachable_sinks(findings: list[dict], tree) -> list[dict]:
+    """Sink findings inside statements that can never run are not risks."""
+    if not findings:
+        return findings
+    ranges = unreachable_line_ranges(tree)
+    if not ranges:
+        return findings
+    return [
+        finding
+        for finding in findings
+        if finding.get("rule_id") not in _UNREACHABLE_SINK_RULES
+        or not isinstance(finding.get("line"), int)
+        or not any(start <= finding["line"] <= end for start, end in ranges)
+    ]
+
 
 def dedupe_findings(findings: list[dict]) -> list[dict]:
     """One report per rule and source location; keep the most severe one.
@@ -811,6 +879,12 @@ def _scan_file(file_path: Path, findings, project_root=None):
 
     checker = _DangerousCallsChecker(file_path, findings, project_root)
     checker.visit(tree)
+    findings[:] = [
+        finding for finding in findings if str(finding.get("file")) != str(file_path)
+    ] + drop_unreachable_sinks(
+        [finding for finding in findings if str(finding.get("file")) == str(file_path)],
+        tree,
+    )
 
 
 def scan_ctx(_, files):

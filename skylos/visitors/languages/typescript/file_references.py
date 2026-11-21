@@ -58,6 +58,7 @@ from pathlib import Path
 import yaml
 
 from skylos.core.file_discovery import discover_source_files
+from skylos.core.js_ast import call_arguments
 from skylos.deadcode.python_source_proofs import _PythonReferenceProof, _scope_nodes
 from skylos.core.safe_cache_io import read_text_no_symlink
 
@@ -948,10 +949,10 @@ def _require_specifier(source: bytes, node) -> str | None:
         or arguments is None
         or function.type != "identifier"
         or _node_text(source, function) != "require"
-        or len(arguments.named_children) != 1
+        or len(call_arguments(arguments)) != 1
     ):
         return None
-    return _static_string(source, arguments.named_children[0])
+    return _static_string(source, call_arguments(arguments)[0])
 
 
 def path_module_bindings(source: bytes, root) -> tuple[set[str], set[str]]:
@@ -1247,6 +1248,7 @@ def _is_tool_configuration(path: str) -> bool:
         "rc-config",
         "conf-config",
         "storybook-config",
+        "plugin-config",
     }
 
 

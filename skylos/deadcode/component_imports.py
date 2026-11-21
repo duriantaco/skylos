@@ -7,16 +7,15 @@ component, so an unused loader cannot make a whole component tree live.
 
 from __future__ import annotations
 
+import os
+import re
 from collections import Counter
 from copy import deepcopy
 from html.parser import HTMLParser
-import os
 from pathlib import Path
-import re
 
 from skylos.core.file_discovery import should_exclude_path
 from skylos.core.safe_cache_io import read_project_text_no_symlink
-
 
 COMPONENT_SUFFIXES = frozenset({".vue", ".svelte", ".astro"})
 MAX_COMPONENTS = 256
@@ -34,18 +33,25 @@ class _Scripts(HTMLParser):
         super().__init__(convert_charrefs=False)
         self.blocks = []
         self.current = None
+        self.styles = []
+        self.style = None
         self.template_depth = 0
 
     def handle_starttag(self, tag, attrs):
         if tag == "template":
             self.template_depth += 1
-        if tag == "script" and not self.template_depth:
+        if tag in {"script", "style"} and not self.template_depth:
             line = self.getpos()[0] + (self.get_starttag_text() or "").count("\n")
-            self.current = (dict(attrs), line, [])
+            if tag == "script":
+                self.current = (dict(attrs), line, [])
+            else:
+                self.style = (dict(attrs), line, [])
 
     def handle_data(self, data):
         if self.current is not None:
             self.current[2].append(data)
+        elif self.style is not None:
+            self.style[2].append(data)
 
     def handle_endtag(self, tag):
         if tag == "template":
@@ -54,9 +60,23 @@ class _Scripts(HTMLParser):
             attrs, line, body = self.current
             self.blocks.append((attrs, line, "".join(body)))
             self.current = None
+        if tag == "style" and self.style is not None:
+            attrs, line, body = self.style
+            self.styles.append((attrs, line, "".join(body)))
+            self.style = None
 
 
 def _script_blocks(source, suffix):
+    blocks, _styles, complete = component_blocks(source, suffix)
+    return blocks, complete
+
+
+def component_blocks(source, suffix):
+    """Return top-level script and style blocks with their starting lines.
+
+    Blocks are read as text only; ``complete`` is false for an unclosed block
+    or an unterminated Astro frontmatter fence.
+    """
     blocks = []
     if suffix == ".astro":
         frontmatter = _FRONTMATTER.match(source)
@@ -64,18 +84,28 @@ def _script_blocks(source, suffix):
             blocks.append(({"lang": "ts"}, 1, "\n" + frontmatter.group("body")))
             source = "\n" * source[: frontmatter.end()].count("\n") + source[frontmatter.end() :]
         elif source.lstrip("\ufeff").startswith("---"):
-            return [], False
+            return [], [], False
     parser = _Scripts()
     parser.feed(source)
     parser.close()
     blocks.extend(parser.blocks)
-    return blocks, parser.current is None
+    return blocks, parser.styles, parser.current is None and parser.style is None
 
 
 def _component_specifier(specifier):
     if not isinstance(specifier, str) or "?" in specifier or "#" in specifier:
         return False
     return Path(specifier).suffix.lower() in COMPONENT_SUFFIXES
+
+
+def _rune_module(target):
+    """A ``.svelte`` specifier that resolved to a Svelte 5 module script.
+
+    ``import { count } from "./state.svelte"`` loads ``state.svelte.ts`` (or
+    ``.js``): an ordinary module, already an edge of its importer, not a
+    component whose script needs expanding.
+    """
+    return target is not None and Path(target).suffix.lower() not in COMPONENT_SUFFIXES
 
 
 def _safe_component(root, candidate, exclude_folders):
@@ -148,8 +178,8 @@ def expand_component_imports(project_root, source_files, raw_imports, *, resolve
     Callers merge these records after checks that require a literal source
     import declaration; ``component_file`` identifies each original declaration.
     """
-    from skylos.visitors.languages.typescript.analysis import resolve_ts_module
     from skylos.deadcode.component_providers import generated_component_provider_limits
+    from skylos.visitors.languages.typescript.analysis import resolve_ts_module
 
     root = Path(project_root).resolve()
     selected = {str(Path(file).absolute()) for file in source_files}
@@ -209,7 +239,7 @@ def expand_component_imports(project_root, source_files, raw_imports, *, resolve
         for raw in entries:
             specifier = raw.get("source", "")
             target = resolve_ts_module(specifier, str(component), resolver)
-            if _component_specifier(specifier):
+            if _component_specifier(specifier) and not _rune_module(target):
                 if target is None:
                     issues.append({"file": str(component), "reason": "unresolved_component", "source": specifier})
                 else:
@@ -250,7 +280,7 @@ def expand_component_imports(project_root, source_files, raw_imports, *, resolve
             target = resolve_ts_module(specifier, owner, resolver)
             if target is None:
                 issues.append({"file": owner, "reason": "unresolved_component", "source": specifier})
-            else:
+            elif not _rune_module(target):
                 visit(Path(target), owner, 0, set())
     receipt = {
         "status": "incomplete" if issues else "complete" if cache else "not_applicable",
@@ -263,3 +293,168 @@ def expand_component_imports(project_root, source_files, raw_imports, *, resolve
         "issues": issues,
     }
     return extras, receipt
+
+
+MAX_FRAMEWORK_COMPONENTS = 4096
+MAX_FRAMEWORK_COMPONENT_BYTES = 32_000_000
+
+# Component files a framework loads by location, not by import: route pages,
+# layouts and auto-registered components. Facts (enabler packages and
+# patterns relative to the enabling package.json) cover Astro, SvelteKit,
+# Nuxt, vite-plugin-pages, unplugin-vue-router, vite-plugin-vue-layouts,
+# unplugin-vue-components and Quasar. A pattern segment starting with ``_``
+# is private in Astro.
+FRAMEWORK_COMPONENT_ROOTS = (
+    (("astro",), ("src/pages/**/*.astro",)),
+    (("@sveltejs/kit",), ("src/routes/**/+*.svelte",)),
+    (
+        ("nuxt", "nuxt-nightly"),
+        (
+            "app.vue",
+            "error.vue",
+            "pages/**/*.vue",
+            "layouts/**/*.vue",
+            "components/**/*.vue",
+            "app/app.vue",
+            "app/error.vue",
+            "app/pages/**/*.vue",
+            "app/layouts/**/*.vue",
+            "app/components/**/*.vue",
+        ),
+    ),
+    (("vite-plugin-pages", "unplugin-vue-router"), ("src/pages/**/*.vue",)),
+    (
+        ("vite-plugin-vue-layouts", "vite-plugin-vue-layouts-next", "vite-plugin-vue-meta-layouts"),
+        ("src/layouts/**/*.vue",),
+    ),
+    (("unplugin-vue-components",), ("src/components/**/*.vue", "components/**/*.vue")),
+    (("@quasar/app", "@quasar/app-vite", "@quasar/app-webpack"), ("src/App.vue",)),
+)
+
+
+def _pattern_regex(pattern):
+    out, index = [], 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            out.append("(?:[^/]+/)*")
+            index += 3
+        elif pattern[index] == "*":
+            out.append("[^/]*")
+            index += 1
+        else:
+            out.append(re.escape(pattern[index]))
+            index += 1
+    return re.compile("".join(out))
+
+
+_FRAMEWORK_COMPONENT_REGEXES = tuple(
+    (enablers, tuple(_pattern_regex(pattern) for pattern in patterns))
+    for enablers, patterns in FRAMEWORK_COMPONENT_ROOTS
+)
+
+
+def framework_component_root(path):
+    """The framework loads this component by its location (a page, layout or auto-registered component)."""
+    from skylos.visitors.languages.typescript.conventions import (
+        _depends_on,
+        _enclosing_package_roots,
+        _package_data,
+    )
+
+    path = os.path.abspath(str(path))
+    roots = _enclosing_package_roots(path)
+    for index, package_root in enumerate(roots):
+        relative = os.path.relpath(path, package_root).replace(os.sep, "/")
+        manifests = [_package_data(root) for root in roots[index:]]
+        for enablers, regexes in _FRAMEWORK_COMPONENT_REGEXES:
+            if not any(regex.fullmatch(relative) for regex in regexes):
+                continue
+            if "astro" in enablers and any(part.startswith("_") for part in relative.split("/")[2:]):
+                continue
+            if any(_depends_on(data, name) for data in manifests for name in enablers):
+                return True
+    return False
+
+
+def expand_framework_component_imports(project_root, source_files, raw_imports, *, resolver=None, exclude_folders=None):
+    """Import records of components the framework loads by location.
+
+    Route pages, layouts and auto-registered components
+    (``src/pages/index.astro``, ``+page.svelte``, a Nuxt ``components/``
+    file) are loaded by their framework, not by an import, so they are graph
+    roots: a module they import is reachable. Records are keyed by the
+    component itself, with nested component scripts expanded into it.
+    A component only a JS/TS file imports keeps its edges on that loader (see
+    :func:`expand_component_imports`), so an unused loader still cannot make
+    its component tree live, and an orphan component outside these locations
+    stays unused. Budgets abstain silently: a missing root only keeps today's
+    findings.
+    """
+    from skylos.core.file_discovery import discover_source_files
+    from skylos.visitors.languages.typescript.analysis import resolve_ts_module
+
+    root = Path(project_root).resolve()
+    try:
+        components = discover_source_files(root, COMPONENT_SUFFIXES, exclude_folders=exclude_folders)
+    except (OSError, ValueError):
+        return {}
+    if not components or len(components) > MAX_FRAMEWORK_COMPONENTS:
+        return {}
+    parsed = {}
+    total_bytes = 0
+    for path in components:
+        real = Path(os.path.realpath(str(path)))
+        text = _safe_component(root, real, exclude_folders)
+        if text is None:
+            continue
+        total_bytes += len(text.encode("utf-8"))
+        if total_bytes > MAX_FRAMEWORK_COMPONENT_BYTES:
+            return {}
+        parsed[real] = _imports(real, text)[0]
+
+    def component_target(specifier, importer):
+        if not _component_specifier(specifier):
+            return None
+        target = resolve_ts_module(specifier, str(importer), resolver)
+        if target is None or _rune_module(target):
+            return None
+        return Path(os.path.realpath(target))
+
+    extras = {}
+    for owner in sorted(parsed):
+        if not framework_component_root(owner):
+            continue
+        records, pending, seen = [], [(owner, 0)], set()
+        while pending:
+            component, depth = pending.pop()
+            if component in seen or depth >= MAX_COMPONENT_DEPTH or component not in parsed:
+                continue
+            seen.add(component)
+            for raw in parsed[component]:
+                specifier = raw.get("source", "")
+                target = component_target(specifier, component)
+                if target is not None:
+                    pending.append((target, depth + 1))
+                    continue
+                resolved = resolve_ts_module(specifier, str(component), resolver)
+                if _component_specifier(specifier) and not _rune_module(resolved):
+                    continue  # An unresolved component names no module.
+                item = deepcopy(raw)
+                if resolved is not None:
+                    item["source"] = "./" + os.path.relpath(resolved, owner.parent).replace(os.sep, "/")
+                elif specifier.startswith("."):
+                    absolute = component.parent / specifier
+                    item["source"] = "./" + os.path.relpath(absolute, owner.parent).replace(os.sep, "/")
+                if item.pop("is_reexport", False):
+                    if any(name == "*" or name.startswith("* as ") for name in item.get("names", ())):
+                        item["consume_all_exports"] = True
+                    item.pop("reexport_reference_names", None)
+                item["component_file"] = str(component)
+                item["component_line"] = item.get("line", 1)
+                item["is_component_import"] = True
+                records.append(item)
+                if len(records) > MAX_IMPORT_EDGES:
+                    return extras
+        if records:
+            extras[owner] = records
+    return extras

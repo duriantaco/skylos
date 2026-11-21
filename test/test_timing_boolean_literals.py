@@ -39,34 +39,49 @@ def test_boolean_literal_comparisons_have_no_secret_content_oracle(
 @pytest.mark.parametrize(
     "expression",
     [
-        "token === expectedToken",
+        "req.body.token === expectedToken",
         "secret !== request.body.secret",
-        "password == supplied",
-        "signature != expectedSignature",
-        "token === 'false'",
-        'secret !== "true"',
-        "token == false",
-        "token != true",
-        "false == password",
-        "true != apiKey",
-        "token === Boolean(value)",
-        "signature === (value as boolean)",
-        "token !== falseValue",
-        "token === (supplied as false)",
-        'token === ("false" as unknown as boolean)',
+        "req.body.password == user.password",
+        "req.get('x-signature') != expectedSignature",
+        "req.query.token === process.env.API_TOKEN",
+        "process.env.ADMIN_PASSWORD == req.body.password",
+        "req.headers['x-api-key'] !== process.env.API_KEY",
+        "req.body.token === (secretToken as boolean)",
+        "(apiKey as unknown as boolean) !== req.query.key",
     ],
 )
-def test_real_or_unproved_secret_comparisons_still_report(tmp_path, expression):
+def test_real_secret_comparisons_still_report(tmp_path, expression):
     result = findings(tmp_path, expression)
     assert len(result) == 1
     assert result[0]["line"] == 1
     assert result[0]["severity"] == "MEDIUM"
 
 
+@pytest.mark.parametrize(
+    "expression",
+    [
+        # A literal has no secret content, whatever its spelling.
+        "req.body.token === 'false'",
+        'req.body.secret !== "true"',
+        "req.body.token == false",
+        "true != req.query.apiKey",
+        # Without request input or a server secret there is no oracle.
+        "token === expectedToken",
+        "password == supplied",
+        "token === Boolean(value)",
+        "signature === (value as boolean)",
+    ],
+)
+def test_literals_and_unproved_operands_are_not_secret_comparisons(
+    tmp_path, expression
+):
+    assert findings(tmp_path, expression) == []
+
+
 def test_outer_boolean_comparison_keeps_nested_secret_comparison(tmp_path):
-    result = findings(tmp_path, "((token === expectedToken) === true)")
+    result = findings(tmp_path, "((req.body.token === expectedToken) === true)")
     assert len(result) == 1
-    assert "token" in result[0]["message"]
+    assert "expectedToken" in result[0]["message"]
 
 
 def test_boolean_flag_does_not_hide_following_secret_comparison(tmp_path):
@@ -86,7 +101,7 @@ def test_boolean_flag_does_not_hide_following_secret_comparison(tmp_path):
 
 @pytest.mark.parametrize(
     "expression, expected",
-    [("withXSRFToken !== false", 0), ("token === suppliedToken", 1)],
+    [("withXSRFToken !== false", 0), ("req.body.token === suppliedToken", 1)],
 )
 def test_actual_json_listing_and_security_gate_agree(tmp_path, expression, expected):
     write_fixture(tmp_path, "check.ts", "export const check = " + expression + ";\n")

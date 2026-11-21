@@ -97,6 +97,7 @@ Rule IDs use a stable public prefix:
 | SCA | Software composition analysis for dependency vulnerabilities and opt-in npm publisher review signals. |
 | Not checked (SCA) | A lockfile entry that is the project's own local code, so no advisory database can describe it: pnpm `link:`/`file:` directories, local tarballs, peers satisfied by a workspace project, `runtime:` entries, Cargo workspace members and path crates, Composer path repositories, Bundler `PATH` gems, pub `path` and `sdk` packages, and NuGet `Project` entries. Listed in `sca_coverage.lockfile_not_checked` (count `not_checked_lockfile_dependency_count`); it does not make the dependency scan incomplete or stop the gate. In every lockfile format except `gradle.lockfile` and `packages.lock.json`, validated Git, URL, private-registry and Composer branch (`dev-*`) entries are also not checked and give `complete_with_non_registry_sources`; contradictory records (a public-registry tarball that does not match its package, an alternate pnpm `id`, an unrecorded Yarn `virtual:` peer) stay unresolved and make the scan incomplete. |
 | SCA dependency files | Files `--sca` reads: lockfiles `uv.lock`, `poetry.lock`, `Pipfile.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `Cargo.lock`, `composer.lock`, `Gemfile.lock`, `pubspec.lock`, `gradle.lockfile`, `packages.lock.json`; manifests (exact pins only) `requirements.txt`, `pyproject.toml`, `setup.cfg`, `setup.py`, `package.json`, `go.mod`, `*.csproj`, `pom.xml`, `Cargo.toml`, `composer.json`, `pubspec.yaml`. `Gemfile` and `build.gradle(.kts)` are code and are not read. A file that cannot be parsed is named in `sca_coverage.parse_errors`. |
+| Cargo dependency scope (SCA) | `metadata.dependency_scope` of a Cargo.lock advisory, derived from the workspace's `Cargo.toml` files when the lockfile on disk is scanned: `normal`, `build-only`, `optional-feature` (an optional dependency no default or member-requested feature enables) or `dev-only` (reached only through `[dev-dependencies]`, or through an optional dependency that only the package's `tests/`, `benches/` and `examples/` name, such as clap's `unstable-shell-tests`). `dev-only` advisories get `low_risk_context.reason = "dev-only-dependency"`: kept in JSON and gates, left out of the default listing. A lockfile edge the manifests cannot explain leaves the whole lockfile unclassified. |
 | Informational advisory (SCA) | A RustSec notice (`unmaintained`, `notice`, `unsound`) served by OSV, recorded as `metadata.advisory_informational`. `unmaintained` and `notice` get `low_risk_context.reason = "informational-advisory"`: kept in JSON and gates, left out of the default listing. |
 | npm publisher review | Opt-in `--scan-publisher-changes` checks direct npm dependencies in a lockfile for a newly observed publisher after a long release gap. `publisher_change_findings` are WARN review signals, not evidence of compromise or known vulnerabilities; they do not affect the vulnerability count or gate. |
 | SBOM | `skylos sbom .`; offline dependency inventory as CycloneDX 1.6 (default) or SPDX 2.3 (`--format spdx-json`) JSON, including declared licenses. |
@@ -112,6 +113,10 @@ Rule IDs use a stable public prefix:
 | Upgrade review | `--review-upgrades` (implies `--sca`; on in pull request scans from `skylos cicd init` when dependency checks are selected): with `--diff`/`--diff-base`, each npm/PyPI lockfile version change is downloaded old and new by ca9 and compared as data, and a newly added package is reviewed on its own (SKY-SCA-UPG001/UPG002). Never installs or runs the packages. |
 | Upgrade API comparison | Part of `--review-upgrades`: compares the public API of the old and new release of each Python package whose locked version changed, and names your lines that use what was removed (`SKY-SCA-API001`). The pull request comment says `Review these N call sites` or `No API-level impact found in N call sites (behaviour changes not checked)`, and `Could not check` with a reason for anything it could not read. Receipt: `analysis_summary.supply_chain_diff.checks.upgrade_api`. |
 | Hardening exception | `[tool.skylos.supply_chain.hardening_exceptions]` `package = "reason"`, read from the diff base commit only: SKY-SCA-HRD001 regressions that name that package are skipped and listed in `analysis_summary.supply_chain_diff`. |
+| Plugin table (JS/TS) | `skylos/visitors/languages/typescript/data/plugin_facts.json`: one row per JS/TS tool (about 200 tools, such as SolidStart, Docusaurus 1 and jscodeshift; data sources are listed in the folder's `NOTICE.txt`). Each row lists the packages that switch the tool on (also inherited from an enclosing `package.json`), its config files, the files it loads by convention and the exports it reads (every export unless the row narrows it). Matching files are dead-code roots. Config keys that name entries (`e2e.specPattern`, `stories`, `appDirectory`, `entry`, ...) are read without running code; when a key is not a literal the tool's default patterns stay and the files the key could select (the row's `abstain` patterns, else the tool's own patterns; for a directory key such as `appDirectory`, those patterns under any folder) are *abstained*: roots whose exports count as read, listed by `plugin_facts.abstained_config_keys`. Test runners' entries (vitest, jest, mocha, cypress, ...) are roots whose exports stay judged, since a runner reads none. The table only removes findings. Rows whose tool a hand-written module models more precisely (Next.js, Expo Router, react-email) set `defer_to` and add no entries. |
+| Static config reader | Reads JSON, JSONC, YAML, TOML, `package.json` keys and JS/TS configs whose export is a literal (`export default`/`module.exports`, one `defineConfig(...)`-style call or arrow returning an object, top-level `const` bindings, spreads, `path.join(__dirname, ...)`, `new URL("./x", import.meta.url)`, regex literals). Nothing is executed; anything else is UNKNOWN, kept per key. |
+| Knip config (honoured) | `knip.json`, `knip.jsonc`, `.knip.json(c)`, `knip.ts`/`knip.js`/`knip.config.*` (literal export) or `package.json#knip`. Only keys that remove findings apply: `entry` (roots with public exports), `project`, `ignore`, `ignoreFiles`, `ignoreDependencies`, `ignoreBinaries`, `ignoreUnresolved`, `ignoreExportsUsedInFile`, per-workspace `workspaces[dir]` keys, and `ignoreWorkspaces` only with `knip_ignore_workspaces = true`. Removed findings move to `suppressed` with reason `knip <key>`; `analysis_summary.knip_config` lists honoured and unread keys. Turn it off with `knip_config = false`. |
+| Strict dependencies | `[tool.skylos] strict_dependencies = true`: SKY-Q408 also reports production source of a published package whose dependency only an ancestor `package.json` declares. Off by default, where `analysis_summary.npm_dependency_analysis.ancestor_declared_production_imports` counts those imports instead. |
 | Symlink safety | Checks for file operations that follow repository-controlled symbolic links across the intended scan or output boundary. |
 
 ## CLI Output Modes
@@ -135,8 +140,8 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | ID | Severity | Name | Languages / Scope | CWE / OWASP |
 |:---|:---|:---|:---|:---|
 | D200 | varies | Dangerous function call family | Python | wrapper for D201-D210, D233, D235, D250 |
-| D201 | HIGH-CRITICAL | Dynamic code execution: `eval` (PHP: `eval`, `create_function`, `preg_replace` with the `/e` modifier, and `assert()` of request data; CRITICAL with request data, HIGH for other non-constant code) | Python, TS/JS, PHP, audit | CWE-95 / A03 |
-| D202 | HIGH-CRITICAL | Dynamic code execution: `exec`, `new Function`, string timers | Python, TS/JS | CWE-95 / A03 |
+| D201 | HIGH-CRITICAL | Dynamic code execution: `eval` (PHP: `eval`, `create_function`, `preg_replace` with the `/e` modifier, and `assert()` of request data; CRITICAL with request data, HIGH for other non-constant code; TS/JS also mathjs `eval`/`evaluate`/`compile`/`parse` (CRITICAL) and notevil/safe-eval/static-eval (HIGH) of request data) | Python, TS/JS, PHP, audit | CWE-95 / A03 |
+| D202 | HIGH-CRITICAL | Dynamic code execution: `exec`, `new Function`, string timers; TS/JS also `vm.runInContext`/`runInNewContext`/`runInThisContext`/`compileFunction` and `new vm.Script` of request data (CRITICAL) | Python, TS/JS | CWE-95 / A03 |
 | D203 | CRITICAL | OS command execution: `os.system`, `os.popen` / process sinks; Java/Kotlin `Runtime.getRuntime().exec(...)` (HIGH; LOW and hidden by default for a fixed command string or array); PHP `exec`, `system`, `shell_exec`, `passthru`, `popen`, `proc_open`, backticks and `pcntl_exec` with a command that is not request data but not constant either (HIGH; LOW and hidden by default when the command is fixed and every inserted value is a number or an `escapeshellarg()` argument outside quotes) | Python, Java, Kotlin, PHP | CWE-78 / A03 |
 | D204 | CRITICAL | Unsafe deserialization: `pickle.load`, `pickle.Unpickler(...).load()` (also through a subclass that does not define `find_class`), `cloudpickle.load`, `pandas.read_pickle` and language equivalents | Python, Java, Kotlin, PHP, audit | CWE-502 / A08 |
 | D205 | CRITICAL | Unsafe deserialization: `pickle.loads`, `cloudpickle.loads` | Python | CWE-502 / A08 |
@@ -144,29 +149,29 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D207 | MEDIUM | Weak hash: MD5 | Python, TS/JS, Go, Java | CWE-328 |
 | D208 | MEDIUM | Weak hash: SHA1 | Python, TS/JS, Go, Java | CWE-328 |
 | D209 | HIGH | Shell execution: `subprocess` with `shell=True`, `subprocess.getoutput`/`getstatusoutput`, `asyncio.create_subprocess_shell` | Python | CWE-78 / A03 |
-| D210 | HIGH | TLS verification disabled (`requests` `verify=False`, `ssl._create_unverified_context()`, TS/JS `rejectUnauthorized: false` and `NODE_TLS_REJECT_UNAUTHORIZED=0`, Go `InsecureSkipVerify: true`). Like D346, not reported in test code: Python test modules (`test_*`, `*_test.py`, `conftest.py`, under `tests/` or `test/`), TS/JS test files (`.test.`/`.spec.`, `test`/`tests`/`__tests__` directories), Go `_test.go` files and test-support files (import `testing` and take a `testing.TB`/`*testing.T`) | Python, TS/JS, Go | A02 |
+| D210 | HIGH | TLS verification disabled (`requests` `verify=False`, `ssl._create_unverified_context()`, TS/JS `rejectUnauthorized: false` and `NODE_TLS_REJECT_UNAUTHORIZED=0`, Go `InsecureSkipVerify: true`, Rust `danger_accept_invalid_certs(true)`/`danger_accept_invalid_hostnames(true)`, openssl `set_verify(SslVerifyMode::NONE)` and a rustls `ServerCertVerifier` whose `verify_server_cert` only returns `ServerCertVerified::assertion()`). Like D346, not reported in test code: Python test modules (`test_*`, `*_test.py`, `conftest.py`, under `tests/` or `test/`), TS/JS test files (`.test.`/`.spec.`, `test`/`tests`/`__tests__` directories), Go `_test.go` files and test-support files (import `testing` and take a `testing.TB`/`*testing.T`), Rust `tests/`/`benches/` files, `build.rs` and `#[cfg(test)]`/`#[test]` code | Python, TS/JS, Go, Rust | A02 |
 | D211 | CRITICAL | SQL injection | Python, TS/JS, Go, Java, Kotlin, C#, PHP, audit | CWE-89 / A03 |
-| D212 | CRITICAL | Command injection. In TS/JS, `X.exec(...)` is a command sink only when the file loads a command-execution module: `child_process`, `node:child_process`, `shelljs`, or remote/container exec (`ssh2`, `node-ssh`, `dockerode`; there `conn`/`connection` are not treated as database handles unless a database driver is also loaded). Without one it is `RegExp.prototype.exec` or another library method; a proven RegExp receiver is never a command sink | Python, TS/JS, Go, Java, Kotlin, C#, PHP, Rust, Ruby (explicit Kernel calls), Dart, Shell, audit | CWE-78 / A03 |
+| D212 | CRITICAL | Command injection. In TS/JS, `X.exec(...)` is a command sink only when the file loads a command-execution module: `child_process`, `node:child_process`, `shelljs`, or remote/container exec (`ssh2`, `node-ssh`, `dockerode`; there `conn`/`connection` are not treated as database handles unless a database driver is also loaded). Without one it is `RegExp.prototype.exec` or another library method; a proven RegExp receiver is never a command sink, nor is a receiver imported or required from a database package (`const { R } = require("redbean-node")`, `pg`, `mysql2`, `knex`, `sequelize`, `typeorm`, `kysely`, `drizzle-orm`, ...). A TS/JS `exec` whose whole command is a string literal gets `low_risk_context.reason = "constant-argument"` (kept in JSON and gates, left out of the default listing), as for D203/D209 | Python, TS/JS, Go, Java, Kotlin, C#, PHP, Rust, Ruby (explicit Kernel calls), Dart, Shell, audit | CWE-78 / A03 |
 | D215 | HIGH | Path traversal and archive extraction traversal | Python, TS/JS, Go, Java, Kotlin, C#, PHP, Rust, Dart, Shell | CWE-22 / A01 |
-| D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Kotlin, C#, PHP, Dart, Shell, audit | CWE-918 / A10 |
+| D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Kotlin, C#, PHP, Rust, Dart, Shell, audit | CWE-918 / A10 |
 | D213 | HIGH | Hugging Face `trust_remote_code=True`: loading the model or dataset imports and runs Python files from its repository. MEDIUM when `revision=` pins a commit SHA or the path is a local directory; a non-literal value is the caller's choice and is not reported | Python | CWE-94, CWE-829 / A08 |
 | D217 | CRITICAL | Raw SQL / ORM SQL injection: Django `.objects.raw()`, `QuerySet.extra()` (`select` values, `where`/`tables`/`order_by` entries) and `RawSQL()`, peewee `Model.raw()`. SQLAlchemy `text()` and pandas `read_sql` are reported once, as D211 | Python | CWE-89 / A03 |
 | D218 | MEDIUM | Conditional URL scheme audit; unresolved cases are diagnostics | Python | CWE-918 |
 | D220 | CRITICAL | SQL injection in added code / diff validation | MCP code-change validator | CWE-89 / A03 |
 | D223 | MEDIUM | Undeclared third-party dependency | Python | supply-chain |
-| D226 | CRITICAL | XSS: unsafe DOM or HTML rendering (Go: request input converted to an `html/template` safe type such as `template.HTML`; Java/Kotlin: request data written to a servlet response writer (HIGH), Kotlin also Ktor `respondText(..., ContentType.Text.Html)`; C#: request input in `HtmlString`, `Html.Raw` or `MarkupString`, HIGH; PHP: Drupal `Markup::create()` and Blade `{!! !!}` of request data, HIGH) | Python, TS/JS, Go, Java, Kotlin, C#, PHP, audit | CWE-79 / A03 |
+| D226 | CRITICAL | XSS: unsafe DOM or HTML rendering (Go: request input converted to an `html/template` safe type such as `template.HTML`; Java/Kotlin: request data written to a servlet response writer (HIGH), Kotlin also Ktor `respondText(..., ContentType.Text.Html)`; C#: request input in `HtmlString`, `Html.Raw` or `MarkupString`, HIGH; PHP: Drupal `Markup::create()` and Blade `{!! !!}` of request data, HIGH; TS/JS: Angular `DomSanitizer.bypassSecurityTrust*` of a non-constant value, HIGH from the URL or browser storage, MEDIUM otherwise) | Python, TS/JS, Go, Java, Kotlin, C#, PHP, audit | CWE-79 / A03 |
 | D227 | HIGH | XSS: unsafe template rendering | Python | CWE-79 / A03 |
-| D228 | HIGH | XSS: unescaped HTML output (Go: request input written to an HTML HTTP response; PHP: request data printed by `echo`, `print`, `<?= ?>`, `printf`, `die`/`exit`, `print_r`/`var_export`/`var_dump`) | Python, TS/JS, Go, C#, PHP | CWE-79 / A03 |
+| D228 | HIGH | XSS: unescaped HTML output (Go: request input written to an HTML HTTP response; PHP: request data printed by `echo`, `print`, `<?= ?>`, `printf`, `die`/`exit`, `print_r`/`var_export`/`var_dump`; Rust: request data inserted by `format!`/`write!` into a template with HTML markup) | Python, TS/JS, Go, C#, PHP, Rust | CWE-79 / A03 |
 | D229 | CRITICAL | XPath injection: request data in a `javax.xml.xpath.XPath` `compile`/`evaluate` expression or dom4j `DocumentHelper.createXPath` | Java | CWE-643 / A03 |
 | D230 | HIGH | Open redirect (Java/Kotlin: Spring `"redirect:"` views, `RedirectView`, servlet `sendRedirect`; Kotlin also Ktor `respondRedirect`) | Python, TS/JS, Go, Java, Kotlin, C#, audit | CWE-601 / A01 |
 | D231 | HIGH | CORS misconfiguration: wildcard origin with credentials; wildcard origin (`CORSMiddleware`, flask-cors) in a module whose app has state-changing routes without an auth guard (reported on the origin setting; HIGH when one of those routes is a SKY-D283 privileged route, MEDIUM otherwise; open means the SKY-D283 test without the action word); a literal `Access-Control-Allow-Origin: *` key in a response dict (any module); a header (dict, subscript or `set`/`add`/`setdefault`, including an f-string) echoing the request's `Origin` without a membership, equality or `fullmatch` allowlist check that guards the header, an early reject or a reset to a fixed origin, or a same-module helper returning such a check. A substring test against a string, a prefix check, an ignored result, the wrong branch, a `fullmatch` pattern with a `.*`/`.+` run, or an allowlist containing `*` or `null` does not count. A wildcard middleware in a module that only serves reads, or whose routes something may authenticate, is not reported | Python | CWE-942 / A05 |
 | D232 | CRITICAL | JWT verification disabled or unsafe algorithm | Python | A02 |
-| D233 | MEDIUM-CRITICAL | Unsafe deserialization: `marshal.load(s)`, `shelve.open`, `jsonpickle.decode`, `dill.load(s)`, `dill.Unpickler`; Java `XMLDecoder`, XStream `fromXML` with `AnyTypePermission` (HIGH, CRITICAL with request data) or without explicit type permissions (MEDIUM, HIGH with request data: XStream has an allowlist by default from 1.4.18), SnakeYAML `load` without `SafeConstructor` (MEDIUM, HIGH with request data: safe by default from SnakeYAML 2.0), Jackson `enableDefaultTyping` or `activateDefaultTyping` with `LaissezFaireSubTypeValidator`, `@JsonTypeInfo(use = Id.CLASS/MINIMAL_CLASS)` (MEDIUM), Kryo `setRegistrationRequired(false)`; C# `BinaryFormatter`, `SoapFormatter`, `NetDataContractSerializer`, `LosFormatter` and `ObjectStateFormatter` deserialization (HIGH, CRITICAL with request data), Json.NET `TypeNameHandling` other than `None` (HIGH, MEDIUM with a `SerializationBinder`), `new JavaScriptSerializer(new SimpleTypeResolver())` (HIGH) | Python, Java, Kotlin, C# | CWE-502 / A08 |
+| D233 | MEDIUM-CRITICAL | Unsafe deserialization: `marshal.load(s)`, `shelve.open`, `jsonpickle.decode`, `dill.load(s)`, `dill.Unpickler`; Java `XMLDecoder`, XStream `fromXML` with `AnyTypePermission` (HIGH, CRITICAL with request data) or without explicit type permissions (MEDIUM, HIGH with request data: XStream has an allowlist by default from 1.4.18), SnakeYAML `load` without `SafeConstructor` (MEDIUM, HIGH with request data: safe by default from SnakeYAML 2.0), Jackson `enableDefaultTyping` or `activateDefaultTyping` with `LaissezFaireSubTypeValidator`, `@JsonTypeInfo(use = Id.CLASS/MINIMAL_CLASS)` (MEDIUM), Kryo `setRegistrationRequired(false)`; C# `BinaryFormatter`, `SoapFormatter`, `NetDataContractSerializer`, `LosFormatter` and `ObjectStateFormatter` deserialization (HIGH, CRITICAL with request data), Json.NET `TypeNameHandling` other than `None` (HIGH, MEDIUM with a `SerializationBinder`), `new JavaScriptSerializer(new SimpleTypeResolver())` (HIGH); TS/JS `node-serialize` `unserialize`, `serialize-to-js` `deserialize` and `funcster` `deepDeserialize` of a non-literal (HIGH, CRITICAL with request data) and js-yaml 3 `load`/`loadAll` of request data (HIGH) | Python, Java, Kotlin, C#, TS/JS | CWE-502 / A08 |
 | D234 | HIGH | Mass assignment | Python | A01 |
 | D235 | HIGH | Remote command execution via `exec_command` | Python | CWE-78 |
-| D236 | HIGH-CRITICAL | XML external entity (XXE): an XML parser created and used without disabling DTDs or external entities | Java, Kotlin | CWE-611 / A05 |
+| D236 | HIGH-CRITICAL | XML external entity (XXE): an XML parser created and used without disabling DTDs or external entities; TS/JS: libxmljs `parseXml`/`parseXmlString` with `noent: true` and the libxml2 `XML_PARSE_NOENT` parse option (HIGH, CRITICAL when request data is parsed) | Java, Kotlin, TS/JS | CWE-611 / A05 |
 | D237 | CRITICAL | Expression, JNDI or script injection: request data evaluated as SpEL, OGNL, MVEL, EL or JEXL, looked up through JNDI, or run by a script engine or Groovy | Java, Kotlin | CWE-917 / CWE-94 / CWE-74 / A03 |
-| D238 | HIGH | NoSQL injection: request data as a MongoDB/Mongoose query object or `$where` | TS/JS | CWE-943 / A03 |
+| D238 | HIGH | NoSQL injection: request data as a MongoDB/Mongoose query object or `$where`, or a `$where` string built from a function parameter | TS/JS | CWE-943 / A03 |
 | D239 | CRITICAL | LDAP injection: request data in the base DN or filter of a JNDI `DirContext`, Spring `LdapTemplate` or UnboundID `LDAPConnection` search | Java | CWE-90 / A03 |
 | D240 | CRITICAL | MCP tool description poisoning | Python | A03 |
 | D241 | HIGH | MCP unauthenticated transport | Python | A07 |
@@ -176,11 +181,11 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D245 | HIGH | Dynamic `require()` with variable argument | TS/JS | CWE-94 / A03 |
 | D246 | HIGH | JWT decode without verification | TS/JS | CWE-347 / A02 |
 | D247 | MEDIUM | CORS wildcard origin | TS/JS | CWE-942 / A05 |
-| D248 | MEDIUM | Hardcoded internal URL | TS/JS | CWE-798 |
+| D248 | MEDIUM | Hardcoded internal URL. Not reported in test code or in test-runner configuration (`cypress.config.ts`, `playwright.config.ts`, `jest.config.js`, `karma.conf.js` and the like) | TS/JS | CWE-798 |
 | D250 | MEDIUM | Insecure randomness for security-sensitive values | Python, TS/JS, Go, Java | CWE-330 |
 | D251 | HIGH | Sensitive data in logs | Python, TS/JS | CWE-532 |
-| D252 | MEDIUM | Insecure cookie flags | TS/JS, Go, Java | CWE-614 |
-| D253 | MEDIUM | Timing-unsafe comparison | TS/JS | CWE-208 |
+| D252 | MEDIUM | Insecure cookie flags (TS/JS: `res.cookie()` options and `express-session`/`cookie-session` session cookies) | TS/JS, Go, Java | CWE-614 |
+| D253 | MEDIUM | Timing-unsafe comparison: a server secret or stored credential compared with request input (or an environment/config secret with a caller-supplied value) by `==`/`===` | TS/JS | CWE-208 |
 | D254 | HIGH | HTTP session trust boundary violation | Java | CWE-501 |
 | D255 | CRITICAL | File inclusion: request data chooses the path of PHP `include`/`require`/`include_once`/`require_once` (reported as D215 before this release) | PHP | CWE-98 / A03 |
 | D257 | HIGH | Android WebView JavaScript bridge: `addJavascriptInterface` in a class (or file, for top-level code) that sets `javaScriptEnabled = true` / `setJavaScriptEnabled(true)`; every page the WebView loads can call the bridge's `@JavascriptInterface` methods | Kotlin | CWE-749 / A05 |
@@ -193,9 +198,9 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D265 | HIGH-CRITICAL | Unsafe ML model deserialization | Python | OWASP LLM04 |
 | D266 | CRITICAL | AI config instruction injection | Agent config and instruction files | OWASP LLM01 |
 | D267 | MEDIUM | Unbounded LLM consumption | Python | OWASP LLM10 |
-| D270 | MEDIUM | Sensitive data in `localStorage` / `sessionStorage` | TS/JS | CWE-922 |
+| D270 | MEDIUM | Sensitive data in `localStorage` / `sessionStorage`. Like D210, not reported in test code (`*.test.*`, `*.spec.*`, `*.cy.*`, `__tests__/`, `cypress/`, `e2e/`, a top-level `test`/`tests` folder): a spec that seeds a token to sign in its fixture user ships to no browser | TS/JS | CWE-922 |
 | D271 | MEDIUM | Error information disclosure in HTTP responses | TS/JS | CWE-209 |
-| D280 | HIGH | Next.js mutating API route missing auth checks | TS/JS | A01 |
+| D280 | HIGH | Next.js mutating API route missing auth checks (a route-local auth call, a project helper that verifies identity, or a rejecting authorization check counts) | TS/JS | A01 |
 | D281 | CRITICAL | Untrusted server action input reaching raw SQL text | TS/JS | CWE-89 |
 | D282 | HIGH | Webhook handler missing signature verification | Python, TS/JS | CWE-347 |
 | D283 | HIGH-CRITICAL | Unauthenticated route that controls a device or the host, deletes data, administers or runs commands (see the SKY-F102 notes) | Python (FastAPI, Flask, Quart, Starlette, Sanic) | CWE-306, CWE-862 / A01 |
@@ -218,6 +223,26 @@ local-file and other non-HTTP resources. It does not establish attacker control
 or an exploitable file read. Explicit literal URLs and proven HTTP/HTTPS prefixes
 or dominating scheme guards do not produce this audit. D216 independently checks
 whether untrusted input can choose the request host.
+
+Security findings follow the rule of precise taint analysis: a sink is a
+listed vulnerability when attacker-controlled input (request data, an upload,
+a network message, an archive member, event text from an outside account) is
+shown to reach it. When the analysis cannot connect a sink to such input, the
+record stays in `danger` as a review signal: `review_item` is
+`{"kind": "unproven_source", "blocking": false}`, the message starts "Review
+(not listed, not blocking)", `listing.reason` is `unproven-source` and gates
+do not count it (`--all-advice` or naming the rule lists it). This covers
+Python D215/D324/D325 whose caller provenance stopped `incomplete` ("callers
+not visible"), the TS/JS `fetch`/axios D216 pattern on a URL no request data
+reaches, shell D212/D215/D216 whose only source is the script's own
+command-line arguments, and Rust D212/D215 whose only inputs are environment
+variables, command-line arguments or a function's parameters
+(`metadata.rust_source = "operator_input"`). Python sink findings (D201-D217, D226-D230, D233,
+D245, D265, D324-D326, D357) inside a statement that follows an unconditional
+`return`, `raise`, `continue` or `break` in the same block are not reported:
+that code never runs. Flask/Quart `request.endpoint`, `request.blueprint(s)`
+and `request.url_rule` come from the application's routing table and are not
+request data.
 
 For Python D203, `os.system` or `os.popen` with a fixed command string (no
 dynamic formatting or Python/shell variables) is LOW: there is no input to
@@ -306,6 +331,19 @@ their purpose is unclear; names such as `cache_key` do not prove the digest
 is unrelated to security. An explicit `usedforsecurity=False` suppresses the
 finding.
 
+For TS/JS D207/D208, `createHash('md5').update(data)` is a low-risk hash
+(reported, not listed by default) when the hashed names are not credentials,
+identities or certificates. When the hashed value is a parameter of a
+module-level helper (`export const hash = (data) => createHash('md5')...`),
+the parameter name proves nothing, so the scan reads the helper's calls in
+the scanned JS/TS files (a relative `import`/`require` of its module, or a
+call in the module itself): a call that passes a credential
+(`security.hash(req.body.password)`) or stores the result under a credential
+name (`setDataValue('password', hash(x))`, `password: hash(x)`) lists the
+finding, with the calls in `hash_input_evidence`. A helper whose callers hash
+other data (a checksum of file contents) stays low-risk; calls through path
+aliases or re-exports are not followed.
+
 For Python D211, a query executed on a chained connection or cursor call
 (`sqlite3.connect(...).execute(q)`, `conn.cursor().execute(q)`,
 `engine.connect().execute(q)`, `get_db().executescript(q)`) is reported only
@@ -367,7 +405,11 @@ or a literal such as `"/srv/files/"`), because `/srv/files2/x` also starts with
 `/srv/files`; a prefix of only separators proves nothing.
 
 Python D215, D324 and D325 check tainted paths from web routes, MCP/agent
-tools, request data and standard input. A path built from a helper's
+tools, request data and standard input. The request proxy read through its
+module (`import flask` then `flask.request.form[...]`, also `quart` and
+`bottle`, under any import alias) is the same source as `from flask import
+request`; `urllib.request` and a local object's `request` attribute are not.
+This applies to every Python taint checker (SQL, command, SSRF, XSS, redirect). A path built from a helper's
 parameter is followed through the scanned source (imports, assignments,
 calls, returns, constructor and dataclass bindings, aliases,
 `functools.partial`, executors, lambdas, containers and their local aliases,
@@ -393,7 +435,15 @@ web framework, and a `@<group>.command` decorator counts as a CLI when the
 group resolves to Click/Typer or the function has Click/Typer parameter
 decorators; findings resting on these conventions or on no source at all are
 traced the same way. When a caller budget, depth limit, file size budget or
-analysis error cuts a chain off, the finding stays reported as `incomplete`.
+analysis error cuts a chain off before any chain reaches one of those sources,
+the finding stays in `danger` as `incomplete` but is a review signal, not a
+vulnerability: `review_item` is `{"kind": "unproven_source", "blocking":
+false}`, the message starts "Review (not listed, not blocking)", it is left
+out of the default listing (`listing.reason` `unproven-source`;
+`--all-advice` or naming the rule lists it) and gates do not count it. Precise
+taint analysis reports a sink only when attacker input is shown to reach it;
+"callers not visible" in library or package code (a public function's
+parameter, a CLI or operator argument, configuration) shows no such input.
 Otherwise it moves to `suppressed` as `safe` (complete scan, no hidden caller,
 and every caller passes literals, the module's location, clock or numeric
 values, temporary paths, test values or operator input) or `unknown` (a
@@ -552,10 +602,23 @@ built only from literals and such names (conditionals included when every
 branch is), or one whose literal `scheme://host/` prefix fixes the host, is not
 reported; a bound call, member, `||`/`??` or `new URL(...)` value is dynamic. A name assigned anywhere in the file, shadowed
 by a parameter, loop or `catch` variable, destructured, imported, hoisted by a
-`var` next to other bindings, or in a file using `eval`/`with` is not resolved.
+`var` next to other bindings, or in a file using `eval`/`with` is not resolved,
+except a name imported by name from a project module (`./x`, `@/x`, `~/x`,
+`#x`) that declares it `export const NAME = '...'` with a literal (one
+re-export hop is followed): ``fetch(`${UPDATES_URL}?v=${v}`)`` with
+`UPDATES_URL = 'https://api.example.com/updates'` keeps its fixed host.
+A variable URL that request taint (below) does not reach is chosen by the
+operator, a stored or admin setting, a constant or a caller outside the
+handler, not by an attacker: the `fetch`/axios finding stays in `danger` as a
+review signal (`review_item` `{"kind": "unproven_source", "blocking":
+false}`, message "Review (not listed, not blocking)"), is left out of the
+default listing (`listing.reason` `unproven-source`) and is not counted by
+gates. A finding with request evidence (`security_evidence`) stays listed.
+`await axios.get<T>(url)` and `await fetch<T>(url)` are matched too
+(tree-sitter parses the awaited member as the callee of the typed call).
 
-TS/JS request taint (D211, D212, D215, D216, D228, D230, D238, D510) follows
-request data inside one handler of one file. Handlers: Express, Fastify, Hapi
+TS/JS request taint (D201, D202, D211, D212, D215, D216, D228, D230, D233,
+D236, D238, D510) follows request data inside one handler of one file. Handlers: Express, Fastify, Hapi
 and Next.js pages-API functions (`(req, res)`, `(request, reply)`,
 `(request, h)`, or a first parameter typed `Request`, `FastifyRequest`,
 `NextApiRequest`, `NextRequest`; a function whose only parameter is an untyped
@@ -565,8 +628,11 @@ or `any` `req`/`request` is read only through `query`, `body`, `params`,
 parameter `ctx`/`context`), NestJS methods with `@Body()`, `@Query()`,
 `@Param()`, `@Headers()`, `@HostParam()`, `@UploadedFile()` or `@Req()`
 parameters (routing-controllers equivalents too), exported `GET`/`POST`/...
-functions in a Next.js App Router `route` file, and exported Remix
-`loader`/`action` functions. Sources: `req.body/query/params/headers/cookies/
+functions in a Next.js App Router `route` file, exported Remix
+`loader`/`action` functions, and Express-style handlers whose first parameter
+destructures the request (`({ body, file }: Request, res: Response)`, typed
+`Request`/`FastifyRequest` or followed by a `res`/`reply` parameter), where
+each request field the pattern takes is request data. Sources: `req.body/query/params/headers/cookies/
 files/url/originalUrl/path/hostname`, `req.get()/header()/param()`, Hapi
 `payload`/`state`, Koa `ctx.request.body`, `ctx.query`, `ctx.params`,
 `ctx.headers`, `ctx.cookies.get()`, Next.js `await request.json()/formData()/
@@ -577,7 +643,21 @@ source; a TypeScript annotation such as `id: number` is not proof. Sinks:
 SQL text in `query`/`execute`/`raw`/`prepare`/`all`/`get`/`run` calls whose
 literal text is SQL, `$queryRawUnsafe`, knex `whereRaw`-style calls and
 TypeORM query-builder `where`/`orderBy` conditions (D211, CRITICAL);
-`child_process.exec` (D212, CRITICAL); `fs`/`fs/promises`/`fs-extra` paths
+`child_process.exec`, also bound as `const exec =
+require('child_process').exec` (D212, CRITICAL); mathjs
+`eval`/`evaluate`/`compile`/`parse` (D201, CRITICAL), notevil, safe-eval and
+static-eval evaluators (D201, HIGH), and the code of `vm.runInContext`/
+`runInNewContext`/`runInThisContext`/`compileFunction`/`new vm.Script` (D202,
+CRITICAL); a literal `vm.runIn*Context` code string is read for calls of
+sandbox members, and each call is checked with sandbox names mapped to the
+sandbox object's values (`vm.runInContext('safeEval(x)', { safeEval, x })`
+with notevil `eval` and request data in `x` is D201; `'yaml.load(data)'`
+with js-yaml 3 is D233); node-serialize `unserialize`, serialize-to-js
+`deserialize` and funcster `deepDeserialize` (D233, CRITICAL), js-yaml
+`load`/`loadAll` when the nearest `package.json` declares js-yaml below 4
+(D233, HIGH: version 3 resolves `!!js/function`); libxmljs
+`parseXml`/`parseXmlString` with `noent: true` (D236, CRITICAL);
+`fs`/`fs/promises`/`fs-extra` paths
 and `res.sendFile`/`download` without `root` (D215, HIGH); the URL or
 `host`/`url` option of `fetch`, axios (also `axios.create()` instances and
 NestJS `HttpService`), got, undici, superagent, needle, request and
@@ -593,7 +673,15 @@ source order (a plain reassignment in the same block replaces the old value;
 one inside a branch adds to it), destructuring, `+`, templates, string
 methods, `||`/`??`, ternaries, `path.join/resolve/normalize`, `new URL`,
 `JSON.parse` (an object), `Object.keys/values/entries/assign`, `qs.parse`,
-same-file helper functions and methods of same-file `const` objects. Calls into
+same-file helper functions and methods of same-file `const` objects, and
+project helpers in other files (`./x`, `@/x`, `~/x`, `#x`, never
+`node_modules`, files under 256 KiB) whose every `return` is a string
+transform of one parameter (`replace`, `substr`, `slice`, `trim`, case
+changes, `+`, templates, ternaries) and whose other writes to that parameter
+are such transforms too: `utils.trunc(req.params.id, 40)` keeps the id's
+taint. A helper whose body writes HTML entities (`&lt;`) is not followed. A
+ternary that repeats an allowlisted value, `['jpg', 'png'].includes(x) ? x :
+'jpg'`, is only ever a listed literal or the other branch. Other calls into
 other modules stop taint, so a validator such as zod `.parse()`,
 `mongo-sanitize` or `escape-html` ends it, and so does any unmodelled library
 call. Sanitizers are proved, never named: `Number`/`parseInt`/`parseFloat`/
@@ -610,7 +698,23 @@ the prefix provably ends with a separator (`root + path.sep`, `root + '/'`,
 `` `${root}/` `` or a literal ending in `/`, but not `'/'` or `path.sep`
 alone),
 `path.relative(root, p).startsWith('..')`, or rejecting `..` when the value is
-joined under a prefix and not `path.resolve`d (D215); an allowlist of string
+joined under a prefix and not `path.resolve`d (D215); a `startsWith(root)`
+check whose prefix has no trailing separator when the checked value is
+`path.resolve`/`join` of an untainted base and `path.normalize(R)` (through
+`replace` calls that do not write `..`), where `R` starts with '/' (Express
+`req.path`, or a literal '/' start): normalizing a rooted path resolves every
+`..` at the root, so the joined value cannot climb into a sibling directory
+such as `root-old` (D215); rejecting `x.includes('/')` or `x.indexOf('/') !==
+-1` when `x` is the last argument of `path.join`/`path.resolve` under a
+non-empty literal directory, so it is one path segment (an entry of that
+directory, or with `..` the directory's parent itself, which no file read
+returns; Windows `\` separators are outside this proof) (D215); a literal
+allowlist whose values contain no `..`, `/`, `\` or `:` (D215); a same-file
+lookup that returns a non-null value only inside `if
+(collection.has(param))` (or a literal-list `includes`), when the handler
+exits on a null or falsy result (`if (data == null) return 404`; an exit
+inside a `try` body counts when every `catch` exits and there is no
+`finally`), for the argument passed as that parameter (D215); an allowlist of string
 literals (`['a.com'].includes(u.hostname)`, `new Set([...]).has()`, `===`)
 on the hostname, host or origin of the URL, or a `startsWith` with a fixed
 `scheme://host/` (D216, D230); `startsWith('/')` together with a `//` check, or
@@ -621,8 +725,11 @@ mutated array, or a check that only logs is not a guard. A literal
 `scheme://host/` or relative-path prefix (`/users/` + id, not `/` alone) keeps
 D216 and D230 quiet; `new URL('/path', request.url)` stays on the site.
 
-TS/JS D238 (NoSQL injection, CWE-943) needs a file that imports `mongoose`,
+TS/JS D238 (NoSQL injection, CWE-943) checks files that import `mongoose`,
 `mongodb`, `@nestjs/mongoose`, `@typegoose/typegoose`, `mongojs` or `monk`.
+Elsewhere (MarsDB, a DAO handed `db`, a project wrapper module) a query
+counts when its receiver is collection-shaped (`db.ordersCollection`,
+`db.collection('x')`, `usersCol`) or its filter has a literal `$where` key.
 It reports a `find`, `findOne`, `findOneAndUpdate/Delete/Replace`,
 `updateOne/Many`, `deleteOne/Many`, `replaceOne`, `countDocuments`, `exists`,
 `where`, `distinct` (its filter) or `aggregate` `$match` filter that is the
@@ -639,7 +746,13 @@ DTO class counts as validated text (Skylos assumes the usual global
 `any`, inline-object or primitive-typed parameter is not. Option objects with a
 `where`/`select`/`include` key (Sequelize, TypeORM, Prisma) are not Mongo
 filters. `app.use(mongoSanitize())` from `express-mongo-sanitize` or
-`sanitizeFilter: true` in the same file clears the file.
+`sanitizeFilter: true` in the same file clears the file. Without request
+proof, a `$where` string built by a template or `+` from a parameter of an
+enclosing function (directly, through local `const`/`let` values, string
+methods or `String()`) is HIGH too, like SQL text built from a parameter:
+``{ $where: `this.stocks > '${threshold}'` }`` in a DAO method. A
+`Number`/`parseInt`/`parseFloat` value or any other call is not followed by
+this check.
 
 TS/JS D212 also checks `spawn`, `spawnSync`, `execFile` and `execFileSync`
 from Node's `child_process` modules when their effective `shell` option is
@@ -678,7 +791,104 @@ chain or a `$name` variable. `dangerouslySetInnerHTML={{ __html: x }}`, like
 DOMPurify/`isomorphic-dompurify`/`sanitize-html` call (directly or through a
 `const`); a sanitizer imported from a local `./dompurify` file, or a sanitized
 copy that is never rendered, does not count. DOM `element.append(text)` inserts
-text and is not reported.
+text and is not reported. An HTML value built with a template or `+` is also
+quiet when every interpolated part is a constant, a number (numeric literals,
+arithmetic other than `+` of unknowns, `Number()`/`parseInt()`/`parseFloat()`,
+`Math.*()`, `Date.now()`, and `toFixed`/`toString`/`slice` of those) or the
+result of an escaper in a position it covers: the global
+`encodeURIComponent`/`encodeURI` (not shadowed), an imported HTML escaper
+(`escape-html`, `lodash.escape`, lodash/underscore `escape`, `html-escaper`,
+`he.escape`/`encode`, `validator.escape`), or a same-file function whose only
+statement returns one of those. An escaped value is inert in element text and
+in quoted attribute values (double quotes for the URL encoders); it is still
+reported in an event-handler, `style` or `srcdoc` attribute, an unquoted
+value, a tag or attribute name, right after `<`, or at the start of a URL
+attribute unless `encodeURIComponent` produced it or the literal prefix fixes
+the scheme or path. A function named like an escaper is not one.
+
+TS/JS D226 also reports Angular `DomSanitizer.bypassSecurityTrustHtml`,
+`Script`, `Style`, `Url` and `ResourceUrl` in a file that imports from
+`@angular/platform-browser`, when the value is not a constant: HIGH when it
+comes, through local values of the enclosing functions, from the URL
+(`ActivatedRoute` params, query params and fragments, `location`,
+`document.URL`), `document.cookie`, `localStorage`/`sessionStorage` or
+`window.name`; MEDIUM otherwise (HTTP response fields and parameters: stored
+XSS when the server returns user text). Literals, constants and
+`Url`/`ResourceUrl` values whose literal `scheme://host/` prefix fixes the
+origin are not reported.
+
+TS/JS D252 also checks `express-session` and `cookie-session` middleware
+options: both default the cookie's `secure` to false, so a missing or false
+`secure` (`cookie: { secure }` for express-session) is reported, as is
+`httpOnly: false`. `secure: true`, `'auto'` or a non-literal value
+(`process.env.NODE_ENV === 'production'`) counts as set; options built with a
+spread or a non-literal object, and a call inside a branch whose condition
+names a development, test or local environment, are not judged.
+
+TS/JS D253 needs a secret on one side of `==`/`===`/`!=`/`!==` and the
+attacker's guess on the other. A secret is an environment or config value
+whose key names a credential (`process.env.API_KEY`, `config.get('x.secret')`,
+`const { HOOK_SECRET } = process.env`), an HMAC built with `createHmac`, a
+member the function itself filled from one of those (`data.confirm =
+process.env.X`, `Object.assign(data, {...})`, a parameter default), or a
+credential-named value that is neither request data nor a parameter
+(`user.resetToken`, `storedHash`, `this.apiKey`). The guess is request data in
+the handler (`req.body.x`, `req.get('x')`, `request.headers.get('x')`,
+`searchParams.get`, `formData.get`, a destructured `({ body }: Request)`
+field, or a local bound from one). Reported: request data against a secret,
+and a parameter against an environment, config or HMAC secret
+(`verifyKey(key) { return key === process.env.ADMIN_KEY }`). Not reported:
+literals, `null`/`undefined`/booleans, two request fields (a password and its
+confirmation), two values of unknown origin, a hash or digest call on either
+side (`hash(input) === stored`: the attacker cannot steer digest bytes), and
+names that only end in token/hash (`location.hash`,
+`ts.SyntaxKind.ExclamationToken`).
+
+TS/JS D280 accepts three proofs before each mutation of a mutating Next.js
+route: a trusted auth call (next-auth, Clerk, an Auth.js `auth` export) whose
+result is rejected; a project helper (imported from `./x`, `@/x`, `~/x` or
+`#x`) whose source reaches a recognised identity verification
+(`jsonwebtoken`/`jose` verify, next-auth, Clerk, iron-session, Auth0,
+Supabase `getUser`, Firebase Admin `verifyIdToken`, Lucia, better-auth,
+Passport, bcrypt/argon2 compare), followed through same-file functions and
+other project modules up to 4 calls deep, 32 functions and 12 files per proof,
+whose awaited, unconditional result is rejected on failure before the
+mutation (`const { auth, error } = await parseRequest(req, schema); if
+(error) return error();`, `if (!auth) return ...`, `if (access.response)
+return access.response;`); or an explicit authorization check, `if
+(!(await canUpdateWebsite(auth, id))) return unauthorized();` (also through
+`const allowed = await can...()`), whose branch rejects with a 401/403/404
+status, an `unauthorized`/`forbidden`/`notFound`-style call or a `throw`.
+Authorization predicates (`can*`, `has*Permission`, `isAuthorized*`,
+`authorize*`, `check*Permission`), the lookups whose results they check,
+proven helpers, `zod`/`yup`/`joi`/`valibot` schema building, request reads
+(`request.headers.get()`) and `return notFound()`-style responses are not
+mutations. A helper called with `skipAuth: true`, `public: true` or a
+similar option, and a helper whose source does not reach a verification,
+prove nothing.
+
+TS/JS D201 and D202 are not reported when every argument of `eval` or `new
+Function` is a constant: literals, `Math.random()`/`Math.floor()` arithmetic,
+`.toString()` of those, elements of a literal array and `const` names bound
+to them (a captcha that evaluates `3+7*2`, `new Function('m', 'return
+import(m)')`).
+
+TS/JS D248 does not report a `localhost` literal that is only the base of
+`new URL(value, 'https://localhost')` (also as a ternary branch, or through a
+`const` whose every use is that base argument): the base parses a relative
+path and is never contacted.
+
+TS/JS D207 also reports the `md5` npm package (`blueimp-md5`, `js-md5`)
+called in a statement about a token, password, secret, session, nonce, salt,
+signature or reset code (`req.query.token == md5(req.query.login)`);
+checksums and cache keys built with it are not reported.
+
+TS/JS D250 reads the role of a `Math.random()` value from its statement, the
+variable it initializes and its nearest enclosing function only (an outer
+`SessionHandler` around a helper that rolls demo numbers does not make them
+session tokens), and does not report it in seed, fixture or mock data
+generators (`seed/`, `seeds/`, `fixtures/`, `mocks/`, `__mocks__/`, `faker/`
+directories).
 
 TS/JS D327 reports a POST, PUT or PATCH (`fetch` with a literal `method`,
 `axios.post/put/patch`, `axios({method, url, data})`, `axios.request`) whose
@@ -734,11 +944,54 @@ reader writing into a persistence file that is also sensitive
 target that could name one of these (for example `~/.ssh/authorized_ke*`) is
 D339, and redundant `//`, `/./` and `..` segments do not hide one.
 
+Rust security findings (`--danger`) come from a bounded, flow-sensitive
+analysis of one file at a time: locals, branches, `match`, `if let`, loops,
+closures, `format!`-family macros (also inside other macros such as `json!`)
+and calls to helpers in the same file, whose parameters are summarised (a
+request value passed to a helper whose parameter reaches a sink is reported at
+that call, naming the chain in `metadata.rust_flow.via`). Request data is: an
+actix-web extractor (`web::Path`, `Query`, `Json`, `Form`, `Bytes`,
+`Payload`, also through `use actix_web::web::*`), an axum extractor
+(`extract::Path`, `Query`, `Json`, `Form`, `RawQuery`, `RawForm`,
+`Multipart`, `axum::Json`/`Form`, axum-extra `Query`/`Form`/`Json`), a Rocket
+`Json`/`Form`/`Data` guard, a Rocket route parameter named in the route
+attribute (`#[get("/x/<name>?<q>")]`, `<path..>`, `data = "<body>"`) whose type
+is `&str`, `String` or `Cow<str>` (or their `Option`s; other `FromParam` types
+were validated), and the request-data methods of `HttpRequest`/`Request`
+(`uri()`, `path()`, `query_string()`, `match_info()`, `headers()`, `body()`,
+`into_inner()`, ...; not `app_data()` or other server state). An extractor of
+a number or `bool` (`Path<i64>`) carries no text. Environment variables,
+`std::env::args`, configuration and library parameters are operator or
+calling-code input: D212 and D215 sinks they reach are unlisted review items
+(`metadata.rust_source = "operator_input"`), and D216/D228 need request data.
+A value indexed by request data (`items[i]`) is the element, not request
+text; a query that takes a database pool or connection argument (`pool`,
+`conn`, `db`, `tx`, ...) returns stored rows, except a write named `create`,
+`insert`, `update`, `upsert`, `save`, `replace` or `store` that returns what
+it stored. A guard `if !is_valid_x(v) { return }` (a same-file function
+declared `-> bool`, or a call named `is_valid*`, `valid*`, `is_safe*`,
+`is_allowed*`) clears `v` after it. Rust D216 sinks are `reqwest::get`, the
+`get`/`post`/`put`/`patch`/`delete`/`head` methods and `request(method, url)`
+of a reqwest, reqwest-middleware, awc, ureq, surf, isahc or hyper client (a
+parameter of that type, also inside `Data<..>`/`Arc<..>`/`State<..>`, or one
+built by its constructor or builder), the `ureq`, `surf`, `isahc`,
+`attohttpc` and `minreq` request functions, and `webmention::Webmention::new`
+(the target). Only the part of the URL that chooses the host counts: a literal
+`scheme://host` followed by `/`, `?` or `#`, or a leading value with no request
+data followed by one of them (`format!("{base}/users/{id}")`), fixes it, and
+`percent_encoding`/`urlencoding`/`form_urlencoded` encoders clear the value.
+Rust D228 reports request data inserted by `format!`/`format_args!`/`write!`/
+`writeln!` into a template that contains an HTML tag; `html_escape`,
+`htmlescape`, `v_htmlescape`, `askama_escape` and `ammonia::clean` (and the URL
+encoders) clear it. D216 and D228 are not reported in test code. Not covered:
+warp filters, tonic services beyond `Request` methods, values read from
+outbound HTTP responses, and taint across files.
+
 ### AI Supply Chain Security
 
 | ID | Severity | Name | File Types | Details |
 |:---|:---|:---|:---|:---|
-| D260 | HIGH-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization. Bidirectional control characters in Python source are reported once, as D344; D260 keeps them in other files. A lookalike letter is reported when the word reads as Latin (Cyrillic `а` in `аdmin`); a word of another script with a stray Latin letter, an all-lookalike word in a file written in that script, and letters after an escape such as `\n` are ordinary text. Outside agent instruction and AI-reviewer files, one or two zero-width characters are not reported when they stand between string or code delimiters (`replace("\u200b", "")`), are a U+200B word break between letters of a script written without spaces, or sit outside a word on a line that spells out their code point; inside a word, in a longer run, and for bidirectional controls they are. Instruction patterns are matched after zero-width characters are removed. A quoted label followed by the control it names (`the "Skip Check" button`) is a mention. In YAML and TOML, comments document settings and are not scanned. YAML comment boundaries come from PyYAML's scanner (a `#` inside any scalar, quoted, block or flow, is value text); TOML ones from a string-aware lexer checked by `tomllib`. A file that does not parse keeps every line except whole-line comments. Terminology about generated LLM response text is distinguished from credential disclosure. Access tokens, environment credentials and API keys remain covered by the disclosure patterns |
+| D260 | HIGH-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization. Bidirectional control characters in Python source are reported once, as D344; D260 keeps them in other files. A lookalike letter is reported when the word reads as Latin (Cyrillic `а` in `аdmin`); a word of another script with a stray Latin letter, an all-lookalike word in a file written in that script, and letters after an escape such as `\n` are ordinary text. Outside agent instruction and AI-reviewer files, one or two zero-width characters are not reported when they stand between string or code delimiters (`replace("\u200b", "")`), are a U+200B word break between letters of a script written without spaces, or sit outside a word on a line that spells out their code point; inside a word, in a longer run, and for bidirectional controls they are. Each invisible character is judged where it stands, so one misplaced character on a line does not also report the joiners its words need. A ZWNJ/ZWJ between two letters of a script that uses joiners (Arabic, Persian, Syriac, Indic scripts, Sinhala, Myanmar, Khmer) is spelling, and an emoji ZWJ sequence hides nothing. In text and data files (not Python source, where the character can sit in a compared string) a joiner that ends such a word or has a direction mark beside it is spelling too, and so is a left-to-right or right-to-left mark (U+200E/U+200F) beside right-to-left letters (runs of at most three such characters). In a translation catalog (a JSON, YAML or ARB file in an `i18n`/`l10n`/`locales`/`lang`/`intl`/`translations` folder named for a language, or a `pt_BR.json`-style file anywhere), a run of up to eight U+200B or U+2060 of one kind, pasted with the words, is not reported, nor is a lookalike letter of the script its line is written in (a Greek `Ο` typed in Greek text). Embedding and override controls (U+202A-U+202E), runs that mix invisible characters, joiners beside Latin letters and catalog lookalikes in a line of another script stay reported. Instruction patterns are matched after zero-width characters are removed. A quoted label followed by the control it names (`the "Skip Check" button`) is a mention. In YAML and TOML, comments document settings and are not scanned. YAML comment boundaries come from PyYAML's scanner (a `#` inside any scalar, quoted, block or flow, is value text); TOML ones from a string-aware lexer checked by `tomllib`. A file that does not parse keeps every line except whole-line comments. Terminology about generated LLM response text is distinguished from credential disclosure. Access tokens, environment credentials and API keys remain covered by the disclosure patterns |
 
 Finding types:
 
@@ -949,7 +1202,7 @@ Read-only mounts can still expose sensitive data or container-runtime sockets.
 | D291 | MEDIUM-HIGH | Missing or excessive permissions. A job's own `permissions` replaces the workflow's, so workflow-level values are judged by the jobs that inherit them: missing permissions are one finding per workflow naming those jobs (none when every job declares its own), `read-all`/`write-all` need an inheriting job, and a workflow-level `X: write` needs two (with one it is already job-scoped). A job's own `read-all`/`write-all` is reported on that job | GitHub Actions |
 | D292 | HIGH (LOW for GitHub-owned) | Unpinned action or reusable workflow (not a full commit SHA). Valid same-repository job calls using `./.github/workflows/...` or `$/.github/workflows/...` already select the caller's commit and need no additional SHA pin. GitHub-owned `actions/*` and `github/*` at a tag or branch are LOW (GitHub runs the workflow and owns them); a path with `.`, `..` or empty segments gets no such discount. Every other owner, dynamic `${{ }}` refs and refs with no `@` are HIGH | GitHub Actions |
 | D293 | MEDIUM | Checkout persists credentials where they can reach someone new: a later `actions/upload-artifact` of the checkout (`.git` included: before v4.4, or with `include-hidden-files: true`, or a SHA pin), a pull request's code checked out in a job accounts without write access can start, or an explicitly write-scoped token beside a later third-party action. GitHub-owned and local actions already hold the token; an undeclared token scope is D291's finding | GitHub Actions |
-| D294 | HIGH-LOW | Template injection: a `${{ }}` expression in code (`run:`, container and service `options`, code inputs of known actions such as `actions/github-script` `script`) whose value an attacker can shape. Each expression is parsed (`format()`, `toJSON()`, `fromJSON()`, `join()`, `case()` values, `a && b || c`, `github['event']`); a comparison or `contains()` result is not a value. What a context can hold comes from GitHub's webhook payload schemas (PR number or SHA: fixed, not reported). `env` and `matrix` values are followed to the expressions that set them; step outputs to the `$GITHUB_OUTPUT` line that writes them (a direct `${{ }}` or a `$VAR` from `env`), job outputs through `needs`, and reusable-workflow inputs to the local callers that pass them. A payload field counts only for the events that carry it (`github.event.inputs` exists on `workflow_dispatch`, `head_commit` on `push`); base-repository, organization and installation fields are set by maintainers. Severity is who can make the job run: HIGH (MEDIUM for structured text) when an account without write access can, after `if:`/`needs` gates; MEDIUM when it is not known (composite actions, reusable workflows without a local caller); LOW when only writers can or a fork's own sandboxed `pull_request` run sets it. Writer-set values not listed as untrusted by GitHub (`github.ref`, `ref_name`, `base_ref`, `vars.*`) and step/job outputs are not reported | GitHub Actions |
+| D294 | HIGH-LOW | Template injection: a `${{ }}` expression in code (`run:`, container and service `options`, code inputs of known actions such as `actions/github-script` `script`) whose value an attacker can shape. Each expression is parsed (`format()`, `toJSON()`, `fromJSON()`, `join()`, `case()` values, `a && b || c`, `github['event']`); a comparison or `contains()` result is not a value. What a context can hold comes from GitHub's webhook payload schemas (PR number or SHA: fixed, not reported). `env` and `matrix` values are followed to the expressions that set them; step outputs to the `$GITHUB_OUTPUT` line that writes them (a direct `${{ }}` or a `$VAR` from `env`), job outputs through `needs`, and reusable-workflow inputs to the local callers that pass them. A payload field counts only for the events that carry it (`github.event.inputs` exists on `workflow_dispatch`, `head_commit` on `push`); base-repository, organization and installation fields are set by maintainers. Severity is who can make the job run: HIGH (MEDIUM for structured text) when an account without write access can, after `if:`/`needs` gates; MEDIUM when it is not known (composite actions, reusable workflows without a local caller); LOW when only writers can or a fork's own sandboxed `pull_request` run sets it. Writer-set values not listed as untrusted by GitHub (`github.ref`, `ref_name`, `base_ref`, `vars.*`) and step/job outputs are not reported. Following GitHub's hardening guide, an event payload field is attacker text only when its name ends with `body`, `default_branch`, `email`, `head_ref`, `label`, `message`, `name`, `page_name`, `ref` or `title` (plus `head_branch`, a branch name); logins, node ids, SHAs, URLs, states and other GitHub-formatted values cannot carry shell syntax and are not reported, nor is the base side of a pull request (`pull_request.base.*`, a branch of the target repository). An expression whose every value is set by maintainers (`workflow_dispatch` inputs, `release` and `repository_dispatch` payloads) or by a caller not visible here gets `low_risk_context.reason = "no-outsider-input"`: kept in JSON and gates as hygiene, left out of the default listing | GitHub Actions |
 | D295 | HIGH | Self-hosted runner exposure | GitHub Actions |
 | D296 | MEDIUM | Unpinned container image | GitHub Actions |
 | D297 | HIGH | Secrets inheritance into reusable workflow | GitHub Actions |
@@ -1327,13 +1580,25 @@ previews are always fully masked.
 
 Values that are not credentials by construction are not reported as generic
 secrets: a sentence written for a reader under a credential-named key
-(capitalised, natural words only, sentence punctuation; a lowercase run of
-words can be a passphrase and stays), prose under a key whose last word says it
+(capitalised or in a script without case, natural words only in any script,
+with their vowel signs and joiners, sentence punctuation including `。`, `।`,
+`۔`, `؟`, `။` and `។`; placeholders such as `{{length}}`, `{n}`, `%s`, ICU
+`{n, plural, ...}` branches and markup tags are left out; a lowercase run of
+words can be a passphrase and stays), in a translation catalog (see SKY-D260)
+any natural-language value, labels and single words included
+(`"LABEL_CONFIRM_CURRENT_PASSWORD": "Confirm your current password"`,
+`"api-key": "API-ключ"`), and tokens inside a gettext-style message id or
+copied from it into the translation, prose under a key whose last word says it
 describes the credential (`api_key_description`, `token_hint`), a storage or
 field name that restates its key behind a short namespace
 (`LOGIN_CREDENTIALS: "app_login_credentials"`), references such as
 `${oc.env:API_KEY}`, `${var.db_password}` and `${TOKEN:-$OTHER_TOKEN}` (a
-literal default stays), an unnamed base64 literal that decodes to printable text
+literal default stays), text built around `${...}` interpolations with no
+default and no random run (`${var.project_name}-sqlite-data`, a template
+expression cut at an inner quote), a modular-crypt password hash (`$2a$10$...`,
+`$argon2id$...`, `pbkdf2_sha256$...`) on a comment line or in documentation,
+a camel-case name under a generic `key` (`web3SandboxChallenge`), an unnamed
+base64 literal that decodes to printable text
 holding no credential (binary data, a `user:password` pair and named values
 stay), a CSS class in a `class="..."` attribute, tokens in the path of a
 scheme-relative URL, and a word slug under a bare `*_KEY` name. `bun.lock`
@@ -1347,7 +1612,17 @@ hex digests that name their algorithm (`sha256:<64 hex>` in `integrity` or
 reported), public keys and certificates (PEM `PUBLIC KEY`/`CERTIFICATE`
 blocks whose body is DER, OpenPGP or SSH key data; `ssh-ed25519 AAAA...`
 lines; the `x`/`y`/`n`/`e` members of a JSON Web Key), `0x` + 40-hex
-contract and wallet addresses, ids in the path of Google Docs/Forms/Drive,
+contract and wallet addresses, Base58Check pay-to-hash addresses whose
+checksum verifies (Bitcoin `1...`/`3...`, Litecoin, Dogecoin, Dash `X...`,
+Tron `T...`; a WIF private key or an extended key has another length and
+stays) and SegWit `bc1...`/`ltc1...` addresses with a valid bech32 checksum,
+ordered character alphabets (`a-z`, `A-Z`, then `1234567890`), a whole
+string literal that is a shuffled standard encoding alphabet (base64,
+base64url, crypt, base62, base58, base36 or a base32 variant, each character
+once) passed to an alphabet constructor or bound to an `*alphabet*`/`*charset*`
+name (`Alphabet::new("AphruV…")`; without that context it stays a finding
+with `public_identifier_evidence`), ids in the
+path of Google Docs/Forms/Drive,
 YouTube, Figma and Notion share URLs, CSP source and subresource-integrity
 hashes outside lockfiles (`'sha256-<base64 digest>'`, `integrity="sha384-..."`
 with a digest of the algorithm's exact length, unless a secret- or
@@ -1355,7 +1630,8 @@ session-named value holds it), parts of URLs other than user info,
 secret-named query/fragment parameters (`api_key=`, `access_token=`, `sig=`,
 `X-Amz-Signature=`) and webhook/bot/token paths, file paths (`/srv/x/y`,
 `./a/b`, `C:\\x\\y`, `dir/name.ext`; not `ab/<token>` or a base64 value with
-`+`/`=`), word slugs (`What-is-the-build-volume`, `INTRA-001-amendment-v2`),
+`+`/`=`), word slugs (`What-is-the-build-volume`, `INTRA-001-amendment-v2`,
+`ELBSecurityPolicy-TLS13-1-2-2021-06`),
 lines of minified `.js` bundles over 1,000 characters, `&anchor`/`!!tag`
 decorated values outside YAML files (`&mut DecompressionMatcherBuilder` in
 Rust is a reference to a type), and, under a
@@ -1369,7 +1645,21 @@ random component, whole-value references
 references (`NAME:latest`). In JS/TS test files (`*.test.*`, `*.spec.*`,
 `__tests__/`, `__mocks__/`), Go test files (`*_test.go`) and test-fixture
 directories (`testdata/`) only provider-shaped tokens are reported, as in
-Python test directories. Minified and vendored front-end files (a `.min`
+Python test directories; in Rust the same holds for code under
+`#[cfg(test)]` or `#[cfg(all(test, ..))]` wherever rustc accepts the
+attribute (items, struct fields in a value, statements, match arms, enum
+variants), `#![cfg(test)]` files, files their parent declares
+`#[cfg(test)] mod name;`, test-module file names (`tests.rs`, `test.rs`,
+`*_tests.rs`, `*_test.rs`), and functions whose attribute path ends in
+`test` or `bench` or is `rstest`/`test_case`/`test_matrix`/`quickcheck`
+(`#[test]`, `#[tokio::test]`, `#[idm_test]`), when the file parses cleanly.
+In that test code a provider-shaped token whose payload is mostly long
+keyboard runs (a `sk_test_` prefix followed by `1234567890abcdefghijklmnop`)
+is a fixture; outside
+tests such tokens stay findings. `urn:ietf:params:` URNs (RFC 3553, e.g.
+OAuth token types) are public identifiers, not secrets. Cypress (`cypress/`, `*.cy.ts`) and end-to-end
+(`e2e/`) suites count as JS test code, and the TS/JS literal check follows the
+same policy. Minified and vendored front-end files (a `.min`
 suffix, an average line length above 110 characters, or a library folder
 under `static/` or `public/`) are skipped like other generated files and
 named in the scan's skip line. A private-key header in prose, markup or
@@ -1391,8 +1681,23 @@ a value: high-entropy passphrases and provider-shaped credentials remain
 eligible for reporting. This behavior applies across the secret scanner's
 supported source and configuration formats.
 
+TS/JS `SKY-S101` also reports a string literal of any length or entropy
+passed where a library takes the key that signs or salts what it issues:
+express-session `secret`, cookie-session `secret`/`keys`, `cookieParser(secret)`,
+jsonwebtoken `sign`/`verify` key, express-jwt `secret`, passport-jwt
+`secretOrKey`, `crypto.createHmac(alg, key)` and the Hashids salt. The callee
+must resolve to that package's import or `require`; the literal may be passed
+directly, through a variable bound once, in an array, or as the fallback of an
+environment variable (`process.env.JWT_SECRET || 'superSecret'`, HIGH; a
+direct literal is CRITICAL). The finding carries `secret_sink`. A key read
+from the environment or a parameter, and test code, are not reported; private
+keys and provider tokens are left to the provider signatures.
+
 `SKY-S102` preserves the `SKY-S101` severity when it reclassifies a concrete
-hardcoded credential; environment-reference exposure is `HIGH`.
+hardcoded credential; environment-reference exposure is `HIGH`. A file is
+client-accessible by whole path segments of its path from the scan root
+(`public/`, `static/`, `assets/`, `.next/static/`, `build/client/`,
+`dist/client/`, `out/`); `src/statics/` or `mypublic/` is not.
 
 ## Security Contracts (SKY-SC)
 
@@ -1817,9 +2122,13 @@ provided. See [cleanup test-quality checks](docs/cleanup.md#python-test-quality-
 | Q405 | HIGH | Async Promise executor | TS/JS | `new Promise(async ...)` ignores the executor's async result |
 | Q406 | HIGH | Async callback passed to built-in `Array.forEach` | TS/JS | callback promises are not awaited |
 | Q407 | HIGH | Discarded result from built-in `Array.map(async ...)` | TS/JS | mapped promises are not consumed |
-| Q408 | MEDIUM | Undeclared npm dependency | TS/JS and supported literal tool configs | A package is used but absent from the owning package.json; source imports must be declared by their own workspace |
-| Q409 | MEDIUM | Unlisted npm script binary | package.json | A simple package script invokes a known npm binary without its provider declared locally or in an ancestor package; unknown or expanded commands remain unresolved |
+| Q408 | MEDIUM | Undeclared npm dependency | TS/JS, Vue/Svelte/Astro scripts, MDX ESM, `/// <reference types>`, tsconfig `types` and supported literal tool configs | A package is used but declared neither by the owning package.json nor, for tests, setup files, configs, scripts, stories, examples, `.d.ts` inputs and private packages, by an ancestor workspace; production source of a published package needs its own declaration. Workspace packages mapped to source by tsconfig `paths` or a bundler alias, and fixture text read by codemod harnesses, are excluded outside published production source. Stylesheets report only Sass `pkg:` and Tailwind `@plugin` names; framework aliases such as Docusaurus `@theme/*` are excluded |
+| Q409 | MEDIUM | Unlisted npm script binary | package.json | A package script segment invokes an npm binary that no declared package (locally or in an ancestor, or in the `--cwd`/`--prefix`/workspace target it runs in) could provide, resolved through installed or workspace bin metadata, a map of differently named CLIs (`ngc` to `@angular/compiler-cli`, `svelte-package` to `@sveltejs/package`), or the command naming its package; configs, plugins and presets never provide a tool binary; system tools, shell builtins, npx/dlx and expanded command names are not reported |
 | Q410 | MEDIUM | Discarded local async result | TS/JS | A stable local async callable returns a promise discarded as an expression statement; awaited, returned, stored, rejection-handled and explicit void uses are retained |
+| Q411 | LOW | Unused pnpm catalog entry | pnpm-workspace.yaml | A `catalog`/`catalogs` entry that no package.json under the workspace references through the catalog protocol (dependency maps, resolutions, overrides, scripts); an unreadable manifest, pnpmfile hook or competing catalog source holds back every claim |
+| Q412 | MEDIUM | Unresolved pnpm catalog reference | package.json | A workspace member declares `catalog:`, `catalog:default` or `catalog:<name>` for a package the referenced catalog does not define |
+| Q413 | LOW | Referenced optional peer dependency | TS/JS, components, MDX | A peer marked optional in `peerDependenciesMeta` (and not also a dependency/devDependency) is imported by a static runtime import; type-only, dynamic and guarded loads stay quiet, and packages with subpath exports are skipped |
+| Q414 | MEDIUM | Unresolved import | TS/JS, Vue/Svelte/Astro scripts | A literal relative or path-alias module request (`import`, `export ... from`, `require()`, `import()`) names no file; bare packages are Q408 |
 | Q501 | MEDIUM | God class | Python | excessive methods or attributes |
 | Q502 | MEDIUM-HIGH | God file | Python | excessive file size / definitions |
 | Q701 | MEDIUM | High coupling | Python | resolved dependency edges; sharing an abstract base does not create sibling dependencies |
@@ -1849,7 +2158,54 @@ provided. See [cleanup test-quality checks](docs/cleanup.md#python-test-quality-
 | R103 | MEDIUM | Repository missing Skylos quality gate | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
 | R104 | MEDIUM | Repository missing pre-commit config | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
 | R105 | LOW | Repository missing TypeScript type-check command | Repo policy | recognizes `tsc` and Next builds with type errors enabled |
-| CIRC | LOW | Circular dependency between modules (top-level imports). A design finding: severity does not grow with cycle length | Python |
+| CIRC | LOW | Circular dependency between modules (top-level imports). A design finding: severity does not grow with cycle length | Python, TS/JS |
+
+SKY-Q414 (quality scans) reports a literal JS/TS module request that loads at
+run time, in a scanned source file or a Vue, Svelte or Astro script block,
+that is relative (`./`, `../`) or matches a tsconfig `paths` pattern (not the
+`*` catch-all) or a package.json `imports` key, when no file answers it.
+`import type`, `export type`, all-`type` clauses and `import("x").T` type
+references are erased by compilers and bundlers and are left to the type
+checker. tsconfig `paths`, `baseUrl` and `rootDirs` follow TypeScript's
+`extends` rules (the nearest config declaring `paths` wins whole;
+`${configDir}` is substituted). Resolution tries the exact
+path, every source, declaration, component and data extension (`.ts .tsx .mts
+.cts .js .jsx .mjs .cjs .d.ts .vue .svelte .astro .json` and any other single
+extension), React Native platform variants, `.js`/`.mjs`/`.jsx` to TypeScript
+source, index files, a directory with a `package.json`, tsconfig `rootDirs`,
+and for aliases every mapped target with build output (`dist/`, `out/`) mapped
+to source. It stays quiet for query or loader suffixes (`?raw`, `?url`, `!`),
+URL and virtual modules (`virtual:`, `astro:`, `~icons/`, `$app/`, `$env/`),
+loads inside a `try` body or with a `.catch` handler, specifiers matching an
+ambient `declare module` in the project's TypeScript, specifiers under a
+`resolve.alias` key of a JS bundler config (Vite, webpack, Rollup, Nuxt,
+SvelteKit, Babel `module-resolver` and similar; an `alias` value Skylos cannot
+read statically holds back every alias specifier below that config), alias
+targets in `node_modules` or matching an installed or declared package,
+targets outside the project or in excluded or Git-ignored paths, importers in
+fixture, codemod test-fixture, snapshot, test-data and template directories
+(`fixtures`, `__fixtures__`, `__testfixtures__`, `__snapshots__`, `testdata`,
+`templates`), files under a test directory (`test`, `tests`, `__tests__`,
+`spec`, `e2e`, `__mocks__`) that are neither test files nor imported by any
+module (compiler or plugin inputs read as text), and alias requests under a
+tsconfig whose relative `extends`
+names a generated config that is not on disk (`./.svelte-kit/tsconfig.json`,
+`./.nuxt/tsconfig.json`). Config files are parsed, never executed.
+`analysis_summary.unresolved_import_analysis` counts checked and held-back
+requests.
+
+SKY-CIRC also covers JS/TS: an edge is a literal `import`, `export ... from`
+or top-level `require()` that resolves to another scanned JS/TS file or a
+Vue/Svelte/Astro component script. `import type`, `export type` and clauses
+whose every specifier is `type` are erased, and `import()` or a `require()`
+inside a function is lazy, so they are not edges. Each strongly connected
+group of files is reported once, LOW, with the shortest cycle through its first
+file in path order (`cycle`, paths relative to the project root);
+`component_files` lists the whole group when it is larger than that cycle.
+Like Python cycles, JS/TS cycles appear on every scan unless
+`check_circular = false`. SKY-Q414 covers unresolved imports and JS/TS
+SKY-CIRC covers import cycles. Unlike Knip, Skylos reports each cyclic group
+of files once rather than every cycle in it.
 
 T101/T102 report missing public-signature annotations required by an applicable
 declared mypy policy. `strict` and `disallow_untyped_defs` require complete
@@ -2503,6 +2859,60 @@ retain their own source-bound identities, so an inner read cannot hide an unused
 outer import. Attributed repeated bindings keep conservative grouping without
 guessing the active Cargo configuration.
 
+Rust crate model: Skylos reads every `Cargo.toml` (`[lib]`, `[[bin]]`,
+`[[test]]`, `[[bench]]`, `[[example]]`, `build`, and the autodiscovered
+`src/main.rs`, `src/bin`, `tests`, `benches`, `examples`) and walks each
+target's `mod` tree (`#[path]` included), so every file has a crate and a
+crate-relative module path. `use` trees are resolved leaf by leaf (nested `{}`
+groups, `self`, globs, `as` aliases) and through `pub(crate) use` re-export
+chains: `flags::generate_fish()` after `pub(crate) use
+crate::flags::{complete::fish::generate as generate_fish}` credits the
+re-export and `fish::generate`; `Separator::new()` after `use
+lowargs::ContextSeparator as Separator` credits `ContextSeparator::new`. A
+method called on a receiver whose type the file names through a re-export
+(`args: &HiArgs`) credits that method on the crate's types of that name. A
+reference in one crate is never captured by a bare-named definition of another
+crate (a `tests/` or crate-root `Config`): the definitions its own file and
+crate can see are credited. These steps only add references; a path Skylos
+cannot resolve keeps the earlier behaviour.
+
+Rust unused imports (SKY-U002) are reported only when the import cannot be a
+trait used through its methods: a module, function, macro or constant; a
+project item that is not a trait; an enum variant (`use syn::Fields::Unit`); a
+known non-trait standard type (`HashMap`, `PathBuf`, `Arc`...); a prelude trait
+the crate's edition already imports (`use std::convert::TryInto` in 2021+); or
+a trait whose member list Skylos knows (project traits, common `std` traits)
+none of whose members the import's scope calls or names. An external or
+unresolved item of unknown kind is reported only when its scope calls no method
+and names no associated item. Everything else (`use bstr::ByteSlice`, `use
+diesel::RunQueryDsl`, a project `Crud` trait whose `create` is called) is an
+abstention, listed in `dead_code_abstentions`. `use Trait as _` creates no
+definition. Writer macros count as `write_fmt`: on a `String` for
+`fmt::Write`, on a byte buffer for `io::Write`, on an unknown receiver for
+both; a local `macro_rules!` body counts where it is invoked.
+
+Rust entry points and positions: any function whose attribute path ends in
+`test` or `bench` (`#[test]`, `#[bench]`, `#[tokio::test(...)]`,
+`#[divan::bench]`, `#[sqlx::test]`), or `#[rstest]`, `#[test_case]`,
+`#[test_matrix]`, `#[wasm_bindgen_test]`, is an entry point, also with doc
+comments between the attributes and `fn`. Read positions include associated
+types and constants in impls (`type InsertForm = X;`), a bare type alias
+right-hand side, tuple-struct fields, identifier patterns naming an imported
+capitalised item (`Unit => ...`), inline format arguments (`{EXE_SUFFIX}`,
+`{x:>width$}`; locals excluded), calls in attribute arguments
+(`#[diesel(select_expression = f())]`, `#[default(f())]`), serde paths inside
+`cfg_attr`, a glob import of an enum's variants, and the item paths of a local
+`macro_rules!` body at each invocation.
+
+Rust lint levels: an item under `#[allow(dead_code)]` or `#[expect(dead_code)]`
+(`unused` and `warnings` too, also through `cfg_attr`) on the item, its impl,
+its module (`#![allow]` in the file, `#[allow]` on `mod x;`) or the crate root
+is not reported: it is listed in `whitelisted` with reason `#[allow(dead_code)]
+in scope` and stays a liveness seed for its callees, as in rustc;
+`allow(unused_imports)` does the same for imports. `#[cfg(...)]` alternatives
+of one function in one scope (`#[cfg(unix)] fn imp` / `#[cfg(not(unix))] fn
+imp`) share liveness. Rust keeps its experimental confidence cap of 40.
+
 Swift dead-code checks parse `.swift` sources and follow `private`/`fileprivate`
 declarations, owner and lexical bindings, function values, callbacks and private
 call cycles. Public/internal APIs and runtime or compiler-generated consumers
@@ -2548,9 +2958,10 @@ from `format(String)`.
 | U002 | INFO | Unused import | Upload/API normalized dead-code category |
 | U003 | INFO | Unused variable | Upload/API normalized dead-code category |
 | U004 | INFO | Unused class | Upload/API normalized dead-code category |
-| U005 | MEDIUM | Declared dependency appears unused. Run-time declarations only: requirements files, `[project].dependencies`, and `install_requires` in `setup.cfg`/`setup.py` (extras, `setup_requires` and `tests_require` are not reported). Compiled lock entries (pip-compile/uv, `--hash`, `# via`) are never reported; their `.in` inputs are checked instead. Imports, Django settings strings, `import_module` strings, Procfile/Dockerfile/compose/Makefile commands, entry points and mypy plugins count as uses; type-stub and database-driver packages are skipped; npm dependencies/devDependencies also count source imports, scripts and supported tool-config uses; unresolved consumers prevent absence claims | Python and npm dependencies |
+| U005 | MEDIUM | Declared dependency appears unused. Run-time declarations only: requirements files, `[project].dependencies`, and `install_requires` in `setup.cfg`/`setup.py` (extras, `setup_requires` and `tests_require` are not reported). Compiled lock entries (pip-compile/uv, `--hash`, `# via`) are never reported; their `.in` inputs are checked instead. Imports, Django settings strings, `import_module` strings, Procfile/Dockerfile/compose/Makefile commands, entry points and mypy plugins count as uses; type-stub and database-driver packages are skipped; npm dependencies/devDependencies also count source imports, package scripts, CI/Dockerfile/Makefile/Procfile commands and supported tool-config uses, and unused `@types/` packages are reported when their package is used nowhere; unresolved consumers prevent absence claims only for the dependencies they could reach | Python and npm dependencies |
 | U006 | INFO | Unused parameter | Debt normalized dead-code category |
-| U007 | LOW | Unused TypeScript enum member | An unread member of a used module-local enum or a closed private package enum with resolved direct named imports; public, escaping, reflective, mutated and opaque enum surfaces are retained |
+| U007 | LOW | Unused TypeScript enum member | An unread member of a used module-local enum, or of an exported enum in an internal module (the SKY-E004 notion) with resolved direct named imports; public, tagged, escaping, reflective, mutated and opaque enum surfaces are retained |
+| U008 | LOW | Unused TypeScript namespace member | An unread variable, type or interface member of an `export namespace` in an internal module, when every read of the namespace names its members; escaping, merged, tagged and public namespaces are retained |
 | DC001 | MEDIUM | Unused function | LLM report dead-code ID |
 | DC002 | LOW | Unused import | LLM report dead-code ID |
 | DC003 | MEDIUM | Unused class | LLM report dead-code ID |
@@ -2561,26 +2972,159 @@ from `format(String)`.
 | UC002 | MEDIUM | Unreachable code after return/throw/break/continue | TS/JS, Java |
 | E002 | LOW | Empty or docstring-only file | Python |
 | E003 | LOW | Unused TypeScript/JavaScript file | TS/JS |
-| E004 | LOW | Unnecessary export | TS/JS |
+| E004 | LOW | Unnecessary export | TS/JS (values, re-exports, types and interfaces) |
+| E005 | LOW | Duplicate export | TS/JS: one binding exported under two names |
+
+SKY-E003 counts every literal module request as an edge, including
+`import()` and `require()` whose specifier follows a leading comment
+(`import(/* webpackChunkName: "x" */ "./x")`). `index`, `main` and `cli`
+files are entry points by name, except an `index` file that a sibling
+`index` with an earlier extension shadows for directory imports (`index.js`
+over `index.tsx` in a Docusaurus site, `index.ts` over `index.js` elsewhere).
+A module published only as declarations by a types-only wildcard export is
+not reported when it declares exported types (`type`, `interface`,
+`namespace`); a value-only module there is.
+
+SKY-E003 also takes entries from the commands a project runs, read with one command model shared with the npm dependency
+rules: package.json scripts, GitHub Actions `run:` steps (workflows and
+composite actions), `.husky/*` hooks and lefthook and simple-git-hooks
+commands. Per-binary argument specifications say which words name files: a
+runtime's script and its `-r`/`--require`/`--import`/`--loader` preloads, a
+`-c`/`--config` file of vite, vitest, playwright, jest, webpack, rollup,
+rolldown, tsup or tsdown (`-C`/`--config-file` for cypress), and tsup, tsdown
+and esbuild positional entries. A build script such a command runs hands its
+literal `entry`/`input` strings (`config.entry = "../packages/app/index-node"`)
+to webpack or rollup; they are resolved against the script's folder and the
+command's folder. A type-check command (`tsc`, `tsgo` and `vue-tsc` with
+`-p`/`--project` or `-b`/`--build`, `ngc -p`, `svelte-check --tsconfig`, also
+run as `node node_modules/typescript/lib/tsc.js`) names a tsconfig project:
+its `files` are entries, and its `include` set (patterns that climb out of
+the declaring config's folder excluded) is the entry set only for a package
+that has no other entry, such as a type-check fixture. The exports of those
+files are public only when the project emits declarations (`declaration`,
+`composite` or `emitDeclarationOnly`, and no `noEmit`). An import resolves to
+the file a symlink names, so every engine sees one identity. Vue, Svelte and
+Astro components that no JS/TS file or component imports (pages, routes,
+auto-registered components) are graph roots, like MDX documents: what they
+import is live and its imported names are used. Files under `scripts/` and
+`example(s)/` are no longer roots by path alone: one needs a live importer, a
+command that runs it, a path reference, a shebang, or its file name written in
+another repository file, and is reported otherwise. Files that import each
+other in a cycle no entry reaches are reported too (the importer fixpoint never
+saw them), unless the unreachable region spans more than 8 files. An unused
+file is one finding: SKY-E004, SKY-E005, the unused-symbol rules,
+SKY-U007, SKY-U008, SKY-Q408 and SKY-Q414 findings inside a file SKY-E003
+reports are folded into it and counted in
+`analysis_summary.dead_code_folded_into_unused_files`.
+
+A public instance method of a class that implements a type from outside the
+project (an imported dependency type such as Lit's `ReactiveController`, or an
+ambient library type such as `EventListenerObject` that the project neither
+imports nor declares) is not judged: the framework or platform calls it.
+Protected, private, `#` and static members stay judged, as do the methods of a
+class that implements a project interface.
 
 SKY-E004 also reports an unused re-export (`type: "reexport"` in JSON): an
 entry such as `export { a } from "./a"`, `export type { T } from "./t"`, an
 imported binding listed in `export { x }`, or `export default x` where `x` is
 another export or an import, when no file in the project requests that name
 from the module, directly or through other re-exports, `export *` or a
-namespace import. Each entry is reported on its own line. Public modules
+namespace import. Each entry is reported on its own line. An imported
+binding re-exported beside a requested value export whose shape names it
+(`export type { GateResult }` next to `notify(result: GateResult)`) stays
+silent, so that export's callers can name it. Public modules
 stay silent: package.json `main`, `module`, `types`, `exports`, `bin` and
-`browser` targets (a build output maps to its source; when it cannot be
-mapped, every module with the same file name stays silent), tool, framework,
+`browser` targets (a build output maps to its source: `dist/` and `out/`
+to `src/`, or the bundler entry that emits it, read from the `entry`/`input`
+option of a `tsdown`, `tsup`, `rolldown` or `rollup` config beside the
+manifest, globs and wrapper calls included; when it cannot be mapped, every
+module with the same file name stays silent). A conditions-only `exports`
+object (no `.` key) is the `.` entry, and every condition's target is tried
+(a custom source condition such as `"@scope/source": "./src/index.ts"`
+names the source). Published packages are read before private ones, so a
+monorepo with many examples keeps its packages' API; tool, framework,
 test and script entries, files named by path elsewhere, `index`/`main`/`cli`
 files at a package root or its `src/`, and modules no file imports. A call
 with a literal relative path (`importActual("./x")`, a `createRequire`
 result) loads the whole module; mock registrations (`vi.mock`, `jest.mock`)
 do not. A computed `import()`/`require()` keeps every module under the
 directories its static path pieces name silent. A module whose name matches
-the last segment of an unresolved import stays silent, and the check is
-skipped for projects with Vue, Svelte, Astro, MDX or Marko files or inline
-module scripts in HTML, whose imports Skylos does not read.
+the last segment of an unresolved import stays silent, unless that import
+is a bare specifier of a declared external npm dependency (`next/server`,
+`react-dom/client`): it resolves into node_modules, never to a project
+module. An unresolved stylesheet, data or media file (`@ui/kit/index.css`,
+`./logo.svg`, `./data.json`) names no module either. Relative, `#`,
+path-alias, workspace-package and undeclared bare specifiers still count. A whole-module use that only runtime code sees in a
+TypeScript importer (an `import * as ns` passed as a value, `import()`,
+`require()`, an import glob) requests every value export but no type, since
+a runtime object holds no types; the importer's `ns.X` reads, types
+included, stay requested. JavaScript importers (which may name types in
+JSDoc), `import type * as ns` and the other whole-module uses still request
+everything. Files that load modules without being JS/TS sources are read
+as text (never compiled) and request names like any importer: Vue, Svelte
+and Astro component scripts, inline `<script type="module">` blocks of HTML
+pages and MDX `import`/`export` statements (an ESM block runs to the next
+blank line; front matter, fenced code and code spans are prose). A
+`<script type="module" src>` target is an entry. What cannot be parsed (a
+script in another language such as `lang="coffee"`, a syntax error, an MDX
+expression `import()`/`require()`, a Marko template) holds back only the
+modules its text names, which then count as wholly used; the rest of the
+project keeps exact checks. Only a consumer that cannot be read at all (a
+symlinked file, one over 32 MB) or a project past 200,000 walked files turns
+the check off (`export_surface_unavailable` in
+`namespace_member_analysis`). A wildcard export with only a `types`
+condition (`"./*": {"types": "./dist/types/*.d.ts"}`) publishes each
+module's declarations, not its values: the module's type exports, type
+re-exports and namespace members stay silent (mapped through the package
+`tsconfig` `outDir`/`rootDir`, else the folder the declaration path names),
+while its value exports are still checked. Code in `__testfixtures__` and
+`__fixtures__` folders is test data read as text (jscodeshift fixtures) and
+is never reported by SKY-E003, SKY-E004, SKY-E005, SKY-U007, SKY-U008 or the
+unused-symbol rules; its imports still count as edges.
+
+SKY-E004 also reports an exported TypeScript type alias or interface
+(`type: "type"` or `"interface"`; `export declare type` and a local type
+exported by `export type { T }` included) that no project file requests from
+its module: named or `import type` imports, `import("./m").T` type
+references, namespace-import member reads in type positions, re-exports and
+`export *` chains all count as requests. The same public modules stay
+silent, and `.d.ts` files, `declare global`/`declare module` blocks and a
+module named in another file's `declare module "./m"` are never reported.
+A type used only inside its own file is still reported, because its `export`
+keyword is unnecessary; the message then says "used in this file". A type in
+the shape
+of a value export some file requests stays silent, since that export's
+callers may need to name it: its parameter, return or annotation types, the
+body of a function whose return type is inferred (but not what a JSX element
+renders: the element is a `JSX.Element` whatever its components and props),
+and the module-local declarations those reach (Knip follows fewer of these).
+A requested type does not hold the types it names, and the walk does not continue through
+another exported type. A type merged with a value of the same name
+(`const Config` plus `type Config`, a class plus an interface) also stays
+silent.
+
+Release tags in a JSDoc or `//` comment directly before an export mark it as
+published API: `@public`, `@alpha`, `@beta` (and `@alias`) keep a
+value, class, re-export, type, enum, enum member or namespace member out of
+SKY-E004, SKY-U001/U003/U004, SKY-U007 and SKY-U008. `@internal` gives no
+protection. A `//` comment that ends the previous statement's line does not
+tag the next one.
+
+SKY-E005 (LOW) reports one binding exported under two names (public modules
+included): `export const B = A` where
+`A` is an earlier export of the module, and `export default A` where `A` was exported
+by its own declaration (a component exported by name and as default). The
+binding must not change: `A` is a `const`, function or class that is never
+reassigned, and `B` is a `const`. Specifier lists (`export { a, a as b }`,
+`export { x }; export default x`), imported bindings, `@alias`-tagged
+statements, internal modules an importer uses whole (`Object.keys(ns)`,
+`import()`, `require()`) and the modules they forward through `export *`,
+`.d.ts` files, text fixtures, stories and tool configs stay silent; a
+package entry or its `export *` target is checked like any module, even when
+a test uses it whole (`vi.spyOn(ns, "x")`);
+an unrequested alias in a specifier list is SKY-E004's unused re-export. The
+finding names the group (`NAV_ITEMS|ALL_NAV_ITEMS`) on the alias's line and
+lists the names in `duplicate_names`.
 
 SKY-UC001 preserves a sole unreachable `yield`/`yield None` that establishes
 generator semantics in its enclosing function. Nested function/class bodies
@@ -2599,26 +3143,129 @@ remain independent of this usage decision.
 
 For npm, SKY-U005 also checks dependencies and devDependencies in each owning
 package.json. Literal source imports, package scripts, type references and
-supported plugin configuration count as uses. Peer contracts and implicit
-`@types/` packages are retained. Shared ancestor tooling can supply script
-binaries, but a source import still needs its own workspace declaration
-(SKY-Q408). A known script binary without an available declared provider is
-SKY-Q409. Dynamic loaders, unknown commands, unparsed components and incomplete
-source selection prevent absence claims; the receipt is
-`analysis_summary.npm_dependency_analysis`. Package code and scripts are never
-executed by these checks.
+supported plugin configuration count as uses. Vue, Svelte and Astro script and
+style blocks, top-level MDX ESM (not fenced code or prose) and stylesheet
+`@import`/`@use`/`@forward`/`@plugin`/`@config`/`@reference` rules are read as
+text; a component also uses its framework runtime and a `.scss`/`.sass`/`.less`
+file its compiler. Literal PostCSS plugin maps, TypeScript
+`types`/`importHelpers`/JSX runtime options (also from relative `extends`
+parents, which are followed), `/// <reference types>` directives, source a
+tsconfig `include`/`files` pulls in from outside the package, package names in
+tool config strings (Nuxt modules, Docusaurus presets, Storybook addons, Jest
+presets, Vitest coverage providers, `angular.json` builders, Expo plugins),
+literal ESLint/Babel/Prettier configs written as JS modules, runner flags and
+subcommands that load a package (`vitest --ui`, `astro check`), `@size-limit/*`
+plugins next to a size-limit config and the peers a used framework requires
+(installed or workspace `peerDependencies`, or well-known contracts such as
+`next` to `react-dom` and Angular's framework peers) also count. Peer
+contracts and `typescript` in TypeScript packages are retained. An `@types/x`
+package is reported only when `x` is used nowhere in the project, no tsconfig
+`types` entry or reference directive names it and no source uses its ambient
+global (`@types/node` stays while any source uses Node built-ins or `process`).
+A dependency declared in several sections is reported once per section.
+
+A nested package.json that declares no name, dependency map, workspaces,
+scripts or binaries (a `{"type": "commonjs"}` format marker) does not own
+files: they belong to the enclosing package, as only the root and declared
+workspaces own files. A marker at the scan root keeps ownership.
+
+Node resolution walks up to ancestor `node_modules`, so an ancestor
+workspace's declaration satisfies SKY-Q408 for tests, test setup files, tool
+configs, scripts, stories, examples and benchmarks, for compile-time inputs
+(`.d.ts` files, `/// <reference types>`, tsconfig `types`) and for every file
+of a private package, and that ancestor declaration counts as used. By
+default it also satisfies production source of a
+published (non-`private`) package; the receipt counts those imports as
+`ancestor_declared_production_imports`. With `strict_dependencies = true`
+such source needs its own declaration, because consumers install only that
+package's dependencies, and the finding names the `ancestor_manifest`. A sibling workspace's declaration never
+satisfies an import. A workspace package that a tsconfig `paths` entry (of the
+file's own tsconfig or of another package's tsconfig that compiles the file)
+or a readable bundler `resolve.alias` key maps to project source is not an
+unlisted dependency outside published production source, where the emitted
+bare specifier still needs a declaration. Files that codemod and transform
+test harnesses read as text (`__testfixtures__/`, `__fixtures__/`, and
+`fixtures/**/input.*`/`output.*`) are usage evidence only, and a JSDoc
+`import()` type is an unlisted claim only in published production source; a
+type-only import is satisfied by the matching `@types/` declaration. A script
+binary that no declared package could provide is SKY-Q409; configs, plugins,
+presets and `@types/` packages never provide a tool binary, and an unknown
+command holds back only uninstalled, name-related dependencies that could
+provide it, recorded under `abstained_dependencies[].binaries`. Lockfiles are
+read as data for binary names and peers when `node_modules` is absent:
+`package-lock.json`/`npm-shrinkwrap.json` (`bin`, `peerDependencies`), Yarn
+Berry `yarn.lock` (`bin:`, `peerDependencies:`), `bun.lock` and the
+`peerDependencies` of `pnpm-lock.yaml` entries (pnpm records only `hasBin`).
+They only credit: a binary maps to the package whose lock entry lists it, and
+a used package's locked peers count as used; a lock entry without a `bin`
+never removes a hold.
+
+Package scripts, GitHub Actions `run:` steps, Dockerfile `RUN`/`CMD`/
+`ENTRYPOINT` lines, Makefile recipes, Procfiles and GitLab CI scripts are read
+with one command parser: each `&&`/`;`/`||`/`|` segment on its own, `$VAR`
+expansions in arguments and assignments, redirections, command substitutions,
+`cross-env`/`env` prefixes, `yarn --cwd <dir>`/`npm --prefix <dir>`/`pnpm -C`/
+`--filter`/`yarn workspace <name>` targets (a target's own script is read
+there) and runtime script files (`node ../../scripts/build.js`, followed
+through its relative imports). CI and container commands credit every
+declaration that provides them; a CI line the parser declines holds back only
+dependencies named like its words. An expanded command name, `node -e` code,
+opaque wrappers, a missing script outside the package and unparseable files
+still prevent absence claims. Computed module specifiers proven to be a local
+path (`path.resolve(...)`, `${__dirname}/...`, a constant relative path) or a
+literal (`["fs"].join()`) do not; other dynamic loaders do. An unresolved
+consumer holds back only the ancestor declarations its resolution can reach
+(those it and nearer ancestors do not declare), and an unread ESLint, Babel,
+Prettier or manifest tool config holds back only that tool's family. pnpm
+catalogs are checked for unused entries (SKY-Q411) and unresolved references
+(SKY-Q412), and static imports of optional peers are SKY-Q413. The receipt is
+`analysis_summary.npm_dependency_analysis` with `limitations_by_package`,
+`abstained_dependencies` (with `binaries` or `limitations`),
+`catalog_analysis` and `optional_peer_limitations`. Package code, configs and
+scripts are never executed by these checks.
 
 SKY-U007 reports unread members of a used module-local TypeScript enum, and
-exported enums only when their owning package is explicitly `private: true`
-and a complete source graph resolves direct named imports and literal member
-reads. Public packages, ambient/classic-script enums, namespace imports,
-re-exports, unresolved or dynamic module loads, unparsed component consumers,
-reflection, mutation, escapes and effectful initializers prevent narrowing. An
-entirely unused enum stays with the existing owner finding. Findings carry
-their explicit rule ID and `type: "enum_member"` in `unused_variables`;
-`analysis_summary.enum_member_analysis` records the bounded
-`local_and_closed_private_enums` scope and abstentions. Review numeric
-member values before removing a declaration: implicit values can change.
+of an exported enum whose module is internal by the SKY-E004 notion (not a
+package.json entry, tool or framework entry, file named by path, module no
+file imports, or wholly consumed module), when a complete source graph
+resolves direct named imports and literal member reads. A package need not
+be `private: true`. An unresolved import does not hold back every enum: a
+relative specifier that matches no file cannot load an existing module, so
+only the module its last segment names (`./status.js?raw` names
+`status.ts`) and, for a path alias or workspace package specifier, the
+modules of that package abstain (`unresolved_import_may_reach_module`); the
+specifiers are listed in `unresolved_imports`. Package entries,
+ambient/classic-script enums, namespace imports, re-exports, dynamic module
+loads, reflection, mutation, escapes and effectful initializers prevent
+narrowing. A Vue, Svelte or Astro component, HTML module script or MDX
+document that imports an enum's module is an opaque consumer of its enums
+(a template can read `Status.Spare` without the script naming it); other
+modules keep exact narrowing. Importing such a component from TypeScript does
+not stop the check when Skylos can read the component; only an unreadable one
+holds the enums back. A `@public`/`@alpha`/`@beta`
+enum or member stays live. An entirely unused enum stays with the existing
+owner finding. Findings carry their explicit rule ID and `type:
+"enum_member"` in `unused_variables`; `analysis_summary.enum_member_analysis`
+records the bounded `local_and_internal_module_enums` scope and abstentions.
+Review numeric member values before removing a declaration: implicit values
+can change.
+
+SKY-U008 reports an unread member of an `export namespace N { export ... }`
+in an internal module: a variable, type alias or
+interface, including members of nested namespaces (`N.Inner.x`). A member
+is read by `N.x` (also in type positions) in any file, by a destructuring of
+`N`, or by any reference in the namespace body. Functions, classes and enums
+declared in a namespace keep their existing SKY-U001/SKY-U004 findings, so
+they are not reported twice. The check abstains for the whole namespace when
+it escapes (passed as a value, spread, `Object.keys(N)`, `N[key]`,
+re-exported, `export default N`, requested whole through `export *`), is
+merged with another declaration of the same name, is ambient (`declare`), is
+tagged `@public`/`@alpha`/`@beta`, when no other file imports it, or when a
+types-only wildcard export publishes its module's declarations
+(`public_type_declarations`).
+Findings are in `unused_variables` with `type: "namespace_member"`;
+`analysis_summary.namespace_member_analysis` records the
+`internal_module_namespaces` scope, checked namespaces and abstentions.
 
 ### Framework entrypoints
 
@@ -2636,6 +3283,17 @@ than by an import. These conventions apply to TS/JS, PHP and Python:
 | Expo Router | a package whose `dependencies`/`devDependencies` list `expo-router`; router root from `app.json` (`expo-router` plugin `root` / `extra.router.root`), else `src/app` if present, else `app` | every `.js`/`.jsx`/`.ts`/`.tsx` file under the root, its default export, `unstable_settings`, `ErrorBoundary`, `generateStaticParams`, `loader`; HTTP method exports of `+api` files; `redirectSystemPath`/`legacy_subscribe` of `+native-intent` |
 | React Email | a package depending on `react-email`; `./emails` plus any `--dir`/`-d` in an `email dev\|build\|export` script | `.js`/`.jsx`/`.tsx` files with a default export, outside `_`-prefixed and `static` folders, and their default export |
 | Jest manual mocks | any `__mocks__/` directory | the file and all its exports |
+| Plugin table tools | a package (or an enclosing one) that declares a row's enabler (`@remix-run/dev`, `vike`, `@react-router/dev`, `@tanstack/react-router`, `gatsby`, `@builder.io/qwik`, `mocha`, `cypress`, `@storybook/*`, ... 200 tools) or has its marker file | the row's config files, entry and production patterns (relative to each enclosing package root) plus entries its literal config keys name; every export unless the row narrows it. See *Plugin table (JS/TS)* in the glossary |
+| jscodeshift transforms (table row `jscodeshift`) | `defineTest(__dirname, "name", ...)`/`runTest(__dirname, "name", ...)` in a test file | `<test dir>/../name` (with `.js`, `.cjs`, `.ts`, ... resolution): the transform and what it requires; `__testfixtures__`/`__fixtures__` files are text and never reported |
+| SolidStart (table row `solid-start`) | a package depending on `@solidjs/start` | `src/app`, `src/entry-server`, `src/entry-client` and their default export; modules under `src/routes` with their default export, `route` and HTTP method handlers |
+| Nuxt (table row `nuxt`) | a package depending on `nuxt` | `plugins/`, `middleware/`, `pages/`, `layouts/`, `components/`, `modules/` (also under Nuxt 4's `app/`), `server/api`, `server/routes`, `server/middleware`, `server/plugins`, `app.config` and their default export; every export of the auto-imported `composables/`, `utils/` (top level and `<dir>/index`), `server/utils/` and `shared/utils`/`shared/types`; the `server/tasks`, `app`/`error` and `router.options` patterns |
+| Astro (table row `astro`) | a package depending on `astro` or with `astro.config.*` | `src/pages/**` endpoints (default, HTTP methods, `getStaticPaths`, `prerender`, `partial`), `src/content.config` (`collections`), `src/middleware` (`onRequest`), `src/actions/index` (`server`) |
+| Docusaurus (table rows `docusaurus`, `docusaurus-v1`) | a package depending on `@docusaurus/core` (or `docusaurus` 1) | `docusaurus.config.*`, `sidebars.*`, `src/pages/**`, `src/theme/**` (v1: `siteConfig.js`, `core/**`, `pages/**`) and their default export |
+| SvelteKit routes (table row `sveltekit`) | a package depending on `@sveltejs/kit` or with `svelte.config.*` | `src/routes/**/+*.{js,ts}`, `src/hooks*.{js,ts}`, `src/params/*`, `src/service-worker` and every export |
+| Lit reactive controllers (table row `lit`) | a module importing `lit`, `lit-element`, `lit-html` or `@lit/*` | `hostConnected`, `hostDisconnected`, `hostUpdate`, `hostUpdated` of a class that `implements ReactiveController` (imported from Lit) or calls `host.addController(this)` |
+| Knip config entries | `entry` (top level for the root workspace, `workspaces[dir].entry`) of the repository's literal Knip config | the files and every export |
+| Docusaurus aliases | an importer inside a site with `docusaurus.config.*` | `@site/x` resolves from the site root and `@theme/X` to a swizzled `src/theme/X`; extensionless paths follow the site's webpack order (`.mjs`, `.js`, `.jsx`, `.ts`, `.tsx`; plain webpack 5 defaults to `.js`, `.json`, `.wasm`, TypeScript tries `.ts`/`.tsx` first), so `index.js` shadows a sibling `index.tsx` |
+| SvelteKit `$lib` (table row `sveltekit`, `aliases`) | a package depending on `@sveltejs/kit` (or with `svelte.config.*`) | `$lib/x` resolves to `src/lib/x`, including Svelte 5 rune modules (`$lib/state.svelte` loads `state.svelte.ts`) |
 | esbuild entry points | `entryPoints` of a top-level `esbuild.build/context` call in a script a `package.json` script runs (also under an excluded folder such as `dev/build`), including `path.join(import.meta.dirname, ...)` values and objects that later gain new keys | the entry files and all their exports (the bundle's interface) |
 | Laravel Vite plugin | `vite.config.*` | each `input` of `laravel(...)` from `laravel-vite-plugin` |
 | Laravel | a `composer.json` whose `require` lists `laravel/framework` | `Illuminate\Console\Command` subclasses in `app/Console/Commands` (bases resolved through imports and the PSR-4 map); classes in `app/Listeners` with a `handle*`/`__invoke` method whose first parameter has a class type, when event discovery is on (a provider's `shouldDiscoverEvents()` returns true, or the Laravel 11 `Application::configure()` builder without `withEvents(discover: false)`); `*Factory` in `database/factories` when the model in `app/Models` or `app` uses `HasFactory` (directly or through a project parent); `*Policy` in `app/Policies` when the model exists; classes in `app/Livewire`, `app/Http/Livewire`, `app/View/Components`, `database/migrations`; `DatabaseSeeder` and any other `Illuminate\Database\Seeder` subclass in `database/seeders` (run by `db:seed --class`); and the public methods of those classes |

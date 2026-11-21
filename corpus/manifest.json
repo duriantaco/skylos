@@ -2408,6 +2408,101 @@
       }
     },
     {
+      "id": "npm-component-catalog-usage",
+      "path": "fixtures/npm_component_catalog_usage",
+      "description": "Vue, MDX and stylesheet imports count as npm usage; MDX prose, fenced code and framework aliases do not; unknown script binaries, unused pnpm catalog entries and static optional-peer imports are reported.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original paired static source contract."
+      },
+      "expect": {
+        "present": {
+          "quality": [
+            {
+              "rule_id": "SKY-U005",
+              "file": "package.json",
+              "start_line": 9,
+              "end_line": 9
+            },
+            {
+              "rule_id": "SKY-Q409",
+              "file": "package.json",
+              "start_line": 19,
+              "end_line": 19
+            },
+            {
+              "rule_id": "SKY-Q411",
+              "file": "pnpm-workspace.yaml",
+              "start_line": 5,
+              "end_line": 5
+            },
+            {
+              "rule_id": "SKY-Q413",
+              "file": "src/main.ts",
+              "start_line": 3,
+              "end_line": 3
+            }
+          ]
+        },
+        "absent": {
+          "quality": [
+            {
+              "rule_id": "SKY-U005",
+              "file": "package.json",
+              "start_line": 6,
+              "end_line": 6
+            },
+            {
+              "rule_id": "SKY-U005",
+              "file": "package.json",
+              "start_line": 7,
+              "end_line": 7
+            },
+            {
+              "rule_id": "SKY-U005",
+              "file": "package.json",
+              "start_line": 8,
+              "end_line": 8
+            },
+            {
+              "rule_id": "SKY-Q409",
+              "file": "package.json",
+              "start_line": 20,
+              "end_line": 20
+            },
+            {
+              "rule_id": "SKY-Q411",
+              "file": "pnpm-workspace.yaml",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "rule_id": "SKY-Q413",
+              "file": "src/main.ts",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "rule_id": "SKY-Q408",
+              "file": "content/post.mdx",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "rule_id": "SKY-Q408",
+              "file": "content/post.mdx",
+              "start_line": 5,
+              "end_line": 5
+            }
+          ]
+        }
+      },
+      "scan": {
+        "enable_quality": true
+      }
+    },
+    {
       "id": "php-blade-helper-consumers",
       "path": "fixtures/php_blade_helpers",
       "description": "Blade reads preserve used helpers and owning classes beside unused siblings.",
@@ -2462,6 +2557,410 @@
               "file": "status.ts",
               "start_line": 2,
               "end_line": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "typescript-unused-export-types",
+      "path": "fixtures/typescript_export_types",
+      "description": "An exported type no file requests is an unnecessary export, while requested, signature, declaration-merged and @public-tagged types stay exported.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original minimal paired source contract for unused exported types (SKY-E004)."
+      },
+      "expect": {
+        "present": {
+          "unused_exports": [
+            {
+              "rule_id": "SKY-E004",
+              "file": "src/cart.ts",
+              "start_line": 6,
+              "end_line": 6
+            },
+            {
+              "rule_id": "SKY-E004",
+              "file": "src/cart.ts",
+              "start_line": 16,
+              "end_line": 16
+            }
+          ]
+        },
+        "absent": {
+          "unused_exports": [
+            {
+              "rule_id": "SKY-E004",
+              "file": "src/cart.ts",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E004",
+              "file": "src/cart.ts",
+              "start_line": 8,
+              "end_line": 8
+            },
+            {
+              "rule_id": "SKY-E004",
+              "file": "src/cart.ts",
+              "start_line": 11,
+              "end_line": 11
+            },
+            {
+              "rule_id": "SKY-E004",
+              "file": "src/cart.ts",
+              "start_line": 14,
+              "end_line": 14
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "typescript-duplicate-exports",
+      "path": "fixtures/typescript_duplicate_exports",
+      "description": "One unchanging binding exported under two names is a duplicate export; @alias-tagged and reassigned bindings are not.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original minimal paired source contract for duplicate exports (SKY-E005)."
+      },
+      "expect": {
+        "present": {
+          "unused_exports": [
+            {
+              "rule_id": "SKY-E005",
+              "file": "src/nav.ts",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "rule_id": "SKY-E005",
+              "file": "src/button.tsx",
+              "start_line": 4,
+              "end_line": 4
+            }
+          ]
+        },
+        "absent": {
+          "unused_exports": [
+            {
+              "rule_id": "SKY-E005",
+              "file": "src/nav.ts",
+              "start_line": 6,
+              "end_line": 6
+            },
+            {
+              "rule_id": "SKY-E005",
+              "file": "src/nav.ts",
+              "start_line": 9,
+              "end_line": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "typescript-namespace-members",
+      "path": "fixtures/typescript_namespace_members",
+      "description": "Unread members of an exported namespace are reported beside member reads in values, types and the namespace body; an enumerated namespace keeps every member.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original minimal paired source contract for unread namespace members (SKY-U008)."
+      },
+      "expect": {
+        "present": {
+          "unused_variables": [
+            {
+              "rule_id": "SKY-U008",
+              "file": "src/shapes.ts",
+              "start_line": 3,
+              "end_line": 3
+            }
+          ]
+        },
+        "absent": {
+          "unused_variables": [
+            {
+              "rule_id": "SKY-U008",
+              "file": "src/shapes.ts",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "rule_id": "SKY-U008",
+              "file": "src/shapes.ts",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "rule_id": "SKY-U008",
+              "file": "src/shapes.ts",
+              "start_line": 5,
+              "end_line": 5
+            },
+            {
+              "rule_id": "SKY-U008",
+              "file": "src/shapes.ts",
+              "start_line": 6,
+              "end_line": 6
+            },
+            {
+              "rule_id": "SKY-U008",
+              "file": "src/shapes.ts",
+              "start_line": 10,
+              "end_line": 10
+            },
+            {
+              "rule_id": "SKY-U008",
+              "file": "src/shapes.ts",
+              "start_line": 11,
+              "end_line": 11
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "public-package-enum-members",
+      "path": "fixtures/public_package_enum_members",
+      "description": "An internal module of a published package narrows enum members even when a relative import matches no file; the package entry's enum stays public.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original minimal paired source contract for unused enum members (SKY-U007)."
+      },
+      "expect": {
+        "present": {
+          "unused_variables": [
+            {
+              "rule_id": "SKY-U007",
+              "file": "src/colors.ts",
+              "start_line": 3,
+              "end_line": 3
+            }
+          ]
+        },
+        "absent": {
+          "unused_variables": [
+            {
+              "rule_id": "SKY-U007",
+              "file": "src/colors.ts",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "rule_id": "SKY-U007",
+              "file": "src/index.ts",
+              "start_line": 5,
+              "end_line": 5
+            },
+            {
+              "rule_id": "SKY-U007",
+              "file": "src/index.ts",
+              "start_line": 6,
+              "end_line": 6
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "typescript-export-consumers",
+      "path": "fixtures/typescript_export_consumers",
+      "description": "Vue, Svelte and MDX imports request the type names they import; an unrequested type is still an unnecessary export, and a component script Skylos cannot parse holds back only the module it names.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original paired static source contract (reductions of gaps found in a labelled TS/JS ground truth). Fixture files are read as text; nothing is installed, built or executed."
+      },
+      "scan": {
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "unused_exports": [
+            {
+              "rule_id": "SKY-E004",
+              "file": "src/shapes.ts",
+              "start_line": 4,
+              "end_line": 4
+            }
+          ]
+        },
+        "absent": {
+          "unused_exports": [
+            {
+              "rule_id": "SKY-E004",
+              "file": "src/shapes.ts",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E004",
+              "file": "src/shapes.ts",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "rule_id": "SKY-E004",
+              "file": "src/shapes.ts",
+              "start_line": 3,
+              "end_line": 3
+            },
+            {
+              "rule_id": "SKY-E004",
+              "file": "src/legacy.ts",
+              "start_line": 1,
+              "end_line": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "typescript-package-entry-mapping",
+      "path": "fixtures/typescript_package_entry_mapping",
+      "description": "A built package target maps back to the tsdown entry that emits it, a types-only wildcard export publishes declaration modules but not value-only ones, jscodeshift transforms named by defineTest are entries and __testfixtures__ code is text.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original paired static source contract (reductions of gaps found in a labelled TS/JS ground truth). Fixture files are read as text; nothing is installed, built or executed."
+      },
+      "scan": {
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "unused_files": [
+            {
+              "rule_id": "SKY-E003",
+              "file": "src/valueOnly.ts",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "src/codemods/stale.cjs",
+              "start_line": 1,
+              "end_line": 1
+            }
+          ]
+        },
+        "absent": {
+          "unused_files": [
+            {
+              "rule_id": "SKY-E003",
+              "file": "src/production.ts",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "src/declarations.ts",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "src/codemods/rename.cjs",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "src/codemods/__testfixtures__/default.input.tsx",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "src/codemods/__testfixtures__/default.output.tsx",
+              "start_line": 1,
+              "end_line": 1
+            }
+          ],
+          "unused_functions": [
+            "unusedInFixture"
+          ]
+        }
+      }
+    },
+    {
+      "id": "typescript-framework-aliases",
+      "path": "fixtures/typescript_framework_aliases",
+      "description": "Docusaurus @site imports resolve with the site's webpack extension order (index.js shadows index.tsx), a magic-comment dynamic import loads its module, and SolidStart and Nuxt convention files are entries; orphans stay unused.",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original paired static source contract (reductions of gaps found in a labelled TS/JS ground truth). Fixture files are read as text; nothing is installed, built or executed."
+      },
+      "scan": {
+        "grep_verify": false
+      },
+      "expect": {
+        "present": {
+          "unused_files": [
+            {
+              "rule_id": "SKY-E003",
+              "file": "docs/src/components/Homepage/index.tsx",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "docs/src/components/Orphan.js",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "nuxt/lib/orphan.ts",
+              "start_line": 1,
+              "end_line": 1
+            }
+          ]
+        },
+        "absent": {
+          "unused_files": [
+            {
+              "rule_id": "SKY-E003",
+              "file": "docs/src/components/Homepage/index.js",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "docs/src/components/Highlight.js",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "app/src/template.ts",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "solid/src/app.tsx",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "solid/src/entry-server.tsx",
+              "start_line": 1,
+              "end_line": 1
+            },
+            {
+              "rule_id": "SKY-E003",
+              "file": "nuxt/plugins/query.ts",
+              "start_line": 1,
+              "end_line": 1
             }
           ]
         }

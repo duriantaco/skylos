@@ -15,10 +15,12 @@ from skylos.security.canonicalize import (
     ZERO_WIDTH_CHARS,
     detect_homoglyphs,
     normalize,
+    written_in_script_of,
     remove_zero_width,
     strip_zero_width,
 )
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
+from skylos.core.message_catalogs import is_message_catalog_path
 from skylos.security.agent_instruction_paths import (
     AGENT_RULE_ID,
     agent_rule_id,
@@ -645,6 +647,17 @@ def scan_file(
 
     _, zero_width_hits = strip_zero_width(source, max_hits=MAX_ZERO_WIDTH_HITS)
     source_lines = source.split("\n")
+    # Translation catalogs hold reader text in every script: a word break or
+    # a run of one invisible spacing character there formats text.
+    message_catalog = (
+        not is_agent_instruction
+        and not is_reviewer_config
+        and is_message_catalog_path(str(scan_path or filepath.name))
+    )
+    hit_columns = _hit_columns(source_lines, zero_width_hits)
+    # In source code an invisible character can sit in an identifier or a
+    # string the program compares: only the strict spelling rules apply.
+    source_code = ext in _PYTHON_SOURCE_SUFFIXES
     # A U+FEFF that starts the file is the UTF-8 byte-order mark (Windows
     # editors write it in any file type); it precedes all text and hides
     # nothing. Hits are in file order, so it is the first one. Agent
@@ -657,6 +670,7 @@ def scan_file(
     for index, (char_hex, line_no) in enumerate(zero_width_hits):
         if index == 0 and leading_bom:
             continue
+        column = hit_columns[index]
         if ext in _PYTHON_SOURCE_SUFFIXES and char_hex in _TROJAN_SOURCE_CONTROLS:
             continue
         if (
@@ -671,10 +685,20 @@ def scan_file(
             not is_agent_instruction
             and not is_reviewer_config
             and char_hex in _ORTHOGRAPHIC_JOINERS
-            and _only_orthographic_joiners(
-                source_lines, line_no, _ORTHOGRAPHIC_JOINERS[char_hex]
+            and _orthographic_joiner_at(
+                source_lines, line_no, column, text_file=not source_code
             )
         ):
+            continue
+        if (
+            not is_agent_instruction
+            and not is_reviewer_config
+            and not source_code
+            and char_hex in _DIRECTIONAL_MARKS
+            and _directional_mark_at(source_lines, line_no, column)
+        ):
+            continue
+        if message_catalog and _catalog_spacing_run_at(source_lines, line_no, column):
             continue
         if (
             not is_agent_instruction
@@ -720,7 +744,13 @@ def scan_file(
             return findings
 
     if not high_only:
-        _add_source_homoglyph_findings(findings, filepath, source, is_agent_instruction)
+        _add_source_homoglyph_findings(
+            findings,
+            filepath,
+            source,
+            is_agent_instruction,
+            message_catalog=message_catalog,
+        )
     if len(findings) >= MAX_FINDINGS_PER_FILE:
         return findings
 
@@ -983,35 +1013,116 @@ def _joins_script_letters(char: str) -> bool:
     return unicodedata.name(char, "").startswith(_JOINING_SCRIPTS)
 
 
-def _only_orthographic_joiners(lines: list[str], line_no: int, joiner: str) -> bool:
-    """Every ``joiner`` on the line sits where spelling needs it: between
-    letters of a script that uses ZWNJ/ZWJ (for example, Persian), or a
-    ZWJ inside an emoji sequence. Such a character hides nothing."""
-    if not 1 <= line_no <= len(lines):
+# Invisible characters that sit inside one written word or mark its direction.
+_WORD_FORMAT_CHARACTERS = frozenset("\u200c\u200d\u200e\u200f\u061c")
+_DIRECTIONAL_MARKS = {"U+200E": "\u200e", "U+200F": "\u200f"}
+_MAX_SCRIPT_FORMAT_RUN = 3
+# U+200B and U+2060 space or bind words; a run of only one of them carries
+# no code (a payload needs at least two different symbols).
+_CATALOG_SPACING_CHARACTERS = frozenset("\u200b\u2060")
+_MAX_CATALOG_SPACING_RUN = 8
+
+
+def _hit_columns(lines: list[str], hits) -> list[int | None]:
+    """The column of each ``(char_hex, line_no)`` hit, in file order."""
+    seen: dict[tuple[int, str], int] = {}
+    columns: list[int | None] = []
+    for char_hex, line_no in hits:
+        char = chr(int(char_hex.removeprefix("U+"), 16))
+        key = (line_no, char)
+        start = seen.get(key, -1) + 1
+        line = lines[line_no - 1] if 1 <= line_no <= len(lines) else ""
+        column = line.find(char, start)
+        if column < 0:
+            columns.append(None)
+            continue
+        seen[key] = column
+        columns.append(column)
+    return columns
+
+
+def _format_run(line: str, column: int, members) -> tuple[int, int]:
+    start = column
+    while start > 0 and line[start - 1] in members:
+        start -= 1
+    end = column + 1
+    while end < len(line) and line[end] in members:
+        end += 1
+    return start, end
+
+
+def _line_at(lines: list[str], line_no: int) -> str | None:
+    return lines[line_no - 1] if 1 <= line_no <= len(lines) else None
+
+
+def _orthographic_joiner_at(
+    lines: list[str], line_no: int, column, *, text_file: bool = True
+) -> bool:
+    """A ZWNJ/ZWJ where spelling needs it: between letters of a script that
+    uses joiners (Persian ``فایل\u200cها``, Sinhala ``ප්\u200dර``), or a ZWJ
+    inside an emoji sequence. In a text or data file (not source code) also
+    beside a direction mark or at the end of such a word. A joiner beside
+    Latin letters stays reported."""
+    line = _line_at(lines, line_no)
+    if line is None or column is None:
         return False
-    line = lines[line_no - 1]
-    found = False
-    for index, char in enumerate(line):
-        if char != joiner:
-            continue
-        found = True
-        before = ""
-        if index > 0:
-            before = line[index - 1]
-        after = ""
-        if index + 1 < len(line):
-            after = line[index + 1]
-        if _joins_script_letters(before) and _joins_script_letters(after):
-            continue
-        emoji_pair = (
-            bool(before and after)
-            and _is_pictographic(before)
-            and _is_pictographic(after)
-        )
-        if joiner == "\u200d" and emoji_pair:
-            continue
+    members = _WORD_FORMAT_CHARACTERS if text_file else {line[column]}
+    start, end = _format_run(line, column, members)
+    if not text_file and end - start > 1:
         return False
-    return found
+    if end - start > _MAX_SCRIPT_FORMAT_RUN:
+        return False
+    before = line[start - 1 : start]
+    after = line[end : end + 1]
+    if _joins_script_letters(before) and (
+        _joins_script_letters(after) or (text_file and not after.isalnum())
+    ):
+        return True
+    return (
+        line[column] == "\u200d"
+        and end - start == 1
+        and bool(before and after)
+        and _is_pictographic(before)
+        and _is_pictographic(after)
+    )
+
+
+def _is_right_to_left(char: str) -> bool:
+    return bool(char) and unicodedata.bidirectional(char) in {"R", "AL"}
+
+
+def _directional_mark_at(lines: list[str], line_no: int, column) -> bool:
+    """A left-to-right or right-to-left mark (U+200E/U+200F) beside
+    right-to-left letters: it orders the words around it, as Persian,
+    Arabic and Hebrew text needs. The embedding and override controls
+    (U+202A-U+202E) are not marks and stay reported."""
+    line = _line_at(lines, line_no)
+    if line is None or column is None:
+        return False
+    start, end = _format_run(line, column, _WORD_FORMAT_CHARACTERS)
+    if end - start > _MAX_SCRIPT_FORMAT_RUN:
+        return False
+    return _is_right_to_left(line[start - 1 : start]) or _is_right_to_left(
+        line[end : end + 1]
+    )
+
+
+def _catalog_spacing_run_at(lines: list[str], line_no: int, column) -> bool:
+    """In a translation catalog, a U+200B word break or U+2060 word joiner
+    in a run of that one character, next to text: translators paste them
+    with the words. A run that mixes invisible characters stays reported."""
+    line = _line_at(lines, line_no)
+    if line is None or column is None:
+        return False
+    char = line[column]
+    if char not in _CATALOG_SPACING_CHARACTERS:
+        return False
+    start, end = _format_run(line, column, {char})
+    if end - start > _MAX_CATALOG_SPACING_RUN:
+        return False
+    before = line[start - 1 : start]
+    after = line[end : end + 1]
+    return not (before in ZERO_WIDTH_CHARS or after in ZERO_WIDTH_CHARS)
 
 
 def _is_pictographic(char: str) -> bool:
@@ -1401,8 +1512,14 @@ def _add_source_homoglyph_findings(
     filepath: Path,
     source: str,
     is_agent_instruction: bool,
+    *,
+    message_catalog: bool = False,
 ) -> None:
+    """Lookalike letters that disguise a word. In a translation catalog, a
+    lookalike from the script its line is written in (a Greek ``Ο`` typed
+    in Greek text) is the translator's keyboard, not a disguise."""
     seen_lines: set[int] = set()
+    source_lines = source.splitlines()
     # HTML punctuation, quotes and escapes separate words. Combining those
     # boundaries can incorrectly treat an ordinary Cyrillic phrase beside an
     # ASCII tag or Python expression as one mixed-script identifier.
@@ -1416,6 +1533,12 @@ def _add_source_homoglyph_findings(
         if len(findings) >= MAX_FINDINGS_PER_FILE:
             return
         if line_no in seen_lines:
+            continue
+        if (
+            message_catalog
+            and 1 <= line_no <= len(source_lines)
+            and written_in_script_of(source_lines[line_no - 1], char)
+        ):
             continue
         seen_lines.add(line_no)
         char_hex = f"U+{ord(char):04X}"

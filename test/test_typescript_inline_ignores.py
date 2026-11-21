@@ -47,8 +47,8 @@ def test_rule_specific_inline_ignore_suppresses_issue_839_for_every_ts_js_suffix
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\n"
-        "  return record.report_sha256 === digest;"
-        "  // skylos: ignore[SKY-D253] public digest\n"
+        "  return req.body.digest === process.env.REPORT_SECRET;"
+        "  // skylos: ignore[SKY-D253] signed elsewhere\n"
         "}\n",
         suffix,
     )
@@ -63,8 +63,8 @@ def test_rule_specific_inline_ignore_does_not_hide_other_rule_on_same_line(tmp_p
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\n"
-        "  return eval(record.report_sha256 === digest);"
-        "  // skylos: ignore[SKY-D253] public digest\n"
+        "  return eval(req.body.digest === process.env.REPORT_SECRET);"
+        "  // skylos: ignore[SKY-D253] signed elsewhere\n"
         "}\n",
     )
 
@@ -78,7 +78,7 @@ def test_inline_ignore_accepts_multiple_comma_separated_rule_ids(tmp_path):
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\n"
-        "  return eval(record.report_sha256 === digest);"
+        "  return eval(req.body.digest === process.env.REPORT_SECRET);"
         " // skylos: ignore[sky-d253, SKY-D201]\n"
         "}\n",
     )
@@ -93,7 +93,7 @@ def test_blanket_typescript_inline_ignore_suppresses_all_findings_on_line(tmp_pa
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\n"
-        "  return eval(record.report_sha256 === digest); // skylos: ignore\n"
+        "  return eval(req.body.digest === process.env.REPORT_SECRET); // skylos: ignore\n"
         "}\n",
         ".ts",
     )
@@ -108,7 +108,7 @@ def test_wrong_rule_id_does_not_suppress_typescript_finding(tmp_path):
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\n"
-        "  return record.report_sha256 === digest;"
+        "  return req.body.digest === process.env.REPORT_SECRET;"
         "  // skylos: ignore[SKY-D252] unrelated rule\n"
         "}\n",
         ".ts",
@@ -129,7 +129,7 @@ def test_directive_text_inside_js_literal_cannot_suppress_finding(tmp_path, lite
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\n"
-        f"  if (record.report_sha256 === digest) {{ console.log({literal}); }}\n"
+        f"  if (req.body.digest === process.env.REPORT_SECRET) {{ console.log({literal}); }}\n"
         "}\n",
     )
 
@@ -141,7 +141,7 @@ def test_error_recovery_cannot_turn_unclosed_template_text_into_directive(tmp_pa
     result = _scan(
         tmp_path,
         "const docs = `// skylos: ignore-start\n"
-        "if (record.report_sha256 === digest) { proceed(); }\n",
+        "if (req.body.digest === process.env.REPORT_SECRET) { proceed(); }\n",
     )
 
     assert len(_rule_findings(result, "danger", "SKY-D253")) == 1
@@ -163,7 +163,7 @@ def test_documented_directive_text_inside_comment_cannot_suppress_finding(
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\n"
-        f"  return record.report_sha256 === digest; {comment}\n"
+        f"  return req.body.digest === process.env.REPORT_SECRET; {comment}\n"
         "}\n",
     )
 
@@ -175,7 +175,7 @@ def test_documented_ignore_start_text_cannot_suppress_later_findings(tmp_path):
     result = _scan(
         tmp_path,
         '// Never copy "# skylos: ignore-start" without an end marker\n'
-        "if (record.report_sha256 === digest) { proceed(); }\n",
+        "if (req.body.digest === process.env.REPORT_SECRET) { proceed(); }\n",
     )
 
     assert len(_rule_findings(result, "danger", "SKY-D253")) == 1
@@ -190,7 +190,7 @@ def test_multiline_block_comment_cannot_define_ignore_directive(tmp_path):
         " * skylos: ignore-start\n"
         ' * "\n'
         " */\n"
-        "if (record.report_sha256 === digest) { proceed(); }\n",
+        "if (req.body.digest === process.env.REPORT_SECRET) { proceed(); }\n",
     )
 
     assert len(_rule_findings(result, "danger", "SKY-D253")) == 1
@@ -208,7 +208,7 @@ def test_explanation_cannot_broaden_leading_rule_specific_ignore(tmp_path, expla
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\n"
-        "  return record.report_sha256 === digest;"
+        "  return req.body.digest === process.env.REPORT_SECRET;"
         f" // skylos: ignore[SKY-D252] {explanation}\n"
         "}\n",
     )
@@ -221,7 +221,7 @@ def test_explanation_cannot_start_ignore_block(tmp_path):
     result = _scan(
         tmp_path,
         '// skylos: ignore[SKY-D252] Do not write "skylos: ignore-start"\n'
-        "if (record.report_sha256 === digest) { proceed(); }\n",
+        "if (req.body.digest === process.env.REPORT_SECRET) { proceed(); }\n",
     )
 
     assert len(_rule_findings(result, "danger", "SKY-D253")) == 1
@@ -244,7 +244,7 @@ def test_malformed_directive_cannot_suppress_finding(tmp_path, malformed):
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\n"
-        "  return record.report_sha256 === digest;"
+        "  return req.body.digest === process.env.REPORT_SECRET;"
         f" // skylos: {malformed}\n"
         "}\n",
     )
@@ -265,7 +265,7 @@ def test_non_ascii_case_folding_cannot_create_directive(tmp_path, directive):
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\n"
-        "  return record.report_sha256 === digest;"
+        "  return req.body.digest === process.env.REPORT_SECRET;"
         f" // {directive}\n"
         "}\n",
     )
@@ -329,7 +329,7 @@ def test_rule_list_cannot_inject_ignore_block(tmp_path):
     result = _scan(
         tmp_path,
         "// skylos: ignore[SKY-D252 # skylos: ignore-start]\n"
-        "if (record.report_sha256 === digest) { proceed(); }\n",
+        "if (req.body.digest === process.env.REPORT_SECRET) { proceed(); }\n",
     )
 
     assert len(_rule_findings(result, "danger", "SKY-D253")) == 1
@@ -341,7 +341,7 @@ def test_non_line_separator_inside_comment_cannot_shift_directive(tmp_path, sepa
     result = _scan(
         tmp_path,
         f"/* example{separator}skylos: ignore[SKY-D253] */\n"
-        "if (record.report_sha256 === digest) { proceed(); }\n",
+        "if (req.body.digest === process.env.REPORT_SECRET) { proceed(); }\n",
     )
 
     assert len(_rule_findings(result, "danger", "SKY-D253")) == 1
@@ -426,7 +426,7 @@ def test_separate_rule_comments_on_same_line_are_combined(tmp_path):
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\n"
-        "  return record.report_sha256 === digest;"
+        "  return req.body.digest === process.env.REPORT_SECRET;"
         " /* skylos: ignore[SKY-D252] */"
         " /* skylos: ignore[SKY-D253] */\n"
         "}\n",
@@ -441,9 +441,9 @@ def test_typescript_ignore_block_is_bounded(tmp_path):
         tmp_path,
         "export function compare(record, firstDigest, secondDigest) {\n"
         "  // skylos: ignore-start\n"
-        "  const first = record.first_sha256 === firstDigest;\n"
+        "  const first = req.body.first === process.env.FIRST_SECRET;\n"
         "  // skylos: ignore-end\n"
-        "  const second = record.second_sha256 === secondDigest;\n"
+        "  const second = req.body.second === process.env.SECOND_SECRET;\n"
         "  return first || second;\n"
         "}\n",
         ".ts",
@@ -459,8 +459,8 @@ def test_typescript_block_comment_can_hold_inline_ignore(tmp_path):
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\n"
-        "  return record.report_sha256 === digest;"
-        "  /* skylos: ignore[SKY-D253] public digest */\n"
+        "  return req.body.digest === process.env.REPORT_SECRET;"
+        "  /* skylos: ignore[SKY-D253] signed elsewhere */\n"
         "}\n",
         ".tsx",
     )
@@ -473,7 +473,7 @@ def test_closed_same_line_ignore_block_does_not_bleed(tmp_path):
     result = _scan(
         tmp_path,
         "/* skylos: ignore-start skylos: ignore-end */\n"
-        "if (record.report_sha256 === digest) { proceed(); }\n",
+        "if (req.body.digest === process.env.REPORT_SECRET) { proceed(); }\n",
     )
 
     assert len(_rule_findings(result, "danger", "SKY-D253")) == 1
@@ -488,7 +488,7 @@ def test_unsupported_js_line_endings_fail_open_for_inline_ignores(
         tmp_path,
         "// skylos: ignore-start"
         + line_ending
-        + "if (record.report_sha256 === digest) { proceed(); }"
+        + "if (req.body.digest === process.env.REPORT_SECRET) { proceed(); }"
         + line_ending
         + "// skylos: ignore-end",
     )
@@ -501,7 +501,7 @@ def test_crlf_typescript_inline_ignore_is_supported(tmp_path):
     result = _scan(
         tmp_path,
         "export function sameReport(record, digest) {\r\n"
-        "  return record.report_sha256 === digest;"
+        "  return req.body.digest === process.env.REPORT_SECRET;"
         " // skylos: ignore[SKY-D253]\r\n"
         "}\r\n",
         ".ts",

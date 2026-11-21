@@ -18,7 +18,9 @@ def _project(tmp_path, exports, *, build=True, exclude=None):
             {"name": "public-library", "main": "./src/main.ts", "exports": exports}
         ),
     )
-    write_fixture(root, "src/main.ts", "import './internal';\n")
+    # Both modules are loaded, so an unused-file finding does not fold
+    # their export findings (SKY-E003 reports a file once).
+    write_fixture(root, "src/main.ts", "import './internal';\nimport './utils/url';\n")
     write_fixture(
         root,
         "src/utils/url.ts",
@@ -80,7 +82,6 @@ def _names(root, monkeypatch):
                 "require": "./dist/cjs/utils/*.js",
             }
         },
-        {"./utils/*": {"types": "./dist/types/utils/*.d.ts"}},
         {"./utils/*": "./src/utils/*.ts"},
     ],
 )
@@ -89,6 +90,30 @@ def test_published_pattern_keeps_only_its_source_interface(
 ):
     root = _project(tmp_path, exports)
     assert _names(root, monkeypatch) == {"internalOnly"}
+
+
+def test_types_only_pattern_publishes_types_but_not_values(tmp_path, monkeypatch):
+    # Runtime imports of "public-library/utils/url" fail: only the
+    # declarations are exported, so the value keeps its warning while an
+    # unrequested type of the same module stays silent.
+    root = _project(tmp_path, {"./utils/*": {"types": "./dist/types/utils/*.d.ts"}})
+    write_fixture(
+        root,
+        "src/main.ts",
+        "import './internal';\nimport { decodeURIComponent_ } from './utils/url';\n"
+        "decodeURIComponent_('x');\n",
+        overwrite=True,
+    )
+    write_fixture(
+        root,
+        "src/utils/url.ts",
+        "export const decodeURIComponent_ = (value: string) => value;\n"
+        "export const spareValue = (value: string) => value;\nspareValue('ok');\n"
+        "export type UrlParts = { href: string };\n",
+        overwrite=True,
+    )
+    assert _names(root, monkeypatch) == {"internalOnly", "spareValue"}
+    assert str((root / "src/utils/url.ts").resolve()) not in _discover_package_entry_files(str(root))
 
 
 @pytest.mark.parametrize(

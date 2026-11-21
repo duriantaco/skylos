@@ -1,0 +1,6 @@
+{
+  "name": "public-package-enum-contract",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.ts"
+}

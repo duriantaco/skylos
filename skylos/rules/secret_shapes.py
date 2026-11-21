@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import re
+import unicodedata
 from functools import lru_cache
+from itertools import pairwise
 
 # ---------------------------------------------------------------------------
 # Digests
@@ -202,6 +205,61 @@ def is_character_table(token: str) -> bool:
     return len(token) >= 32 and len(set(token)) == len(token)
 
 
+_DIGITS = "0123456789"
+_UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_LOWER = "abcdefghijklmnopqrstuvwxyz"
+# Encoding alphabets of 32 or more characters: base64 (standard, URL-safe and
+# crypt/bcrypt), base62, base58 (Bitcoin and Flickr), base36 and the base32
+# variants (RFC 4648, base32hex, Crockford, z-base-32).
+_ENCODING_ALPHABETS = tuple(
+    frozenset(alphabet)
+    for alphabet in (
+        _UPPER + _LOWER + _DIGITS + "+/",
+        _UPPER + _LOWER + _DIGITS + "-_",
+        "./" + _DIGITS + _UPPER + _LOWER,
+        _DIGITS + _UPPER + _LOWER,
+        "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz",
+        "123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ",
+        _DIGITS + _LOWER,
+        _DIGITS + _UPPER,
+        _UPPER + "234567",
+        _DIGITS + "ABCDEFGHIJKLMNOPQRSTUV",
+        _DIGITS + "ABCDEFGHJKMNPQRSTVWXYZ",
+        "ybndrfg8ejkmcpqxot1uwisza345h769",
+    )
+)
+
+
+def is_alphabet_permutation(token: str) -> bool:
+    """Every character of a standard encoding alphabet exactly once, in any
+    order: an encoding table such as a shuffled base64 alphabet. A random
+    32+ character credential repeats characters; the chance that one is a
+    permutation of a whole alphabet is negligible (about 1e-26 for base64)."""
+    if len(token) < 32 or len(set(token)) != len(token):
+        return False
+    characters = frozenset(token)
+    return any(characters == alphabet for alphabet in _ENCODING_ALPHABETS)
+
+
+_ALPHABET_CONTEXT_RE = re.compile(
+    r"(?i)[A-Za-z0-9_]*(?:alphabet|charset)[A-Za-z0-9_]*(?:::[A-Za-z0-9_]+)*"
+    r"\s*(?:\(|(?::\s*[^=;(]+)?=)\s*$"
+)
+
+
+def is_declared_alphabet(line: str, start: int, end: int, token: str) -> bool:
+    """A whole string literal that permutes a standard encoding alphabet and
+    is passed to an alphabet constructor or bound to an alphabet/charset name
+    (``Alphabet::new("…")``, ``const ALPHABET: &str = "…"``). Without that
+    context a shuffled alphabet stays a (demoted) finding, because a
+    substitution table can itself be an obfuscation key."""
+    if start < 1 or end >= len(line) or line[start - 1] not in "\"'":
+        return False
+    if line[end] != line[start - 1] or not is_alphabet_permutation(token):
+        return False
+    return bool(_ALPHABET_CONTEXT_RE.search(line[: start - 1]))
+
+
 def is_prose(token: str) -> bool:
     """Three or more words separated by spaces: a sentence or label whose
     entropy comes from the variety of letters, not from randomness. Callers
@@ -264,38 +322,272 @@ def restates_its_key(key: str, value: str) -> bool:
     )
 
 
-_SENTENCE_WORD_RE = re.compile(
-    r"[(\[\"'“‘«¿¡]*[^\W\d_]+(?:['’-][^\W\d_]+)*[)\]\"'”’».,:;!?…]*"
+# Placeholders a message carries for the program to fill in: printf
+# (``%s``, ``%1$d``, ``%(name)s``, ``%@``) and markup tags (``<b>``,
+# ``</0>``, ``<a href="...">``). Braces (``{{x}}``, ``{x}``, ``${x}``, ICU)
+# are matched by ``_without_placeholders`` itself.
+_PRINTF_PLACEHOLDER_RE = re.compile(
+    r"%(?:\d+\$)?(?:\([A-Za-z_][\w.]*\))?[-+ #0]*(?:\d+|\*)?(?:\.\d+)?"
+    r"(?:hh|h|ll|l|L|z|j|t)?[sSdiufFeEgGxXocpr@]"
 )
-_SENTENCE_SEPARATOR_RE = re.compile(r"[:;,.!?…–—/&-]|[0-9]{1,4}[.,:;]?")
-_SENTENCE_END = ".:!?…。"
-_SENTENCE_OPENERS = " ([\"'“‘«¿¡"
-_SENTENCE_CLOSERS = " )]\"'”’»"
-_SENTENCE_CLAUSE_RE = re.compile(r"[,;:.!?] ")
+_MARKUP_TAG_RE = re.compile(r"</?[A-Za-z0-9][\w.:-]*(?:\s[^<>]{0,160})?/?>")
+_ICU_SELECTOR_RE = re.compile(
+    r"\s*[\w.]+\s*,\s*(?:plural|select|selectordinal)\s*,", re.IGNORECASE
+)
+_MAX_PLACEHOLDER_NESTING = 8
+# Sentence ends in Latin, CJK (。！？), Devanagari (। ॥), Urdu (۔), Arabic
+# (؟), Myanmar (။), Khmer (។ ៕), Ethiopic (።), Armenian (։) and Greek (;).
+_SENTENCE_END = frozenset(
+    ".:!?\u2026\u3002\uff01\uff1f\uff61\u0964\u0965\u06d4\u061f"
+    "\u104b\u17d4\u17d5\u1362\u0589\u037e"
+)
+_SENTENCE_CLAUSE_RE = re.compile("[,;:.!?\u060c\u061b] |[\u3001\uff0c\uff1b\uff1a]")
 _MAX_SENTENCE_WORD_LENGTH = 24
+# Compound words in a catalog (German ``Zwöifaktorouthentisierigs``).
+_MAX_CATALOG_WORD_PART = 32
+# Scripts written without spaces between words: one token is a phrase.
+_UNSPACED_SCRIPT_PREFIXES = (
+    "CJK",
+    "HIRAGANA",
+    "KATAKANA",
+    "THAI",
+    "LAO",
+    "KHMER",
+    "MYANMAR",
+    "TIBETAN",
+    "HANGUL SYLLABLE",
+)
+_UNSPACED_LETTERS_PER_WORD = 3
+# Symbols that belong to code or credentials, never to a punctuation token.
+_CODE_SYMBOLS = frozenset("#@*\\$^=+~|`_<>{}")
+# Letters and digits fused into one word (``2FA``, ``IPv6``, ``B2B``) are
+# short; a longer mix of Latin letters and digits is how passwords look.
+_MAX_MIXED_LATIN_WORD = 5
+_MAX_NUMBER_DIGITS = 4
+
+
+def _closing_brace(text: str, start: int) -> int | None:
+    depth = 0
+    for index in range(start, min(len(text), start + 800)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+            if depth > _MAX_PLACEHOLDER_NESTING:
+                return None
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _icu_branch_texts(body: str, depth: int) -> str:
+    """The reader text of ``n, plural, one {# day} other {# days}``."""
+    selector = _ICU_SELECTOR_RE.match(body)
+    texts = []
+    index = selector.end() if selector else 0
+    while index < len(body):
+        if body[index] != "{":
+            index += 1
+            continue
+        end = _closing_brace(body, index)
+        if end is None:
+            break
+        branch, _ = _without_placeholders(body[index + 1 : end], depth + 1)
+        texts.append(branch.replace("#", " "))
+        index = end + 1
+    return " ".join(texts)
+
+
+def _without_placeholders(value: str, depth: int = 0) -> tuple[str, int]:
+    """``value`` with every placeholder replaced by a space, and how many
+    there were. The branches of an ICU ``plural``/``select`` are reader text
+    and are kept; an unclosed brace is left in place."""
+    if depth > _MAX_PLACEHOLDER_NESTING:
+        return value, 0
+    parts = []
+    found = 0
+    index = 0
+    while index < len(value):
+        char = value[index]
+        opens = char == "{" or (char == "$" and value[index + 1 : index + 2] == "{")
+        if not opens:
+            parts.append(char)
+            index += 1
+            continue
+        brace = index if char == "{" else index + 1
+        end = _closing_brace(value, brace)
+        if end is None:
+            parts.append(char)
+            index += 1
+            continue
+        body = value[brace + 1 : end]
+        found += 1
+        if char == "{" and _ICU_SELECTOR_RE.match(body):
+            parts.append(" " + _icu_branch_texts(body, depth) + " ")
+        else:
+            parts.append(" ")
+        index = end + 1
+    text = "".join(parts)
+    text, printf = _PRINTF_PLACEHOLDER_RE.subn(" ", text)
+    text, tags = _MARKUP_TAG_RE.subn(" ", text)
+    return text, found + printf + tags
+
+
+def _is_unspaced_letter(char: str) -> bool:
+    return unicodedata.name(char, "").startswith(_UNSPACED_SCRIPT_PREFIXES)
+
+
+def _is_separator_token(token: str) -> bool:
+    """Punctuation, dashes, emoji or a short number standing alone."""
+    stripped = token.strip(".,:;%)(")
+    if stripped.isdigit() and len(stripped) <= _MAX_NUMBER_DIGITS:
+        return True
+    return all(
+        unicodedata.category(char)[0] in "PS" and char not in _CODE_SYMBOLS
+        for char in token
+    )
+
+
+def _without_word_marks(word: str) -> str:
+    """Drop vowel signs, viramas and joiners: in Devanagari, Thai or Myanmar
+    they are part of the letters around them, not separate characters."""
+    return "".join(
+        char
+        for char in word
+        if unicodedata.category(char)[0] != "M" and char not in "\u200c\u200d"
+    )
+
+
+def _natural_word_part(part: str) -> bool:
+    if part.isalpha():
+        changes = sum(
+            1
+            for before, after in pairwise(part)
+            if before.isascii()
+            and after.isascii()
+            and before.islower()
+            and after.isupper()
+        )
+        return changes < 2
+    runs = re.findall(r"\d+|[^\W\d_]+|.", part)
+    if any(not (run.isdigit() or run.isalpha()) for run in runs):
+        return False
+    for index, run in enumerate(runs):
+        if not run.isdigit():
+            continue
+        if len(run) > _MAX_NUMBER_DIGITS:
+            return False
+        neighbours = runs[max(0, index - 1) : index] + runs[index + 1 : index + 2]
+        if any(neighbour.isascii() for neighbour in neighbours) and (
+            len(part) > _MAX_MIXED_LATIN_WORD
+        ):
+            return False
+    return True
+
+
+def _is_word_punctuation(char: str) -> bool:
+    return unicodedata.category(char)[0] == "P" and char not in _CODE_SYMBOLS
+
+
+def _natural_word(token: str, max_part: int) -> tuple[bool, int]:
+    """Whether ``token`` is a word of natural language, and how many words
+    it stands for. Punctuation around and inside it (hyphens, apostrophes,
+    slashes, an ideographic full stop) separates its parts; each part is
+    letters of any script with their marks, with digits only as in ``2FA``
+    or ``有6個``."""
+    core = _without_word_marks(token)
+    while (
+        core
+        and unicodedata.category(core[-1])[0] == "S"
+        and core[-1] not in _CODE_SYMBOLS
+    ):
+        core = core[:-1]
+    while (
+        core
+        and unicodedata.category(core[0])[0] == "S"
+        and core[0] not in _CODE_SYMBOLS
+    ):
+        core = core[1:]
+    parts = []
+    current = []
+    for char in core:
+        if _is_word_punctuation(char):
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current))
+    parts = [part for part in parts if part]
+    if not parts:
+        return False, 0
+    for part in parts:
+        if not _natural_word_part(part):
+            return False, 0
+    unspaced = sum(1 for part in parts for char in part if _is_unspaced_letter(char))
+    if unspaced:
+        return True, max(1, unspaced // _UNSPACED_LETTERS_PER_WORD)
+    if any(len(part) > max_part for part in parts):
+        return False, 0
+    return True, 1
+
+
+def _reader_words(text: str, max_part: int = _MAX_SENTENCE_WORD_LENGTH) -> int | None:
+    """How many natural words ``text`` has, or None when a token is neither
+    a natural word nor punctuation."""
+    words = 0
+    for token in text.split():
+        natural, weight = _natural_word(token, max_part)
+        if natural:
+            words += weight
+        elif not _is_separator_token(token):
+            return None
+    return words
+
+
+def _first_letter(text: str) -> str:
+    for char in text:
+        if char.isalpha():
+            return char
+        if char.isdigit():
+            return ""
+    return ""
 
 
 def is_message_sentence(value: str) -> bool:
     """``"Sign-in failed: wrong user name or password."``: text written for
-    a reader. It starts with a capital letter, is made only of natural words
-    (letters, with inner hyphens or apostrophes), has three or more of them
-    and carries sentence punctuation. A lowercase run of words can be a
-    generated passphrase and is not a sentence here; a word with digits or
-    symbols in it is not a natural word."""
-    words = 0
-    for token in value.split():
-        if _SENTENCE_WORD_RE.fullmatch(token):
-            if len(token) > _MAX_SENTENCE_WORD_LENGTH:
-                return False
-            words += 1
-        elif not _SENTENCE_SEPARATOR_RE.fullmatch(token):
-            return False
-    if words < 3:
+    a reader. It starts with a capital letter (or a letter of a script with
+    no case, or a placeholder), is made only of natural words in any script
+    (letters with their marks, inner hyphens, apostrophes or slashes), has
+    three or more of them and carries sentence punctuation. Placeholders
+    (``{{length}}``, ``{n}``, ``%s``, ``<b>``) are left out. A lowercase run
+    of words can be a generated passphrase and is not a sentence here; a
+    word with digits or symbols in it is not a natural word."""
+    text, _ = _without_placeholders(value)
+    words = _reader_words(text)
+    if words is None or words < 3:
         return False
-    if not value.lstrip(_SENTENCE_OPENERS)[:1].isupper():
+    starts_with_placeholder = value.lstrip()[:1] in {"{", "$", "%", "<"}
+    first = _first_letter(text)
+    if not first or (first.islower() and not starts_with_placeholder):
         return False
-    ending = value.rstrip(_SENTENCE_CLOSERS)[-1:]
-    return ending in _SENTENCE_END or bool(_SENTENCE_CLAUSE_RE.search(value))
+    stripped = text.rstrip()
+    while stripped and unicodedata.category(stripped[-1]) in {"Pe", "Pf"} | {"Zs"}:
+        stripped = stripped[:-1]
+    if stripped[-1:] in {'"', "'"}:
+        stripped = stripped[:-1].rstrip()
+    return stripped[-1:] in _SENTENCE_END or bool(_SENTENCE_CLAUSE_RE.search(text))
+
+
+def is_catalog_text(value: str) -> bool:
+    """A value of a translation catalog that is text for a reader: natural
+    words in any script, with placeholders and punctuation, and no token
+    shaped like a password or key (``Sommer2024``, ``aB3dE5fG``). In a
+    catalog a label (``Confirm your current password``) or a single word
+    (``API-Schlüssel``) is a translation, not a credential."""
+    text, _ = _without_placeholders(value)
+    words = _reader_words(text, _MAX_CATALOG_WORD_PART)
+    return bool(words) and sum(char.isalpha() for char in text) >= 2
 
 
 _PROSE_ATTRIBUTE_WORDS = frozenset(
@@ -452,6 +744,10 @@ _SLUG_WORD_RE = re.compile(
     r"|[A-Za-z]{1,3}[0-9]{1,4}"  # v2, H264
     r"|[0-9]{1,4}[A-Za-z]{1,3}"  # 3L, 2xl
 )
+# ``ELBSecurityPolicy``, ``HTTPServerConfig``: an acronym, then words.
+_ACRONYM_WORDS_RE = re.compile(r"[A-Z]{2,6}(?:[A-Z][a-z]+){1,3}")
+_MAX_SLUG_PART = 16
+_MAX_ACRONYM_WORDS_PART = 24
 _EVM_ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]{40}")
 _URL_RE = re.compile(
     r"https?://(?P<host>[A-Za-z0-9.-]+)(?::\d+)?(?P<path>/[^\s'\"`<>?#]*)?"
@@ -516,7 +812,158 @@ def is_word_slug(token: str) -> bool:
     parts between its separators."""
     parts = [part for part in re.split(r"[-_]+", token) if part]
     return len(parts) >= 3 and all(
-        len(part) <= 16 and _SLUG_WORD_RE.fullmatch(part) for part in parts
+        (len(part) <= _MAX_SLUG_PART and _SLUG_WORD_RE.fullmatch(part))
+        or (len(part) <= _MAX_ACRONYM_WORDS_PART and _ACRONYM_WORDS_RE.fullmatch(part))
+        for part in parts
+    )
+
+
+_CAMEL_WORD_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+_CAMEL_NAME_MIN_WORDS = 3
+_CAMEL_NAME_MAX_WORDS = 8
+_CAMEL_NAME_MAX_WORD = 12
+_VOWELS = frozenset("aeiouyAEIOUY")
+
+
+def is_camel_case_name(token: str) -> bool:
+    """``web3SandboxChallenge``, ``loginAdminChallenge2``: a name made of
+    three to eight camel-case words, each a word of three or more letters
+    with a vowel (an all-capital acronym needs none) or a short number. A
+    random token splits into one- and two-letter fragments."""
+    words = _CAMEL_WORD_RE.findall(token)
+    if "".join(words) != token or not (
+        _CAMEL_NAME_MIN_WORDS <= len(words) <= _CAMEL_NAME_MAX_WORDS
+    ):
+        return False
+    long_words = 0
+    for word in words:
+        if word.isdigit():
+            if len(word) > 4:
+                return False
+            continue
+        if not 3 <= len(word) <= _CAMEL_NAME_MAX_WORD:
+            return False
+        if not word.isupper() and not _VOWELS.intersection(word):
+            return False
+        if len(word) >= 4:
+            long_words += 1
+    return long_words >= 2
+
+
+_BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+_BASE58_INDEX = {char: index for index, char in enumerate(_BASE58_ALPHABET)}
+_BASE58_ADDRESS_RE = re.compile(r"[1-9A-HJ-NP-Za-km-z]{25,35}")
+# A pay-to-hash address: a version byte, a 20-byte hash and a 4-byte check.
+# A WIF private key (33-34 payload bytes) or an extended key is longer.
+_BASE58_ADDRESS_BYTES = 25
+_BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+_BECH32_ADDRESS_RE = re.compile(
+    r"(?P<hrp>bc|tb|bcrt|ltc|tltc)1(?P<data>[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{8,87})"
+)
+_BECH32_CONSTANTS = (1, 0x2BC830A3)  # BIP-173 bech32, BIP-350 bech32m
+
+
+def _base58_decode(token: str) -> bytes | None:
+    number = 0
+    for char in token:
+        index = _BASE58_INDEX.get(char)
+        if index is None:
+            return None
+        number = number * 58 + index
+    body = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
+    leading = len(token) - len(token.lstrip("1"))
+    return b"\x00" * leading + body
+
+
+def _is_base58check_address(token: str) -> bool:
+    if not _BASE58_ADDRESS_RE.fullmatch(token):
+        return False
+    raw = _base58_decode(token)
+    if raw is None or len(raw) != _BASE58_ADDRESS_BYTES:
+        return False
+    payload, check = raw[:-4], raw[-4:]
+    return hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4] == check
+
+
+def _bech32_polymod(values) -> int:
+    generator = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
+    checksum = 1
+    for value in values:
+        top = checksum >> 25
+        checksum = (checksum & 0x1FFFFFF) << 5 ^ value
+        for bit in range(5):
+            if (top >> bit) & 1:
+                checksum ^= generator[bit]
+    return checksum
+
+
+def _is_bech32_address(token: str) -> bool:
+    match = _BECH32_ADDRESS_RE.fullmatch(token.lower())
+    if match is None or (token != token.lower() and token != token.upper()):
+        return False
+    hrp = match.group("hrp")
+    data = [_BECH32_CHARSET.index(char) for char in match.group("data")]
+    expanded = [ord(char) >> 5 for char in hrp] + [0] + [ord(char) & 31 for char in hrp]
+    return _bech32_polymod(expanded + data) in _BECH32_CONSTANTS
+
+
+def is_crypto_address(token: str) -> bool:
+    """A cryptocurrency receiving address, public by design: a Base58Check
+    pay-to-hash address whose checksum verifies (Bitcoin ``1…``/``3…``,
+    Litecoin, Dogecoin, Dash ``X…``, Tron ``T…``), a SegWit bech32 or
+    bech32m address with a valid checksum (``bc1…``), or an ``0x`` + 40-hex
+    account. A private key (WIF, ``xprv``) has another length and stays."""
+    return (
+        is_evm_address(token)
+        or _is_base58check_address(token)
+        or _is_bech32_address(token)
+    )
+
+
+# Modular-crypt password hashes: bcrypt, argon2, scrypt, sha-crypt, PBKDF2.
+_PASSWORD_HASH_RE = re.compile(
+    r"\$2[abxy]?\$\d{2}\$[./A-Za-z0-9]{53}"
+    r"|\$argon2(?:id|i|d)\$v=\d+\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+"
+    r"|\$scrypt\$[^\s$]+\$[A-Za-z0-9+/.=]+\$[A-Za-z0-9+/.=]+"
+    r"|\$[156]\$(?:rounds=\d+\$)?[./A-Za-z0-9]{1,16}\$[./A-Za-z0-9]{22,86}"
+    r"|\$pbkdf2(?:-sha\d+)?\$\d+\$[./A-Za-z0-9+]+\$[./A-Za-z0-9+]+"
+    r"|pbkdf2_sha(?:1|256|512)\$\d+\$[^\s$]+\$[A-Za-z0-9+/=]+"
+)
+
+
+def is_password_hash(value: str) -> bool:
+    """A salted password hash in modular-crypt form (``$2a$10$…``,
+    ``$argon2id$v=19$…``, ``pbkdf2_sha256$…``): what a database stores, not
+    the password."""
+    return bool(_PASSWORD_HASH_RE.fullmatch(value.strip()))
+
+
+_INTERPOLATION_DEFAULT_RE = re.compile(r":-|:=|:\?|\|\||\?\?")
+_LITERAL_RANDOM_RE = re.compile(r"[A-Za-z0-9+/=_-]{16,}")
+
+
+def is_interpolated_expression(value: str) -> bool:
+    """``${var.project_name}-sqlite-data``, or a template expression cut at
+    an inner quote (``${security.hash(req.body.password || ``): text built
+    around ``${…}`` interpolations, not a literal secret. A default inside
+    the braces (``${TOKEN:-…}``) or a long run of letters and digits
+    anywhere in the value (``${TOKEN:q7Rk…}``) keeps the value scanned."""
+    if "${" not in value:
+        return False
+    index = 0
+    while True:
+        start = value.find("${", index)
+        if start < 0:
+            break
+        end = value.find("}", start)
+        if end < 0:
+            break  # cut at a quote inside the expression: the rest is code
+        if _INTERPOLATION_DEFAULT_RE.search(value[start:end]):
+            return False
+        index = end + 1
+    return not any(
+        any(char.isdigit() for char in run) and any(char.isalpha() for char in run)
+        for run in _LITERAL_RANDOM_RE.findall(value)
     )
 
 

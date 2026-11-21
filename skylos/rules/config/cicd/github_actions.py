@@ -1983,22 +1983,32 @@ def _report_injections(
         reasons = "; ".join(
             f"{item.context} ({item.reason})" for item in injection.sources[:3]
         )
-        _add_finding(
-            findings,
-            lines,
-            _finding(
-                rule_id="SKY-D294",
-                name="github-actions-template-injection",
-                message=(
-                    f"{where} expands {injection.raw} into code: {reasons}. Pass the "
-                    "value through env and quote the variable instead."
-                ),
-                file=path,
-                line=line,
-                severity=injection.severity,
-                value=f"{where}:{injection.raw}:{seen[needle]}",
+        finding = _finding(
+            rule_id="SKY-D294",
+            name="github-actions-template-injection",
+            message=(
+                f"{where} expands {injection.raw} into code: {reasons}. Pass the "
+                "value through env and quote the variable instead."
             ),
+            file=path,
+            line=line,
+            severity=injection.severity,
+            value=f"{where}:{injection.raw}:{seen[needle]}",
         )
+        if not any(item.outsider for item in injection.sources):
+            # GitHub's threat model: only values an account without write
+            # access can set are injections. Maintainer-only values (dispatch
+            # inputs, release and repository_dispatch payloads) and values
+            # whose setter is not visible here stay as hygiene advice.
+            finding["low_risk_context"] = {
+                "reason": "no-outsider-input",
+                "detail": (
+                    "no expanded value is set by an account without write "
+                    "access: only maintainers, or callers not visible here, "
+                    "choose it"
+                ),
+            }
+        _add_finding(findings, lines, finding)
 
 
 def _fragment_line(lines: list[str], start_line: int, needle: str, skip: int) -> int:

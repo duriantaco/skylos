@@ -8,9 +8,9 @@ gate:
   full: counted
   note: Reported as quality; counts toward max_quality.
 run_with: '`skylos . --quality`'
-what_it_is: A simple package script invokes a known npm binary whose provider is not declared
-  by that package or an ancestor. Unknown system commands and dynamically expanded scripts
-  do not establish a missing provider.
+what_it_is: A simple package script invokes an npm binary whose provider is not declared by
+  that package or an ancestor. System tools and dynamically expanded scripts do not establish
+  a missing provider.
 why_it_matters: A build can succeed only because the developer has a globally installed tool.
   A clean environment lacks that undeclared provider and the script stops working.
 flagged_example:
@@ -38,23 +38,38 @@ not_flagged_example:
   why: The typescript declaration supplies the known tsc binary; an ancestor tooling declaration
     can also supply workspace scripts.
 how_skylos_decides:
-- Reads simple command heads in package.json scripts without executing them. Literal command
-  chains and supported package-manager wrappers are inspected.
-- Maps known binaries such as tsc to typescript and reads literal bin metadata from available
-  installed package manifests. A provider declared in the package or an ancestor counts as
-  available.
-- Reports MEDIUM on the script line only when a known provider is missing and the command
-  is not dynamic. Unknown commands, shell expansion, external scripts and unsupported wrappers
-  remain unresolved.
-- Unresolved scripts prevent unused-dependency absence claims and are recorded in analysis_summary.npm_dependency_analysis;
-  they are not treated as proof that installed tools are unused.
+- Reads command heads in package.json scripts without executing them. Each `&&`, `;`, `||` and
+  `|` segment is read on its own; `$VAR` arguments, assignments, redirections and command
+  substitutions do not hide the command, and `yarn --cwd <dir>`, `npm --prefix <dir>`, `pnpm -C`,
+  `pnpm --filter` and `yarn workspace` run the target package's script there or resolve the binary
+  in the target's lineage.
+- Resolves a command through literal bin metadata from installed or workspace package
+  manifests, the `bin` entries a lockfile records (package-lock.json, Yarn Berry yarn.lock,
+  bun.lock), a map of well-known CLIs whose package name differs (tsc to typescript, ng to
+  @angular/cli, ngc to @angular/compiler-cli, svelte-package to @sveltejs/package, changeset to
+  @changesets/cli and others), and otherwise assumes the command names its package. A provider
+  declared in the package or an ancestor counts as available. Shareable configs, plugins,
+  presets and @types/ packages never provide a tool binary.
+- Reads through cross-env, env, concurrently and npm-run-all style runners. npx, pnpm dlx and
+  unknown package-manager shorthands can fetch or resolve providers indirectly, so they never
+  report a missing provider.
+- An unknown command first holds back declared dependencies that could plausibly provide it,
+  meaning not installed and name-related to the command. Only those dependencies abstain from
+  SKY-U005; every other dependency is still checked.
+- Reports MEDIUM on the script line when no declared dependency could provide the command,
+  the command is not a system tool or shell builtin (psql, docker, make, readarray and similar)
+  and the script is not dynamic. An expanded command name, subshells, `node -e` code and opaque
+  wrappers remain unresolved and are recorded in analysis_summary.npm_dependency_analysis. CI
+  and container commands count as dependency use but are never reported here.
 source_refs:
 - path: skylos/rules/quality/npm_dependencies.py
   symbol: def scan_npm_dependencies(
-- path: skylos/rules/quality/npm_dependencies.py
+- path: skylos/rules/quality/npm_commands.py
   symbol: def _script_commands(
 - path: test/test_npm_dependency_usage.py
   symbol: def test_known_npm_binary_without_provider_is_unlisted
+- path: test/test_npm_dependency_workspaces.py
+  symbol: def test_eslint_plugins_and_configs_do_not_provide_the_eslint_binary
 fix:
   explanation: Add the intended binary provider to this package or shared ancestor tooling,
     or replace the script with a declared tool.
@@ -66,7 +81,8 @@ false_alarms_and_suppression:
   misfires:
   - An operator may intentionally install the binary globally, but that contract is outside
     this manifest.
-  - Custom binaries without a known provider are unresolved and are not reported as missing.
+  - A tool installed outside npm under a name Skylos does not list as a system command is
+    reported; suppress it or invoke it through an explicit path.
   suppress:
   - check: config
     text: Set `[tool.skylos] ignore = ["SKY-Q409"]` to disable this rule project-wide.

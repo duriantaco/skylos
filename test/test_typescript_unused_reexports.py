@@ -275,21 +275,47 @@ def test_src_index_without_main_is_public(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "main, barrel",
+    "main, barrel, expected",
     [
         (
             'import * as lib from "./lib";\nexport function wire(fn: (x: object) => void) { fn(lib); }\n',
             BARREL,
+            # A runtime namespace object holds values only: the type-only
+            # re-exports nobody names are still unused.
+            {("src/lib/index.ts", 2, "Shape"), ("src/lib/index.ts", 2, "SpareShape")},
+        ),
+        (
+            'import * as lib from "./lib";\nlet s: lib.Shape | undefined;\nexport function wire(fn: (x: object) => void) { fn(lib); fn(s ?? {}); }\n',
+            BARREL,
+            {("src/lib/index.ts", 2, "SpareShape")},
         ),
         (
             'import * as lib from "./lib";\nconsole.log(Object.keys(lib));\n',
             'export * from "./helpers";\nexport { Shape, SpareShape } from "./types";\n',
+            set(),
         ),
     ],
-    ids=["namespace-escapes", "star-barrel-enumerated"],
+    ids=["namespace-escapes", "namespace-escapes-type-read", "star-barrel-enumerated"],
 )
-def test_namespace_consumers_keep_every_reexport(tmp_path, main, barrel):
+def test_namespace_consumers_keep_every_value_reexport(tmp_path, main, barrel, expected):
     _barrel_project(tmp_path, main=main, extra={"src/lib/index.ts": barrel})
+    assert _reexports(tmp_path) == expected
+
+
+@pytest.mark.parametrize(
+    "main",
+    [
+        # JavaScript can name the namespace's types in JSDoc.
+        'import * as lib from "./lib/index.js";\nexport function wire(fn) { fn(lib); }\n',
+        # A type-only namespace import is about types.
+        'import type * as lib from "./lib";\nexport type All = typeof lib;\nexport type Pick = lib.Shape;\n',
+    ],
+    ids=["javascript-importer", "type-only-namespace"],
+)
+def test_namespace_consumers_that_may_name_types_keep_every_reexport(tmp_path, main):
+    name = "src/main.js" if "fn)" in main else "src/main.ts"
+    package = {**APP_PACKAGE, "main": name}
+    _barrel_project(tmp_path, package=package, main="", extra={name: main})
     assert _reexports(tmp_path) == set()
 
 
@@ -413,6 +439,56 @@ def test_unresolved_specifier_that_may_name_the_barrel(tmp_path):
     assert _reexports(tmp_path) == set()
 
 
+@pytest.mark.parametrize(
+    "version, expected",
+    [
+        # A declared npm dependency resolves into node_modules, never to src/lib.
+        ("^1.0.0", P1_FINDINGS),
+        # A workspace or file dependency may be project source.
+        ("workspace:*", set()),
+        ("file:../lib", set()),
+    ],
+)
+def test_unresolved_declared_dependency_names_no_project_module(tmp_path, version, expected):
+    _barrel_project(
+        tmp_path,
+        package={**APP_PACKAGE, "dependencies": {"@app/lib": version}},
+        extra={
+            "src/extra.ts": 'import { spare } from "@app/lib";\nconsole.log(spare());\n'
+        },
+        main=MAIN + 'import "./extra";\n',
+    )
+    assert _reexports(tmp_path) == expected
+
+
+@pytest.mark.parametrize(
+    "main, expected",
+    [
+        ('import { notify } from "./slack";\nconsole.log(notify);\n', set()),
+        (
+            'import { other } from "./slack";\nconsole.log(other);\n',
+            {("src/slack.ts", 2, "Result")},
+        ),
+    ],
+    ids=["signature-of-requested-export", "unrequested-export"],
+)
+def test_reexported_import_in_a_requested_signature_stays(tmp_path, main, expected):
+    _project(
+        tmp_path,
+        files={
+            "src/types.ts": "export type Result = { ok: boolean };\n",
+            "src/slack.ts": (
+                'import { type Result } from "./types";\n'
+                "export type { Result };\n"
+                "export function notify(result: Result): string { return String(result.ok); }\n"
+                "export const other = 1;\n"
+            ),
+            "src/main.ts": main,
+        },
+    )
+    assert _reexports(tmp_path) == expected
+
+
 def test_declaration_files_and_test_barrels_are_roots(tmp_path):
     _project(
         tmp_path,
@@ -427,7 +503,7 @@ def test_declaration_files_and_test_barrels_are_roots(tmp_path):
     assert _reexports(tmp_path) == set()
 
 
-def test_component_files_that_can_import_modules_stop_the_check(tmp_path):
+def test_component_script_imports_request_their_names(tmp_path):
     _barrel_project(
         tmp_path,
         extra={
@@ -437,7 +513,34 @@ def test_component_files_that_can_import_modules_stop_the_check(tmp_path):
             )
         },
     )
+    assert _reexports(tmp_path) == {("src/lib/index.ts", 2, "SpareShape")}
+
+
+def test_unparsed_component_script_holds_back_the_barrel(tmp_path):
+    _barrel_project(
+        tmp_path,
+        extra={
+            "src/Widget.vue": (
+                '<script lang="coffee">\nimport { spare } from "./lib"\n</script>\n'
+            )
+        },
+    )
     assert _reexports(tmp_path) == set()
+
+
+def test_svelte_rune_module_is_a_module_not_a_component(tmp_path):
+    _barrel_project(
+        tmp_path,
+        package={**APP_PACKAGE, "dependencies": {"@sveltejs/kit": "2", "svelte": "5"}},
+        extra={
+            "src/lib/state.svelte.ts": 'export { used, spare } from "./helpers";\n',
+            "src/routes/+page.svelte": (
+                '<script lang="ts">\nimport { used } from "$lib/state.svelte";\n'
+                "used();\n</script>\n"
+            ),
+        },
+    )
+    assert _reexports(tmp_path) == P1_FINDINGS | {("src/lib/state.svelte.ts", 1, "spare")}
 
 
 def test_computed_loader_with_a_static_directory_reaches_the_barrel(tmp_path):
@@ -618,7 +721,8 @@ def test_unresolvable_entry_keeps_only_same_named_modules_public(
                 '  const { used, ...rest } = await import("./lib");\n'
                 "  return [used, rest];\n}\n"
             },
-            set(),
+            # ``rest`` holds every value; no runtime object holds a type.
+            {("src/lib/index.ts", 2, "SpareShape")},
         ),
     ],
     ids=["import-used", "require-used", "import-spare", "import-rest"],

@@ -41,6 +41,9 @@ def _python_d211(tmp_path: Path, code: str) -> list[tuple[int, str]]:
 
 
 class TestPasswordConfirmationIsNotTimingOracle:
+    """SKY-D253 needs a secret on one side and the attacker's guess on the
+    other. A password and its confirmation are both the user's own input."""
+
     @pytest.mark.parametrize(
         "comparison",
         (
@@ -49,12 +52,17 @@ class TestPasswordConfirmationIsNotTimingOracle:
             "data => data.password === data.passwordConfirmation",
             "({ password, confirmPassword }: Form) => password === confirmPassword",
             "function check({ password, repeatPassword = '' }) { return password !== repeatPassword; }",
+            "(req) => req.body.password === req.body.confirm_password",
+            "(req) => req.body.passwordRepeat !== req.body.password",
         ),
     )
-    def test_generic_confirmation_requires_input_provenance(self, tmp_path, comparison):
-        assert _ts_lines(
-            tmp_path, "SKY-D253", f"export const check = {comparison};\n"
-        ) == [1]
+    def test_password_and_its_confirmation_are_not_a_timing_oracle(
+        self, tmp_path, comparison
+    ):
+        assert (
+            _ts_lines(tmp_path, "SKY-D253", f"export const check = {comparison};\n")
+            == []
+        )
 
     def test_renamed_operands_remain_outside_name_based_rule(self, tmp_path):
         code = "export const check = ({ password: pw, confirm_password: again }) => pw === again;\n"
@@ -77,23 +85,56 @@ class TestPasswordConfirmationIsNotTimingOracle:
     @pytest.mark.parametrize(
         "comparison",
         (
-            "(ctx) => ctx.password === ctx.storedPassword",
-            "(ctx) => ctx.password === ctx.confirmPasswordHash",
-            "(ctx) => ctx.token === ctx.confirmToken",
-            "(data, adminPassword) => data.password === adminPassword",
-            "(a, b) => a.password === b.confirm_password",
-            "(data) => data.password === data.newPassword",
-            "(data) => data.password === data.password",
-            "(req) => req.body.password === req.body.confirm_password",
-            "({ password }, confirmPassword) => password === confirmPassword",
+            "(req) => req.body.password === user.password",
+            "(req, user) => req.body.password === user.storedPassword",
+            "(req) => req.body.token === process.env.CONFIRM_TOKEN",
+            "(req, expectedToken) => req.query.token === expectedToken",
+            "(data) => data.password === process.env.ADMIN_PASSWORD",
+            "({ password }) => password === process.env.ADMIN_PASSWORD",
         ),
     )
-    def test_comparisons_that_can_involve_a_stored_value_still_report(
-        self, tmp_path, comparison
-    ):
+    def test_secret_compared_with_input_still_reports(self, tmp_path, comparison):
         assert _ts_lines(
             tmp_path, "SKY-D253", f"export const check = {comparison};\n"
         ) == [1]
+
+    @pytest.mark.parametrize(
+        "comparison",
+        (
+            "(ctx) => ctx.password === ctx.storedPassword",
+            "(ctx) => ctx.token === ctx.confirmToken",
+            "(data, adminPassword) => data.password === adminPassword",
+            "(a, b) => a.password === b.confirm_password",
+            "(data) => data.password === data.password",
+            "({ password }, confirmPassword) => password === confirmPassword",
+        ),
+    )
+    def test_two_values_of_unknown_origin_are_not_reported(self, tmp_path, comparison):
+        # Neither side is proven to be request input or a server secret.
+        assert (
+            _ts_lines(tmp_path, "SKY-D253", f"export const check = {comparison};\n")
+            == []
+        )
+
+    @pytest.mark.parametrize(
+        "comparison",
+        (
+            "(req) => hash(req.body.password) === user.passwordHash",
+            "(req) => md5(req.query.login) == req.query.token",
+            "(req) => security.hash(req.body.current) !== user.password",
+            "(req) => req.body.token === ''",
+            "(req) => req.body.password === 'undefined'",
+            "() => window.location.hash === expectedHash",
+            "(expression) => expression.operator === ts.SyntaxKind.ExclamationToken",
+        ),
+    )
+    def test_digests_literals_and_name_lookalikes_are_not_reported(
+        self, tmp_path, comparison
+    ):
+        assert (
+            _ts_lines(tmp_path, "SKY-D253", f"export const check = {comparison};\n")
+            == []
+        )
 
     @pytest.mark.parametrize(
         "body",
@@ -103,20 +144,20 @@ class TestPasswordConfirmationIsNotTimingOracle:
             "for (data of load()) { return data.password === data.confirm_password; } return false;",
         ),
     )
-    def test_rebound_record_still_reports(self, tmp_path, body):
+    def test_rebound_record_without_a_secret_is_quiet(self, tmp_path, body):
         code = f"export function check(data, load) {{ {body} }}\n"
-        assert _ts_lines(tmp_path, "SKY-D253", code) == [1]
+        assert _ts_lines(tmp_path, "SKY-D253", code) == []
 
-    def test_destructured_name_rebound_still_reports(self, tmp_path):
+    def test_destructured_name_rebound_to_a_secret_reports(self, tmp_path):
         code = (
-            "export function check({ password, confirmPassword }, load) {\n"
-            "  password = load();\n"
+            "export function check({ password, confirmPassword }) {\n"
+            "  password = process.env.LOGIN_PASSWORD;\n"
             "  return password === confirmPassword;\n"
             "}\n"
         )
         assert _ts_lines(tmp_path, "SKY-D253", code) == [3]
 
-    def test_class_fields_and_server_secret_still_report(self, tmp_path):
+    def test_class_fields_are_quiet_and_server_secret_reports(self, tmp_path):
         code = (
             "export class Form {\n"
             '  password = "";\n'
@@ -129,7 +170,21 @@ class TestPasswordConfirmationIsNotTimingOracle:
             "  return token === process.env.API_TOKEN;\n"
             "}\n"
         )
-        assert _ts_lines(tmp_path, "SKY-D253", code) == [4, 9]
+        assert _ts_lines(tmp_path, "SKY-D253", code) == [9]
+
+    def test_handler_destructuring_and_hmac_signature(self, tmp_path):
+        code = (
+            "import crypto from 'crypto';\n"
+            "export function hook({ headers, body }: Request, res: Response) {\n"
+            "  const signature = headers['x-signature'];\n"
+            "  const expected = crypto.createHmac('sha256', process.env.HOOK_SECRET!)\n"
+            "    .update(body.raw).digest('hex');\n"
+            "  if (signature !== expected) return res.status(401).end();\n"
+            "  const newPassword = body.new;\n"
+            "  if (newPassword !== body.repeat) return res.status(400).end();\n"
+            "}\n"
+        )
+        assert _ts_lines(tmp_path, "SKY-D253", code, "hook.ts") == [6]
 
 
 class TestDryRunPublishIsNotAPublish:

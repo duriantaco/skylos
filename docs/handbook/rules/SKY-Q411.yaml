@@ -1,0 +1,90 @@
+id: SKY-Q411
+title: Unused pnpm catalog entry
+family: quality
+severity: LOW
+languages:
+- pnpm-workspace.yaml
+- package.json
+gate:
+  full: counted
+  note: Reported as quality; counts toward max_quality.
+run_with: '`skylos . --quality`'
+what_it_is: A pnpm-workspace.yaml catalog entry is not referenced by any package.json in the
+  workspace. Neither the default catalog nor a named catalog is used through the catalog
+  protocol for that package.
+why_it_matters: Stale catalog entries look like supported versions that nobody installs. They
+  mislead upgrades and reviews and keep pinning a package the workspace no longer uses.
+flagged_example:
+  language: yaml
+  expect_file: pnpm-workspace.yaml
+  expect_line: 5
+  files:
+  - filename: pnpm-workspace.yaml
+    code: |
+      packages:
+        - "."
+      catalog:
+        lodash: ^4.17.21
+        left-pad: ^1.3.0
+  - filename: package.json
+    language: json
+    code: |
+      {"name":"shop","private":true,"dependencies":{"lodash":"catalog:"}}
+  - filename: src/app.js
+    language: javascript
+    code: |
+      import _ from "lodash";
+      console.log(_);
+not_flagged_example:
+  language: yaml
+  files:
+  - filename: pnpm-workspace.yaml
+    code: |
+      packages:
+        - "."
+      catalog:
+        lodash: ^4.17.21
+  - filename: package.json
+    language: json
+    code: |
+      {"name":"shop","private":true,"dependencies":{"lodash":"catalog:"}}
+  - filename: src/app.js
+    language: javascript
+    code: |
+      import _ from "lodash";
+      console.log(_);
+  why: Every catalog entry is referenced with the catalog protocol by a workspace package.
+how_skylos_decides:
+- Reads catalog and catalogs from each pnpm-workspace.yaml as data, with YAML 1.2 scalars, and
+  never runs pnpm or a pnpmfile hook.
+- Collects catalog references from every package.json under the workspace root (dependency
+  maps, resolutions, overrides, pnpm.overrides and catalog references in scripts) plus the
+  workspace file's own overrides. Folders the dependency scan skips are still searched.
+- Reports LOW at the entry line only when that inventory is complete. An unreadable manifest,
+  a pnpmfile hook, a competing bun or Yarn catalog source, or an unparsed reference holds back
+  every unused-entry claim and is recorded in analysis_summary.npm_dependency_analysis.catalog_analysis.
+source_refs:
+- path: skylos/rules/quality/npm_dependencies.py
+  symbol: def _catalog_findings(
+- path: test/test_npm_dependency_usage.py
+  symbol: def test_unused_default_and_named_catalog_entries_are_reported
+fix:
+  explanation: Remove the unused entry, or reference it from the workspace package that needs it.
+  language: yaml
+  filename: pnpm-workspace.yaml
+  code: |
+    packages:
+      - "."
+    catalog:
+      lodash: ^4.17.21
+false_alarms_and_suppression:
+  misfires:
+  - A catalog entry kept for an upcoming package or a published template is reported until a
+    package.json references it.
+  - Tools that rewrite manifests outside pnpm hooks are not modelled.
+  suppress:
+  - check: config
+    text: Set `[tool.skylos] ignore = ["SKY-Q411"]` to disable this rule project-wide.
+related:
+- SKY-Q412
+- SKY-U005

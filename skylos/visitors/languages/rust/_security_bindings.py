@@ -18,12 +18,30 @@ class Value:
     shell: bool = False
     shell_switch: bool = False
     items: tuple["Value", ...] = ()
+    # Rules whose sinks an encoder made this value safe for (a percent-encoded
+    # string cannot choose a URL's host or open an HTML tag).
+    cleared: frozenset[str] = frozenset()
+    # For a URL string: the part that chooses the host. ``None`` means the
+    # whole value; a value without sources means a literal fixed the host.
+    host: Value | None = None
+
+    @property
+    def real_sources(self):
+        """Sources other than the symbolic ``param#`` labels that record which
+        of the enclosing function's parameters a value came from."""
+        return frozenset(s for s in self.sources if not s.startswith(SYMBOLIC))
+
+    @property
+    def request_sources(self):
+        return frozenset(s for s in self.sources if s.startswith(REQUEST))
 
     @property
     def tainted(self):
-        return bool(self.sources) and not self.contained
+        return bool(self.real_sources) and not self.contained
 
 
+SYMBOLIC = "param#"
+REQUEST = "request:"
 UNKNOWN = Value()
 
 
@@ -40,9 +58,14 @@ def joined(values):
                 kind="unknown_args",
             ),
         )
+    sourced = [v.cleared for v in values if v.sources]
     return Value(
         sources=frozenset().union(*(v.sources for v in values)),
         return_sources=frozenset().union(*(v.return_sources for v in values)),
+        cleared=frozenset.intersection(*sourced) if sourced else frozenset(),
+        host=joined([v.host for v in values])
+        if all(v.host is not None for v in values)
+        else None,
         kind=first.kind if all(v.kind == first.kind for v in values) else None,
         api=first.api if all(v.api == first.api for v in values) else None,
         guarded_api=first.guarded_api
@@ -57,6 +80,48 @@ def joined(values):
         shell_switch=any(v.shell_switch for v in values),
         items=items,
     )
+
+
+# Crate roots whose paths the security rules model. A local item or module of
+# the same name shadows the crate, as in Rust's own resolution.
+KNOWN_CRATES = frozenset(
+    {
+        "std",
+        "tokio",
+        "async_std",
+        "axum",
+        "axum_extra",
+        "actix_web",
+        "awc",
+        "rocket",
+        "hyper",
+        "hyper_util",
+        "http",
+        "tonic",
+        "reqwest",
+        "reqwest_middleware",
+        "ureq",
+        "surf",
+        "isahc",
+        "attohttpc",
+        "minreq",
+        "webmention",
+        "url",
+        "percent_encoding",
+        "urlencoding",
+        "form_urlencoded",
+        "html_escape",
+        "htmlescape",
+        "v_htmlescape",
+        "askama_escape",
+        "ammonia",
+        "rustls",
+        "tokio_rustls",
+        "native_tls",
+        "tokio_native_tls",
+        "openssl",
+    }
+)
 
 
 class State:
@@ -77,11 +142,13 @@ class State:
                         value, api=api if guards <= self.conditions else None
                     )
                 return value
-        if name in {"std", "tokio", "async_std", "axum", "actix_web"}:
+        if name in KNOWN_CRATES:
             return Value(api=name)
         if name == "String":
             return Value(api="std::string::String")
-        if name in {"format", "format_args"}:
+        if name == "Box":
+            return Value(api="std::boxed::Box")
+        if name in {"format", "format_args", "write", "writeln"}:
             return Value(api=f"std::{name}")
         return UNKNOWN
 
@@ -143,6 +210,23 @@ def use_bindings(node, text, prefix=""):
             else "::".join(part for part in (prefix, text(node)) if part)
         )
         return [(path.rsplit("::", 1)[-1], path)]
+    if kind == "use_wildcard":
+        # ``use actix_web::web::*``: the caller decides which names a glob of
+        # a known module provides; an explicit import always wins.
+        module = next(
+            (
+                child
+                for child in node.named_children
+                if child.type in {"identifier", "scoped_identifier"}
+            ),
+            None,
+        )
+        path = "::".join(
+            part
+            for part in (prefix, text(module) if module is not None else "")
+            if part
+        )
+        return [("*", path)] if path else []
     return []
 
 

@@ -26,11 +26,20 @@ def _names(result, category):
 
 
 def _js_function_names(result):
-    return {
+    names = {
         item.get("simple_name") or item.get("name")
         for item in result.get("unused_functions", [])
         if str(item.get("file", "")).endswith(".js")
     }
+    # An unused file reports its functions once, as folded findings.
+    names.update(
+        folded["name"]
+        for item in result.get("unused_files", [])
+        if str(item.get("file", "")).endswith(".js")
+        for folded in item.get("folded_findings", ())
+        if folded["rule_id"] == "unused_functions"
+    )
+    return names
 
 
 def _unused_file_paths(result, tmp_path):

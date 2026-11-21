@@ -234,6 +234,7 @@ def _danger_findings(
 
     from skylos.rules.danger.danger import (
         dedupe_findings,
+        drop_unreachable_sinks,
         scan_file_with_tree,
         scan_trojan_source_text,
     )
@@ -257,6 +258,7 @@ def _danger_findings(
             kind="security_scan_error",
         )
     findings.extend(taint_findings)
+    findings = drop_unreachable_sinks(findings, prepared.tree)
     return dedupe_findings(findings), analysis_error
 
 

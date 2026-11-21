@@ -32,6 +32,8 @@ def attach_circular_and_architecture(
     ts_importers_of=None,
     project_root=None,
     workspace_inventory=None,
+    ts_module_requests=None,
+    ts_module_resolver=None,
 ):
     check_circular = project_cfg.get("check_circular", True)
     if not check_circular and not enable_quality:
@@ -42,6 +44,10 @@ def attach_circular_and_architecture(
     except Exception:
         _debug_traceback()
         return
+    if check_circular:
+        circular_findings = circular_findings + _typescript_cycles(
+            ts_module_requests, ts_module_resolver, project_root, files
+        )
     if check_circular and circular_findings:
         result["circular_dependencies"] = circular_findings
     if enable_quality:
@@ -94,6 +100,19 @@ def _build_circular_rule(files, modmap, all_raw_imports):
         raw_imp = all_raw_imports.get(file, [])
         circular_rule.add_file_imports(str(file), mod, raw_imp)
     return circular_rule
+
+
+def _typescript_cycles(module_requests, resolver, project_root, files):
+    if module_requests is None or resolver is None:
+        return []
+    from skylos.analysis.typescript_cycles import find_typescript_cycles
+
+    root = project_root if project_root is not None else _source_root(files)
+    try:
+        return find_typescript_cycles(module_requests, resolver, root)
+    except Exception:  # noqa: BLE001 - Python cycles still report without it
+        _debug_traceback()
+        return []
 
 
 def _debug_traceback():

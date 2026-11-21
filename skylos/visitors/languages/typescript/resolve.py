@@ -395,6 +395,61 @@ def _match_wildcard_map(source: str, mapping: dict) -> str | None:
     return None
 
 
+def _package_targets(entry) -> list[str]:
+    """Every target of an export entry, the preferred condition first."""
+    targets: list[str] = []
+
+    def visit(value) -> None:
+        if isinstance(value, str):
+            if value not in targets:
+                targets.append(value)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, dict):
+            preferred = [
+                key
+                for key in (
+                    "import",
+                    "default",
+                    "require",
+                    "node",
+                    "browser",
+                    "module",
+                    "source",
+                    "types",
+                )
+                if key in value
+            ]
+            for key in [*preferred, *(key for key in value if key not in preferred)]:
+                visit(value[key])
+
+    visit(entry)
+    return targets
+
+
+def _resolve_export_entry(pkg_dir: str, entry) -> str | None:
+    """The first target of ``entry`` that names a project source.
+
+    A conditions-only object (no ``.`` key) is the ``.`` entry. Built
+    outputs (``./build/index.js``) map back to the bundler entry that emits
+    them; a custom source condition (``"@scope/source": "./src/index.ts"``)
+    names the source directly.
+    """
+    targets = _package_targets(entry)
+    for target in targets:
+        resolved = _resolve_path_target(pkg_dir, target)
+        if resolved is not None:
+            return resolved
+    from .bundler_entries import built_output_source
+
+    for target in targets:
+        resolved = built_output_source(pkg_dir, target)
+        if resolved is not None:
+            return resolved
+    return None
+
+
 def _resolve_package_exports(pkg_dir: str, subpath: str | None = None) -> str | None:
     pkg_json = os.path.join(pkg_dir, "package.json")
     data = _read_json_file(pkg_json)
@@ -403,27 +458,21 @@ def _resolve_package_exports(pkg_dir: str, subpath: str | None = None) -> str | 
         return None
 
     if subpath is None and not isinstance(exports, dict):
-        target = _extract_package_target(exports)
-        if not target:
-            return None
-        return _resolve_path_target(pkg_dir, target)
+        return _resolve_export_entry(pkg_dir, exports)
 
     if subpath is None and isinstance(exports, dict):
         if "." not in exports and not any(
             isinstance(key, str) and key.startswith(".") for key in exports
         ):
-            target = _extract_package_target(exports)
-            if not target:
-                return None
-            return _resolve_path_target(pkg_dir, target)
+            return _resolve_export_entry(pkg_dir, exports)
 
     if not isinstance(exports, dict):
         return None
 
     export_key = "." if not subpath else f"./{subpath}"
-    target = _extract_package_target(exports.get(export_key))
-    if not target:
-        target = _match_wildcard_map(export_key, exports)
+    if export_key in exports:
+        return _resolve_export_entry(pkg_dir, exports.get(export_key))
+    target = _match_wildcard_map(export_key, exports)
     if not target:
         return None
     return _resolve_path_target(pkg_dir, target)
@@ -561,6 +610,20 @@ class MonorepoResolver:
     def resolve(self, source: str, importer: str) -> str | None:
         if source.startswith("."):
             return None
+
+        if source.startswith(("@site/", "@theme/")):
+            from .site_generators import resolve_docusaurus_alias
+
+            result = resolve_docusaurus_alias(source, importer)
+            if result:
+                return result
+
+        if source == "$lib" or source.startswith("$lib/"):
+            from .framework_aliases import resolve_sveltekit_alias
+
+            result = resolve_sveltekit_alias(source, importer)
+            if result:
+                return result
 
         if source.startswith("#"):
             result = _resolve_package_imports(self.project_root, importer, source)

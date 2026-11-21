@@ -1,0 +1,89 @@
+id: SKY-Q412
+title: Unresolved pnpm catalog reference
+family: quality
+severity: MEDIUM
+languages:
+- package.json
+- pnpm-workspace.yaml
+gate:
+  full: counted
+  note: Reported as quality; counts toward max_quality.
+run_with: '`skylos . --quality`'
+what_it_is: A workspace package.json declares a dependency with the catalog protocol, but the
+  referenced catalog in pnpm-workspace.yaml has no entry for that package. The reference can
+  name the default catalog or a named catalog.
+why_it_matters: pnpm cannot resolve the version, so a clean install of the workspace fails.
+  The error appears only when someone installs, often in CI.
+flagged_example:
+  language: json
+  expect_file: package.json
+  expect_line: 1
+  files:
+  - filename: pnpm-workspace.yaml
+    language: yaml
+    code: |
+      packages:
+        - "."
+      catalog:
+        lodash: ^4.17.21
+  - filename: package.json
+    code: |
+      {"name":"shop","private":true,"dependencies":{"lodash":"catalog:","zod":"catalog:"}}
+  - filename: src/app.js
+    language: javascript
+    code: |
+      import _ from "lodash";
+      import { z } from "zod";
+      console.log(_, z);
+not_flagged_example:
+  language: json
+  files:
+  - filename: pnpm-workspace.yaml
+    language: yaml
+    code: |
+      packages:
+        - "."
+      catalog:
+        lodash: ^4.17.21
+        zod: ^3.23.0
+  - filename: package.json
+    code: |
+      {"name":"shop","private":true,"dependencies":{"lodash":"catalog:","zod":"catalog:"}}
+  - filename: src/app.js
+    language: javascript
+    code: |
+      import _ from "lodash";
+      import { z } from "zod";
+      console.log(_, z);
+  why: Both references resolve to entries in the default catalog.
+how_skylos_decides:
+- Reads catalog and catalogs from the nearest pnpm-workspace.yaml as data and maps catalog:,
+  catalog:default and catalog:<name> references to entries.
+- Checks only package.json files that the workspace packages globs include (the workspace
+  root is always included), and only dependency maps.
+- Reports MEDIUM at the dependency line. A malformed workspace file, a pnpmfile hook or a
+  competing bun or Yarn catalog source prevents the check.
+source_refs:
+- path: skylos/rules/quality/npm_dependencies.py
+  symbol: def _catalog_findings(
+- path: test/test_npm_dependency_usage.py
+  symbol: def test_unresolved_catalog_references_are_reported_for_workspace_members
+fix:
+  explanation: Add the package to the referenced catalog, or use an explicit version range.
+  language: yaml
+  filename: pnpm-workspace.yaml
+  code: |
+    packages:
+      - "."
+    catalog:
+      lodash: ^4.17.21
+      zod: ^3.23.0
+false_alarms_and_suppression:
+  misfires:
+  - A package.json outside the workspace globs is not checked, even if it uses catalog references.
+  suppress:
+  - check: config
+    text: Set `[tool.skylos] ignore = ["SKY-Q412"]` to disable this rule project-wide.
+related:
+- SKY-Q411
+- SKY-Q408
