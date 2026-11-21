@@ -65,13 +65,23 @@ jobs:
 
       - name: Install trusted Skylos for pull requests
         if: github.event_name == 'pull_request'
+        env:
+          TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
         run: |
+          # Judge a PR with the Skylos on its base branch: reviewed code the
+          # PR cannot change, and the same engine main is scanned with.
+          if [[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid pull request base SHA" >&2
+            exit 1
+          fi
+          git cat-file -e "$TRUSTED_BASE_SHA^{commit}"
+          TRUSTED_SKYLOS="$RUNNER_TEMP/skylos-trusted-python"
+          mkdir -p "$TRUSTED_SKYLOS"
+          git archive "$TRUSTED_BASE_SHA" -- pyproject.toml README.md LICENSE MANIFEST.in skylos \
+            | tar -x -C "$TRUSTED_SKYLOS"
           uv venv --python 3.11
-          # Reviewed scanner fixes and the compact PR report button, including
-          # escaped report links and isolated Actions context.
-          # Use this snapshot until those fixes are released on PyPI.
-          # Keep this immutable and independent of the PR's code or metadata.
-          uv pip install --python .venv/bin/python "skylos @ git+https://github.com/duriantaco/skylos.git@ab5fda49b111f844e0ae3c7fa2218b3730a6bb31"
+          uv pip install --python .venv/bin/python "$TRUSTED_SKYLOS"
           .venv/bin/skylos --version
 
       - name: Use repo Skylos on trusted refs
@@ -301,12 +311,24 @@ jobs:
           python-version: "3.11"
 
       - name: Install trusted PR renderer
+        env:
+          TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
         run: |
-          # Keep the installed renderer outside the PR checkout. Isolated
-          # Python prevents checked-out modules from replacing it.
+          # The same base-branch Skylos as the scan, installed outside the PR
+          # checkout. Isolated Python prevents checked-out modules from
+          # replacing it.
+          if [[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid pull request base SHA" >&2
+            exit 1
+          fi
+          git cat-file -e "$TRUSTED_BASE_SHA^{commit}"
+          TRUSTED_SKYLOS="$RUNNER_TEMP/skylos-trusted-python"
+          mkdir -p "$TRUSTED_SKYLOS"
+          git archive "$TRUSTED_BASE_SHA" -- pyproject.toml README.md LICENSE MANIFEST.in skylos \
+            | tar -x -C "$TRUSTED_SKYLOS"
           python -I -m venv "$RUNNER_TEMP/skylos-review-venv"
-          "$RUNNER_TEMP/skylos-review-venv/bin/python" -I -m pip install \
-            "skylos @ git+https://github.com/duriantaco/skylos.git@ab5fda49b111f844e0ae3c7fa2218b3730a6bb31"
+          "$RUNNER_TEMP/skylos-review-venv/bin/python" -I -m pip install "$TRUSTED_SKYLOS"
 
       - name: Download the saved scan report
         continue-on-error: true
