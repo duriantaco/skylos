@@ -22,6 +22,19 @@
 * **cicd:** only treat a real YAML comment as an inline ignore for D340 and for shell-command findings on a one-line `run:`, so a marker inside a quoted step value no longer hides a publish or exfiltration finding.
 * **cicd:** locate each shell-command finding inside its own `run:` value, so repeating the command next to an ignore marker elsewhere in the workflow no longer hides it and identical steps are each reported.
 
+## [5.7.1](https://github.com/duriantaco/skylos/compare/v5.7.0...v5.7.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **ai-defects:** stop re-reading big scripts for every import ([bd5a678](https://github.com/duriantaco/skylos/commit/bd5a67840aad0fcc55bb5bce4ddcc6b52305fc92))
+* **cicd:** apply YAML merge keys in spec order on PyYAML 6.0.4 ([ecefe8c](https://github.com/duriantaco/skylos/commit/ecefe8c66155e5ed7d30585cbf9f9fc5ff0907e8))
+
+
+### Documentation
+
+* **readme:** put quick start first and show the skylos cloud flow step by step ([45e9250](https://github.com/duriantaco/skylos/commit/45e9250db19a8e9bb1bd833642dca6bf7bd8b5aa))
+
 ## [5.7.0](https://github.com/duriantaco/skylos/compare/v5.6.0...v5.7.0) (2026-11-19)
 
 
