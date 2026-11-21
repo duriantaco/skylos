@@ -39,6 +39,60 @@ It is built for:
   dead-code findings from one scan, in Python, TypeScript, Java, Go and
   [more](#language-support).
 
+## Quick start
+
+```bash
+pip install skylos
+skylos . -a          # scan this repo with every check; nothing leaves your machine
+```
+
+### Key commands
+
+No account needed. Your code and findings stay on your machine.
+
+| To | Run |
+|:---|:---|
+| Find dead code | `skylos .` |
+| Run every check: security, secrets, dependencies, quality, AI-code mistakes | `skylos . -a` |
+| Check only what your branch changed | `skylos . -a --diff origin/main` |
+| Fail the build when the gate fails | `skylos . --gate` |
+| Check the agent really finished (runs your tests) | `skylos done --base main` |
+| Check every pull request in CI | `skylos cicd init` |
+| Set up Claude Code and Codex in this repo | `skylos setup` |
+
+### Skylos Cloud: see results online and block failing pull requests
+
+Optional. Five steps, in this order, from your repository folder. No token to
+copy.
+
+| Step | Run or do | What happens |
+|:---|:---|:---|
+| 1. Upload your first scan | `skylos cloud` | Your browser opens skylos.dev. Sign in, then pick or create the project for this repo. Back in the terminal, Skylos scans and uploads the findings (not your code). |
+| 2. Open your results | Click the `Open:` link it prints | The scan in your dashboard: its gate result and every issue. Find it again later at [skylos.dev/dashboard](https://skylos.dev/dashboard). |
+| 3. Add the pull request check | `skylos cicd init` | Writes `.github/workflows/skylos.yml` and prints the next steps: the `git` commands that open a pull request with it, and the GitHub App link. |
+| 4. Install the GitHub App, then merge | Open the GitHub App link it printed | Install the Skylos GitHub App on the repo before you merge that pull request. CI then uploads with its GitHub identity, so there is no token or secret to add. |
+| 5. Make the check required | `skylos setup` | Run it after the merge (it uses the GitHub CLI, `gh`). A pull request that fails the Skylos check can no longer merge. |
+
+Done: every pull request gets a Skylos check, and every push to your default
+branch shows up in your dashboard.
+
+The end of step 1 looks like this:
+
+```text
+✓ Scan saved · gate (not blocking): fail
+  Open: https://skylos.dev/dashboard/projects/<project>/scans/<scan>
+  Saved for review. Only verified CI scans block merges and update the project verdict.
+  Next: to block pull requests, run skylos cicd init and merge the workflow it writes.
+```
+
+A scan from your machine is saved for review but never blocks a merge; only CI
+scans do. Upload again any time with `skylos cloud`. Details:
+[Skylos Cloud](./docs/skylos-cloud.md).
+
+Working with a coding agent? `skylos setup` once per repo, then `skylos open`
+every day for a diagram of your code, what changed, and every check run. The
+[tutorial](./docs/workflow.md) walks through a real session.
+
 ## How it works
 
 Skylos steps in at four points:
@@ -66,45 +120,6 @@ billing.py:1  SKY-U001  unused function: charge_card
 Every finding names the file, line and rule. Security findings show the
 source-to-sink path when one was recorded; `--format json` keeps the full
 evidence.
-
-## Quick start
-
-```bash
-pip install skylos
-```
-
-### Key commands
-
-No account needed. Your code and findings stay on your machine.
-
-| To | Run |
-|:---|:---|
-| Find dead code | `skylos .` |
-| Run every check: security, secrets, dependencies, quality, AI-code mistakes | `skylos . -a` |
-| Check only what your branch changed | `skylos . -a --diff origin/main` |
-| Fail the build when the gate fails | `skylos . --gate` |
-| Check the agent really finished (runs your tests) | `skylos done --base main` |
-| Check every pull request in CI | `skylos cicd init` |
-| Set up Claude Code and Codex in this repo | `skylos setup` |
-
-### Skylos Cloud in three steps
-
-Optional. Track every branch and block pull requests from one dashboard. No
-token to copy.
-
-```bash
-skylos cloud        # 1. sign in once in your browser; connects this repo, scans and uploads
-skylos cicd init    # 2. writes .github/workflows/skylos.yml and prints what to do next
-                    # 3. open its pull request, install the Skylos GitHub App (link printed), merge
-```
-
-Scans from your machine are saved for review but never block a merge. After
-step 3, every pull request is checked, and CI uploads with its GitHub identity
-(OIDC), so you never add a secret. Details: [Skylos Cloud](./docs/skylos-cloud.md).
-
-Working with a coding agent? `skylos setup` once per repo, then `skylos open`
-every day for a diagram of your code, what changed, and every check run. The
-[tutorial](./docs/workflow.md) walks through a real session.
 
 ## Check every agent edit
 

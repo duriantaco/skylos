@@ -86,6 +86,43 @@ def test_script_sibling_needs_script_only_execution(monkeypatch, tmp_path, case)
         assert [symbol for _rule, symbol in _symbols(findings)] == ["flight_common"]
 
 
+def _script_parses(monkeypatch, tmp_path, sibling_count):
+    """Scan a ``#!`` script importing ``os``, ``sys``, ``json`` and
+    ``sibling_count`` sibling modules; return how often its source is parsed."""
+    _stub(monkeypatch)
+    names = [f"sib_{index}" for index in range(sibling_count)]
+    script = "#!/usr/bin/env python3\nimport os\nimport sys\nimport json\n"
+    script += "".join(f"import {name}\n" for name in names)
+    extra = {f"fly/plan/{name}.py": "VALUE = 1\n" for name in names}
+    base = tmp_path / str(sibling_count)
+    base.mkdir()
+    repo, source = _plan(base, script=script, extra=extra)
+    real_parse = dep.ast.parse
+    parses = []
+
+    def counting_parse(text, *args, **kwargs):
+        if text == script:
+            parses.append(text)
+        return real_parse(text, *args, **kwargs)
+
+    monkeypatch.setattr(dep.ast, "parse", counting_parse)
+    try:
+        findings = dep.scan_python_dependency_hallucinations(repo, [source])
+    finally:
+        monkeypatch.setattr(dep.ast, "parse", real_parse)
+    assert _symbols(findings) == []
+    return len(parses)
+
+
+def test_script_source_is_parsed_once_however_many_modules_it_imports(
+    monkeypatch, tmp_path
+):
+    # Each import used to re-parse and walk the whole script (issue #1260).
+    assert _script_parses(monkeypatch, tmp_path, 12) == _script_parses(
+        monkeypatch, tmp_path, 1
+    )
+
+
 def _analyze(tmp_path, files):
     for name, text in files.items():
         write_fixture(tmp_path, name, text)

@@ -138,6 +138,21 @@ def test_merge_sequence_precedence_matches_constructed_data():
     assert source.line_for_path(("group", "nested", "only_second")) is None
 
 
+@pytest.mark.parametrize("key", ["k", "label"])
+def test_merge_sequence_precedence_does_not_depend_on_key_length(key):
+    # PyYAML 6.0.4 picks the winner by key string identity, so a short,
+    # interned key and a longer one resolved differently.
+    data, _ = _load(
+        f"a: &a {{{key}: first}}\n"
+        f"b: &b {{{key}: second}}\n"
+        "group:\n"
+        "  <<: [*a, *b]\n"
+        f"own: {{<<: [*a, *b], {key}: explicit}}\n"
+    )
+    assert data["group"] == {key: "first"}
+    assert data["own"] == {key: "explicit"}
+
+
 def test_nested_merges_keep_outer_use_site():
     data, source = _load(
         "base: &base {label: sample}\n"
