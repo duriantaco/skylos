@@ -457,3 +457,79 @@ def test_model_effects_follow_runtime_import_domain(tmp_path, monkeypatch, impor
     else:
         assert rows == []
         assert check_gate(result, {"gate": {"max_high": 0}})[0] is True
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "return len(item.name)",
+        "return item.name.lower()",
+        "return item.dict()",
+        "return item.model_dump()",
+        "return helpers.answer()",
+    ],
+    ids=[
+        "pure-builtin",
+        "string-method",
+        "read-method",
+        "read-method-json",
+        "project-module",
+    ],
+)
+def test_an_inert_helper_may_still_read_the_model(tmp_path, monkeypatch, call):
+    """A body that only reads the model leaves it unwritten, whether the read
+    goes through a pure builtin, a string method, one of the model's own read
+    methods or a function of a project module; the route must stay proven."""
+    prelude = (
+        "\nimport external_plugin\n"
+        "import helpers\n"
+        "def helper(item):\n"
+        f"    {call}\n"
+        "external_plugin.register(helper)\n"
+    )
+    result, rows = _scan(
+        tmp_path,
+        monkeypatch,
+        prelude=prelude,
+        extra={"helpers.py": "def answer():\n    return 42\n"},
+    )
+    assert rows == []
+    assert check_gate(result, {"gate": {"max_high": 0}})[0] is True
+
+
+@pytest.mark.parametrize(
+    "handoff",
+    [
+        "external_plugin.mutate(*[item])",
+        "external_plugin.mutate(*(item,))",
+        "external_plugin.mutate([item][0])",
+        "external_plugin.mutate({0: item})",
+        "external_plugin.mutate(item if item else None)",
+        "external_plugin.mutate(json.dumps(item, default=lambda value: value))",
+        "item.rewrite()",
+    ],
+    ids=[
+        "star-list",
+        "star-tuple",
+        "subscript",
+        "mapping",
+        "conditional",
+        "callback-keyword",
+        "receiver-method",
+    ],
+)
+def test_escaped_helper_hands_the_model_over_whatever_the_wrapper(
+    tmp_path, monkeypatch, handoff
+):
+    """A function value that passes its parameter on to opaque code can hand
+    the model over no matter how the argument is wrapped; the destination must
+    stay reported."""
+    prelude = (
+        "\nimport json\n"
+        "import external_plugin\n"
+        "def handoff(item):\n"
+        f"    {handoff}\n"
+        "external_plugin.register(handoff)\n"
+    )
+    result, rows = _scan(tmp_path, monkeypatch, mutation="pass", prelude=prelude)
+    _assert_unsafe(result, rows)
