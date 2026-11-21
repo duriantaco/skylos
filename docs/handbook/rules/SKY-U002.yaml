@@ -135,8 +135,19 @@ how_skylos_decides:
     line carries `# noqa: F401`, a bare `# noqa`, `# skylos: ignore` or
     `# skylos: ignore[SKY-U002]`. Other imports with no reads are listed at
     confidence 100.
+  - >-
+    In Rust, a trait import is used by method calls that never name it, so
+    an unread import is reported only when it cannot be such a trait: a
+    module, function or constant, a project item that is not a trait, an
+    enum variant, a known non-trait `std` type, a trait the edition's prelude
+    already imports, or a trait none of whose members its scope reaches.
+    Other imports are abstentions. `use Trait as _` is never reported, nor
+    is an import under `#[allow(unused_imports)]`.
 
 source_refs:
+  - path: skylos/visitors/languages/rust/project_liveness.py
+    symbol: "def _import_reportable(definition, items, project):"
+    note: which unread Rust imports may be reported.
   - path: skylos/visitors/base.py
     symbol: "def visit_Try(self, node: ast.Try)"
     note: imports guarded by an ImportError handler.

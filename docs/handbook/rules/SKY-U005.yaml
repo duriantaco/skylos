@@ -95,14 +95,31 @@ not_flagged_example:
 how_skylos_decides:
   - >-
     For npm, also reads dependencies and devDependencies from each owning
-    package.json with --quality. Literal imports, package scripts and
-    supported tool configurations supply usage; peer contracts and @types/
-    packages are retained. Shared ancestor tooling can provide workspace
-    commands, while source imports require their own package declaration.
+    package.json with --quality. Literal imports (including Vue, Svelte and
+    Astro script and style blocks, MDX ESM and stylesheet at-rules), package
+    scripts, GitHub Actions `run:` steps, Dockerfile, Makefile, Procfile and
+    GitLab CI commands, `/// <reference types>` directives, tsconfig `types`
+    (following relative `extends`), supported tool configurations and package
+    names in tool config strings supply usage; peer contracts are retained.
+    An ancestor declaration that a workspace's import or command resolves to
+    counts as used.
   - >-
-    The npm check never runs package code or scripts. Dynamic loaders,
-    unknown commands, unread source, unparsed components and incomplete
-    source selection prevent absence claims. Its separate receipt is
+    An `@types/x` package is reported only when `x` is used nowhere in the
+    project and no tsconfig `types` entry, reference directive or ambient
+    global names it; `@types/node` stays while any source uses Node
+    built-ins or `process`. A package declared in two sections is reported
+    in each.
+  - >-
+    The npm check never runs package code or scripts. Command lines are read
+    segment by segment, with `$VAR` arguments, redirections, `cross-env`,
+    `yarn --cwd`/`npm --prefix` targets and `node <script>` files followed.
+    Dynamic loaders that are not proven local, an expanded command name,
+    unread source, unparsed components and incomplete source selection
+    prevent absence claims. An unknown command holds back only the
+    uninstalled, name-related dependencies that could provide it; an unread
+    ESLint, Babel, Prettier or tool config holds back only that tool's
+    family; an unresolved workspace consumer holds back only the ancestor
+    declarations it could resolve. The receipt is
     analysis_summary.npm_dependency_analysis.
   - >-
     Runs with `--quality` on a directory scan that contains Python files

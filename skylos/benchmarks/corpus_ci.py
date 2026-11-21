@@ -258,6 +258,10 @@ def run_case(case: dict[str, Any], manifest_path: str | Path) -> dict[str, Any]:
                     except (OSError, UnicodeError):
                         continue
         result = _scan_case(analysis_path, scan=case.get("scan"))
+    from skylos.reporting.result_builder import with_folded_findings
+
+    # Symbols folded into an unused file's finding are still reported.
+    result = with_folded_findings(result)
     issues = analysis_issues(result, scanner="skylos")
     expect = case.get("expect", {})
     categories = {

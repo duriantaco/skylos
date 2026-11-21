@@ -11,6 +11,7 @@ from .danger import scan_danger
 from .framework import TSFrameworkVisitor
 from .quality import scan_quality
 from .source_lines import split_ecmascript_lines
+from .text_fixtures import is_text_fixture
 
 
 class DummyVisitor:
@@ -262,12 +263,14 @@ def scan_typescript_file(
         )
 
     test_visitor = DummyVisitor()
+    # Fixture code is data a test reads as text: no dead-code definitions.
+    defs = [] if is_text_fixture(file_path) else core.defs
     if _include_analysis_metadata:
         test_visitor.ignore_lines = ignore_lines
         test_visitor.ignore_rules_by_line = ignore_rules_by_line
 
     base_result = (
-        core.defs,
+        defs,
         core.refs,
         set(),
         set(),

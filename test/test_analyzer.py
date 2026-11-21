@@ -1972,9 +1972,13 @@ fn run(stream: StreamLike, widget: Widget) {
         result = json.loads(result_json)
 
         unused_imports = {item["simple_name"] for item in result["unused_imports"]}
+        abstained = {item["name"] for item in result["dead_code_abstentions"]}
 
         assert "StreamExt" not in unused_imports
-        assert "WidgetExt" in unused_imports
+        # `crate::traits` does not resolve and `widget.next()` is called in
+        # scope: the unresolved item may be a trait, so Skylos abstains.
+        assert "WidgetExt" not in unused_imports
+        assert "WidgetExt" in abstained
 
     @patch("skylos.analyzer.logger.info")
     def test_analyze_mixed_languages_includes_csharp_in_summary(self, mock_log_info):

@@ -2466,7 +2466,7 @@
       "source": {
         "repo": "https://github.com/duriantaco/skylos",
         "license": "Apache-2.0",
-        "notes": "Original static-only fixture. Selective namespace/opaque-use approach studied in Knip at 2305dad9b0d76e5f603cd353a1820c24ae0e720d (ISC); no upstream code copied."
+        "notes": "Original static-only fixture for selective namespace and opaque-use handling."
       },
       "scan": {
         "confidence": 0,

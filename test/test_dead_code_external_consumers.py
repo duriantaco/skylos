@@ -130,6 +130,12 @@ def test_live_node_source_reads_keep_only_exact_assets_and_public_exports(tmp_pa
     unused = {
         row["name"].rsplit(".", 1)[-1] for row in report.get("unused_functions", [])
     }
+    # Unused files report their functions once, as folded findings.
+    unused |= {
+        folded["name"]
+        for row in report.get("unused_files", [])
+        for folded in row.get("folded_findings", ())
+    }
     assert not {"starter", "solution", "tests"} & unused
     assert "orphan" in unused
     assert "unrelated" in unused

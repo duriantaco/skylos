@@ -21,8 +21,8 @@ Acceptance rules:
 
 ## Current coverage
 
-The manifest has 84 cases and 330 explicit expectations: 186 absence checks and
-144 presence checks. Presence includes 120 unused-symbol controls, 17 quality
+The manifest has 88 cases and 351 explicit expectations: 201 absence checks and
+150 presence checks. Presence includes 126 unused-symbol controls, 17 quality
 expectations, four unused-file controls, and three separately recorded policy
 controls. These are assertions,
 not a whole-repository precision or recall score.
@@ -128,3 +128,13 @@ and private-package enum members, Vue/Svelte/Astro import graphs, and PHP Blade
 helper consumers. All retain live and unused controls. Generated routes and
 automatic component providers that cannot be resolved from source are reported
 as incomplete; unsupported bodies do not earn quiet-result credit.
+
+Four TypeScript export contracts cover unused exported types, duplicate
+exports, unread namespace members and unused enum members: an unrequested
+exported type beside requested, signature, declaration-merged and `@public`
+types (SKY-E004); one binding exported twice beside `@alias` and reassigned
+bindings (SKY-E005); unread namespace members beside value, type and body
+reads and an enumerated namespace (SKY-U008); and enum members of an internal
+module in a published package with a relative import that matches no file,
+beside the package entry's enum (SKY-U007). The earlier 84 case objects and
+expected answers are retained.

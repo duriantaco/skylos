@@ -7,15 +7,23 @@ import re
 import shlex
 from collections import defaultdict
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import tree_sitter_typescript as tsts
 from tree_sitter import Language, Parser
 
 from skylos.core.file_discovery import should_exclude_path
-from skylos.core.js_ast import is_type_only, iter_import_clause_bindings
+from skylos.core.js_ast import (
+    first_call_argument,
+    is_type_only,
+    iter_import_clause_bindings,
+)
 
 from .esbuild_static import EsbuildStaticOptions, esbuild_entry_values
+from .bundler_entries import built_output_source
+from .text_fixtures import is_text_fixture
+from .framework_aliases import resolve_sveltekit_alias
 from .nextjs import (
     NEXTJS_CONVENTION_EXPORTS,
     NEXTJS_CONVENTION_FILES,
@@ -41,8 +49,14 @@ from skylos.deadcode.confidence import (
 )
 
 from .conventions import convention_reason, is_dev_convention_file
-from .site_generators import site_generator_entry
+from .site_generators import (
+    docusaurus_site_root,
+    resolve_docusaurus_alias,
+    resolve_with_extensions,
+    site_generator_entry,
+)
 from .file_references import collect_ts_path_references
+from .script_inputs import bundler_script_entries, collect_script_inputs
 from .tool_configs import RUNNER_CONFIG_FILES as _PLAYWRIGHT_CONFIG_FILES
 from .tool_configs import TOOL_CONFIG_FILES as _CONFIG_FILES
 
@@ -120,13 +134,69 @@ def _has_default_export(defn) -> bool:
         return False
     return "default_export" in factors
 
+
+@lru_cache(maxsize=65536)
+def _real_directory(directory: str) -> str:
+    return os.path.realpath(directory)
+
+
+def _real_file(path: str) -> str:
+    # One lstat for the leaf; directory links are resolved once per folder.
+    if os.path.islink(path):
+        return os.path.realpath(path)
+    directory, name = os.path.split(path)
+    return os.path.join(_real_directory(directory), name) if directory else path
+
+
+def canonical_module_path(path: str, importer: str) -> str:
+    """The analysed spelling of a resolved module, with symlinks resolved.
+
+    File discovery records real paths and skips symlinked files, so a module
+    reached through a link (``root.tsdown.config.js -> ../../scripts/x.js``)
+    is the file the link names. When the importer itself is spelled through
+    a link (an unresolved scan root such as ``/tmp`` on macOS), the target is
+    re-anchored on the importer's spelling so both sides still match.
+    """
+    real = _real_file(path)
+    if real == path:
+        return path
+    base = os.path.dirname(importer)
+    real_base = _real_directory(base) if base else base
+    if not base or real_base == base:
+        return real
+    return os.path.normpath(os.path.join(base, os.path.relpath(real, real_base)))
+
+
 def resolve_ts_module(source: str, importer: str, monorepo_resolver=None) -> str | None:
+    """Resolve an import to a project file, symlinks resolved once here."""
+    resolved = _resolve_ts_module_spelling(source, importer, monorepo_resolver)
+    if resolved is None:
+        return None
+    return canonical_module_path(resolved, importer)
+
+
+def _resolve_ts_module_spelling(
+    source: str, importer: str, monorepo_resolver=None
+) -> str | None:
     if not source.startswith("."):
+        if source.startswith(("@site/", "@theme/")):
+            resolved = resolve_docusaurus_alias(source, importer)
+            if resolved is not None:
+                return resolved
+        if source == "$lib" or source.startswith("$lib/"):
+            resolved = resolve_sveltekit_alias(source, importer)
+            if resolved is not None:
+                return resolved
         if monorepo_resolver:
             return monorepo_resolver.resolve(source, importer)
         return None
     base = os.path.dirname(importer)
     target = os.path.normpath(os.path.join(base, source))
+    if not os.path.splitext(target)[1] and docusaurus_site_root(base) is not None:
+        # Inside a Docusaurus site, webpack tries ``.js`` before ``.tsx``.
+        resolved = resolve_with_extensions(target)
+        if resolved is not None:
+            return resolved
 
     candidates: list[str] = []
     if target.endswith(".js"):
@@ -568,7 +638,7 @@ def demote_unconsumed_ts_exports(
         signals = getattr(defn, "framework_signals", ())
         if "ambient declaration" in signals:
             continue
-        if "deprecated export" in signals:
+        if "deprecated export" in signals or "public api tag" in signals:
             continue
         if "type-only declaration" in signals:
             continue
@@ -652,7 +722,13 @@ _TS_ENTRY_FILES = frozenset(
 )
 
 
-def _is_ts_entry_or_infra(sf: str) -> bool:
+def _is_ts_entry_or_infra(sf: str, *, path_roots: bool = True) -> bool:
+    """Files that are entries or tooling by path.
+
+    ``path_roots=False`` leaves out the blanket ``/scripts/`` and
+    ``/example(s)/`` folders, whose files need evidence to be roots (see
+    ``_unevidenced_path_roots``).
+    """
     sf = sf.replace(os.sep, "/")
     if f"/{sf}".endswith(_VITEPRESS_CONFIG_SUFFIXES):
         return True
@@ -671,11 +747,11 @@ def _is_ts_entry_or_infra(sf: str) -> bool:
         return True
     if "/perf/" in sf or "/perf-measures/" in sf or "/performance/" in sf:
         return True
-    if "/example/" in sf or "/examples/" in sf:
+    if path_roots and ("/example/" in sf or "/examples/" in sf):
         return True
     if sf.endswith(".d.ts"):
         return True
-    if "/scripts/" in sf:
+    if path_roots and "/scripts/" in sf:
         return True
     basename = os.path.basename(sf)
     if is_nextjs_pages_router_file(sf) or is_nextjs_pages_api_file(sf):
@@ -727,7 +803,9 @@ def _classify_entry_scope(file_path: str, kind: str, reason: str) -> str:
         if kind == "heuristic" and _is_ts_dev_or_test_root(file_path):
             return "dev"
         return "prod"
-    if reason.endswith("-config"):
+    if reason.endswith("-config") or reason == "tsconfig-typecheck-root":
+        # A type-check-only project (``noEmit``) publishes nothing: its
+        # exports are still judged.
         return "dev"
     if reason.startswith(("vitest-", "playwright-", "jest-", "angular-test-")):
         return "dev"
@@ -1202,10 +1280,9 @@ def _laravel_vite_plugin_inputs(source: bytes, root_node) -> list:
             or _node_text(source, function_node) not in bindings
         ):
             continue
-        arguments = node.child_by_field_name("arguments")
-        if arguments is None or not arguments.named_children:
+        first = first_call_argument(node.child_by_field_name("arguments"))
+        if first is None:
             continue
-        first = arguments.named_children[0]
         if first.type == "object":
             inputs.extend(_find_object_path_values(source, [first], ("input",)))
         elif first.type in {"string", "array"}:
@@ -1426,10 +1503,10 @@ def _discover_esbuild_config_entries(
             source, node, direct_bindings, namespace_bindings
         ):
             continue
-        arguments = node.child_by_field_name("arguments")
-        if arguments is None or not arguments.named_children:
+        first = first_call_argument(node.child_by_field_name("arguments"))
+        if first is None:
             continue
-        options = static_options.evaluate(arguments.named_children[0])
+        options = static_options.evaluate(first)
         if not isinstance(options, dict) or "entryPoints" not in options:
             continue
 
@@ -1722,6 +1799,75 @@ def _path_is_inside(path: str, directory: str) -> bool:
     return os.path.realpath(path).startswith(real_directory.rstrip(os.sep) + os.sep)
 
 
+def _shadowed_index(path: str, ts_files: set[str]) -> bool:
+    """An ``index`` file that a directory import never loads.
+
+    When one folder holds several ``index`` sources, the resolver's extension
+    order picks one (``index.ts`` before ``index.js`` for TypeScript,
+    ``index.js`` before ``index.tsx`` in a Docusaurus site); the others are
+    not entry points by name.
+    """
+    name = os.path.basename(path)
+    if not name.startswith("index."):
+        return False
+    directory = os.path.dirname(path)
+    siblings = {
+        os.path.join(directory, "index" + suffix)
+        for suffix in _ENTRY_FILE_SUFFIXES
+    } & ts_files
+    siblings.discard(path)
+    if not siblings:
+        return False
+    parent = os.path.dirname(directory)
+    loaded = resolve_ts_module(
+        "./" + os.path.basename(directory), os.path.join(parent, "index.ts")
+    )
+    return loaded is not None and os.path.realpath(loaded) in siblings
+
+
+# jscodeshift's ``defineTest(__dirname, "transform.cjs", options, "fixture")``
+# requires ``path.join(__dirname, "..", transform)``; its fixtures are read as
+# text from ``__testfixtures__``.
+_DEFINE_TEST_RE = re.compile(
+    r"""\b(?:defineTest|runTest)\s*\(\s*__dirname\s*,\s*(?P<q>['"])(?P<name>[^'"\r\n]+)(?P=q)"""
+)
+_MAX_CODEMOD_TEST_BYTES = 512 * 1024
+
+
+@lru_cache(maxsize=65536)
+def _define_test_names(test_file: str, mtime_ns: int, size: int) -> tuple[str, ...]:
+    if size > _MAX_CODEMOD_TEST_BYTES:
+        return ()
+    try:
+        text = Path(test_file).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ()
+    if "__dirname" not in text:
+        return ()
+    return tuple(match.group("name") for match in _DEFINE_TEST_RE.finditer(text))
+
+
+def _codemod_transform_entries(ts_files: set[str]) -> set[str]:
+    """Transforms that jscodeshift tests load by path, relative to the test."""
+    entries: set[str] = set()
+    for test_file in ts_files:
+        normalized = test_file.replace(os.sep, "/")
+        if not (normalized.endswith(_TEST_SUFFIXES) or "/__tests__/" in normalized):
+            continue
+        try:
+            stat = os.stat(test_file)
+        except OSError:
+            continue
+        parent = os.path.dirname(os.path.dirname(test_file))
+        for name in _define_test_names(test_file, stat.st_mtime_ns, stat.st_size):
+            if name.startswith("/") or ".." in name.split("/"):
+                continue
+            resolved = _resolve_path_target(parent, "./" + name)
+            if resolved and os.path.realpath(resolved) in ts_files:
+                entries.add(os.path.realpath(resolved))
+    return entries
+
+
 def _iter_entry_discoveries(
     ts_files: set[str],
     project_root: str | None = None,
@@ -1731,7 +1877,10 @@ def _iter_entry_discoveries(
     discoveries: list[_TsEntryDiscovery] = []
 
     for tf in sorted(ts_files):
-        if os.path.basename(tf) in _TS_ENTRY_FILES or _is_ts_entry_or_infra(tf):
+        if (
+            os.path.basename(tf) in _TS_ENTRY_FILES
+            and not _shadowed_index(tf, ts_files)
+        ) or _is_ts_entry_or_infra(tf):
             reason = "default-root"
             discoveries.append(
                 _TsEntryDiscovery(
@@ -1741,6 +1890,17 @@ def _iter_entry_discoveries(
                     _classify_entry_scope(tf, "heuristic", reason),
                 )
             )
+
+    for entry_file in sorted(_codemod_transform_entries(ts_files)):
+        reason = "jscodeshift-transform"
+        discoveries.append(
+            _TsEntryDiscovery(
+                entry_file,
+                "config",
+                reason,
+                _classify_entry_scope(entry_file, "config", reason),
+            )
+        )
 
     if not project_root and workspace_inventory is None:
         return discoveries
@@ -1828,6 +1988,42 @@ def _iter_entry_discoveries(
                 )
         custom_config_tools.update(script_configs)
 
+    script_inputs = collect_script_inputs(package_roots, project_root)
+    for entry_file, reason in sorted(script_inputs.entries.items()):
+        if entry_file in ts_files:
+            discoveries.append(
+                _TsEntryDiscovery(
+                    entry_file,
+                    "script",
+                    reason,
+                    _classify_entry_scope(entry_file, "script", reason),
+                )
+            )
+    for script, cwd in sorted(script_inputs.executed.items()):
+        for build_entry in sorted(bundler_script_entries(script, cwd, ts_files)):
+            build_reason = "bundler-script-root"
+            discoveries.append(
+                _TsEntryDiscovery(
+                    build_entry,
+                    "config",
+                    build_reason,
+                    _classify_entry_scope(build_entry, "config", build_reason),
+                )
+            )
+    for config_path, (tool, cwd) in sorted(script_inputs.configs.items()):
+        if tool in _RUNNER_CONFIG_TOOLS:
+            custom_config_tools.setdefault(config_path, (tool, cwd))
+        elif config_path in ts_files:
+            reason = f"{tool}-config"
+            discoveries.append(
+                _TsEntryDiscovery(
+                    config_path,
+                    "config",
+                    reason,
+                    _classify_entry_scope(config_path, "config", reason),
+                )
+            )
+
     default_configs: dict[str, tuple[str, str]] = {}
     for package_root in package_roots:
         for config_name in _PLAYWRIGHT_CONFIG_FILES | _CONFIG_FILES:
@@ -1890,7 +2086,83 @@ def _iter_entry_discoveries(
                 )
             )
 
+    discoveries.extend(
+        _typecheck_project_discoveries(
+            script_inputs.projects, ts_files, discoveries, package_roots
+        )
+    )
     return discoveries
+
+
+def _typecheck_project_discoveries(projects, ts_files, discoveries, package_roots):
+    """Files that a type-check command (``tsc -p X``, ``ngc -p X``) compiles.
+
+    A ``tsconfig``'s ``files`` are always roots. Its ``include`` set becomes
+    the entry set only for a package with no other entry: a fixture folder
+    that exists to be compiled (``integrations/*/nodenext``). In an ordinary
+    app, ``tsc --noEmit -p tsconfig.json`` type-checks code that has its own
+    entries, so its ``include`` proves nothing. Include patterns that climb
+    out of their config's folder name another package's sources and are not
+    read. Exports count as public only when the project emits declarations.
+    """
+    if not projects:
+        return []
+    from .script_inputs import project_source_files, read_tsconfig_project
+
+    owners = sorted(
+        (os.path.realpath(str(root)) for root in package_roots),
+        key=len,
+        reverse=True,
+    )
+    entry_files = [discovery.file for discovery in discoveries]
+    found: list[_TsEntryDiscovery] = []
+    pending = [(config, tool, cwd, 0) for config, (tool, cwd) in sorted(projects.items())]
+    seen = set()
+    while pending:
+        config, tool, cwd, depth = pending.pop(0)
+        if config in seen or len(seen) >= 256:
+            continue
+        seen.add(config)
+        project = read_tsconfig_project(config)
+        if project is None:
+            continue
+        if tool in {"tsc", "tsgo", "vue-tsc"} and depth < 2:
+            # ``tsc --build`` also compiles the referenced projects.
+            pending.extend(
+                (reference, tool, os.path.dirname(reference), depth + 1)
+                for reference in project.references
+            )
+        owner = next(
+            (
+                root
+                for root in owners
+                if os.path.realpath(cwd) == root
+                or os.path.realpath(cwd).startswith(root + os.sep)
+            ),
+            None,
+        )
+        has_other_entry = owner is None or any(
+            path == owner or path.startswith(owner + os.sep) for path in entry_files
+        )
+        listed, included = project_source_files(
+            project, ts_files, local_only=True, include=not has_other_entry
+        )
+        selected = listed | included
+        reason = (
+            "tsconfig-emit-root"
+            if project.emits_declarations
+            else "tsconfig-typecheck-root"
+        )
+        for entry_file in sorted(selected):
+            found.append(
+                _TsEntryDiscovery(
+                    entry_file,
+                    "config",
+                    reason,
+                    _classify_entry_scope(entry_file, "config", reason),
+                )
+            )
+    return found
 
 
 def _entry_package_roots(
@@ -2032,6 +2304,9 @@ def _discover_package_entry_files(
         )
     for target in targets:
         resolved = _resolve_path_target(package_root, target)
+        if resolved is None:
+            # ``./build/modern/production.js``: the bundler entry that emits it.
+            resolved = built_output_source(package_root, target)
         if resolved:
             entry_files.add(os.path.realpath(resolved))
     return entry_files
@@ -2187,6 +2462,7 @@ def _discover_package_roots_from_files(
 ) -> set[Path]:
     exclude_root = _resolve_exclude_root(files, project_root)
     package_roots: set[Path] = set()
+    stop = Path(project_root).resolve() if project_root else None
 
     for file_path in files:
         path = Path(str(file_path)).resolve()
@@ -2199,7 +2475,10 @@ def _discover_package_roots_from_files(
         while True:
             if (current / "package.json").is_file():
                 package_roots.add(current)
-                break
+                # A nested format marker (``{"type": "commonjs"}``) does not
+                # own its folder: the enclosing package's entries apply too.
+                if current == stop or not _is_marker_package_root(current):
+                    break
             parent = current.parent
             if parent == current:
                 break
@@ -2208,15 +2487,32 @@ def _discover_package_roots_from_files(
     return package_roots
 
 
+@lru_cache(maxsize=4096)
+def _marker_manifest_at(manifest: str, mtime_ns: int) -> bool:
+    from .workspace import is_marker_manifest
+
+    return is_marker_manifest(_read_json_file(manifest))
+
+
+def _is_marker_package_root(directory: Path) -> bool:
+    manifest = directory / "package.json"
+    try:
+        mtime_ns = manifest.stat().st_mtime_ns
+    except OSError:
+        return False
+    return _marker_manifest_at(str(manifest), mtime_ns)
+
+
 def _find_owning_package_root(
     file_path: Path, package_roots: list[Path]
 ) -> Path | None:
+    # A string prefix test on resolved paths: ``Path.relative_to`` per root
+    # dominated entry discovery in large monorepos.
+    text = str(file_path)
     for package_root in package_roots:
-        try:
-            file_path.relative_to(package_root)
+        root = str(package_root)
+        if text == root or text.startswith(root.rstrip(os.sep) + os.sep):
             return package_root
-        except ValueError:
-            continue
     return None
 
 
@@ -2382,8 +2678,14 @@ def mark_package_api_ts_exports_consumed(
         MAX_JS_API_REEXPORT_DEPTH,
     )
 
+    # Published packages first: in a monorepo with more packages than the
+    # budget (examples, integrations), sorting by path alone would drop
+    # ``packages/*`` after ``examples/*`` and lose their public API.
+    ordered_roots = sorted(
+        package_roots, key=lambda root: (_is_private_package(str(root)), str(root))
+    )[:MAX_JS_API_PACKAGE_ROOTS]
     host_entries: set[str] = set()
-    for package_root in sorted(package_roots, key=str)[:MAX_JS_API_PACKAGES]:
+    for package_root in ordered_roots:
         host_entries.update(discover_package_named_files(str(package_root))[1])
     if host_entries:
         for defn in defs.values():
@@ -2397,7 +2699,7 @@ def mark_package_api_ts_exports_consumed(
                 )
 
     package_entries: set[str] = set()
-    for package_root in sorted(package_roots, key=str)[:MAX_JS_API_PACKAGES]:
+    for package_root in ordered_roots:
         package_data = _read_json_file(os.path.join(str(package_root), "package.json"))
         if _has_vscode_extension_metadata(package_data):
             continue
@@ -2414,6 +2716,18 @@ def mark_package_api_ts_exports_consumed(
         for entry_file in sorted(entry_files)[:MAX_JS_API_ENTRYPOINTS_PER_PACKAGE]:
             if entry_file in ts_files:
                 package_entries.add(entry_file)
+    # A project that a package script compiles with declaration emit
+    # publishes the exports of the files it compiles as entries.
+    package_entries.update(
+        discovery.file
+        for discovery in _iter_entry_discoveries(
+            ts_files,
+            project_root=project_root,
+            workspace_inventory=workspace_inventory,
+            exclude_folders=exclude_folders,
+        )
+        if discovery.reason == "tsconfig-emit-root" and discovery.file in ts_files
+    )
     if not package_entries:
         return set()
 
@@ -2521,6 +2835,16 @@ def mark_package_api_ts_exports_consumed(
     return marked
 
 
+# Package manifests read for public entries. The surface budget below bounds
+# the expensive part (one API-surface inspection per entry file).
+MAX_JS_API_PACKAGE_ROOTS = 4096
+
+
+def _is_private_package(package_root: str) -> bool:
+    data = _read_json_file(os.path.join(package_root, "package.json"))
+    return bool(isinstance(data, dict) and data.get("private") is True)
+
+
 def _has_vscode_extension_metadata(data: dict) -> bool:
     engines = data.get("engines")
     if isinstance(engines, dict) and isinstance(engines.get("vscode"), str):
@@ -2618,6 +2942,339 @@ def _dead_ts_file_set(ts_files, entry_points, norm_importers) -> set[str]:
     return dead_set
 
 
+# An unreachable import cycle larger than this usually means a whole program
+# whose entry Skylos does not know; it is left unreported.
+_MAX_UNREACHABLE_CYCLE_FILES = 8
+
+
+def _unreachable_cycle_files(ts_files, entry_points, norm_importers, dead_set):
+    """Candidates no entry reaches that the importer fixpoint keeps alive.
+
+    ``_dead_ts_file_set`` marks a file dead when every importer is dead, so
+    files that import each other in a cycle nobody reaches are never
+    reported. A forward walk from the entries would find them. Here every
+    importer that is not a candidate (a test, a config, an excluded folder)
+    stays a root, so the only difference from such a walk is an unreachable
+    cycle and the files only it imports. A region larger than
+    ``_MAX_UNREACHABLE_CYCLE_FILES`` files is left unreported: it most
+    likely is a whole program with an entry Skylos does not know.
+    """
+    imports = defaultdict(set)
+    roots = set(entry_points)
+    for target, importers in norm_importers.items():
+        for importer in importers:
+            imports[importer].add(target)
+            if importer not in ts_files:
+                roots.add(importer)
+    reached = set()
+    stack = list(roots)
+    while stack:
+        current = stack.pop()
+        if current in reached:
+            continue
+        reached.add(current)
+        stack.extend(imports.get(current, set()) - reached)
+    unreachable = ts_files - entry_points - reached - dead_set
+    if not unreachable:
+        return set()
+    # Group into weakly connected regions and keep only small ones.
+    neighbours = defaultdict(set)
+    for path in unreachable:
+        for other in imports.get(path, set()) | norm_importers.get(path, set()):
+            if other in unreachable:
+                neighbours[path].add(other)
+                neighbours[other].add(path)
+    result = set()
+    seen = set()
+    for path in sorted(unreachable):
+        if path in seen:
+            continue
+        region, stack = set(), [path]
+        while stack:
+            current = stack.pop()
+            if current in region:
+                continue
+            region.add(current)
+            stack.extend(neighbours[current] - region)
+        seen |= region
+        if len(region) <= _MAX_UNREACHABLE_CYCLE_FILES:
+            result |= region
+    return result
+
+
+_TYPE_EXPORT_RE = re.compile(
+    r"^[ \t]*export[ \t]+(?:declare[ \t]+)?(?:type|interface|namespace)\b", re.MULTILINE
+)
+_COMMENT_RE = re.compile(r"/\*.*?\*/|(?<![:\\])//[^\n]*", re.DOTALL)
+_MAX_TYPE_SCAN_BYTES = 2_000_000
+
+
+def _declares_type_export(path: str) -> bool:
+    try:
+        if os.path.getsize(path) > _MAX_TYPE_SCAN_BYTES:
+            return True
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return True
+    return _TYPE_EXPORT_RE.search(_COMMENT_RE.sub("", text)) is not None
+
+
+def _published_type_declaration_files(files, candidates, project_root, exclude_folders):
+    """Candidates a types-only wildcard export publishes, that export types.
+
+    ``"./*": {"types": "./dist/types/*.d.ts"}`` ships each module's
+    declarations: a module that declares exported types is part of the
+    package's type API even when no file imports it. A value-only module has
+    nothing importable there and stays reported.
+    """
+    from .package_exports import types_only_pattern_files
+
+    package_roots = {
+        os.path.realpath(str(root))
+        for root in _discover_package_roots_from_files(
+            files, project_root, exclude_folders=exclude_folders
+        )
+    }
+    package_roots.add(os.path.realpath(str(project_root)))
+    analysed = {
+        os.path.realpath(str(file))
+        for file in files
+        if str(file).endswith(_TS_JS_EXTENSIONS)
+    }
+    published = set()
+    for package_root in sorted(package_roots):
+        data = _read_json_file(os.path.join(package_root, "package.json"))
+        if isinstance(data, dict) and isinstance(data.get("exports"), dict):
+            published |= types_only_pattern_files(
+                package_root, data["exports"], analysed, str(project_root)
+            )
+    return {
+        path
+        for path in published & set(candidates)
+        if _declares_type_export(path)
+    }
+
+
+_PATH_ROOT_SEGMENTS = ("/scripts/", "/example/", "/examples/")
+_MAX_NAME_SEARCH_FILES = 200_000
+_MAX_NAME_SEARCH_BYTES = 400_000_000
+_MAX_NAME_SEARCH_FILE_BYTES = 2_000_000
+_NAME_SEARCH_SKIPPED_DIRS = frozenset({".git", ".hg", ".svn", "node_modules"})
+
+
+def _path_root_only(path: str, project_root: str) -> bool:
+    """Only the blanket ``/scripts/`` or ``/example(s)/`` rule makes it a root."""
+    try:
+        relative = "/" + os.path.relpath(path, project_root).replace(os.sep, "/")
+    except ValueError:
+        return False
+    if relative.startswith("/.."):
+        return False
+    return (
+        any(segment in relative for segment in _PATH_ROOT_SEGMENTS)
+        and os.path.basename(path) not in _TS_ENTRY_FILES
+        and not _is_ts_entry_or_infra(path, path_roots=False)
+    )
+
+
+def _nearest_owning_package(path: str, project_root: str, cache) -> str | None:
+    """The nearest folder above ``path`` whose package.json owns files."""
+    directory = os.path.dirname(path)
+    root = os.path.realpath(project_root)
+    trail = []
+    found = None
+    while True:
+        if directory in cache:
+            found = cache[directory]
+            break
+        trail.append(directory)
+        manifest = os.path.join(directory, "package.json")
+        if os.path.isfile(manifest) and (
+            directory == root or not _is_marker_package_root(Path(directory))
+        ):
+            found = directory
+            break
+        parent = os.path.dirname(directory)
+        if directory == root or parent == directory:
+            break
+        directory = parent
+    for item in trail:
+        cache[item] = found
+    return found
+
+
+_TOOL_CONFIG_NAME_RE = re.compile(r"(?:^|\.)config\.[cm]?[jt]sx?$|^\.[\w-]+rc\.[cm]?[jt]s$")
+
+
+def _tool_or_test_file(path: str) -> bool:
+    normalized = path.replace(os.sep, "/")
+    basename = os.path.basename(normalized)
+    return (
+        basename in _CONFIG_FILES
+        or basename in _PLAYWRIGHT_CONFIG_FILES
+        or _TOOL_CONFIG_NAME_RE.search(basename) is not None
+        or normalized.endswith(_TEST_SUFFIXES)
+        or "/__tests__/" in normalized
+        or _STORYBOOK_FILE_RE.search(normalized) is not None
+    )
+
+
+def _has_shebang(path: str) -> bool:
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(2) == b"#!"
+    except OSError:
+        return True
+
+
+def _names_written_elsewhere(project_root: str, candidates: set[str], exclude_folders):
+    """Candidates whose file name (without extension) another repository file writes.
+
+    A script run by hand, by a tool Skylos does not model or named in a
+    README is usually named somewhere. Every text file counts, comments
+    included; an inventory past the budget names everything.
+    """
+    stems = {}
+    for path in candidates:
+        stem = os.path.splitext(os.path.basename(path))[0]
+        if stem:
+            stems.setdefault(stem, set()).add(path)
+    if not stems:
+        return set()
+    pattern = re.compile(
+        r"(?<![\w$-])("
+        + "|".join(sorted((re.escape(stem) for stem in stems), key=len, reverse=True))
+        + r")(?![\w$-])"
+    )
+    named: set[str] = set()
+    root = os.path.realpath(project_root)
+    walked = 0
+    total = 0
+    for directory, subdirectories, names in os.walk(root):
+        subdirectories[:] = [
+            name
+            for name in subdirectories
+            if name not in _NAME_SEARCH_SKIPPED_DIRS
+            and not os.path.islink(os.path.join(directory, name))
+        ]
+        for name in names:
+            walked += 1
+            if walked > _MAX_NAME_SEARCH_FILES:
+                return set(candidates)
+            path = os.path.join(directory, name)
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                continue
+            if size > _MAX_NAME_SEARCH_FILE_BYTES or os.path.islink(path):
+                continue
+            total += size
+            if total > _MAX_NAME_SEARCH_BYTES:
+                return set(candidates)
+            try:
+                with open(path, "rb") as handle:
+                    data = handle.read()
+            except OSError:
+                continue
+            if b"\0" in data[:8192]:
+                continue
+            text = data.decode("utf-8", errors="replace")
+            for match in pattern.finditer(text):
+                for candidate in stems.get(match.group(1), ()):
+                    if candidate != path:
+                        named.add(candidate)
+            if len(named) == len(candidates):
+                return named
+    return named
+
+
+def _unevidenced_path_roots(
+    files,
+    exclude_folders,
+    exclude_root,
+    project_root,
+    workspace_inventory,
+    browser_entry_points,
+    norm_importers,
+    dead_set,
+) -> set[str]:
+    """``/scripts/`` and ``/example(s)/`` files that nothing proves live.
+
+    These folders used to be roots by path, which hid genuinely dead build
+    scripts. A file there now needs evidence: a package script, CI step, git
+    hook or tool that runs it, a live importer, a path reference
+    (``file_references``), a shebang, or its name written in any other
+    repository file. A file with none is reported. What it imports keeps its
+    current liveness, so a missed entry costs one finding.
+    """
+    analysed = _analysed_ts_files(files, exclude_folders, exclude_root)
+    blanket = {path for path in analysed if _path_root_only(path, project_root)}
+    if not blanket:
+        return set()
+    discoveries = _iter_entry_discoveries(
+        analysed,
+        project_root=project_root,
+        workspace_inventory=workspace_inventory,
+        exclude_folders=exclude_folders,
+    )
+    evidenced = {
+        discovery.file
+        for discovery in discoveries
+        if discovery.reason != "default-root"
+    }
+    evidenced.update(os.path.realpath(str(path)) for path in browser_entry_points or ())
+    # A package with no program entry of its own (a lint or type-check
+    # demo, a fixture package) shows Skylos does not know how it is used:
+    # its files are not judged by the absence of evidence. Tool configs and
+    # tests run the tools, not the package's code.
+    package_cache: dict[str, str | None] = {}
+    entry_packages = {
+        _nearest_owning_package(discovery.file, project_root, package_cache)
+        for discovery in discoveries
+        if not (discovery.reason == "default-root" and discovery.file in blanket)
+        and not discovery.reason.endswith("-config")
+        and not _tool_or_test_file(discovery.file)
+    }
+    entry_packages.update(
+        _nearest_owning_package(os.path.realpath(str(path)), project_root, package_cache)
+        for path in browser_entry_points or ()
+    )
+    entry_packages.discard(None)
+    candidates = {
+        path
+        for path in blanket - evidenced
+        if _nearest_owning_package(path, project_root, package_cache)
+        in entry_packages
+    }
+    changed = True
+    while changed and candidates:
+        changed = False
+        for path in sorted(candidates):
+            if norm_importers.get(path, set()) - dead_set - candidates:
+                candidates.discard(path)
+                changed = True
+    candidates = {path for path in candidates if not _has_shebang(path)}
+    if not candidates:
+        return set()
+    try:
+        reference_roots, reference_edges = collect_ts_path_references(
+            project_root, analysed, candidates, exclude_folders=exclude_folders
+        )
+    except (OSError, RecursionError, UnicodeError, ValueError):
+        return set()
+    candidates -= reference_roots
+    candidates = {
+        path
+        for path in candidates
+        if not set(reference_edges.get(path, ())) - dead_set - candidates
+    }
+    if not candidates:
+        return set()
+    return candidates - _names_written_elsewhere(
+        project_root, candidates, exclude_folders
+    )
+
+
 def find_dead_ts_files(
     files,
     exclude_folders,
@@ -2627,6 +3284,8 @@ def find_dead_ts_files(
     workspace_inventory=None,
     browser_entry_points=None,
     source_read_edges=None,
+    *,
+    evidence_roots: bool = False,
 ):
     exclude_root = _resolve_exclude_root(files, project_root)
     ts_files = set()
@@ -2663,7 +3322,12 @@ def find_dead_ts_files(
         os.path.realpath(str(path)) for path in browser_entry_points or ()
     )
 
-    dead_set = _dead_ts_file_set(ts_files, entry_points, norm_importers)
+    def dead_files():
+        dead = _dead_ts_file_set(ts_files, entry_points, norm_importers)
+        cycles = _unreachable_cycle_files(ts_files, entry_points, norm_importers, dead)
+        return dead | cycles, cycles
+
+    dead_set, cycle_files = dead_files()
     if dead_set and project_root:
         # Files named by path in configs, templates, scripts or other
         # languages are loaded without an import; re-run with those loads.
@@ -2682,14 +3346,42 @@ def find_dead_ts_files(
             entry_points |= reference_roots
             for target, referencers in reference_edges.items():
                 norm_importers[target].update(referencers)
-            dead_set = _dead_ts_file_set(ts_files, entry_points, norm_importers)
+            dead_set, cycle_files = dead_files()
+
+    unevidenced: set[str] = set()
+    if evidence_roots and project_root:
+        unevidenced = _unevidenced_path_roots(
+            files,
+            exclude_folders,
+            exclude_root,
+            project_root,
+            workspace_inventory,
+            browser_entry_points,
+            norm_importers,
+            dead_set,
+        )
+        dead_set |= unevidenced
+
+    if dead_set and project_root:
+        dead_set -= _published_type_declaration_files(
+            files, dead_set, project_root, exclude_folders
+        )
 
     dead_files = []
     for tf in sorted(dead_set):
+        if is_text_fixture(tf):
+            # Read as text by its test, not loaded: never an unused module.
+            continue
         has_importers = bool(norm_importers.get(tf))
         confidence, factors = file_finding_confidence(has_importers=has_importers)
         message = (
-            "Unused TypeScript/JavaScript file (only imported by files that "
+            "Unused TypeScript/JavaScript file (no import, package script, "
+            "workflow, hook or other file names it)"
+            if tf in unevidenced
+            else "Unused TypeScript/JavaScript file (only imported by files in an "
+            "import cycle that no entry reaches)"
+            if tf in cycle_files
+            else "Unused TypeScript/JavaScript file (only imported by files that "
             "are themselves unused)"
             if has_importers
             else "Unused TypeScript/JavaScript file (not imported by any other file)"
@@ -2899,9 +3591,11 @@ def _has_opaque_ts_loads(source, root):
                 parent is not None
                 and parent.type == "call_expression"
                 and parent.child_by_field_name("function") == node
-                and (arguments := parent.child_by_field_name("arguments")) is not None
-                and arguments.named_children
-                and arguments.named_children[0].type == "string"
+                and (
+                    first := first_call_argument(parent.child_by_field_name("arguments"))
+                )
+                is not None
+                and first.type == "string"
             ):
                 return True
         stack.extend(reversed(node.named_children))
@@ -3128,7 +3822,7 @@ def find_unused_ts_exports(
         fname = str(defn.filename)
         if _is_ts_reachability_root(fname, entry_points):
             continue
-        if defn.type == "method":
+        if defn.type == "method" or is_text_fixture(fname):
             continue
         if os.path.realpath(fname) in api_surface:
             continue

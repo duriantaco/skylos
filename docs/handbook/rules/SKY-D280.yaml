@@ -119,6 +119,21 @@ how_skylos_decides:
     every path before the change. A result that is never checked, or a
     check inside a branch, does not count.
   - >-
+    A project helper counts as well: a function imported from the project
+    (`./lib/request`, `@/lib/auth`) whose source, followed through its own
+    calls and imports (up to 4 calls deep, 12 files), reaches a recognised
+    verification such as `jsonwebtoken`/`jose` verify, next-auth, Clerk,
+    iron-session, Supabase `getUser` or Firebase `verifyIdToken`. Its
+    awaited result must be rejected on failure: `const { auth, error } =
+    await parseRequest(request); if (error) return error();`. A call with
+    `skipAuth: true` proves nothing.
+  - >-
+    An explicit authorization check also counts: `if (!(await
+    canUpdateWebsite(auth, id))) return unauthorized();` (or a 401/403/404
+    status or `throw`) before the change. Schema building
+    (`z.object(...)`), request reads and `return notFound()`-style
+    responses are not data changes.
+  - >-
     A `POST` route on a webhook path (for example `api/stripe/webhook`)
     that reads the request body is left to SKY-D282. When the file could
     not be fully analysed, a file that looks like a mutating route is still
@@ -133,6 +148,14 @@ source_refs:
   - path: skylos/visitors/languages/typescript/security_proofs.py
     symbol: "def _assess_auth_boundary("
     note: awaited, assigned and rejected before the change.
+  - path: skylos/visitors/languages/typescript/security_proofs.py
+    symbol: "def _is_project_auth_helper_call("
+    note: project helpers that verify identity.
+  - path: skylos/visitors/languages/typescript/project_helpers.py
+    symbol: "def helper_authenticates("
+  - path: skylos/visitors/languages/typescript/security_proofs.py
+    symbol: "def _authorization_guard("
+    note: rejecting authorization checks.
   - path: skylos/visitors/languages/typescript/danger.py
     symbol: "def _is_security_flow_candidate(source: bytes, file_path: str) -> bool:"
   - path: test/test_ts_danger_nextjs.py

@@ -99,7 +99,7 @@ def test_expo_router_routes_are_entrypoints_and_dead_code_stays_reported(tmp_pat
         if name in {"RootLayout", "Index", "Post", "GET", "unstable_settings"}
     }
     assert ("unused_files", "src/utils/orphan.ts", "") in reported
-    assert ("unused_functions", "src/utils/orphan.ts", "deleteToken") in reported
+    assert ("unused_functions", "src/utils/orphan.ts", "deleteToken") not in reported  # folded into the file finding
     # A non-conventional export from a route file is still judged.
     assert ("unused_functions", "src/app/index.tsx", "helperNobodyUses") in reported
 
@@ -156,7 +156,7 @@ def test_react_email_templates_are_rendered_by_the_cli(tmp_path):
     assert not any(name == "WelcomeEmail" for _k, _f, name in reported)
     # ``_``-prefixed folders hold parts, not templates: an unused part is dead.
     assert ("unused_files", "emails/_parts/divider.tsx", "") in reported
-    assert ("unused_functions", "emails/_parts/divider.tsx", "Divider") in reported
+    assert ("unused_functions", "emails/_parts/divider.tsx", "Divider") not in reported  # folded into the file finding
 
 
 def test_react_email_dir_option_and_dependency_gate(tmp_path):
@@ -212,7 +212,7 @@ def test_tool_configs_mocks_and_turbo_generators(tmp_path):
     ):
         assert not any(file == path for _k, file, _n in reported), path
     assert ("unused_files", "src/site.config.ts", "") in reported
-    assert ("unused_variables", "src/site.config.ts", "siteName") in reported
+    assert ("unused_variables", "src/site.config.ts", "siteName") not in reported  # folded into the file finding
 
 
 def test_js_package_entry_default_export_is_public_api(tmp_path):
@@ -230,7 +230,9 @@ def test_js_package_entry_default_export_is_public_api(tmp_path):
     reported = _reported(_scan(tmp_path), tmp_path)
 
     assert not any(name == "config" for _k, _f, name in reported)
-    assert ("unused_functions", "lib/unused.js", "stale") in reported
+    # lib/unused.js is an unused file; its export folds into that finding.
+    assert ("unused_files", "lib/unused.js", "") in reported
+    assert ("unused_functions", "lib/unused.js", "stale") not in reported
 
 
 def _refs(source: str, name: str = "x.ts") -> set[str]:
@@ -368,4 +370,4 @@ def test_esbuild_script_in_an_excluded_build_folder_still_names_entries(tmp_path
     assert ("unused_files", "src/old.ts", "") in reported
     # The entry's exports are the bundle's interface (``bundle.init()``).
     assert ("unused_functions", "src/app.ts", "init") not in reported
-    assert ("unused_functions", "src/old.ts", "old") in reported
+    assert ("unused_functions", "src/old.ts", "old") not in reported  # folded into the file finding

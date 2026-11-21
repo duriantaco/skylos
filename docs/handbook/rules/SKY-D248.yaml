@@ -59,6 +59,11 @@ how_skylos_decides:
     Skips files in test folders (`test`, `tests`, `__tests__`) and test file
     names (`*.test.ts`, `*.spec.js` and similar).
   - >-
+    Skips a localhost literal that is only the base of `new URL(value,
+    'https://localhost')`, directly, as a ternary branch, or through a
+    `const` whose every use is that base: it parses a relative path and is
+    never contacted.
+  - >-
     Skips the literal when it is the right-hand side of `??` or `||` and the
     left-hand side is an environment lookup: `process.env.X`,
     `process.env["X"]`, `import.meta.env.X`, `Bun.env.X`, `Deno.env.get("X")`

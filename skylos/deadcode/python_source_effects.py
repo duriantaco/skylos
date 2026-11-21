@@ -721,6 +721,20 @@ def block(index, statements, path, env):
     return returns, ""
 
 
+def _arguments_key(env) -> tuple:
+    """A stable key for the literal arguments a call was evaluated with.
+
+    Keys are sorted by their text: an environment can hold a ``None`` key
+    beside parameter names, and comparing ``None`` with ``str`` raises.
+    """
+    items = sorted(env.items(), key=lambda item: (item[0] is None, str(item[0])))
+    return tuple(
+        (name, str(value))
+        for name, value in items
+        if isinstance(value, (str, int, bool, Path))
+    )
+
+
 def call_function(index, function, arguments, keywords):
     active = getattr(index, "active_calls", set())
     index.active_calls = active
@@ -779,11 +793,7 @@ def call_function(index, function, arguments, keywords):
     # either limit, and makes a caller appear complete after a child stops.
     active.add(id(function.node))
     index.reachable.add((function.path, id(function.node)))
-    arguments_key = []
-    for name, value in sorted(env.items()):
-        if isinstance(value, (str, int, bool, Path)):
-            arguments_key.append((name, str(value)))
-    context_key = (function.path, id(function.node), tuple(arguments_key))
+    context_key = (function.path, id(function.node), _arguments_key(env))
     if context_key not in index.context_keys and len(index.executed_contexts) < 4096:
         index.context_keys.add(context_key)
         index.executed_contexts.append((function.node, function.path, env))

@@ -4,3 +4,4 @@ include pyproject.toml
 recursive-include skylos/api/upload_contract *.json
 include skylos/rules/ai_defect/pipreqs_import_mapping.txt
 include skylos/llm/cleanup_standards.md
+recursive-include skylos/visitors/languages/typescript/data *.json *.txt

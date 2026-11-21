@@ -202,6 +202,7 @@ def apply_project_trait_imports(
             if not closure.external_modules:
                 continue
             core = RustCore(str(crate_root), expanded)
+            core.collect_scope_members = False
             core.scan()
             local = core._local_trait_imports
             if local is None:

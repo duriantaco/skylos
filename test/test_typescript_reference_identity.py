@@ -133,7 +133,8 @@ def test_unreachable_consumer_does_not_rescue_imported_functions_or_data(
     )
     assert ("helpers.ts", "calculate") in _identities(report, "unused_functions")
     assert ("helpers.ts", "modes") in _identities(report, "unused_variables")
-    assert ("orphan.ts", "prepare") in _identities(report, "unused_functions")
+    # orphan.ts is itself an unused file: its symbols fold into that finding.
+    assert ("orphan.ts", "prepare") not in _identities(report, "unused_functions")
     assert ("orphan.ts", "calculate") not in _identities(report, "unused_imports")
     assert ("orphan.ts", "modes") not in _identities(report, "unused_imports")
     assert ("helpers.ts", "format") not in _identities(report, "unused_functions")
@@ -420,7 +421,9 @@ def test_static_literal_loader_does_not_disable_closed_module_demand(tmp_path):
     report = _scan(
         tmp_path,
         {
-            "index.ts": "const {format}=require('./active'); console.log(format());",
+            # The side-effect import keeps helpers.ts a live file, so only
+            # closed-module demand decides whether its exports are used.
+            "index.ts": "import './helpers'; const {format}=require('./active'); console.log(format());",
             "active.ts": "export function format(){return 1;}",
             "helpers.ts": "export function calculate(){return 2;} export const modes=[1];",
             "consumer.ts": "import {calculate,modes} from './helpers'; export function prepare(){return calculate()+modes[0];} prepare();",
@@ -449,7 +452,7 @@ def test_comment_string_and_type_names_are_not_runtime_loader_exposure(
         tmp_path,
         {
             "index.ts": non_runtime_reference
-            + "\nimport {format} from './active'; console.log(format());",
+            + "\nimport './helpers'; import {format} from './active'; console.log(format());",
             "active.ts": "export function format(){return 1;}",
             "helpers.ts": "export function calculate(){return 2;} export const modes=[1];",
             "consumer.ts": "import {calculate,modes} from './helpers'; export function prepare(){return calculate()+modes[0];} prepare();",
@@ -528,8 +531,11 @@ def test_dead_consumer_demand_keeps_file_evidence_and_architecture_edges(tmp_pat
         },
         enable_quality=True,
     )
-    assert ("helpers.ts", "calculate") in _identities(report, "unused_functions")
-    assert ("helpers.ts", "modes") in _identities(report, "unused_variables")
+    # helpers.ts is only imported by a dead file, so it is reported once as
+    # an unused file and its symbols fold into that finding.
+    assert ("helpers.ts", "calculate") not in _identities(report, "unused_functions")
+    assert ("helpers.ts", "modes") not in _identities(report, "unused_variables")
+    assert report["analysis_summary"]["dead_code_folded_into_unused_files"]["count"] >= 2
     assert ("active.ts", "format") not in _identities(report, "unused_functions")
     files = {Path(row["file"]).name: row for row in report.get("unused_files", [])}
     assert files["orphan.ts"]["confidence"] == 80

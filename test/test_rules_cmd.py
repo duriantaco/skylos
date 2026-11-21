@@ -52,6 +52,7 @@ def test_catalog_exposes_unused_typescript_file_rule():
     ("SKY-Q408", "quality", "MEDIUM", "review"),
     ("SKY-Q409", "quality", "MEDIUM", "review"),
     ("SKY-Q410", "quality", "MEDIUM", "defect"),
+    ("SKY-Q414", "quality", "MEDIUM", "defect"),
 ])
 def test_bounded_js_ts_rules_keep_their_public_identity(rule_id, category, severity, purpose):
     entries = {entry["id"]: entry for entry in get_rule_catalog()}

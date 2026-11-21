@@ -9,10 +9,14 @@ from pathlib import Path
 import tree_sitter_typescript as tsts
 from tree_sitter import Language, Parser, Query, QueryCursor
 
+from skylos.core.js_ast import first_call_argument
 from skylos.visitors.base import Definition
 from skylos.visitors.languages.typescript.grammar_gaps import (
     is_typescript_path,
     repair_typescript_grammar_gaps,
+)
+from skylos.visitors.languages.typescript.jsdoc_tags import (
+    declaration_has_public_api_tag,
 )
 from skylos.visitors.languages.typescript.safe_glob import safe_glob_paths
 
@@ -229,6 +233,132 @@ def _get_parser(lang: Language) -> Parser:
     return _PARSER_CACHE[lang_id]
 
 
+_FUNCTION_SCOPE_NODES = frozenset(
+    {
+        "arrow_function",
+        "function_declaration",
+        "function_expression",
+        "generator_function",
+        "generator_function_declaration",
+        "method_definition",
+    }
+)
+
+
+def _statement_is_type_only(statement) -> bool:
+    """Whether an import/export-from statement is erased from emitted code.
+
+    ``import type``/``export type`` and clauses whose every named specifier is
+    ``type`` qualified (with no default or namespace binding) load nothing at
+    run time. ``import {} from`` and side-effect imports still load.
+    """
+    if any(child.type == "type" for child in statement.children):
+        return True
+    specifiers = []
+    for child in statement.named_children:
+        if child.type == "import_clause":
+            for clause_child in child.named_children:
+                if clause_child.type != "named_imports":
+                    return False
+                specifiers.extend(
+                    node
+                    for node in clause_child.named_children
+                    if node.type == "import_specifier"
+                )
+        elif child.type == "export_clause":
+            specifiers.extend(
+                node for node in child.named_children if node.type == "export_specifier"
+            )
+        elif child.type == "namespace_export":
+            return False
+    return bool(specifiers) and all(
+        any(part.type == "type" for part in specifier.children)
+        for specifier in specifiers
+    )
+
+
+_TYPE_CONTEXT_NODES = frozenset(
+    {
+        "type_annotation",
+        "opting_type_annotation",
+        "omitting_type_annotation",
+        "adding_type_annotation",
+        "asserts_annotation",
+        "type_predicate_annotation",
+        "type_alias_declaration",
+        "type_arguments",
+        "type_parameters",
+        "interface_declaration",
+        "ambient_declaration",
+        "type_query",
+    }
+)
+
+
+def _inside_type_context(node) -> bool:
+    """Whether ``import("x")`` is a type reference (``import("x").T``)."""
+    current = node.parent
+    while current is not None:
+        if current.type in _TYPE_CONTEXT_NODES:
+            return True
+        current = current.parent
+    return False
+
+
+def _inside_function(node) -> bool:
+    current = node.parent
+    while current is not None:
+        if current.type in _FUNCTION_SCOPE_NODES:
+            return True
+        current = current.parent
+    return False
+
+
+def _inside_try_block(node) -> bool:
+    """Whether a module load handles its own failure.
+
+    A ``require``/``import()`` in the body of a ``try`` (in the same function)
+    or an ``import()`` whose promise chain ends in ``.catch`` is an optional
+    load: a missing module is an expected outcome, not a broken import.
+    """
+    child, current = node, node.parent
+    while current is not None and current.type not in _FUNCTION_SCOPE_NODES:
+        if current.type == "try_statement":
+            body = current.child_by_field_name("body")
+            if body is not None and body.id == child.id:
+                return True
+        child, current = current, current.parent
+    current = node
+    while True:
+        member = current.parent
+        if (
+            member is None
+            or member.type != "member_expression"
+            or member.child_by_field_name("object") is None
+            or member.child_by_field_name("object").id != current.id
+        ):
+            return False
+        call = member.parent
+        if (
+            call is None
+            or call.type != "call_expression"
+            or call.child_by_field_name("function") is None
+            or call.child_by_field_name("function").id != member.id
+        ):
+            return False
+        prop = member.child_by_field_name("property")
+        name = (prop.text or b"").decode("utf-8", "replace") if prop is not None else ""
+        if name == "catch":
+            return True
+        if name == "then":
+            arguments = call.child_by_field_name("arguments")
+            if arguments is not None and len(arguments.named_children) >= 2:
+                return True
+        elif name != "finally":
+            return False
+        current = call
+
+
 def _jsx_text_ampersands(root_node, source: bytes) -> set[int]:
     """Find raw ampersands where TSX error recovery stopped parsing JSX text."""
     positions: set[int] = set()
@@ -369,6 +499,7 @@ class TypeScriptCore:
         self._dependency_bindings: set[str] | None = None
         self._path_bindings: tuple[set[str], set[str]] | None = None
         self._class_bases: dict[str, str] | None = None
+        self._import_bindings: tuple[set[str], set[str], set[str]] | None = None
 
         self._suffix = Path(str(file_path)).suffix.lower()
         self._uses_jsx_parser = self._suffix in _JSX_EXTENSIONS
@@ -739,17 +870,91 @@ class TypeScriptCore:
             base = self._class_bases.get(base)
         return False
 
+    def _project_import_bindings(self) -> set[str]:
+        """Local names of every import, with their specifiers' externality."""
+        if self._import_bindings is None:
+            external: set[str] = set()
+            imported: set[str] = set()
+            from .conventions import is_declared_dependency
+
+            for statement in self.root_node.named_children:
+                if statement.type != "import_statement":
+                    continue
+                source_node = statement.child_by_field_name("source")
+                names = {
+                    name.rpartition(" as ")[2].strip()
+                    for name in self._extract_import_names_from_stmt(statement)
+                }
+                for clause in statement.named_children:
+                    if clause.type == "import_require_clause":
+                        # ``import api = require("pkg")``
+                        source_node = clause.child_by_field_name("source")
+                        names |= {
+                            self._get_text(child)
+                            for child in clause.named_children
+                            if child.type == "identifier"
+                        }
+                if source_node is None:
+                    imported |= names
+                    continue
+                specifier = self._get_text(source_node).strip("'\"")
+                imported |= names
+                if not specifier.startswith((".", "/")) and (
+                    is_declared_dependency(specifier, str(self.file_path))
+                ):
+                    external |= names
+            declared: set[str] = set()
+            for node in self._iter_nodes(self.root_node):
+                if node.type in {
+                    "interface_declaration",
+                    "type_alias_declaration",
+                    *_CLASS_DECLARATION_TYPES,
+                }:
+                    name_node = node.child_by_field_name("name")
+                    if name_node is not None:
+                        declared.add(self._get_text(name_node))
+            self._import_bindings = (imported, external, declared)
+        return self._import_bindings
+
+    def _implements_external_type(self, class_node) -> bool:
+        """The class implements a type defined outside the project.
+
+        An imported dependency type (``implements ReactiveController`` from
+        ``lit``) or an ambient library type that the project neither imports
+        nor declares (``implements EventListenerObject``) is a contract a
+        framework or the platform calls, not project code.
+        """
+        imported, external, declared = self._project_import_bindings()
+        for child in class_node.named_children:
+            if child.type != "class_heritage":
+                continue
+            for clause in child.named_children:
+                if clause.type != "implements_clause":
+                    continue
+                for contract in clause.named_children:
+                    text = self._get_text(contract).split("<", 1)[0].strip()
+                    head = text.split(".", 1)[0]
+                    if head in external:
+                        return True
+                    if head and head not in imported and head not in declared:
+                        return True
+        return False
+
     def _overrides_dependency_method(self, node) -> bool:
         method = node.parent
         if method is None or method.type != "method_definition":
             return False
         if node.type == "private_property_identifier":
             return False
+        visibility = None
+        is_static = False
         for child in method.children:
-            if child.type == "accessibility_modifier" and (
-                self._get_text(child) == "private"
-            ):
-                return False
+            if child.type == "accessibility_modifier":
+                visibility = self._get_text(child)
+            elif child.type == "static":
+                is_static = True
+        if visibility == "private":
+            return False
         class_node = method.parent
         while (
             class_node is not None and class_node.type not in _CLASS_DECLARATION_TYPES
@@ -759,7 +964,15 @@ class TypeScriptCore:
             class_node = class_node.parent
         if class_node is None:
             return False
-        return self._extends_dependency_class(class_node)
+        if self._extends_dependency_class(class_node):
+            return True
+        # An interface contract is public and per instance: protected and
+        # static members stay judged.
+        return (
+            visibility in {None, "public"}
+            and not is_static
+            and self._implements_external_type(class_node)
+        )
 
     def _scan_default_parameter_refs(self) -> None:
         if not self.root_node:
@@ -832,6 +1045,8 @@ class TypeScriptCore:
             d.framework_signals.append(extra_signal)
         if is_exported and self._has_deprecated_jsdoc(node):
             d.framework_signals.append("deprecated export")
+        if is_exported and declaration_has_public_api_tag(self.source, node):
+            d.framework_signals.append("public api tag")
         if (
             type_name == "function"
             and d.is_exported
@@ -1106,7 +1321,10 @@ class TypeScriptCore:
                     "source": source_path,
                     "names": names,
                     "line": src_node.start_point[0] + 1,
+                    "import_kind": "import",
                 }
+                if _statement_is_type_only(import_stmt):
+                    raw_import["type_import"] = True
                 clause = next(
                     (
                         child
@@ -1142,6 +1360,20 @@ class TypeScriptCore:
                         members = namespace_reads.get(local)
                         if members is None:
                             raw_import["consume_all_exports"] = True
+                            if (
+                                not selected_names
+                                and len(namespace_names) == 1
+                                and is_typescript_path(self.file_path)
+                                and not any(
+                                    child.type == "type"
+                                    for child in import_stmt.children
+                                )
+                            ):
+                                # An opaque runtime use sees only values; the
+                                # names it reads (types included) stay requested.
+                                raw_import["namespace_dotted_reads"] = sorted(
+                                    self._dotted_reads(local)
+                                )
                         else:
                             selected_names.extend(sorted(members))
                     raw_import["names"] = selected_names
@@ -1174,17 +1406,19 @@ class TypeScriptCore:
             export_stmt = src_node.parent
             if export_stmt:
                 names = self._extract_export_names_from_stmt(export_stmt)
-                self.raw_imports.append(
-                    {
-                        "source": source_path,
-                        "names": names,
-                        "line": src_node.start_point[0] + 1,
-                        "is_reexport": True,
-                        "reexport_reference_names": reexport_refs.get(
-                            export_stmt.id, []
-                        ),
-                    }
-                )
+                raw_import = {
+                    "source": source_path,
+                    "names": names,
+                    "line": src_node.start_point[0] + 1,
+                    "is_reexport": True,
+                    "reexport_reference_names": reexport_refs.get(
+                        export_stmt.id, []
+                    ),
+                    "import_kind": "reexport",
+                }
+                if _statement_is_type_only(export_stmt):
+                    raw_import["type_import"] = True
+                self.raw_imports.append(raw_import)
 
         self._scan_dynamic_raw_imports()
         self._scan_jsdoc_raw_imports()
@@ -1200,6 +1434,35 @@ class TypeScriptCore:
                 self.raw_imports.append({"source": "", "names": [], "line": 1})
             for raw_import in self.raw_imports:
                 raw_import["opaque_local_exports"] = True
+
+    def _dotted_reads(self, local: str) -> set[str]:
+        """Every ``local.X`` in values, types and qualified names."""
+        names: set[str] = set()
+        for node in self._iter_nodes(self.root_node):
+            if node.type in {"member_expression", "nested_identifier"}:
+                head = node.child_by_field_name("object")
+                tail = node.child_by_field_name("property")
+            elif node.type == "nested_type_identifier":
+                head = node.child_by_field_name("module")
+                tail = node.child_by_field_name("name")
+            elif node.type == "subscript_expression":
+                head = node.child_by_field_name("object")
+                tail = node.child_by_field_name("index")
+                if tail is not None and tail.type == "string":
+                    value = self._string_literal_value(tail)
+                    if head is not None and self._get_text(head) == local and value:
+                        names.add(value)
+                continue
+            else:
+                continue
+            if (
+                head is not None
+                and tail is not None
+                and head.type == "identifier"
+                and self._get_text(head) == local
+            ):
+                names.add(self._get_text(tail))
+        return names
 
     def _namespace_import_reads(self):
         if self._namespace_reads is None:
@@ -1301,6 +1564,8 @@ class TypeScriptCore:
         *,
         names: list[str] | None = None,
         type_only: bool = False,
+        call_node=None,
+        import_kind: str | None = None,
     ) -> None:
         import_names = ["*"] if names is None else list(names)
         key = (
@@ -1322,6 +1587,14 @@ class TypeScriptCore:
             raw_import["consume_all_exports"] = True
         if type_only:
             raw_import["type_only"] = True
+        if import_kind is not None and call_node is not None and not type_only:
+            # Only a literal module request is a load that can fail or form a
+            # load-time edge; globs, path joins and resolve calls are not.
+            raw_import["import_kind"] = import_kind
+            if _inside_try_block(call_node):
+                raw_import["guarded_import"] = True
+            if _inside_function(call_node):
+                raw_import["deferred_import"] = True
         self.raw_imports.append(raw_import)
 
     @staticmethod
@@ -1736,10 +2009,11 @@ class TypeScriptCore:
             arguments_node = node.child_by_field_name("arguments")
             if function_node is None or arguments_node is None:
                 continue
-            if not arguments_node.named_children:
+            # ``import(/* webpackChunkName: "x" */ "./x")``: a leading magic
+            # comment is a named node, not the specifier.
+            first_arg = first_call_argument(arguments_node)
+            if first_arg is None:
                 continue
-
-            first_arg = arguments_node.named_children[0]
             line = node.start_point[0] + 1
 
             if function_node.type == "import":
@@ -1753,9 +2027,17 @@ class TypeScriptCore:
                         type_only = True
                         break
                     parent = parent.parent
+                literal = first_arg.type == "string" and not _inside_type_context(
+                    node
+                )
                 for source_path in self._string_sources_from_node(first_arg):
                     self._append_raw_import(
-                        source_path, line, consume_all_exports=True, type_only=type_only
+                        source_path,
+                        line,
+                        consume_all_exports=True,
+                        type_only=type_only,
+                        call_node=node if literal else None,
+                        import_kind="dynamic",
                     )
                 continue
 
@@ -1763,8 +2045,15 @@ class TypeScriptCore:
                 function_node.type == "identifier"
                 and self._get_text(function_node) == "require"
             ):
+                literal = first_arg.type == "string"
                 for source_path in self._string_sources_from_node(first_arg):
-                    self._append_raw_import(source_path, line, consume_all_exports=True)
+                    self._append_raw_import(
+                        source_path,
+                        line,
+                        consume_all_exports=True,
+                        call_node=node if literal else None,
+                        import_kind="require",
+                    )
                 continue
 
             if function_node.type != "member_expression":

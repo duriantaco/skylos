@@ -58,6 +58,28 @@ _FORMATTED_RUN_FIELDS = frozenset(
     }
 )
 _MAINTAINER_PAYLOAD = frozenset({"repository", "organization", "enterprise", "installation"})
+# GitHub's security hardening guide names the event fields an outside
+# account can fill with free text: they "typically end with body,
+# default_branch, email, head_ref, label, message, name, page_name, ref, and
+# title". Git branch names (``workflow_run.head_branch``, listed by GitHub
+# Security Lab) are refs too. Other payload strings have a GitHub-enforced
+# format that cannot hold shell syntax: logins, node and GraphQL ids, SHAs,
+# API URLs, states and dates.
+_UNTRUSTED_FIELD_SUFFIXES = (
+    "body",
+    "default_branch",
+    "email",
+    "head_ref",
+    "label",
+    "message",
+    "name",
+    "page_name",
+    "ref",
+    "title",
+    "head_branch",
+)
+# The base side of a pull request is a branch of the target repository.
+_BASE_SIDE_SECTIONS = frozenset({"pull_request"})
 _PAYLOAD_CARRIERS = {
     "inputs": {"workflow_dispatch"},
     "issue": {"issues", "issue_comment"},
@@ -125,6 +147,10 @@ class Source:
     context: str
     severity: str
     reason: str
+    # An account without write access chooses this value. Maintainer-only
+    # values and values whose setter is not known here are not injections
+    # an outside attacker can make.
+    outsider: bool = False
 
 
 @dataclass(frozen=True)
@@ -217,7 +243,14 @@ def _trace_expression(scope: Scope, body: str, depth: int) -> list[Source]:
         return sources
     except (expressions.ExpressionError, RecursionError):
         if _LOOSE_EXPRESSION.search(body):
-            return [Source(body.strip(), "MEDIUM", "expression could not be parsed")]
+            return [
+                Source(
+                    body.strip(),
+                    "MEDIUM",
+                    "expression could not be parsed",
+                    scope.audience == _OUTSIDER,
+                )
+            ]
         return []
 
 
@@ -239,7 +272,9 @@ def _trace_reference(
 
 def _via(sources: list[Source], label: str) -> list[Source]:
     return [
-        Source(f"{label} = {source.context}", source.severity, source.reason)
+        Source(
+            f"{label} = {source.context}", source.severity, source.reason, source.outsider
+        )
         for source in sources
     ]
 
@@ -268,7 +303,14 @@ def _github_root(scope: Scope, reference: expressions.Reference, depth: int) -> 
     shape, outsider_set = _RUN_CONTEXT_FIELDS.get(second, (capability or "arbitrary", True))
     if not outsider_set:
         return []
-    return [Source(reference.span.text, _grade(shape, scope.audience), _why(scope.audience))]
+    return [
+        Source(
+            reference.span.text,
+            _grade(shape, scope.audience),
+            _why(scope.audience),
+            scope.audience == _OUTSIDER,
+        )
+    ]
 
 
 def _payload_field(scope: Scope, reference: expressions.Reference) -> list[Source]:
@@ -278,14 +320,36 @@ def _payload_field(scope: Scope, reference: expressions.Reference) -> list[Sourc
         section = names[2]
     if section in _MAINTAINER_PAYLOAD:
         return []
-    capability = _context_catalog().get(reference.key() or "", "arbitrary")
+    if section in _BASE_SIDE_SECTIONS and len(names) > 3 and names[3] == "base":
+        return []
+    key = reference.key() or ""
+    capability = _context_catalog().get(key, "arbitrary")
     if capability == "fixed":
+        return []
+    if key in _context_catalog() and not _free_text_field(names):
         return []
     audience = scope.audience
     carriers = _PAYLOAD_CARRIERS.get(section)
     if audience == _OUTSIDER and carriers is not None and not scope.events & carriers:
         audience = _WRITERS
-    return [Source(reference.span.text, _grade(capability, audience), _why(audience))]
+    return [
+        Source(
+            reference.span.text,
+            _grade(capability, audience),
+            _why(audience),
+            audience == _OUTSIDER,
+        )
+    ]
+
+
+def _free_text_field(names: list[Any]) -> bool:
+    """A payload field GitHub documents as attacker-fillable text. Fields the
+    webhook schema does not list (custom ``client_payload`` and ``inputs``
+    keys) keep their arbitrary shape."""
+    last = next((name for name in reversed(names) if name not in (None, "*")), None)
+    if not isinstance(last, str):
+        return True
+    return last.lower().endswith(_UNTRUSTED_FIELD_SUFFIXES)
 
 
 def _runner_root(scope: Scope, reference: expressions.Reference, depth: int) -> list[Source]:

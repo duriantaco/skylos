@@ -4,7 +4,11 @@ Cargo records every resolved package with its source id. Only the crates.io
 index (git or sparse protocol) is a public crates.io identity. Packages with
 no source are workspace members or path dependencies: the project's own code.
 Git sources and other registries are reported as coverage gaps and never
-queried. Cargo.lock does not record dev/build scopes.
+queried. Cargo.lock does not record dev/build scopes; when the lockfile is read
+from disk, ``cargo_dependency_kinds`` derives them from the workspace's
+manifests (``dependency_scope``: normal, build-only, optional-feature or
+dev-only). ``dependency_kind`` stays ``unknown``: the scope says why a crate is
+built, not whether a member names it directly.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
     import tomli as tomllib
 
 from skylos.core.safe_cache_io import read_text_no_symlink
+from skylos.rules.sca import cargo_dependency_kinds
 from skylos.rules.sca.lockfile_types import (
     LockfileInventory,
     LockfileLimitError,
@@ -81,7 +86,11 @@ def _source(package: dict) -> tuple[str, str | None]:
 def parse_cargo_lock(
     path: Path, *, text: str | None = None, max_packages: int = 5000
 ) -> LockfileInventory:
-    """Inventory every locked package without reading Cargo.toml or sources."""
+    """Inventory every locked package. Only the lockfile on disk is
+    classified through its workspace manifests; a ``text`` that differs from
+    it (a lockfile from another revision) is not, because the manifests on
+    disk may not match it."""
+    from_disk = text is None
     if text is None:
         text = read_text_no_symlink(
             path, max_bytes=MAX_CARGO_LOCK_BYTES, encoding="utf-8"
@@ -172,4 +181,19 @@ def parse_cargo_lock(
             }
         )
     inventory.non_registry_names = sorted(non_registry_names)
+    if not from_disk and inventory.dependencies:
+        on_disk = read_text_no_symlink(
+            path, max_bytes=MAX_CARGO_LOCK_BYTES, encoding="utf-8"
+        )
+        from_disk = on_disk == text
+    if from_disk and inventory.dependencies:
+        scopes = cargo_dependency_kinds.classify(path, packages)
+        for dependency in inventory.dependencies if scopes is not None else ():
+            index = int(dependency["package_path"][len("package[") : -1])
+            scope = scopes.get(index)
+            if scope is not None:
+                (
+                    dependency["dependency_scope"],
+                    dependency["dependency_scope_reason"],
+                ) = scope
     return inventory

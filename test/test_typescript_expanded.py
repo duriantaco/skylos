@@ -47,9 +47,15 @@ def _unused(defs, refs):
 
 class TestTSDangerRules:
     def test_eval_detected(self, tmp_path):
-        _, _, _, danger = _scan_ts(tmp_path, 'eval("alert(1)");')
+        _, _, _, danger = _scan_ts(
+            tmp_path, "export function run(code: string) { return eval(code); }"
+        )
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D201" in ids
+
+    def test_eval_of_a_constant_is_not_code_injection(self, tmp_path):
+        _, _, _, danger = _scan_ts(tmp_path, 'eval("alert(1)");')
+        assert "SKY-D201" not in {f["rule_id"] for f in danger}
 
     def test_innerhtml_detected(self, tmp_path):
         code = (
@@ -83,7 +89,7 @@ class TestTSDangerRules:
         assert "SKY-D226" not in ids
 
     def test_new_function_detected(self, tmp_path):
-        code = 'const f = new Function("return 1");'
+        code = "export const make = (body: string) => new Function('a', body);"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D202" in ids
@@ -967,6 +973,12 @@ function unusedHelper() {
 
         result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
         unused = {item["name"] for item in result.get("unused_functions", [])}
+        # An unused file reports its symbols once, as folded findings.
+        unused |= {
+            folded["name"]
+            for item in result.get("unused_files", [])
+            for folded in item.get("folded_findings", ())
+        }
 
         assert "switchSite" not in unused
         assert "set3DDensity" not in unused
@@ -1029,6 +1041,12 @@ export function DeadPanel() {
             Path(item["file"]).name for item in result.get("unused_files", [])
         }
 
+        # Unused files report their functions once, as folded findings.
+        unused |= {
+            (Path(item["file"]).name, folded["name"])
+            for item in result.get("unused_files", [])
+            for folded in item.get("folded_findings", ())
+        }
         assert ("used.tsx", "UsedPanel") not in unused
         assert ("duplicate.tsx", "UsedPanel") in unused
         assert ("dead.tsx", "DeadPanel") in unused
@@ -1066,6 +1084,12 @@ function orphanedHandler() {
 
         result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
         unused = {item["name"] for item in result.get("unused_functions", [])}
+        # An unused file reports its symbols once, as folded findings.
+        unused |= {
+            folded["name"]
+            for item in result.get("unused_files", [])
+            for folded in item.get("folded_findings", ())
+        }
 
         assert "deployDroneTo" not in unused
         assert "toggleDroneFeed" not in unused
@@ -1125,6 +1149,12 @@ function unusedLegacyAction() {
 
         result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
         unused = {item["name"] for item in result.get("unused_functions", [])}
+        # An unused file reports its symbols once, as folded findings.
+        unused |= {
+            folded["name"]
+            for item in result.get("unused_files", [])
+            for folded in item.get("folded_findings", ())
+        }
 
         assert "switchSite" not in unused
         assert "toggleFleetPanel" not in unused
@@ -1419,6 +1449,14 @@ class TestMixedRepoIntegration:
         }
         unused_imports = {item["name"] for item in result.get("unused_imports", [])}
         unused_classes = {item["name"] for item in result.get("unused_classes", [])}
+        # unused.ts is an unused file: its symbols fold into that finding.
+        for item in result.get("unused_files", []):
+            for folded in item.get("folded_findings", ()):
+                {
+                    "unused_functions": unused_functions,
+                    "unused_imports": unused_imports,
+                    "unused_classes": unused_classes,
+                }.get(folded["rule_id"], set()).add(folded["name"])
 
         assert "issue877DeadHelper" in unused_functions
         assert "issue877UnusedImport" in unused_imports
@@ -1621,6 +1659,12 @@ class TestMixedRepoIntegration:
         result = json.loads(result_json)
 
         unused_names = {f["name"] for f in result.get("unused_functions", [])}
+        # app.ts is an unused file: its functions fold into that finding.
+        unused_names |= {
+            folded["name"]
+            for item in result.get("unused_files", [])
+            for folded in item.get("folded_findings", ())
+        }
         assert "dead_python_func" in unused_names, (
             f"Python dead code not found in {unused_names}"
         )
@@ -1632,7 +1676,9 @@ class TestMixedRepoIntegration:
         from skylos.analyzer import analyze
 
         (tmp_path / "safe.py").write_text("x = 1\n")
-        (tmp_path / "dangerous.ts").write_text('eval("alert(1)");\n')
+        (tmp_path / "dangerous.ts").write_text(
+            "export const run = (code: string) => eval(code);\n"
+        )
 
         result_json = analyze(str(tmp_path), conf=10, enable_danger=True)
         result = json.loads(result_json)
@@ -1975,7 +2021,14 @@ class InternalTaskProvider implements vscode.TaskProvider<vscode.Task> {
         unused_exports = {item["name"] for item in result.get("unused_exports", [])}
 
         assert "public-api.ts" in unused_files
-        assert "makeLabel" in unused_exports
+        # The unused file's export findings fold into its SKY-E003 finding.
+        folded = {
+            folded["name"]
+            for item in result.get("unused_files", [])
+            for folded in item.get("folded_findings", ())
+        }
+        assert "makeLabel" not in unused_exports
+        assert "makeLabel" in folded
 
     def test_transitive_project_reference_does_not_keep_package_live(self, tmp_path):
         from skylos.analyzer import analyze
@@ -2028,7 +2081,14 @@ class InternalTaskProvider implements vscode.TaskProvider<vscode.Task> {
         unused_exports = {item["name"] for item in result.get("unused_exports", [])}
 
         assert "public-api.ts" in unused_files
-        assert "makeLabel" in unused_exports
+        # The unused file's export findings fold into its SKY-E003 finding.
+        folded = {
+            folded["name"]
+            for item in result.get("unused_files", [])
+            for folded in item.get("folded_findings", ())
+        }
+        assert "makeLabel" not in unused_exports
+        assert "makeLabel" in folded
 
     def test_excluded_referencing_workspace_does_not_keep_package_live(self, tmp_path):
         from skylos.analyzer import analyze
@@ -2079,7 +2139,14 @@ class InternalTaskProvider implements vscode.TaskProvider<vscode.Task> {
         unused_exports = {item["name"] for item in result.get("unused_exports", [])}
 
         assert "public-api.ts" in unused_files
-        assert "makeLabel" in unused_exports
+        # The unused file's export findings fold into its SKY-E003 finding.
+        folded = {
+            folded["name"]
+            for item in result.get("unused_files", [])
+            for folded in item.get("folded_findings", ())
+        }
+        assert "makeLabel" not in unused_exports
+        assert "makeLabel" in folded
 
     def test_exclude_prefix_does_not_match_similar_workspace_path(self, tmp_path):
         from skylos.analyzer import analyze
@@ -2886,7 +2953,7 @@ class TestTimingUnsafeComparison:
         assert "SKY-D253" not in ids
 
     def test_null_guard_does_not_hide_sensitive_comparison(self, tmp_path):
-        code = "if ((digest === expectedDigest) !== null) { proceed(); }\n"
+        code = "if ((req.body.digest === expectedDigest) !== null) { proceed(); }\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         d253 = [finding for finding in danger if finding["rule_id"] == "SKY-D253"]
         assert len(d253) == 1
@@ -2894,9 +2961,9 @@ class TestTimingUnsafeComparison:
     @pytest.mark.parametrize(
         "expression",
         (
-            "nullDigest === expectedDigest",
-            "digest === object.null",
-            'digest === "null"',
+            "req.body.nullDigest === expectedDigest",
+            "req.body.digest === object.nullDigest",
+            "req.query.digest === process.env.NULL_DIGEST",
         ),
     )
     def test_null_lookalikes_remain_timing_comparisons(self, tmp_path, expression):
@@ -2904,50 +2971,62 @@ class TestTimingUnsafeComparison:
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D253" in ids
 
+    def test_string_null_is_a_literal(self, tmp_path):
+        _, _, _, danger = _scan_ts(tmp_path, 'if (req.body.digest === "null") { proceed(); }\n')
+        assert "SKY-D253" not in {f["rule_id"] for f in danger}
+
     def test_shadowed_undefined_remains_timing_comparison(self, tmp_path):
         code = (
-            "function compare(token, undefined) {\n    return token === undefined;\n}\n"
-        )
-        _, _, _, danger = _scan_ts(tmp_path, code)
-        ids = {f["rule_id"] for f in danger}
-        assert "SKY-D253" in ids
-
-    def test_password_triple_eq(self, tmp_path):
-        code = (
-            "function verify(password: string, stored: string) {\n"
-            "    return password === stored;\n"
+            "function compare(token, undefined) {\n"
+            "    return process.env.API_TOKEN === undefined;\n"
             "}\n"
-            "verify('a', 'b');\n"
         )
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D253" in ids
 
-    def test_token_double_eq(self, tmp_path):
-        code = "if (apiToken == expectedToken) { grant(); }\n"
+    def test_password_from_request_against_stored_password(self, tmp_path):
+        code = (
+            "app.post('/login', async (req, res) => {\n"
+            "    const user = await User.findOne({ email: req.body.email });\n"
+            "    if (req.body.password === user.password) { res.send('ok'); }\n"
+            "});\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        assert [f["line"] for f in danger if f["rule_id"] == "SKY-D253"] == [3]
+
+    def test_header_token_double_eq_env(self, tmp_path):
+        code = "if (req.headers['x-token'] == process.env.API_TOKEN) { grant(); }\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D253" in ids
 
-    def test_hash_comparison(self, tmp_path):
-        code = "if (computedHash === storedHash) { return true; }\n"
+    def test_caller_value_against_env_secret(self, tmp_path):
+        code = "export function verifyKey(key: string) { return key === process.env.ADMIN_KEY; }\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D253" in ids
 
     def test_secret_not_equal(self, tmp_path):
         """!== with secret is also timing-unsafe."""
-        code = "if (secret !== expected) { throw new Error('invalid'); }\n"
+        code = "if (req.query.secret !== config.webhookSecret) { throw new Error('invalid'); }\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D253" in ids
 
-    def test_member_expr_password(self, tmp_path):
-        """user.password === input — property access."""
-        code = "if (user.password === input) { auth(); }\n"
+    @pytest.mark.parametrize(
+        "code",
+        (
+            "function verify(password: string, stored: string) { return password === stored; }\n",
+            "if (apiToken == expectedToken) { grant(); }\n",
+            "if (computedHash === storedHash) { return true; }\n",
+            "if (user.password === input) { auth(); }\n",
+            "if (hash(req.body.password) === user.passwordHash) { auth(); }\n",
+        ),
+    )
+    def test_names_alone_are_not_a_secret_compared_with_input(self, tmp_path, code):
         _, _, _, danger = _scan_ts(tmp_path, code)
-        ids = {f["rule_id"] for f in danger}
-        assert "SKY-D253" in ids
+        assert "SKY-D253" not in {f["rule_id"] for f in danger}
 
     def test_number_comparison_safe(self, tmp_path):
         """Numeric comparison should NOT trigger."""

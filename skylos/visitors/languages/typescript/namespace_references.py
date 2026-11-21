@@ -111,6 +111,7 @@ def namespace_member_reads(
     local_value_reads: set[int] | None = None,
     include_named_imports: bool = False,
     include_local_enums: bool = False,
+    include_local_namespaces: bool = False,
     member_paths: bool = False,
 ) -> dict[str, set[str | tuple[str, ...]] | None]:
     """Map namespace locals to read export names; ``None`` means opaque use.
@@ -146,6 +147,8 @@ def namespace_member_reads(
             name = node.child_by_field_name("name")
             if name is not None:
                 namespace_nodes.append(name)
+        elif include_local_namespaces and _is_module_namespace(node):
+            namespace_nodes.append(node.child_by_field_name("name"))
         if len(nodes) > _MAX_NODES:
             return {node_text(source, n): None for n in namespace_nodes}
         stack.extend(reversed(node.named_children))
@@ -213,6 +216,9 @@ def namespace_member_reads(
                 if include_local_enums and node.type == "enum_declaration"
                 else None,
             )
+        elif include_local_namespaces and _is_module_namespace(node):
+            name = node.child_by_field_name("name")
+            bind(outer, name, namespace=node_text(source, name))
         if node.type in _FUNCTIONS:
             scope = _Scope(outer, function=True)
             if node.type in {"function_expression", "generator_function"}:
@@ -498,6 +504,19 @@ def namespace_member_reads(
             if result[name] is not None:
                 shadowed_properties.update(properties)
     return result
+
+
+def _is_module_namespace(node):
+    """A top-level ``namespace N {}`` (exported or not) with a plain name."""
+    if node.type != "internal_module":
+        return False
+    name = node.child_by_field_name("name")
+    if name is None or name.type != "identifier":
+        return False
+    parent = node.parent
+    if parent is not None and parent.type == "export_statement":
+        parent = parent.parent
+    return parent is not None and parent.type == "program"
 
 
 def _destructured_keys(pattern, source):

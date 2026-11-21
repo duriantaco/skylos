@@ -29,9 +29,10 @@ def test_instantiated_generic_import_is_live_and_neighbor_remains_unused(
         "utils.ts",
         "export function helper<T, U>(state: T, action: U) { return state; }\nexport function retired() { return 1; }\n",
     )
+    # An entry file by name: an unused file's imports fold into its finding.
     write_fixture(
         tmp_path,
-        "app." + extension,
+        "index." + extension,
         'import { helper, retired } from "./utils";\nexport const reducers = { active: helper<State, Action> };\n',
     )
     result = json.loads(analyze(str(tmp_path), grep_verify=False, grep_cache=False))

@@ -2,7 +2,7 @@ id: SKY-D210
 title: TLS certificate verification turned off
 family: security
 severity: HIGH
-languages: [Python, TypeScript/JavaScript, Go]
+languages: [Python, TypeScript/JavaScript, Go, Rust]
 gate:
   full: counted
 cwe: [CWE-295]
@@ -173,6 +173,15 @@ how_skylos_decides:
     true` (by the Go engine as SKY-G210, shown as SKY-D210), except in test
     helpers that import `testing` and take a `testing.TB`, `*testing.T`, `B`,
     `F` or `M`. `_test.go` files are not scanned by the Go engine.
+  - >-
+    In Rust it reports `danger_accept_invalid_certs(true)` and
+    `danger_accept_invalid_hostnames(true)` (reqwest, native-tls), openssl
+    `set_verify(SslVerifyMode::NONE)`, and an `impl ServerCertVerifier` from
+    rustls whose `verify_server_cert` does nothing but return
+    `Ok(ServerCertVerified::assertion())`, however it is installed
+    (`with_custom_certificate_verifier`, `set_certificate_verifier`). A
+    verifier that checks anything first is not reported, and neither is code
+    under `tests/` or `benches/`, `build.rs`, or `#[cfg(test)]`/`#[test]` code.
 
 source_refs:
   - path: skylos/rules/danger/calls.py
@@ -194,6 +203,10 @@ source_refs:
     symbol: 'key.Name == "InsecureSkipVerify"'
   - path: skylos/engines/go/internal/analyzer/taint.go
     symbol: "func (a *Analyzer) isTestSupportFile"
+  - path: skylos/visitors/languages/rust/danger.py
+    symbol: "def certificate_verifier(self, node, state)"
+  - path: skylos/visitors/languages/rust/danger.py
+    symbol: "def tls_off(self, node, message, state)"
 
 fix:
   explanation: >-

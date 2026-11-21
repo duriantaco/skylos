@@ -10,7 +10,11 @@ from pathlib import Path
 
 from tree_sitter import Query, QueryCursor
 
-from skylos.core.js_ast import is_type_only, iter_import_clause_bindings
+from skylos.core.js_ast import (
+    first_call_argument,
+    is_type_only,
+    iter_import_clause_bindings,
+)
 from skylos.deadcode.confidence import export_finding_confidence
 
 from .analysis import (
@@ -28,20 +32,27 @@ from .analysis import (
     _string_node_value,
     resolve_ts_module,
 )
+from .bundler_entries import built_output_source
+from .export_facts import ModuleFacts, collect_module_facts
 from .framework import is_framework_loaded_file
+from .jsdoc_tags import has_public_api_tag, leading_comment_tags
+from .module_consumers import CONSUMER_SUFFIXES as _CONSUMER_SUFFIX_SET
+from .module_consumers import collect_module_consumers, entry_specifier
 from .resolve import _resolve_path_target
+from .text_fixtures import is_text_fixture
 
 _ALL = "*"
 _STAR = "**star**"
+# Every value export, but no type: a runtime-only whole-module use
+# (``register(ns)``, ``await import("./m")``) cannot see type exports.
+_VALUES = "**values**"
+_TYPESCRIPT_SUFFIXES = (".ts", ".tsx", ".mts", ".cts")
 _MAX_FILES = 5000
 _MAX_FILE_BYTES = 2_000_000
 _MAX_TOTAL_BYTES = 64_000_000
-_MAX_WALKED_FILES = 200_000
 _MAX_DEMAND_ITEMS = 500_000
-_MAX_HTML_BYTES = 512 * 1024
-_COMPONENT_SUFFIXES = frozenset({".vue", ".svelte", ".astro", ".mdx", ".marko"})
-_HTML_SUFFIXES = frozenset({".html", ".htm"})
-_SKIPPED_WALK_DIRECTORIES = frozenset({".git", ".hg", ".svn", "node_modules"})
+_CONSUMER_SUFFIXES = tuple(sorted(_CONSUMER_SUFFIX_SET))
+_DECLARATION_SUFFIXES = (".d.ts", ".d.mts", ".d.cts")
 _DECLARATION_TYPES = frozenset(
     {
         "function_declaration",
@@ -57,7 +68,7 @@ _DECLARATION_TYPES = frozenset(
     }
 )
 _LOAD_QUERY = """
-(call_expression arguments: (arguments . (_) @first_argument))
+(call_expression arguments: (arguments) @arguments)
 (variable_declarator
   name: (identifier) @required_name
   value: (call_expression function: (identifier) @factory (#eq? @factory "createRequire")))
@@ -65,13 +76,17 @@ _LOAD_QUERY = """
 _SPECIFIER_RE = re.compile(
     r"""(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)(['"])([^'"\r\n]+)\1"""
 )
-_INLINE_MODULE_SCRIPT_RE = re.compile(
-    r"<script\b(?P<attrs>[^>]*)>(?P<body>.*?)</script\s*>", re.IGNORECASE | re.DOTALL
-)
-_MODULE_TYPE_RE = re.compile(r"""\btype\s*=\s*["']?module\b""", re.IGNORECASE)
-_SRC_ATTRIBUTE_RE = re.compile(r"\bsrc\s*=", re.IGNORECASE)
 _URL_SPECIFIER_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 _MOCK_METHODS = frozenset({"mock", "doMock", "unmock", "dontMock", "setMock"})
+_ASSET_EXTENSIONS = frozenset(
+    {
+        ".css", ".scss", ".sass", ".less", ".styl", ".pcss", ".json", ".json5",
+        ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".bmp",
+        ".woff", ".woff2", ".ttf", ".otf", ".eot", ".mp3", ".mp4", ".webm",
+        ".wav", ".ogg", ".wasm", ".txt", ".md", ".html", ".htm", ".yaml", ".yml",
+        ".graphql", ".gql",
+    }
+)
 _QUERY_CACHE: dict[int, Query | None] = {}
 
 
@@ -88,6 +103,8 @@ class _Entry:
     original: str = ""
     type_only: bool = False
     local: str = ""
+    tagged: bool = False
+    import_local: str = ""
 
 
 @dataclass
@@ -101,6 +118,47 @@ class _Module:
     whole_module_loads: set[str] = field(default_factory=set)
     loaded_directories: set[str] = field(default_factory=set)
     dynamic_loads: dict = field(default_factory=dict)
+    augmented: set[str] = field(default_factory=set)
+    facts: ModuleFacts | None = None
+
+    def has_export_facts(self):
+        facts = self.facts
+        return bool(
+            self.entries
+            or (
+                facts is not None
+                and (
+                    facts.type_exports
+                    or facts.duplicates
+                    or facts.namespaces
+                    or facts.exported_enums
+                )
+            )
+        )
+
+
+@dataclass
+class ExportSurface:
+    """Which modules keep a private export surface, and what others request.
+
+    ``internal`` holds the modules whose exports only project files consume
+    (the E004 notion: not public, imported, not wholly consumed). ``demand``
+    maps a module to the export names requested from it; ``demand_paths``
+    keeps the member paths (``("Ns", "member")``) behind those requests.
+    ``types_public`` holds modules a types-only wildcard export publishes as
+    declarations (``"./*": {"types": "./dist/*.d.ts"}``): their type exports
+    are public, their values are not. ``enumerated`` holds modules an
+    importer uses whole (a namespace object, ``import()``, ``require()``, an
+    unparsed importer), whose every export name may be observed.
+    """
+
+    modules: dict
+    demand: dict
+    demand_paths: dict
+    internal: set
+    spelled: dict
+    types_public: set = field(default_factory=set)
+    enumerated: set = field(default_factory=set)
 
 
 def find_unused_ts_reexports(
@@ -114,10 +172,35 @@ def find_unused_ts_reexports(
     browser_entry_points=(),
     analysis_errors=(),
 ):
+    surface = build_ts_export_surface(
+        files,
+        raw_imports,
+        project_root=project_root,
+        resolver=resolver,
+        workspace_inventory=workspace_inventory,
+        exclude_folders=exclude_folders,
+        browser_entry_points=browser_entry_points,
+        analysis_errors=analysis_errors,
+    )
+    return reexport_findings(surface) if surface is not None else []
+
+
+def build_ts_export_surface(
+    files,
+    raw_imports,
+    *,
+    project_root,
+    resolver=None,
+    workspace_inventory=None,
+    exclude_folders=None,
+    browser_entry_points=(),
+    analysis_errors=(),
+):
+    """Return the project's :class:`ExportSurface`, or ``None`` to abstain."""
     if not project_root or not raw_imports:
-        return []
+        return None
     try:
-        return _find(
+        return _build_surface(
             files,
             raw_imports,
             project_root=str(project_root),
@@ -128,10 +211,39 @@ def find_unused_ts_reexports(
             analysis_errors=analysis_errors,
         )
     except (_Declined, OSError, RecursionError, UnicodeError, ValueError):
-        return []
+        return None
 
 
-def _find(
+def reexport_findings(surface, held_locals=None):
+    """Unrequested re-export entries of internal modules.
+
+    ``held_locals`` maps a module to import bindings named in the shape of a
+    requested value export; re-exporting such a binding lets that export's
+    callers name it, so the entry stays.
+    """
+    findings = []
+    for path in sorted(surface.internal):
+        module = surface.modules[path]
+        names = surface.demand[path]
+        held = (held_locals or {}).get(path, ())
+        for entry in module.entries:
+            if entry.kind == "star" or entry.tagged:
+                continue
+            if entry.type_only and path in surface.types_public:
+                continue
+            if entry.import_local and entry.import_local in held:
+                continue
+            if entry.exported in names:
+                continue
+            if _STAR in names and entry.exported != "default":
+                continue
+            if _VALUES in names and not entry.type_only:
+                continue
+            findings.append(_finding(surface.spelled.get(path, path), entry))
+    return findings
+
+
+def _build_surface(
     files,
     raw_imports,
     *,
@@ -145,19 +257,26 @@ def _find(
     exclude_root = _resolve_exclude_root(files, project_root)
     analysed = _analysed_ts_files(files, exclude_folders, exclude_root)
     if not analysed or len(analysed) > _MAX_FILES:
-        return []
+        return None
     error_files = _error_files(analysis_errors)
     modules = _parse_modules(analysed, error_files)
-    if not any(module.entries for module in modules.values()):
-        return []
-    if _has_unparsed_module_consumers(exclude_root, exclude_folders):
-        return []
+    if not any(module.has_export_facts() for module in modules.values()):
+        return None
+    consumers = _module_consumers(exclude_root, exclude_folders)
 
     def resolve(source, importer):
         resolved = resolve_ts_module(source, importer, resolver)
         if resolved is None:
             return None
         return os.path.realpath(resolved)
+
+    external = _external_dependency_names(files, project_root, exclude_folders)
+
+    def note_unresolved(source):
+        # A declared npm dependency (``next/server``) resolves into
+        # node_modules, so its last segment names no project module.
+        if source.startswith((".", "/", "#")) or _package_name(source) not in external:
+            unresolved_tails.update(_specifier_tails(source))
 
     unresolved_tails = set()
     demand_seeds = []
@@ -166,6 +285,9 @@ def _find(
         os.path.realpath(str(path)): items for path, items in raw_imports.items()
     }
     for importer in sorted(set(imports_by_file) | set(modules)):
+        if importer.lower().endswith(_CONSUMER_SUFFIXES):
+            # Read below from the consumer's own text.
+            continue
         module = modules.get(importer)
         conservative = module is None or module.has_error
         sources = [
@@ -175,6 +297,12 @@ def _find(
             sources.extend(
                 (source, None) for source in sorted(module.whole_module_loads)
             )
+            # ``declare module "./x"`` augments that module's declarations.
+            for source in sorted(module.augmented):
+                target = resolve(source, importer)
+                if target is not None:
+                    importers[target].add(importer)
+                    demand_seeds.append((target, (_ALL,)))
         if module is not None and module.has_error:
             recorded = {source for source, _item in sources}
             sources.extend(
@@ -188,7 +316,7 @@ def _find(
             if target is None:
                 built = _built_output_source(source, importer)
             if target is None and built is None:
-                unresolved_tails.update(_specifier_tails(source))
+                note_unresolved(source)
                 continue
             if target is None:
                 target = built
@@ -199,13 +327,36 @@ def _find(
                 demand_seeds.extend(
                     (target, path) for path in _item_paths(item, module, source)
                 )
+    entry_scripts = set()
+
+    def request_from_consumer(consumer, source, paths):
+        target = resolve(source, consumer)
+        built = _built_output_source(source, consumer) if target is None else None
+        if target is None and built is None:
+            note_unresolved(source)
+            return
+        target = target or built
+        importers[target].add(consumer)
+        demand_seeds.extend((target, path) for path in paths)
+
+    for consumer_path, consumer in sorted(consumers.consumers.items()):
+        for item in consumer.imports:
+            # A consumer's import and re-export both request their names.
+            paths = _requested_paths(item)
+            request_from_consumer(consumer_path, item.get("source", ""), paths)
+        for source in sorted(consumer.held):
+            request_from_consumer(consumer_path, source, [(_ALL,)])
+        for value in sorted(consumer.entries):
+            target = resolve(entry_specifier(value), consumer_path)
+            if target is not None:
+                entry_scripts.add(target)
     for module in modules.values():
         for entry in module.entries:
             if entry.kind == "alias" or entry.target is None:
                 continue
             resolved = resolve(entry.target, module.path)
             if resolved is None:
-                unresolved_tails.update(_specifier_tails(entry.target))
+                note_unresolved(entry.target)
             entry.target = resolved
             if resolved is not None:
                 importers[resolved].add(module.path)
@@ -218,6 +369,7 @@ def _find(
         exclude_folders=exclude_folders,
         browser_entry_points=browser_entry_points,
     )
+    public.update(entry_scripts)
     loaded_directories = {
         directory
         for module in modules.values()
@@ -228,42 +380,70 @@ def _find(
         for path in analysed
         if any(_inside(path, directory) for directory in loaded_directories)
     )
-    demand = _propagate(modules, analysed, public, importers, demand_seeds)
+    demand, demand_paths = _propagate(
+        modules, analysed, public, importers, demand_seeds
+    )
     candidates = {
         path
         for path, module in modules.items()
-        if module.entries
+        if module.has_export_facts()
         and path not in public
         and importers.get(path)
         and _ALL not in demand[path]
         and not module.commonjs_export
-        and not path.endswith(".d.ts")
+        and not path.endswith(_DECLARATION_SUFFIXES)
         and not _is_ts_entry_or_infra(path)
         and not is_framework_loaded_file(path)
+        and not is_text_fixture(path)
         and not _names_module(path, unresolved_tails)
     }
-    if not candidates:
-        return []
-    from .file_references import collect_ts_path_references
+    if candidates:
+        from .file_references import collect_ts_path_references
 
-    path_roots, path_edges = collect_ts_path_references(
-        exclude_root, analysed, candidates, exclude_folders=exclude_folders
-    )
-    candidates -= set(path_roots)
-    candidates -= {target for target, sources in path_edges.items() if sources}
+        path_roots, path_edges = collect_ts_path_references(
+            exclude_root, analysed, candidates, exclude_folders=exclude_folders
+        )
+        candidates -= set(path_roots)
+        candidates -= {target for target, sources in path_edges.items() if sources}
     spelled = {os.path.realpath(str(file)): str(file) for file in files}
-    findings = []
-    for path in sorted(candidates):
-        names = demand[path]
-        for entry in modules[path].entries:
-            if entry.kind == "star":
-                continue
-            if entry.exported in names:
-                continue
-            if _STAR in names and entry.exported != "default":
-                continue
-            findings.append(_finding(spelled.get(path, path), entry))
-    return findings
+    types_public = _types_public_modules(
+        files, analysed, project_root=project_root, exclude_folders=exclude_folders
+    )
+    enumerated = _enumerated_modules(modules, demand_seeds, public)
+    return ExportSurface(
+        modules, demand, demand_paths, candidates, spelled, types_public, enumerated
+    )
+
+
+def _enumerated_modules(modules, demand_seeds, public):
+    """Internal modules an importer uses whole, and what they forward whole.
+
+    ``Object.keys(await import("./barrel"))`` observes every name of the
+    barrel, including those its ``export *`` and ``export * as ns`` entries
+    forward from other modules. A public module's names are its API whoever
+    reads them, so a whole-module use of a package entry
+    (``vi.spyOn(ns, "x")`` in a test) does not count.
+    """
+    pending = [
+        target
+        for target, path in demand_seeds
+        if path[0] in {_ALL, _VALUES} and target not in public
+    ]
+    enumerated = set()
+    while pending:
+        path = pending.pop()
+        if path in enumerated or path in public:
+            continue
+        enumerated.add(path)
+        module = modules.get(path)
+        if module is None:
+            continue
+        pending.extend(
+            entry.target
+            for entry in module.entries
+            if entry.kind in {"star", "namespace"} and entry.target is not None
+        )
+    return enumerated
 
 
 def _finding(path, entry):
@@ -321,7 +501,28 @@ def _item_paths(item, module, source):
             for names in loads
         ):
             return [(name,) for names in loads for name in names]
-    return _requested_paths(item)
+    paths = _requested_paths(item)
+    if paths == [(_ALL,)] and module is not None and _runtime_whole_load(item, module):
+        reads = item.get("namespace_dotted_reads") or ()
+        return [(_VALUES,), *((name,) for name in reads if _known_name(name))]
+    return paths
+
+
+def _runtime_whole_load(item, module):
+    """A TypeScript importer's whole-module use that only runtime code sees.
+
+    An opaque ``import * as ns`` (its ``ns.X`` reads, types included, are
+    kept separately), ``import()``, ``require()`` and import globs expose
+    values only. JavaScript importers may still name types in JSDoc, and
+    type-only or mixed imports keep the whole surface.
+    """
+    if not module.path.endswith(_TYPESCRIPT_SUFFIXES):
+        return False
+    if not item.get("consume_all_exports") or item.get("type_only"):
+        return False
+    if "namespace_dotted_reads" in item:
+        return item.get("names") == []
+    return item.get("names") == ["*"] and not item.get("namespace_members")
 
 
 def _requested_paths(item):
@@ -357,6 +558,57 @@ def _known_name(name):
     return len(parts) <= 2 and all(part == "*" or part.isidentifier() for part in parts)
 
 
+_DEPENDENCY_FIELDS = (
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+)
+_LOCAL_VERSION_PREFIXES = ("workspace:", "file:", "link:", "portal:")
+
+
+def _external_dependency_names(files, project_root, exclude_folders):
+    """npm dependency names that resolve outside the project.
+
+    Workspace packages and ``workspace:``/``file:``/``link:`` specs can be
+    project sources, so they are not external.
+    """
+    roots = {
+        os.path.realpath(str(root))
+        for root in _discover_package_roots_from_files(
+            files, project_root, exclude_folders=exclude_folders
+        )
+    }
+    roots.add(os.path.realpath(project_root))
+    declared, local = set(), set()
+    for root in roots:
+        data = _read_json_file(os.path.join(root, "package.json"))
+        if not isinstance(data, dict):
+            continue
+        name = data.get("name")
+        if isinstance(name, str):
+            local.add(name)
+        for field_name in _DEPENDENCY_FIELDS:
+            dependencies = data.get(field_name)
+            if not isinstance(dependencies, dict):
+                continue
+            for dependency, version in dependencies.items():
+                if isinstance(version, str) and version.startswith(
+                    _LOCAL_VERSION_PREFIXES
+                ):
+                    local.add(dependency)
+                else:
+                    declared.add(dependency)
+    return declared - local
+
+
+def _package_name(specifier):
+    parts = specifier.split("/")
+    if specifier.startswith("@") and len(parts) > 1:
+        return "/".join(parts[:2])
+    return parts[0]
+
+
 def _specifier_tails(source):
     if source.startswith("node:") or _URL_SPECIFIER_RE.match(source):
         return set()
@@ -368,6 +620,10 @@ def _specifier_tails(source):
     tail = cleaned.rsplit("/", 1)[-1].lstrip("@#~")
     if not tail or tail in {".", ".."}:
         return {"index"}
+    if os.path.splitext(tail)[1].lower() in _ASSET_EXTENSIONS:
+        # ``@pkg/index.css`` or ``./logo.svg`` loads an asset, never a
+        # module named ``index`` or ``logo``.
+        return set()
     return {tail, tail.split(".", 1)[0]}
 
 
@@ -399,6 +655,7 @@ def _names_module(path, tails):
 
 def _propagate(modules, analysed, public, importers, seeds):
     demand = defaultdict(set)
+    demand_paths = defaultdict(set)
     seen = set()
     pending = deque()
 
@@ -409,6 +666,7 @@ def _propagate(modules, analysed, public, importers, seeds):
         if len(seen) > _MAX_DEMAND_ITEMS:
             raise _Declined
         demand[file].add(path[0])
+        demand_paths[file].add(path)
         pending.append((file, path))
 
     for file in public:
@@ -430,6 +688,17 @@ def _propagate(modules, analysed, public, importers, seeds):
                     continue
                 _forward(entry, (), request)
             continue
+        if name == _VALUES:
+            for entry in module.entries:
+                if entry.type_only or entry.target is None or entry.kind == "alias":
+                    continue
+                if entry.kind == "star":
+                    request(entry.target, (_STAR,))
+                elif entry.kind == "namespace":
+                    request(entry.target, (_VALUES,))
+                else:
+                    request(entry.target, (entry.original,))
+            continue
         matched = [entry for entry in module.entries if entry.exported == name]
         for entry in matched:
             _forward(entry, tuple(tail), request)
@@ -438,7 +707,7 @@ def _propagate(modules, analysed, public, importers, seeds):
         for entry in module.entries:
             if entry.kind == "star" and entry.target is not None:
                 request(entry.target, path)
-    return demand
+    return demand, demand_paths
 
 
 def _forward(entry, tail, request):
@@ -501,6 +770,26 @@ def _public_modules(
     return public
 
 
+def _types_public_modules(files, analysed, *, project_root, exclude_folders):
+    from .package_exports import types_only_pattern_files
+
+    package_roots = {
+        os.path.realpath(str(root))
+        for root in _discover_package_roots_from_files(
+            files, project_root, exclude_folders=exclude_folders
+        )
+    }
+    package_roots.add(os.path.realpath(project_root))
+    found = set()
+    for package_root in sorted(package_roots):
+        data = _read_json_file(os.path.join(package_root, "package.json"))
+        if isinstance(data, dict) and isinstance(data.get("exports"), dict):
+            found |= types_only_pattern_files(
+                package_root, data["exports"], analysed, project_root
+            )
+    return found
+
+
 def _unresolved_entry_stems(package_root):
     manifest = os.path.join(package_root, "package.json")
     if not os.path.isfile(manifest):
@@ -524,6 +813,8 @@ def _file_stem(path):
 def _target_resolves(package_root, target):
     if _resolve_path_target(package_root, target) is not None:
         return True
+    if built_output_source(package_root, target) is not None:
+        return True
     for declaration, runtime in ((".d.mts", ".mjs"), (".d.cts", ".cjs")):
         if target.endswith(declaration):
             converted = target[: -len(declaration)] + runtime
@@ -535,53 +826,18 @@ def _inside(path, directory):
     return path == directory or path.startswith(directory.rstrip(os.sep) + os.sep)
 
 
-def _has_unparsed_module_consumers(root, exclude_folders):
+def _module_consumers(root, exclude_folders):
+    """Imports of Vue/Svelte/Astro, HTML module scripts, MDX and Marko files.
+
+    A consumer that cannot be read, or a project past the walk budget,
+    declines the surface: its requests cannot be bounded.
+    """
     if root is None:
         raise _Declined
-    from skylos.core.file_discovery import should_exclude_path
-
-    root_path = Path(root)
-    walked = 0
-    for directory, subdirectories, names in os.walk(root_path):
-        current = Path(directory)
-        kept = []
-        for name in subdirectories:
-            if name in _SKIPPED_WALK_DIRECTORIES:
-                continue
-            if exclude_folders and should_exclude_path(
-                current / name, root_path, exclude_folders
-            ):
-                continue
-            kept.append(name)
-        subdirectories[:] = kept
-        for name in names:
-            walked += 1
-            if walked > _MAX_WALKED_FILES:
-                return True
-            suffix = os.path.splitext(name)[1].lower()
-            if suffix in _COMPONENT_SUFFIXES:
-                return True
-            if suffix in _HTML_SUFFIXES and _html_has_inline_module_imports(
-                current / name
-            ):
-                return True
-    return False
-
-
-def _html_has_inline_module_imports(path):
-    try:
-        if path.stat().st_size > _MAX_HTML_BYTES:
-            return True
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return True
-    for match in _INLINE_MODULE_SCRIPT_RE.finditer(text):
-        attrs = match.group("attrs")
-        if not _MODULE_TYPE_RE.search(attrs) or _SRC_ATTRIBUTE_RE.search(attrs):
-            continue
-        if "import" in match.group("body"):
-            return True
-    return False
+    consumers = collect_module_consumers(root, exclude_folders)
+    if not consumers.complete:
+        raise _Declined
+    return consumers
 
 
 def _parse_modules(analysed, error_files):
@@ -607,6 +863,8 @@ def _parse_modules(analysed, error_files):
             }
         _collect_loads(source, root, parser.language, module)
         _collect_exports(source, root, module)
+        if not module.has_error:
+            module.facts = collect_module_facts(source, root)
         modules[path] = module
     return modules
 
@@ -634,8 +892,13 @@ def _collect_loads(source, root, language, module):
     for name in captures.get("required_name", ()):
         loader_names.add(_text(source, name))
     directory = os.path.dirname(module.path)
-    for first in captures.get("first_argument", ()):
-        call = first.parent.parent
+    for arguments in captures.get("arguments", ()):
+        # A leading magic comment (``import(/* webpackChunkName */ "./x")``)
+        # is a named node, not the first argument.
+        first = first_call_argument(arguments)
+        if first is None:
+            continue
+        call = arguments.parent
         literal = _literal_text(source, first)
         if (
             literal is not None
@@ -678,7 +941,62 @@ def _is_recorded_load(source, callee):
     return callee.type == "identifier" and _text(source, callee) == "require"
 
 
+_TYPE_POSITION_PARENTS = frozenset(
+    {
+        "type_annotation",
+        "type_arguments",
+        "type_alias_declaration",
+        "union_type",
+        "intersection_type",
+        "array_type",
+        "tuple_type",
+        "parenthesized_type",
+        "readonly_type",
+        "conditional_type",
+        "lookup_type",
+        "function_type",
+        "constraint",
+        "default_type",
+        "extends_type_clause",
+    }
+)
+
+
+def _type_import_member(source, call):
+    """``["X"]`` for ``import("./m").X`` used as a type, else ``None``.
+
+    The same spelling in a value position (``import("./m").then``) reads the
+    promise, not the module, so only type positions narrow the request.
+    """
+    function = call.child_by_field_name("function")
+    parent = call.parent
+    if (
+        function is None
+        or function.type != "import"
+        or parent is None
+        or parent.type != "member_expression"
+        or parent.child_by_field_name("object") != call
+    ):
+        return None
+    member = parent.child_by_field_name("property")
+    if member is None or member.type != "property_identifier":
+        return None
+    top = parent
+    while (
+        top.parent is not None
+        and top.parent.type == "member_expression"
+        and top.parent.child_by_field_name("object") == top
+    ):
+        top = top.parent
+    if top.parent is None or top.parent.type not in _TYPE_POSITION_PARENTS:
+        return None
+    return [_text(source, member)]
+
+
 def _destructured_names(source, call):
+    type_member = _type_import_member(source, call)
+    if type_member is not None:
+        return type_member
     value = call
     parent = call.parent
     if parent is not None and parent.type == "await_expression":
@@ -816,6 +1134,14 @@ def _collect_exports(source, root, module):
     bindings = {}
     declared = set()
     for statement in root.named_children:
+        if statement.type == "ambient_declaration":
+            for child in statement.named_children:
+                if child.type == "module":
+                    augmented = _string_node_value(
+                        source, child.child_by_field_name("name")
+                    )
+                    if augmented:
+                        module.augmented.add(augmented)
         if statement.type == "import_statement":
             for child in statement.named_children:
                 if child.type == "import_require_clause":
@@ -845,6 +1171,7 @@ def _collect_exports(source, root, module):
     local_exports = defaultdict(list)
     defaults = []
     exported_declarations = set()
+    tagged_spans = []
     for statement in root.named_children:
         if statement.type == "expression_statement" and _is_commonjs_export(
             source, statement
@@ -852,6 +1179,10 @@ def _collect_exports(source, root, module):
             module.commonjs_export = True
         if statement.type != "export_statement":
             continue
+        if has_public_api_tag(leading_comment_tags(source, statement)):
+            tagged_spans.append(
+                (statement.start_point[0] + 1, statement.end_point[0] + 1)
+            )
         if any(child.type == "=" for child in statement.children):
             module.commonjs_export = True
             continue
@@ -926,6 +1257,8 @@ def _collect_exports(source, root, module):
     module.own_exports.update(
         entry.exported for entry in module.entries if entry.kind != "alias"
     )
+    for entry in module.entries:
+        entry.tagged = any(start <= entry.line <= end for start, end in tagged_spans)
 
 
 def _export_names(local, exports, exported_declarations):
@@ -938,7 +1271,14 @@ def _export_names(local, exports, exported_declarations):
 def _add_import_entry(module, exported, line, type_only, specifier, binding):
     if binding.kind == "namespace":
         module.entries.append(
-            _Entry(exported, line, "namespace", target=specifier, type_only=type_only)
+            _Entry(
+                exported,
+                line,
+                "namespace",
+                target=specifier,
+                type_only=type_only,
+                import_local=binding.local,
+            )
         )
         return
     module.entries.append(
@@ -949,6 +1289,7 @@ def _add_import_entry(module, exported, line, type_only, specifier, binding):
             target=specifier,
             original=binding.imported,
             type_only=type_only or binding.type_only,
+            import_local=binding.local,
         )
     )
 

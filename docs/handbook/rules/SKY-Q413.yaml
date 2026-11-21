@@ -1,0 +1,98 @@
+id: SKY-Q413
+title: Referenced optional peer dependency
+family: quality
+severity: LOW
+languages:
+- TypeScript
+- JavaScript
+- package.json
+gate:
+  full: counted
+  note: Reported as quality; counts toward max_quality.
+run_with: '`skylos . --quality`'
+what_it_is: A package marks a peer dependency optional in peerDependenciesMeta, but its own
+  source imports that peer with a static runtime import. The package lists it in neither
+  dependencies nor devDependencies.
+why_it_matters: Consumers may legitimately skip an optional peer. A static import then fails
+  when the module loads, so the optional contract is broken for exactly those consumers.
+flagged_example:
+  language: typescript
+  expect_file: src/index.ts
+  expect_line: 1
+  files:
+  - filename: package.json
+    language: json
+    code: |
+      {
+        "name": "ui-kit",
+        "peerDependencies": {"react": "^18.0.0"},
+        "peerDependenciesMeta": {"react": {"optional": true}}
+      }
+  - filename: src/index.ts
+    code: |
+      import React from "react";
+      export const version = React.version;
+not_flagged_example:
+  language: typescript
+  files:
+  - filename: package.json
+    language: json
+    code: |
+      {
+        "name": "ui-kit",
+        "peerDependencies": {"react": "^18.0.0"},
+        "peerDependenciesMeta": {"react": {"optional": true}}
+      }
+  - filename: src/index.ts
+    code: |
+      export async function loadReact() {
+        try {
+          return await import("react");
+        } catch {
+          return null;
+        }
+      }
+  why: The optional peer is loaded lazily, and the caller handles its absence.
+how_skylos_decides:
+- Reads peerDependencies and peerDependenciesMeta from the owning package.json, ignoring a
+  peer that is also in dependencies or devDependencies.
+- Considers only static runtime import and export-from declarations in owned sources,
+  components and MDX. Type-only imports, declaration files and dynamic import or require
+  calls stay quiet.
+- Reports LOW once per peer at its first import. Packages with subpath exports are skipped,
+  because a framework-specific entry point may require the peer; the receipt lists them under
+  optional_peer_limitations.
+source_refs:
+- path: skylos/rules/quality/npm_dependencies.py
+  symbol: def scan_npm_dependencies(
+- path: test/test_npm_dependency_usage.py
+  symbol: def test_static_import_of_optional_peer_is_reported
+fix:
+  explanation: Load the peer lazily and handle its absence, move the import to a subpath entry
+    point, or make the package a regular dependency.
+  language: typescript
+  filename: src/index.ts
+  code: |
+    export async function loadReact() {
+      try {
+        return await import("react");
+      } catch {
+        return null;
+      }
+    }
+false_alarms_and_suppression:
+  misfires:
+  - A module that is only ever loaded by consumers that install the peer (for example through
+    a deep import path) is still reported when the package has no subpath exports.
+  suppress:
+  - check: config
+    text: Set `[tool.skylos] ignore = ["SKY-Q413"]` to disable this rule project-wide.
+  - check: inline
+    text: >-
+      Put the marker on the reported import line.
+    language: typescript
+    code: |
+      import React from "react"; // skylos: ignore[SKY-Q413] only loaded by React consumers
+related:
+- SKY-Q408
+- SKY-U005

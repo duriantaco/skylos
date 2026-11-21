@@ -17,6 +17,7 @@ from math import log2
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote
 
+from skylos.core.message_catalogs import is_message_catalog_path
 from skylos.rules import secret_shapes
 from skylos.rules.secret_decoding import decode_provider_views
 from skylos.rules.secret_providers import (
@@ -41,7 +42,9 @@ __all__ = [
     "is_client_exposure_context",
     "is_provider_only_secret_name",
     "is_public_client_env_name",
+    "is_test_secret_path",
     "iter_sensitive_client_env_references",
+    "matches_provider_pattern",
     "scan_ctx",
 ]
 
@@ -247,6 +250,29 @@ def is_secret_scan_name(name: str) -> bool:
         or lowered.startswith("dockerfile.")
         or is_aws_credential_path(name)
         or is_provider_only_secret_name(name)
+    )
+
+
+def is_test_secret_path(rel_path: str) -> bool:
+    """Test code and fixtures (Python ``tests/``, ``*.test.ts``,
+    ``__tests__/``, Cypress and end-to-end suites, ``*_test.go``,
+    ``testdata/``), where only provider-shaped secrets are reported."""
+    normalized_path = str(rel_path).replace("\\", "/")
+    return bool(
+        IS_TEST_PATH.search(normalized_path)
+        or _JS_TEST_PATH.search(normalized_path)
+        or _TEST_FIXTURE_DIR.search(normalized_path)
+        or normalized_path.endswith("_test.go")
+        or _RUST_TEST_FILE.search(normalized_path)
+    )
+
+
+def matches_provider_pattern(text: str) -> bool:
+    """The text holds a provider-shaped credential (AWS, GitHub, Stripe, ...)."""
+    return any(
+        not _provider_value_is_placeholder(name, match.group(0))
+        for name, pattern in PROVIDER_PATTERNS
+        for match in pattern.finditer(text)
     )
 
 
@@ -520,6 +546,28 @@ _DOCUMENTED_EXAMPLE_CREDENTIALS = frozenset(
 _PUBLIC_PROTOCOL_IDENTIFIERS = frozenset(
     {"urn:ietf:params:oauth:grant-type:jwt-bearer"}  # RFC 7523 section 2.1
 )
+# IETF-registered URNs (RFC 3553) name protocol parameters such as OAuth token
+# types (RFC 8693); they are published identifiers, never credentials.
+_IETF_PARAMS_URN = re.compile(r"^urn:ietf:params:[a-z0-9.-]+(?::[A-Za-z0-9._-]+)+$")
+
+
+# In test code only: a real credential's payload is random, so a
+# provider-shaped token made mostly of long keyboard runs
+# (``sk_test_1234567890abcdefghijklmnop``) is a fixture. Outside tests such
+# tokens stay findings (see test_ordered_runs_do_not_hide_bare_secret_lookalikes).
+_PLACEHOLDER_RUN_MIN_CHARACTERS = 16
+_PLACEHOLDER_RUN_MIN_SHARE = 0.6
+
+
+def _is_ordered_run_placeholder(token: str) -> bool:
+    alphanumeric = "".join(character for character in token if character.isalnum())
+    if not alphanumeric:
+        return False
+    _, removed = _without_long_ordered_ascii_runs(alphanumeric)
+    return (
+        removed >= _PLACEHOLDER_RUN_MIN_CHARACTERS
+        and removed >= _PLACEHOLDER_RUN_MIN_SHARE * len(alphanumeric)
+    )
 
 
 def _is_obvious_placeholder(token: str) -> bool:
@@ -678,11 +726,16 @@ _ORDERED_ASCII_RUN_MIN_LENGTH = 8
 _ORDERED_CHARACTER_SET_PUNCTUATION = frozenset("-._~+/=")
 
 IS_TEST_PATH = re.compile(r"(^|/)(tests?(/|$)|test_[^/]+\.py$)")
-# JS/TS test files and fixtures (``*.test.ts``, ``__tests__/``): like Python
-# tests, they hold fixture tokens, so only provider-shaped secrets count.
+# Rust's conventional names for test-only module files
+# (``#[cfg(test)] mod tests;``): ``tests.rs``, ``test.rs``, ``*_tests.rs``,
+# ``*_test.rs``.
+_RUST_TEST_FILE = re.compile(r"(^|/)(?:[^/]*_)?tests?\.rs$")
+# JS/TS test files and fixtures (``*.test.ts``, ``__tests__/``, Cypress and
+# end-to-end suites): like Python tests, they hold fixture tokens, so only
+# provider-shaped secrets count.
 _JS_TEST_PATH = re.compile(
-    r"(^|/)(__tests__|__mocks__|__fixtures__)/"
-    r"|\.(test|spec)\.[cm]?[jt]sx?$"
+    r"(^|/)(__tests__|__mocks__|__fixtures__|cypress|e2e)/"
+    r"|\.(test|spec|cy)\.[cm]?[jt]sx?$"
 )
 # Go's test-fixture directory: the go tool ignores ``testdata`` ("go help
 # packages"), and Rust and Python projects use the name the same way. Its
@@ -734,7 +787,11 @@ def _without_long_ordered_ascii_runs(value: str) -> tuple[str, int]:
             domain is not None
             and end < len(value)
             and _ordered_ascii_domain(value[end]) == domain
-            and ord(value[end]) == ord(value[end - 1]) + 1
+            and (
+                ord(value[end]) == ord(value[end - 1]) + 1
+                # ``1234567890``: digits in keyboard order end with 0.
+                or (value[end - 1] == "9" and value[end] == "0")
+            )
         ):
             end += 1
 
@@ -785,6 +842,24 @@ def _bare_candidate_is_complete_ordered_character_set(
         line_content[left + 1 : right],
         min_entropy=min_entropy,
     )
+
+
+def _rust_test_lines(file_lines, abs_path=None) -> frozenset[int]:
+    """Lines of ``#[cfg(test)]`` code and test functions in a Rust file; every
+    line when the parent module declares the file ``#[cfg(test)] mod name;``."""
+    try:
+        from skylos.visitors.languages.rust.test_regions import (
+            declared_test_module,
+            test_line_numbers,
+        )
+    except ImportError:  # pragma: no cover - tree-sitter Rust unavailable
+        return frozenset()
+    try:
+        if abs_path and declared_test_module(abs_path):
+            return frozenset(range(1, len(file_lines) + 2))
+        return test_line_numbers("".join(file_lines).encode("utf-8"))
+    except Exception:  # noqa: BLE001 - no test scope is the safe default
+        return frozenset()
 
 
 def _mask(tok):
@@ -844,10 +919,15 @@ def _keyed_value_is_not_secret(key: str, value: str) -> bool:
     )
 
 
-def _keyed_value_is_reader_text(key: str, value: str) -> bool:
-    """A sentence written for a reader, or prose under a key whose last word
-    says it describes the credential. Its long tokens stay scanned on their
-    own."""
+def _keyed_value_is_reader_text(
+    key: str, value: str, *, message_catalog: bool = False
+) -> bool:
+    """A sentence written for a reader, prose under a key whose last word
+    says it describes the credential, or, in a translation catalog, any
+    natural-language text (labels and single words included). Its long
+    tokens stay scanned on their own."""
+    if message_catalog and secret_shapes.is_catalog_text(value):
+        return not _has_random_component(value)
     return secret_shapes.is_message_sentence(value) or (
         secret_shapes.describes_its_key(key, value)
         and not _has_random_component(value)
@@ -941,8 +1021,48 @@ def _complete_token_label_literal(
     return _label_literal_ends_after_line(file_lines, line_number, comment_prefix)
 
 
+_DOCUMENTATION_SUFFIXES = (".md", ".markdown", ".mdx", ".rst", ".txt", ".adoc")
+_LINE_COMMENT_OPENERS = ("//", "#", "/*", "*", "<!--", "--", ";")
+
+
+# ``"<source text>": "<translation>"``: a catalog entry keyed by its message.
+_CATALOG_ENTRY_KEY_RE = re.compile(
+    r"""\s*(?P<q>["'])(?P<key>(?:\\.|(?!(?P=q))[^\\])*)(?P=q)\s*:"""
+)
+_MESSAGE_ID_MIN_WORDS = 3
+
+
+def _is_catalog_message_id_text(line_content: str, start: int, end: int) -> bool:
+    """In a translation catalog keyed by source text (gettext style), a token
+    inside that message id, or copied from it into the translation, is part
+    of the message shown to every reader. A token only in the translation,
+    or under an identifier key, stays scanned."""
+    match = _CATALOG_ENTRY_KEY_RE.match(line_content)
+    if match is None:
+        return False
+    key = match.group("key")
+    if len(key.split()) < _MESSAGE_ID_MIN_WORDS:
+        return False
+    key_start, key_end = match.span("key")
+    if key_start <= start and end <= key_end:
+        return True
+    return start >= match.end() and line_content[start:end] in key
+
+
+def _is_comment_or_documentation_line(line_content: str, rel_name: str) -> bool:
+    """The line is a whole-line comment, or the file is documentation."""
+    if rel_name.lower().endswith(_DOCUMENTATION_SUFFIXES):
+        return True
+    return line_content.lstrip().startswith(_LINE_COMMENT_OPENERS)
+
+
 def _keyed_generic_candidates(
-    line_content: str, *, rel_name: str = "", file_lines=None, line_number=0
+    line_content: str,
+    *,
+    rel_name: str = "",
+    file_lines=None,
+    line_number=0,
+    message_catalog: bool = False,
 ):
     candidates = []
     keyed_spans = []
@@ -951,7 +1071,9 @@ def _keyed_generic_candidates(
         keyed_start = keyed_match.start("val")
         keyed_end = keyed_match.end("val")
         key = _keyed_match_name(keyed_match)
-        if keyed_token in _PUBLIC_PROTOCOL_IDENTIFIERS:
+        if keyed_token in _PUBLIC_PROTOCOL_IDENTIFIERS or _IETF_PARAMS_URN.match(
+            keyed_token
+        ):
             continue
         if secret_shapes.is_location_value(key, keyed_token):
             continue  # a URL: its own parts are scanned as bare tokens
@@ -962,9 +1084,16 @@ def _keyed_generic_candidates(
             # A file path, or a URL without credentials. A secret-named URL
             # with a random component (a capability link) stays reported.
             continue
-        if _keyed_value_is_reader_text(key, keyed_token):
+        if _keyed_value_is_reader_text(
+            key, keyed_token, message_catalog=message_catalog
+        ):
             continue
         keyed_spans.append((keyed_start, keyed_end))
+        if secret_shapes.is_interpolated_expression(keyed_token) or (
+            secret_shapes.is_password_hash(keyed_token)
+            and _is_comment_or_documentation_line(line_content, rel_name)
+        ):
+            continue
         if _keyed_value_is_not_secret(key, keyed_token) or (
             secret_shapes.describes_token_label(key, keyed_token)
             and _complete_token_label_literal(
@@ -1229,6 +1358,7 @@ def _find_generic_values(
     rel_name: str,
     file_lines=None,
     line_number=0,
+    message_catalog: bool = False,
 ):
     if rel_name == "yarn.lock":
         yarn_match = YARN_INTEGRITY_RE.fullmatch(line_content)
@@ -1248,7 +1378,11 @@ def _find_generic_values(
         (start, end) for start, end, _, _ in structural_contexts
     )
     candidates, keyed_spans = _keyed_generic_candidates(
-        line_content, rel_name=rel_name, file_lines=file_lines, line_number=line_number
+        line_content,
+        rel_name=rel_name,
+        file_lines=file_lines,
+        line_number=line_number,
+        message_catalog=message_catalog,
     )
     candidates.extend(
         _structural_generic_candidates(structural_contexts, keyed_spans, approved_spans)
@@ -4287,6 +4421,8 @@ def _is_worded_slug(value: str) -> bool:
     number or a word with a version, at least one a lowercase word. A name,
     not a random key."""
     parts = [part for part in re.split(r"[-_.]+", value) if part]
+    if len(parts) == 1 and secret_shapes.is_camel_case_name(value):
+        return True  # ``web3SandboxChallenge``: a camel-case name
     return (
         len(parts) >= 3
         and all(_KEY_SLUG_PART_RE.fullmatch(part) for part in parts)
@@ -4431,7 +4567,7 @@ def _url_credential_candidates(line_content: str):
         yield match.group("scheme"), start, start + len(password), password
 
 
-def _config_credential_candidates(line_content: str):
+def _config_credential_candidates(line_content: str, *, message_catalog: bool = False):
     stripped = line_content.lstrip()
     if stripped.startswith(("#", ";", "//")):
         return
@@ -4447,6 +4583,10 @@ def _config_credential_candidates(line_content: str):
         if _is_placeholder_credential(value) or _keyed_value_is_not_secret(key, value):
             continue
         if secret_shapes.is_indirect_value(value):
+            continue
+        if message_catalog and _keyed_value_is_reader_text(
+            key, value, message_catalog=True
+        ):
             continue
         if generic_key:
             if not _looks_like_generic_key_value(value):
@@ -4476,7 +4616,7 @@ def _is_public_bare_token(file_lines, line_number, token, start, public_pem):
     end = start + len(token)
     return (
         secret_shapes.is_word_slug(token)
-        or secret_shapes.is_evm_address(token)
+        or secret_shapes.is_crypto_address(token)
         or secret_shapes.in_public_document_url(line, start, end)
         or secret_shapes.in_public_location(line, start, end)
         or secret_shapes.in_class_attribute(line, start, end)
@@ -4839,13 +4979,7 @@ def scan_ctx(
     if ignore_tests and IS_TEST_PATH.search(rel_path.replace("\\", "/")):
         return []
 
-    normalized_path = rel_path.replace("\\", "/")
-    in_tests = bool(
-        IS_TEST_PATH.search(normalized_path)
-        or _JS_TEST_PATH.search(normalized_path)
-        or _TEST_FIXTURE_DIR.search(normalized_path)
-        or rel_path.endswith("_test.go")
-    )
+    in_tests = is_test_secret_path(rel_path)
     legacy_shell_profile = aws_profile and _is_shell_script_file(
         rel_name, ctx.get("lines")
     )
@@ -4917,10 +5051,17 @@ def scan_ctx(
         docstring_lines = _docstring_lines(syntax_tree)
 
     config_credential_file = _is_config_credential_file(rel_name)
+    message_catalog = is_message_catalog_path(rel_path)
     public_pem = (
         secret_shapes.public_pem_spans(file_lines)
         if any("-----BEGIN " in line for line in file_lines)
         else {}
+    )
+
+    rust_test_lines = (
+        _rust_test_lines(file_lines, ctx.get("abs_path"))
+        if not provider_only and rel_name.endswith(".rs")
+        else frozenset()
     )
 
     structured_by_line, structured_values, record_issues = _prepare_secret_records(
@@ -4987,6 +5128,10 @@ def scan_ctx(
                 potential_secret = regex_match.group(0)
 
                 if _provider_value_is_placeholder(provider_name, potential_secret):
+                    continue
+                if (
+                    in_tests or line_number in rust_test_lines
+                ) and _is_ordered_run_placeholder(potential_secret):
                     continue
                 if (
                     provider_name == "private_key_block"
@@ -5167,7 +5312,10 @@ def scan_ctx(
                 findings.append(finding)
         provider_values.update(structured_values.get(line_number, ()))
 
-        if provider_only:
+        # Rust test-only code (``#[cfg(test)]``, ``#[test]``) is treated like
+        # a file under ``tests/``: only provider-shaped secrets count there.
+        line_provider_only = provider_only or line_number in rust_test_lines
+        if line_provider_only:
             generic_values = ()
         else:
             generic_values = _find_generic_values(
@@ -5179,6 +5327,7 @@ def scan_ctx(
                 rel_name=rel_name,
                 file_lines=file_lines,
                 line_number=line_number,
+                message_catalog=message_catalog,
             )
             if rel_name.lower().endswith(
                 (".html", ".htm", ".css", ".map")
@@ -5201,6 +5350,12 @@ def scan_ctx(
             if (clean_token, col_pos, source_end) in provider_values:
                 continue
             if is_bare and _looks_like_identifier(clean_token):
+                continue
+            if (
+                is_bare
+                and message_catalog
+                and _is_catalog_message_id_text(line_content, col_pos, source_end)
+            ):
                 continue
 
             if is_bare and _is_generated_directory_identifier(
@@ -5229,6 +5384,12 @@ def scan_ctx(
                 end=source_end,
                 min_entropy=min_entropy,
             ):
+                continue
+            if not keyed and secret_shapes.is_declared_alphabet(
+                line_content, col_pos, source_end, clean_token
+            ):
+                # ``Alphabet::new("AphruV…")``: a whole literal that is a
+                # shuffled standard encoding alphabet, handed to an alphabet.
                 continue
             if not keyed and first_secret_name_at == -1:
                 first_secret_name = _SECRET_NAME_NEARBY_RE.search(line_content)
@@ -5279,7 +5440,7 @@ def scan_ctx(
                 generic_finding["severity_reason"] = "no_secret_name"
             findings.append(generic_finding)
 
-        if not provider_only:
+        if not line_provider_only:
             for scheme, start, end, _password in _url_credential_candidates(
                 line_content
             ):
@@ -5302,7 +5463,7 @@ def scan_ctx(
                 )
             if config_credential_file:
                 for key, start, end, _value in _config_credential_candidates(
-                    line_content
+                    line_content, message_catalog=message_catalog
                 ):
                     if _spans_overlap(findings, line_number, start, end):
                         continue

@@ -1,0 +1,5 @@
+packages:
+  - "."
+catalog:
+  lodash: ^4.17.21
+  left-pad: ^1.3.0

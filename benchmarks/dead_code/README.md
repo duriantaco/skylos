@@ -94,9 +94,8 @@ source-built native engine; the declaration-use proof requires complete package
 type information and preserves conservative references when that is unavailable.
 
 The implementations adapt approaches studied in
-[Knip](https://github.com/webpro-nl/knip/tree/2305dad9b0d76e5f603cd353a1820c24ae0e720d)
-(ISC), [Staticcheck U1000](https://github.com/dominikh/go-tools/blob/8371db75e9daf10073dc2ba684c2a24a1d6ead95/unused/unused.go)
-(MIT), and [rustc's dead-code pass](https://github.com/rust-lang/rust/blob/c6ac6ea53f6c8234fd06ddf0b88d89fe8b46edf5/compiler/rustc_passes/src/dead.rs)
+[Staticcheck U1000](https://github.com/dominikh/go-tools/blob/8371db75e9daf10073dc2ba684c2a24a1d6ead95/unused/unused.go)
+(MIT) and [rustc's dead-code pass](https://github.com/rust-lang/rust/blob/c6ac6ea53f6c8234fd06ddf0b88d89fe8b46edf5/compiler/rustc_passes/src/dead.rs)
 (MIT OR Apache-2.0). No upstream implementation code was copied. These are
 bounded Skylos checks, not compiler parity. Named TS re-export chains follow
 selected bindings through aliases and wildcard hops. Unknown local export
@@ -123,6 +122,16 @@ consumers or described redundant conformances rather than unused private code.
 Separate paired probes also retain existing
 false positives for escaped exports behind wildcard barrels and cross-file
 classic JS globals; those cases are not counted as passing coverage.
+
+The TS export checks for unused exported types, duplicate exports (SKY-E005),
+namespace members (SKY-U008) and `@public`/`@alpha`/`@beta` release tags were
+compared with Knip 6.44.1 on small probes: a type in the signature of a used
+export stays live, and `export const B = A` or `export default A` beside an
+earlier export of `A` is a duplicate while a specifier list is not. Skylos
+stays quieter where those probes showed Knip reporting a read or a live
+surface: a type read through `import("./m").T`, members of a namespace passed
+as a value, a reassigned `let` alias, types reached through module-local
+declarations of a requested value export, and `@alpha` exports.
 
 The real-repository audit distinguished source evidence from competitor
 warnings: compiler checks proved nine required Rust imports; some Knip file and

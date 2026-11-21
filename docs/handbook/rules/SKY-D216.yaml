@@ -7,12 +7,13 @@ severity_note: >-
   data that chooses the URL of `fetch`, axios, got or a similar client in a
   route handler is HIGH, and a `fetch()` or axios call with any other
   variable URL is MEDIUM.
-languages: [Python, TypeScript/JavaScript, Go, Java, Kotlin, C#, PHP, Dart, Shell]
+languages: [Python, TypeScript/JavaScript, Go, Java, Kotlin, C#, PHP, Rust, Dart, Shell]
 gate:
   full: critical_blocks
   note: >-
     The TypeScript and JavaScript findings are HIGH or MEDIUM and are only
-    counted.
+    counted. A TypeScript or JavaScript call whose URL no request data reaches
+    is a review signal that gates do not count.
 cwe: [CWE-918]
 
 what_it_is: >-
@@ -184,12 +185,30 @@ how_skylos_decides:
   - >-
     TypeScript and JavaScript: request data in an Express, Fastify, Koa,
     NestJS or Next.js handler that reaches the URL of `fetch`, axios, got,
-    undici or `http(s).get` is HIGH; any other `fetch()` or axios call with a
-    URL that is not built from constants is MEDIUM. Go (reported by the Go
+    undici or `http(s).get` is HIGH. Any other `fetch()` or axios call with a
+    URL that is not built from constants is MEDIUM and only a review signal:
+    the destination comes from configuration, an admin setting, a constant or
+    a caller the analysis cannot see, so the finding stays in the report but
+    is not listed by default and does not fail a gate. `await axios.get<T>(url)`
+    is recognised as an axios call. Go (reported by the Go
     engine as SKY-G216): request or network input in `http.Get`, `http.Post`,
     `http.NewRequest`, an `http.Client` call or a reverse proxy target,
     unless a literal prefix fixes the host. Java, Kotlin, C#, PHP, Dart and
     shell scripts have their own checks with the same idea.
+  - >-
+    Rust: the URL of `reqwest::get`, of `get`/`post`/.../`request(method,
+    url)` on a reqwest, reqwest-middleware, awc, ureq, surf, isahc or hyper
+    client, of the `ureq`/`surf`/`isahc`/`attohttpc`/`minreq` functions, or
+    the target of `webmention::Webmention::new`, when request data is an actix-web or axum extractor (`Path`, `Query`, `Json`,
+    `Form`, ...), a Rocket `Json`/`Form`/`Data` guard or text route parameter
+    (`#[get("/x/<name>")]` with `name: &str`), or the data methods of an
+    `HttpRequest`/`Request` (`uri()`, `query_string()`, `headers()`, ...).
+    Only the part that chooses the host counts: a literal `scheme://host/`
+    or a non-request base followed by `/`, `?` or `#` fixes it, and
+    percent-encoding clears a value. Environment variables, arguments and
+    stored rows (a query given a database pool or connection) are not
+    request data. A request value handed to a same-file helper that fetches
+    it is reported at that call.
 
 source_refs:
   - path: skylos/rules/danger/danger_net/ssrf_flow.py
@@ -210,6 +229,11 @@ source_refs:
     symbol: "func (a *Analyzer) isSSRFURL"
   - path: skylos/visitors/languages/go/go.py
     symbol: "_GO_RULE_REMAP"
+  - path: skylos/visitors/languages/rust/danger.py
+    symbol: "def url_sink(self, node, value, description, state)"
+    note: Rust sinks; `formatted()` decides which value chooses the host.
+  - path: skylos/visitors/languages/rust/web_model.py
+    symbol: "HTTP_FUNCTIONS = {"
 
 fix:
   explanation: >-
