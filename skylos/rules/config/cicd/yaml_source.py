@@ -48,6 +48,36 @@ if yaml is not None:
             finally:
                 self._depth -= 1
 
+        def flatten_mapping(self, node):
+            """Apply YAML merge keys the way ``YamlSource`` resolves them:
+            earlier sources in ``<<: [*a, *b]`` win, and explicit keys win
+            over merged ones. PyYAML 6.0.4 lets later sources win, or not,
+            depending on string interning. ``YamlSource`` has already bounded
+            the merge graph before construction."""
+            merge = []
+            index = 0
+            while index < len(node.value):
+                key_node, value_node = node.value[index]
+                if key_node.tag != _MERGE_TAG:
+                    if key_node.tag == "tag:yaml.org,2002:value":
+                        key_node.tag = "tag:yaml.org,2002:str"
+                    index += 1
+                    continue
+                del node.value[index]
+                if isinstance(value_node, MappingNode):
+                    sources = [value_node]
+                elif isinstance(value_node, SequenceNode):
+                    sources = list(reversed(value_node.value))
+                else:
+                    raise ValueError("Invalid YAML merge")
+                for source in sources:
+                    if not isinstance(source, MappingNode):
+                        raise ValueError("Invalid YAML merge source")
+                    self.flatten_mapping(source)
+                    merge.extend(source.value)
+            if merge:
+                node.value = merge + node.value
+
 
 @dataclass(frozen=True)
 class _Entry:
