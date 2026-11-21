@@ -267,3 +267,32 @@ def test_review_tracing_leaves_ordinary_fact_limits_alone(tmp_path, monkeypatch)
     )
     assert observed and all(origins == ["a", "b", "c", "d", "e"] for origins in observed)
     assert retained_origins() == ordinary
+
+
+UNRESOLVED_CALLER = """
+@app.post('/flights/unresolved')
+def unresolved(payload: Flight):
+    save(os.path.join(ROOT, plugin.pick(payload.name)))
+"""
+
+
+def test_unresolved_caller_keeps_the_symlink_finding_blocking(tmp_path, monkeypatch):
+    """A caller whose path source is not followed must not be covered by the
+    validated caller's proof: the finding stays blocking until every caller is
+    accounted for."""
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+    result = _analyze(
+        tmp_path,
+        {
+            "app.py": APP.format(start="clean(payload.name)", read="clean(payload.name)")
+            + UNRESOLVED_CALLER,
+            "storage.py": STORAGE,
+        },
+    )
+    rows = {row["rule_id"]: row for row in _symlink_rows(result)}
+    assert set(rows) == {"SKY-D324", "SKY-D325"}
+    # The read route only ever passes the validated component; the write route
+    # has one validated caller and one unresolved one, so it stays blocking.
+    assert is_nonblocking_review(rows["SKY-D325"])
+    assert not is_nonblocking_review(rows["SKY-D324"])
+    assert check_gate(result, {"gate": {"max_security": 0}})[0] is False

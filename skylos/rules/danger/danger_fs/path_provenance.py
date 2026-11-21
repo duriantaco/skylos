@@ -8087,6 +8087,9 @@ def _component_review_record(tracer, unit, operand, rule):
         or any(len(chains) >= _REVIEW_MAX_CHAINS for chains in traversal.chains.values())
         or traversal.chains[UNTRUSTED]
         or traversal.chains[INCOMPLETE]
+        # An unresolved source is not a proof that this caller validated the
+        # component; leave the finding blocking until every caller is known.
+        or traversal.chains[UNKNOWN]
         or _shared_temp_location(tracer.project, traversal)
     ):
         return None
