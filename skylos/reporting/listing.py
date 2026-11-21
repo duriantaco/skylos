@@ -151,6 +151,9 @@ _PATH_UNPROVEN_RULES = frozenset({"SKY-D215", "SKY-D324", "SKY-D325"})
 # Pattern sinks whose only proof is the shape of the call: a request URL
 # (SKY-D216) built from a variable that no request value was traced into.
 _PATTERN_UNPROVEN_RULES = frozenset({"SKY-D216"})
+# A YAML loader proven safe in its own file, in a project too large for the
+# whole-project proof (see skylos.rules.danger.calls).
+YAML_PROJECT_TOO_LARGE = "project_too_large"
 # Shell findings whose only source is the script's own command-line
 # arguments: the operator's choice, like a Python CLI argument.
 _SCRIPT_ARGUMENT_RULES = frozenset({"SKY-D212", "SKY-D215", "SKY-D216"})
@@ -179,6 +182,10 @@ def is_unproven_source_review(finding):
     * a Rust command or path (SKY-D212/D215) whose only inputs are environment
       variables, command-line arguments or a function's parameters
       (``metadata.rust_source == "operator_input"``, no request source).
+    * a YAML load (SKY-D206) whose loader this file proves is a native safe
+      loader, where only the whole-project proof that no other module
+      replaces it is missing because the project exceeds the source snapshot
+      limits (``metadata.yaml_loader_proof == "project_too_large"``).
 
     The detector records the evidence; a ``review_item`` of another kind or a
     finding with request evidence is never demoted."""
@@ -219,6 +226,8 @@ def is_unproven_source_review(finding):
             and not provenance.get("shared_temp_path")
             and metadata.get("path_source") != "resolved_caller"
         )
+    if rule == "SKY-D206":
+        return metadata.get("yaml_loader_proof") == YAML_PROJECT_TOO_LARGE
     if rule in _PATTERN_UNPROVEN_RULES:
         return not finding.get("security_evidence") and not metadata.get(
             "security_evidence"

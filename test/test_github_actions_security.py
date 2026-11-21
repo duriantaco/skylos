@@ -714,6 +714,8 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
     assert "raise SystemExit(1)" in blocker_step["run"]
 
 
+    # Unlisted review items never block, matching Skylos's own gate.
+    assert 'listing.get("listed") is False' in blocker_step["run"]
 def _assert_installs_trusted_base(step):
     """A PR is scanned by the Skylos on its base commit, never its own code."""
     assert step["env"]["TRUSTED_BASE_SHA"] == (

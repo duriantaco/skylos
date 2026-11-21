@@ -203,9 +203,17 @@ jobs:
           # raw findings in the artifact; real secrets still block everywhere.
           fixture_root = Path.cwd() / "benchmarks/security/fixtures"
           excluded_fixture_dangers = 0
+          review_items = 0
           blocking = []
           for category in ("danger", "secrets"):
               for finding in report.get(category, []) or []:
+                  # Skylos keeps unproven findings as review items that are
+                  # not listed and never fail its own gate; they do not block
+                  # here either. Reports without listing data count in full.
+                  listing = finding.get("listing")
+                  if isinstance(listing, dict) and listing.get("listed") is False:
+                      review_items += 1
+                      continue
                   raw_path = finding.get("file") or finding.get("file_path")
                   if category == "danger" and raw_path:
                       candidate = Path(os.path.abspath(raw_path))
@@ -217,6 +225,9 @@ jobs:
                   ).upper()
                   if severity_rank.get(severity, 0) >= severity_rank["HIGH"]:
                       blocking.append((category, severity, finding))
+
+          if review_items:
+              print(f"{review_items} review items (not listed, not blocking) stay in the report and do not block.")
 
           if excluded_fixture_dangers:
               print(f"Excluded {excluded_fixture_dangers} benchmark fixture danger findings from the self-scan gate; raw findings remain in the report.")

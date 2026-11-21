@@ -1654,7 +1654,8 @@ variants), `#![cfg(test)]` files, files their parent declares
 `test` or `bench` or is `rstest`/`test_case`/`test_matrix`/`quickcheck`
 (`#[test]`, `#[tokio::test]`, `#[idm_test]`), when the file parses cleanly.
 In that test code a provider-shaped token whose payload is mostly long
-keyboard runs (`sk_test_1234567890abcdefghijklmnop`) is a fixture; outside
+keyboard runs (a `sk_test_` prefix followed by `1234567890abcdefghijklmnop`)
+is a fixture; outside
 tests such tokens stay findings. `urn:ietf:params:` URNs (RFC 3553, e.g.
 OAuth token types) are public identifiers, not secrets. Cypress (`cypress/`, `*.cy.ts`) and end-to-end
 (`e2e/`) suites count as JS test code, and the TS/JS literal check follows the

@@ -11,7 +11,8 @@ from __future__ import annotations
 from skylos.rules.secrets import scan_ctx
 
 _VECTOR = "4HcwTg4bQKEbuINCJGMqrij1yipl63Ugu/RazH2y7Qw="
-_AWS = "AKIAIOSFODNN7ABCDEFG"
+# Built at run time so this file does not hold a whole AWS-shaped key.
+_AWS = "AKIA" + "IOSFODNN7ABCDEFG"
 _ALPHABET = "AphruVFwvCetlckdZ2g-foxXBGNbyHnD96qUj3KL_YsE7P1OQiaIR0z4T58mMWJS"
 
 

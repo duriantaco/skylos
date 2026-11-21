@@ -52,6 +52,8 @@ from .calls import (
     _weak_random_call_name,
     _client_nonce_material_reaches_return,
     _yaml_load_without_safeloader,
+    mark_yaml_loader_review,
+    yaml_loader_unproven_for_project_size,
     _ruamel_unsafe_type,
     track_import_aliases,
     unpickler_load_name,
@@ -203,18 +205,25 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 if rule_key == "pickle.loads" and id(node) in self._safe_pickle_loads:
                     continue
 
-                if rule_key in {
-                    "yaml.load",
-                    "yaml.load_all",
-                } and not _yaml_load_without_safeloader(
-                    node,
-                    self.aliases,
-                    self._yaml_loader_classes(),
-                    self.file_path,
-                    self._project_root,
-                    self._module,
-                ):
-                    continue
+                yaml_review = False
+                if rule_key in {"yaml.load", "yaml.load_all"}:
+                    if not _yaml_load_without_safeloader(
+                        node,
+                        self.aliases,
+                        self._yaml_loader_classes(),
+                        self.file_path,
+                        self._project_root,
+                        self._module,
+                    ):
+                        continue
+                    yaml_review = yaml_loader_unproven_for_project_size(
+                        node,
+                        self.aliases,
+                        self._yaml_loader_classes(),
+                        self.file_path,
+                        self._project_root,
+                        self._module,
+                    )
 
                 if (
                     opts
@@ -271,6 +280,8 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     evidence = private_model_slug_evidence(node)
                     if evidence:
                         finding["security_evidence"] = evidence
+                if yaml_review:
+                    mark_yaml_loader_review(finding)
                 self.findings.append(finding)
                 break
             else:

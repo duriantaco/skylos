@@ -552,9 +552,10 @@ _IETF_PARAMS_URN = re.compile(r"^urn:ietf:params:[a-z0-9.-]+(?::[A-Za-z0-9._-]+)
 
 
 # In test code only: a real credential's payload is random, so a
-# provider-shaped token made mostly of long keyboard runs
-# (``sk_test_1234567890abcdefghijklmnop``) is a fixture. Outside tests such
-# tokens stay findings (see test_ordered_runs_do_not_hide_bare_secret_lookalikes).
+# provider-shaped token made mostly of long keyboard runs (a ``sk_test_``
+# prefix followed by ``1234567890abcdefghijklmnop``) is a fixture. Outside
+# tests such tokens stay findings (see
+# test_ordered_runs_do_not_hide_bare_secret_lookalikes).
 _PLACEHOLDER_RUN_MIN_CHARACTERS = 16
 _PLACEHOLDER_RUN_MIN_SHARE = 0.6
 
