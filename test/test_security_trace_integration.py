@@ -156,6 +156,9 @@ def test_analyzer_does_not_call_source_proved_formatter_execute_a_sql_sink(
 def test_analyzer_keeps_unknown_or_dynamic_receiver_with_partial_trace(
     tmp_path, monkeypatch, source
 ):
+    # The module raises first, so the constant-argument refutation would prove
+    # the module-level sink unreachable; this test is about the trace.
+    monkeypatch.setenv("SKYLOS_CONSTANT_REFUTATION", "0")
     _project(tmp_path, {"unknown.py": source})
     result = _analyze(tmp_path, monkeypatch)
     assert not result.get("analysis_errors")
