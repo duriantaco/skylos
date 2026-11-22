@@ -17,6 +17,8 @@ class Value:
     state: str = "unknown"
     literal: str | None = None
     truthy: bool | None = None
+    fixed_url_origin: bool = False
+    fixed_origin_string: bool = False
 
 
 UNKNOWN = Value()
@@ -41,12 +43,11 @@ class CommandScan:
         self.findings = []
         self.coverage = {
             "status": "bounded",
-            "supported_rules": ["SKY-D212"],
+            "supported_rules": ["SKY-D211", "SKY-D212", "SKY-D216"],
             "checked_sinks": 0,
             "unresolved": [],
             "unsupported_families": [
-                "sql",
-                "rails_request_flow",
+                "cross_file_rails_dispatch",
                 "interprocedural_command_flow",
             ],
         }
@@ -132,6 +133,36 @@ class CommandScan:
                 if values and all(v.state == "literal" for v in values)
                 else UNKNOWN
             )
+        source = self.source_value(node, env)
+        if source is not None:
+            return source
+        if node.type == "call":
+            receiver = node.child_by_field_name("receiver")
+            method = self.text(node.child_by_field_name("method"))
+            # These conversions preserve user control rather than sanitize it.
+            if method in {"to_s", "strip", "chomp", "dup"}:
+                return self.value(receiver, env)
+            return UNKNOWN
+        if node.type == "binary":
+            operator = self.text(node.child_by_field_name("operator"))
+            if operator in {"==", "!=", "===", "<", ">", "<=", ">=", "<=>", "=~", "!~"}:
+                return LITERAL
+            if operator not in {"+", "%"}:
+                return UNKNOWN
+        if node.type in {"interpolation", "parenthesized_statements", "binary"}:
+            values = [self.value(n, env) for n in node.named_children]
+            if any(v.state == "tainted" for v in values):
+                if node.type == "binary" and values[0].fixed_origin_string:
+                    return Value("tainted", fixed_url_origin=True, fixed_origin_string=True)
+                return TAINTED
+            return (
+                LITERAL
+                if values and all(v.state == "literal" for v in values)
+                else UNKNOWN
+            )
+        return UNKNOWN
+
+    def source_value(self, node, env):
         if (
             node.type == "element_reference"
             and node.named_children
@@ -148,26 +179,7 @@ class CommandScan:
             }:
                 source_name = "$stdin" if self.text(receiver) == "$stdin" else "STDIN"
                 return UNKNOWN if source_name in self.source_shadowed else TAINTED
-            # These conversions preserve user control rather than sanitize it.
-            if method in {"to_s", "strip", "chomp", "dup"}:
-                return self.value(receiver, env)
-            return UNKNOWN
-        if node.type == "binary":
-            operator = self.text(node.child_by_field_name("operator"))
-            if operator in {"==", "!=", "===", "<", ">", "<=", ">=", "<=>", "=~", "!~"}:
-                return LITERAL
-            if operator not in {"+", "%"}:
-                return UNKNOWN
-        if node.type in {"interpolation", "parenthesized_statements", "binary"}:
-            values = [self.value(n, env) for n in node.named_children]
-            if any(v.state == "tainted" for v in values):
-                return TAINTED
-            return (
-                LITERAL
-                if values and all(v.state == "literal" for v in values)
-                else UNKNOWN
-            )
-        return UNKNOWN
+        return None
 
     def finding(self, node):
         line = node.start_point[0] + 1
@@ -290,7 +302,11 @@ class CommandScan:
                             )
                     elif operator == "+=":
                         if "tainted" in {old.state, new.state}:
-                            new = TAINTED
+                            new = Value(
+                                "tainted",
+                                fixed_url_origin=old.fixed_origin_string,
+                                fixed_origin_string=old.fixed_origin_string,
+                            )
                         elif old.state == new.state == "literal":
                             new = Value("literal", truthy=True)
                         else:
@@ -380,6 +396,10 @@ class CommandScan:
                 if name:
                     env[name] = UNKNOWN
             return
+        self.inspect_operation(node, env)
+        self._walk_children(node, env)
+
+    def inspect_operation(self, node, env):
         if node.type == "subshell":
             self.coverage["checked_sinks"] += 1
             if self.provider_uncertain:
@@ -420,7 +440,6 @@ class CommandScan:
                 "public_method",
             }:
                 self.unknown(node, "Kernel provider alias is unsupported")
-        self._walk_children(node, env)
 
     def _walk_children(self, node, env):
         for child in node.named_children:
@@ -431,6 +450,12 @@ class CommandScan:
             values = [branch.get(name, UNKNOWN) for branch in branches]
             if all(value == values[0] for value in values):
                 env[name] = values[0]
+            elif all(value.fixed_url_origin for value in values):
+                env[name] = Value(
+                    "tainted" if any(value.state == "tainted" for value in values) else "literal",
+                    fixed_url_origin=True,
+                    fixed_origin_string=all(value.fixed_origin_string for value in values),
+                )
             elif any(value.state == "tainted" for value in values):
                 env[name] = TAINTED
             else:
