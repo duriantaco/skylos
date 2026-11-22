@@ -27,6 +27,12 @@ def run_rules_command(argv, *, console_factory=Console) -> int:
     p_install = rules_sub.add_parser("install", help="Install a rule pack or YAML URL")
     p_install.add_argument("pack_or_url", help="Pack name or URL to a .yml/.yaml file")
 
+    p_vulnhunter = rules_sub.add_parser(
+        "vulnhunter", help="Scan a source directory with the bundled VulnHunter rules"
+    )
+    p_vulnhunter.add_argument("path", type=Path, help="File or directory to scan")
+    p_vulnhunter.add_argument("--format", choices=["text", "json", "sarif"], default="text")
+
     p_list = rules_sub.add_parser("list", help="List built-in rules")
     p_list.add_argument(
         "terms",
@@ -64,6 +70,10 @@ def run_rules_command(argv, *, console_factory=Console) -> int:
 
     rules_args = rules_parser.parse_args(argv)
 
+    if rules_args.rules_cmd == "vulnhunter":
+        from skylos.rules.vulnhunter_pack import run_pack
+
+        return run_pack(rules_args.path, rules_args.format)
     if rules_args.rules_cmd == "install":
         return install_rules(console, rules_dir, rules_args.pack_or_url)
     if rules_args.rules_cmd == "list":
