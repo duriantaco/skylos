@@ -99,10 +99,12 @@ how_skylos_decides:
     request cookie.
   - >-
     In TypeScript and JavaScript it reports `Math.random()` when the
-    statement around it, or the name of an enclosing function, method or
-    variable, contains a security term such as `token`, `nonce`, `csrf`,
-    `session`, `secret`, `password`, `apikey`, `jwt`, `cookie`, `salt`,
-    `otp…`, `resetcode` or `magiclink`.
+    statement around it, the variable it initializes, or the name of its
+    nearest enclosing function, method or variable contains a security term
+    such as `token`, `nonce`, `csrf`, `session`, `secret`, `password`,
+    `apikey`, `jwt`, `cookie`, `salt`, `otp…`, `resetcode` or `magiclink`.
+    Outer functions are not read, and seed, fixture and mock data
+    generators (`seed/`, `fixtures/`, `mocks/` folders) are skipped.
   - >-
     In Go every call into `math/rand` or `math/rand/v2` is reported (by the
     Go engine as SKY-G209, shown as SKY-D250), whatever the value is used

@@ -5,7 +5,11 @@ severity: HIGH
 severity_note: >-
   Every language reports HIGH. In shell scripts the severity drops to
   MEDIUM when only the script's own arguments reach the path behind a
-  root-only check, or when the command runs as a non-root user.
+  root-only check, or when the command runs as a non-root user. A shell
+  finding whose only source is the script's own command-line arguments is a
+  review signal that is not listed by default and does not fail a gate, as
+  is a Rust finding whose only inputs are environment variables,
+  command-line arguments or a function's parameters.
 languages: [Python, TypeScript/JavaScript, Go, Java, Kotlin, C#, PHP, Rust, Dart, Shell]
 gate:
   full: counted
@@ -171,14 +175,17 @@ how_skylos_decides:
     `send_from_directory()`.
   - >-
     Treats request data, route and MCP tool arguments, `input()` and standard
-    input as untrusted. A path built from a helper's parameter is followed to
+    input as untrusted; `flask.request` read through the module (`import
+    flask`) counts like `from flask import request`. A path built from a helper's parameter is followed to
     every caller Skylos can resolve in the project, and is reported when a
     chain starts at untrusted data.
   - >-
     Moves a helper-parameter finding to the suppressed list when every
     resolved caller passes literals, operator input or other safe values,
     and also when a caller cannot be resolved (including a helper nobody
-    calls). A chain cut off by a depth or size limit stays reported.
+    calls). A chain cut off by a depth or size limit before it reaches
+    untrusted data stays in the report as a review signal ("callers not
+    visible"): it is not listed by default and does not fail a gate.
   - >-
     Does not report paths whose only source is the person running the
     program: command-line arguments and environment variables.
@@ -201,8 +208,20 @@ how_skylos_decides:
     as SKY-G215 and SKY-G305): request or network input reaching `os.Open`,
     `os.ReadFile`, `os.WriteFile` and similar calls without `filepath.Base`,
     `SecureJoin` or a check on a cleaned path, and archive entry names
-    written to disk without a `..` check. Java, Kotlin, C#, PHP, Rust, Dart
+    written to disk without a `..` check. Java, Kotlin, C#, PHP, Dart
     and shell scripts have their own checks with the same idea.
+  - >-
+    Rust: `std::fs`, `tokio::fs` and `async_std::fs` reads, writes, copies,
+    renames and removals, `File::open`/`create`, and `PathBuf::push` are
+    listed only when request data is an actix-web or axum extractor (`Path`, `Query`, `Json`,
+    `Form`, ...), a Rocket `Json`/`Form`/`Data` guard or text route parameter
+    (`#[get("/x/<name>")]` with `name: &str`), or the data methods of an
+    `HttpRequest`/`Request` (`uri()`, `query_string()`, `headers()`, ...).
+    A path from an environment variable, `std::env::args` or a library
+    function's parameter (`Searcher::search_path(path)`) is a review item that
+    is not listed and does not fail a gate. A path checked with
+    `starts_with` after `canonicalize`, or by a `-> bool` validator that
+    rejects it with an early return, is not reported.
 
 source_refs:
   - path: skylos/rules/danger/danger_fs/path_flow.py
@@ -229,6 +248,9 @@ source_refs:
     symbol: "_GO_RULE_REMAP"
   - path: test/test_untrusted_source_flows.py
     symbol: "def test_file_serving_negatives_stay_clean"
+  - path: skylos/visitors/languages/rust/danger.py
+    symbol: "def emit(self, rule, message, node, value"
+    note: Rust request data is listed; operator input is a review item.
 
 fix:
   explanation: >-

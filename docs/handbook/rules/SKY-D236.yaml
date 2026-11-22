@@ -6,7 +6,7 @@ severity_note: >-
   On the JVM, CRITICAL when request data is parsed, HIGH for other input. Python
   findings for explicitly enabled external entity processing are HIGH. dom4j
   `DocumentHelper.parseText()` is MEDIUM, or HIGH with request data.
-languages: [Java, Kotlin, Python]
+languages: [Java, Kotlin, TypeScript/JavaScript, Python]
 gate:
   full: critical_blocks
   note: >-
@@ -17,8 +17,10 @@ what_it_is: >-
   An XML document can declare a DTD with "external entities": names that
   the parser replaces with the contents of a file or a URL. SKY-D236 reports
   Java and Kotlin XML parsers that are created and used without turning DTDs
-  or external entities off, which the JDK parsers allow by default. In Python,
-  it checks for a parse call using a parser explicitly configured to resolve
+  or external entities off, which the JDK parsers allow by default,
+  TypeScript/JavaScript libxml parses that turn entity substitution on
+  (libxmljs `noent: true`, the libxml2 `XML_PARSE_NOENT` option), and
+  Python parse calls using a parser explicitly configured to resolve
   external entities.
 
 why_it_matters: >-
@@ -171,6 +173,11 @@ how_skylos_decides:
     Reports CRITICAL when request data reaches the parse call and HIGH
     otherwise. dom4j `DocumentHelper.parseText()` is MEDIUM, or HIGH with
     request data.
+  - >-
+    In TypeScript and JavaScript, reports libxmljs `parseXml`/
+    `parseXmlString` called with `noent: true` and any use of the libxml2
+    `XML_PARSE_NOENT` parse option (not `& ~XML_PARSE_NOENT`): HIGH, or
+    CRITICAL when request data is parsed in a handler.
 
 source_refs:
   - path: skylos/visitors/languages/java/flow.py
@@ -181,6 +188,8 @@ source_refs:
     symbol: "DISALLOW_DOCTYPE = \"disallow-doctype-decl\""
   - path: skylos/visitors/languages/kotlin/security.py
     symbol: "parses XML with DTDs and external entities enabled (XXE)."
+  - path: skylos/visitors/languages/typescript/library_sinks.py
+    symbol: "def check_library_sinks("
 
 fix:
   explanation: >-

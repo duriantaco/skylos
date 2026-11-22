@@ -2,7 +2,7 @@ id: SKY-D228
 title: HTML response built from user input
 family: security
 severity: HIGH
-languages: [Python, TypeScript/JavaScript, Go, PHP, C#]
+languages: [Python, TypeScript/JavaScript, Go, PHP, C#, Rust]
 gate:
   full: counted
 cwe: [CWE-79]
@@ -207,8 +207,22 @@ how_skylos_decides:
     In Blade templates the same finding is reported as SKY-D226. C#:
     request data passed to `Content(x, "text/html")` or `Response.Write(x)`
     without encoding.
+  - >-
+    Rust: request data inserted by `format!`, `format_args!`, `write!` or
+    `writeln!` (also inside another macro such as `json!`) into a template
+    that contains an HTML tag, where request data is an actix-web or axum extractor (`Path`, `Query`, `Json`,
+    `Form`, ...), a Rocket `Json`/`Form`/`Data` guard or text route parameter
+    (`#[get("/x/<name>")]` with `name: &str`), or the data methods of an
+    `HttpRequest`/`Request` (`uri()`, `query_string()`, `headers()`, ...).
+    `html_escape`, `htmlescape`, `v_htmlescape`, `askama_escape`,
+    `ammonia::clean` and URL encoding (`form_urlencoded::byte_serialize`,
+    `utf8_percent_encode`, `urlencoding::encode`) clear the value. Not
+    reported in test code.
 
 source_refs:
+  - path: skylos/visitors/languages/rust/danger.py
+    symbol: "def formatted(self, node, tokens, state"
+    note: Rust `format!` templates with HTML markup.
   - path: skylos/rules/danger/danger_web/xss_flow.py
     symbol: "def visit_Return"
     note: the Python check on returned HTML.

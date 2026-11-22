@@ -98,7 +98,9 @@ how_skylos_decides:
     Decides who controls the path as SKY-D324 does: request data and route
     or MCP tool arguments are reported, operator input is skipped, and a
     plain helper's parameter is reported only when the scanned callers pass
-    untrusted input (otherwise it moves to `suppressed`). Reports MEDIUM on
+    untrusted input (otherwise it moves to `suppressed`; a trace cut off
+    before reaching untrusted input stays as an unlisted, non-blocking review
+    signal). Reports MEDIUM on
     the line of the read call.
   - >-
     Caller provenance does not establish an attacker's ability to create or

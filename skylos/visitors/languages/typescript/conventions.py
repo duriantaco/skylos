@@ -34,6 +34,10 @@ the tool is in use, so an ordinary module with a similar name stays judged:
   the WebdriverIO CLI loads ``wdio.conf.{js,ts}`` and reads its exported
   ``config``, Nightwatch loads ``nightwatch.conf.{js,ts}``; each from the
   package root.
+* **Tools in the plugin table** (``plugin_facts``): routes, pages, server
+  handlers, test files, stories and config files of SolidStart, Nuxt, Astro,
+  Docusaurus, SvelteKit, Remix, React Router, Vike and 200 other tools,
+  stored as enabler-gated glob patterns plus the exports each tool reads.
 * **Storybook** (an enclosing package depends on ``storybook`` /
   ``@storybook/*`` or a package script runs it): the files Storybook looks up
   by name in a ``.storybook`` directory: ``main``, ``preview``, ``manager``,
@@ -59,6 +63,7 @@ _DEPENDENCY_FIELDS = (
     "optionalDependencies",
 )
 _ROUTE_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx")
+_SCRIPT_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs")
 _REACT_EMAIL_EXTENSIONS = (".js", ".jsx", ".tsx")
 _CONFIG_EXTENSIONS = ("js", "cjs", "mjs", "ts", "cts", "mts")
 _TOOL_CONFIG_RE = re.compile(
@@ -211,6 +216,22 @@ def is_declared_dependency(specifier: str, importer: str | os.PathLike[str]) -> 
     )
 
 
+def declared_dependency_version(
+    package: str, importer: str | os.PathLike[str]
+) -> str | None:
+    """The version range the innermost enclosing ``package.json`` declares
+    for ``package``, or None."""
+    for package_root in _enclosing_package_roots(_normalized(importer)):
+        data = _package_data(package_root)
+        if not isinstance(data, dict):
+            continue
+        for field in _DEPENDENCY_FIELDS:
+            declared = data.get(field)
+            if isinstance(declared, dict) and isinstance(declared.get(package), str):
+                return declared[package]
+    return None
+
+
 def depends_on_any(path: str | os.PathLike[str], packages=(), prefixes=()) -> bool:
     """An enclosing ``package.json`` declares one of ``packages`` or a
     dependency whose name starts with one of ``prefixes``."""
@@ -304,6 +325,36 @@ def expo_router_exports(path: str | os.PathLike[str]) -> frozenset[str]:
     if stem == "+native-intent":
         return EXPO_NATIVE_INTENT_EXPORTS
     return EXPO_ROUTER_EXPORTS
+
+
+# ------------------------------------------------------------- plugin table
+
+ALL_EXPORTS = frozenset({"*"})
+
+
+def framework_convention_exports(path: str | os.PathLike[str]) -> frozenset[str] | None:
+    """Exports a tool in the plugin table reads from ``path``, or None.
+
+    ``{"*"}`` means every export (auto-imported folders, tool entries).
+    """
+    from .plugin_facts import plugin_entry_exports
+
+    absolute = _normalized(path)
+    if not absolute.endswith(_SCRIPT_EXTENSIONS) or absolute.endswith(".d.ts"):
+        return None
+    return plugin_entry_exports(absolute)
+
+
+def plugin_convention_kind(path: str | os.PathLike[str]) -> str | None:
+    """``production``/``entry``/``config``/``abstain`` when a tool in the
+    plugin table loads ``path`` (or might, for an unreadable config)."""
+    from .plugin_facts import plugin_entry
+
+    absolute = _normalized(path)
+    if not absolute.endswith(_SCRIPT_EXTENSIONS) or absolute.endswith(".d.ts"):
+        return None
+    found = plugin_entry(absolute)
+    return found.kind if found is not None else None
 
 
 # -------------------------------------------------------------- React Email
@@ -472,6 +523,13 @@ def convention_reason(path: str | os.PathLike[str]) -> str | None:
         return "expo-router-route"
     if is_react_email_template(path):
         return "react-email-template"
+    kind = plugin_convention_kind(path)
+    if kind == "config":
+        return "plugin-config"
+    if kind == "abstain":
+        return "plugin-abstained"
+    if kind is not None:
+        return "framework-convention"
     return None
 
 

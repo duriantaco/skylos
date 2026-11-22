@@ -3,6 +3,7 @@
 from collections import Counter
 from pathlib import Path
 
+from skylos.core.js_ast import call_arguments
 from skylos.core.safe_cache_io import read_project_text_no_symlink
 
 
@@ -96,9 +97,9 @@ def generated_component_provider_limits(project_root, source_files, raw_imports)
             config = next((child for child in statement.named_children if child.type in {"object", "call_expression"}), None)
             if config is not None and config.type == "call_expression":
                 arguments = config.child_by_field_name("arguments")
-                if text(config.child_by_field_name("function")) not in config_functions or arguments is None or len(arguments.named_children) != 1:
+                if text(config.child_by_field_name("function")) not in config_functions or len(call_arguments(arguments)) != 1:
                     continue
-                config = arguments.named_children[0]
+                config = call_arguments(arguments)[0]
             if config is None or config.type != "object":
                 continue
             pairs = [child for child in config.named_children if child.type == "pair" and text(child.child_by_field_name("key")).strip("'\"") == "plugins"]

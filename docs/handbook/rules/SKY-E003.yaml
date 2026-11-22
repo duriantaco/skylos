@@ -87,21 +87,58 @@ how_skylos_decides:
     Runs in every scan on `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`,
     `.mts` and `.cts` files outside excluded folders.
   - >-
-    Builds the import graph, counting re-exports. A file is unused when no
+    Builds the import graph, counting re-exports and `import()`/`require()`
+    calls, also when a comment precedes the specifier
+    (`import(/* webpackChunkName: "x" */ "./x")`). A file is unused when no
     other file imports it, or when every file that imports it is itself
-    unused.
+    unused. Files that import each other in a cycle no entry reaches are
+    unused too, unless that region spans more than 8 files. Docusaurus
+    `@site/` and `@theme/` and SvelteKit `$lib` aliases resolve without a
+    generated tsconfig; inside a Docusaurus site extensionless paths follow
+    its webpack order (`.js` before `.tsx`). An import through a symlink
+    reaches the file the link names. Astro pages, SvelteKit `+` route files,
+    Nuxt pages, layouts and components, and Vue page and layout folders of
+    the plugins that route them are graph roots, so what they import is used.
   - >-
     Never reports entry points and infrastructure: files named in
     `package.json` (`main`, `exports`, `bin` and similar) or by a bundler or
-    framework convention (Next.js pages and routes, config files, static
-    site generators), tests and stories, `.d.ts` files, and files under
-    `scripts`, `examples`, `static`, `public` or benchmark folders.
+    framework convention (Next.js pages and routes, and the entry, route and
+    config patterns of the JS/TS plugin table: SolidStart, Nuxt, Astro,
+    Docusaurus, SvelteKit, Remix, React Router, Vike, Storybook, Cypress,
+    Mocha and about 200 other tools, each switched on by its package; static
+    site generators; jscodeshift transforms named by `defineTest`), entries
+    in the repository's own literal Knip config, tests and stories, `.d.ts`
+    files, and files under `static`, `public` or benchmark folders. When a tool config key that names entries cannot be
+    read without running code, the files it could select are held back. A
+    `package.json` target in a build folder maps back to the tsdown, tsup,
+    Rollup or Rolldown entry that emits it.
+  - >-
+    Reads the commands of `package.json` scripts, GitHub Actions `run:`
+    steps and git hooks (husky, lefthook, simple-git-hooks) the same way the
+    npm dependency rules do: a runtime's script and `--require`/`--import`
+    preloads, `-c`/`--config` files, bundler positional entries, and the
+    literal `entry`/`input` of a webpack or Rollup build script such a
+    command runs. A `tsconfig` that `tsc -p`, `vue-tsc -p`, `ngc -p` or
+    `tsc --build` compiles names its `files` as entries, and its `include`
+    set too for a package with no other entry (a type-check fixture).
+  - >-
+    Files under `scripts` and `examples` need evidence to be used: an import
+    from a used file, a command that runs them, a path reference, a shebang,
+    or their file name written in another repository file.
+  - >-
+    Files in `__testfixtures__`/`__fixtures__` folders are test data read as
+    text and never reported. A module published only through a types-only
+    wildcard export (`"./*": {"types": ...}`) is kept when it declares
+    exported types.
   - >-
     Before reporting, looks for the file's path in configuration files,
     HTML, `package.json` scripts and other languages, and treats a file
     loaded that way as used.
   - >-
     Reports LOW on line 1, in the `unused_files` list of the JSON output.
+    An unused file is one finding: unused-symbol, export, unlisted-dependency
+    (SKY-Q408) and unresolved-import (SKY-Q414) findings inside it are
+    listed under its `folded_findings` instead of on their own.
 
 source_refs:
   - path: skylos/visitors/languages/typescript/analysis.py

@@ -17,6 +17,7 @@ SCA_LOW_RISK_REASONS = frozenset({"dev-only-dependency", "informational-advisory
 CONSTANT_ARGUMENT_REASON = "constant-argument"
 LOW_RISK_REASONS = {
     "SKY-D292": frozenset({"github-owned-action-tag"}),
+    "SKY-D294": frozenset({"no-outsider-input"}),
     "SKY-D299": frozenset({"non-credential-secret"}),
     "SKY-D309": frozenset({"non-credential-secret"}),
     "SKY-D201": frozenset({CONSTANT_ARGUMENT_REASON}),
@@ -25,6 +26,7 @@ LOW_RISK_REASONS = {
     "SKY-D205": frozenset({CONSTANT_ARGUMENT_REASON}),
     "SKY-D206": frozenset({CONSTANT_ARGUMENT_REASON}),
     "SKY-D209": frozenset({"constant-shell-command", CONSTANT_ARGUMENT_REASON}),
+    "SKY-D212": frozenset({CONSTANT_ARGUMENT_REASON}),
     "SKY-D207": frozenset({"non-sensitive-hash-input"}),
     "SKY-D208": frozenset({"non-sensitive-hash-input"}),
 }
@@ -136,9 +138,101 @@ def demotion_reason(finding):
     """The listing reason a risk finding is hidden under by default, or None."""
     if is_demoted_secret(finding):
         return PUBLIC_IDENTIFIER_REASON
+    if is_unproven_source_review(finding):
+        return UNPROVEN_SOURCE_REASON
     if low_risk_context(finding) is not None:
         return LOW_RISK_REASON
     return None
+
+
+UNPROVEN_SOURCE_REASON = "unproven-source"
+UNPROVEN_SOURCE_KIND = "unproven_source"
+_PATH_UNPROVEN_RULES = frozenset({"SKY-D215", "SKY-D324", "SKY-D325"})
+# Pattern sinks whose only proof is the shape of the call: a request URL
+# (SKY-D216) built from a variable that no request value was traced into.
+_PATTERN_UNPROVEN_RULES = frozenset({"SKY-D216"})
+# A YAML loader proven safe in its own file, in a project too large for the
+# whole-project proof (see skylos.rules.danger.calls).
+YAML_PROJECT_TOO_LARGE = "project_too_large"
+# Shell findings whose only source is the script's own command-line
+# arguments: the operator's choice, like a Python CLI argument.
+_SCRIPT_ARGUMENT_RULES = frozenset({"SKY-D212", "SKY-D215", "SKY-D216"})
+# Rust command and path findings whose only inputs are environment variables,
+# command-line arguments or a function's parameters: the operator's or the
+# calling code's choice, as in the Go engine's source model.
+_RUST_OPERATOR_RULES = frozenset({"SKY-D212", "SKY-D215"})
+
+
+def is_unproven_source_review(finding):
+    """A sink the analysis could not connect to attacker input.
+
+    Precise taint analysis reports a sink only when untrusted input is shown
+    to reach it. These records stay in the report as review signals but are
+    not listed and do not fail gates:
+
+    * a Python path or symlink finding (SKY-D215/D324/D325) whose caller
+      provenance (``metadata.path_provenance``) stopped incomplete before any
+      chain reached web request data, an upload, a network message or an
+      archive member, so only "callers not visible" remains;
+    * a pattern SSRF finding (SKY-D216) that request taint never reached: the
+      URL is a variable whose value comes from configuration, stored settings,
+      a constant or a caller the analysis cannot see;
+    * a shell command, path or URL (SKY-D212/D215/D216) whose only source is
+      the script's own command-line arguments, which its operator chooses;
+    * a Rust command or path (SKY-D212/D215) whose only inputs are environment
+      variables, command-line arguments or a function's parameters
+      (``metadata.rust_source == "operator_input"``, no request source).
+    * a YAML load (SKY-D206) whose loader this file proves is a native safe
+      loader, where only the whole-project proof that no other module
+      replaces it is missing because the project exceeds the source snapshot
+      limits (``metadata.yaml_loader_proof == "project_too_large"``).
+
+    The detector records the evidence; a ``review_item`` of another kind or a
+    finding with request evidence is never demoted."""
+    if not isinstance(finding, Mapping):
+        return False
+    item = finding.get("review_item")
+    if not isinstance(item, Mapping) or item.get("kind") != UNPROVEN_SOURCE_KIND:
+        return False
+    if item.get("blocking") is not False:
+        return False
+    rule = str(finding.get("rule_id") or "").upper()
+    metadata = finding.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    if metadata.get("rust_source") is not None:
+        evidence = metadata.get("security_evidence")
+        sources = evidence.get("sources") if isinstance(evidence, Mapping) else None
+        return (
+            rule in _RUST_OPERATOR_RULES
+            and metadata.get("rust_source") == "operator_input"
+            and isinstance(sources, list)
+            and not any(
+                isinstance(source, str) and source.startswith("request:")
+                for source in sources
+            )
+        )
+    if metadata.get("shell_source") is not None:
+        return (
+            rule in _SCRIPT_ARGUMENT_RULES
+            and metadata.get("shell_source") == "script_arguments"
+            and not finding.get("security_evidence")
+        )
+    if rule in _PATH_UNPROVEN_RULES:
+        provenance = metadata.get("path_provenance")
+        return (
+            isinstance(provenance, Mapping)
+            and provenance.get("status") == "incomplete"
+            and not provenance.get("untrusted")
+            and not provenance.get("shared_temp_path")
+            and metadata.get("path_source") != "resolved_caller"
+        )
+    if rule == "SKY-D206":
+        return metadata.get("yaml_loader_proof") == YAML_PROJECT_TOO_LARGE
+    if rule in _PATTERN_UNPROVEN_RULES:
+        return not finding.get("security_evidence") and not metadata.get(
+            "security_evidence"
+        )
+    return False
 
 
 NONBLOCKING_REVIEW_RULES = frozenset({"SKY-D324", "SKY-D325"})
@@ -175,6 +269,12 @@ def is_nonblocking_review(finding):
         and isinstance(proofs, list) and bool(proofs)
         and all(isinstance(proof, str) and proof.strip() for proof in proofs)
     )
+
+
+def is_gate_exempt_review(finding):
+    """A review item that stays reported but does not fail gates: a symlink
+    directory-entry question or a sink with no proven untrusted source."""
+    return is_nonblocking_review(finding) or is_unproven_source_review(finding)
 
 
 def is_combined_review(finding):

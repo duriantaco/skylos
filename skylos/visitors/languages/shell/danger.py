@@ -143,6 +143,16 @@ _ROOT_ONLY_MESSAGES = {
     "SKY-D216": "A URL from the script's own command-line arguments reaches curl or wget."
     + _ROOT_ONLY_SUFFIX,
 }
+_SCRIPT_ARGUMENT_MESSAGES = {
+    "SKY-D212": "Shell command execution receives the script's own command-line "
+    "arguments, which whoever runs the script chooses. If a less-trusted caller "
+    "can run it, use fixed commands and quote every argument.",
+    "SKY-D215": "A path from the script's own command-line arguments reaches a "
+    "filesystem sink without basename or canonical path validation; whoever runs "
+    "the script chooses it.",
+    "SKY-D216": "A URL from the script's own command-line arguments reaches curl or "
+    "wget; whoever runs the script chooses it.",
+}
 _OPTIONS_WITH_VALUES = {
     "-C",
     "-H",
@@ -366,6 +376,12 @@ def _assessed(
     rule_id, message, severity = spec
     reasons = []
     lowered = severity
+    # The script's own command-line arguments are chosen by whoever runs it,
+    # like a Python CLI argument: a review signal, not a listed injection
+    # (reporting.listing.is_unproven_source_review).
+    script_arguments = bool(taint.origins) and set(taint.origins) <= {"argv"}
+    if script_arguments:
+        message = _SCRIPT_ARGUMENT_MESSAGES[rule_id]
     if (
         structure is not None
         and structure.root_gate_covers(line_no)
@@ -381,13 +397,24 @@ def _assessed(
             "which limits the impact."
         )
         lowered = _SEVERITY_BELOW[lowered]
+    review = {}
+    if script_arguments:
+        review = {
+            "review_item": {"kind": "unproven_source", "blocking": False},
+            "metadata": {"shell_source": "script_arguments"},
+        }
+        message = f"Review (not listed, not blocking): {message}"
     if not reasons:
-        return rule_id, message, severity, {}
+        return rule_id, message, severity, review
     return (
         rule_id,
         message,
         lowered,
-        {"severity_reason": "_and_".join(reasons), "original_severity": severity},
+        {
+            "severity_reason": "_and_".join(reasons),
+            "original_severity": severity,
+            **review,
+        },
     )
 
 

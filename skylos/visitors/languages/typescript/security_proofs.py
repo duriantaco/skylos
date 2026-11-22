@@ -72,6 +72,19 @@ _MUTATION_CALLEES = frozenset(
 )
 
 _CLERK_AUTH_MODULES = frozenset({"@clerk/nextjs", "@clerk/nextjs/server"})
+_PURE_SCHEMA_MODULES = frozenset(
+    {
+        "zod",
+        "zod/v4",
+        "yup",
+        "joi",
+        "valibot",
+        "superstruct",
+        "arktype",
+        "io-ts",
+        "@sinclair/typebox",
+    }
+)
 _TRUSTED_WEBHOOK_MODULES = frozenset({"stripe", "svix", "@octokit/webhooks"})
 _PUBLIC_ENV_PREFIXES = (
     "NEXT_PUBLIC_",
@@ -824,8 +837,15 @@ def _append_webhook_finding(
 def _assess_auth_route(flow: SecurityFlow, route: RouteScope) -> dict[str, Any]:
     route_events = _auth_route_events(flow, route)
     calls = tuple(event for event in route_events if event.kind == EventKind.CALL)
+    # Calls that establish or check the caller's identity are not the
+    # protected effect: a proven project auth helper, an authorization
+    # predicate (`canUpdateWebsite(...)`) and the lookup whose result that
+    # predicate checks.
+    identity_calls = _identity_call_ids(flow, route, calls)
     mutations = tuple(
-        event for event in route_events if _is_route_side_effect(flow, event, route)
+        event
+        for event in route_events
+        if event.id not in identity_calls and _is_route_side_effect(flow, event, route)
     )
     targets: tuple[FlowEvent | None, ...] = mutations or (None,)
     protected_guards: list[str] = []
@@ -865,6 +885,20 @@ def _assess_auth_boundary(
         # A call is only complete after every argument has evaluated. This
         # prevents auth.protect(db.write()) from authenticating a prior write.
         if event.span.end_byte > boundary:
+            continue
+        if _is_project_auth_helper_call(flow, event):
+            proof = _project_helper_guard(flow, route, event, boundary, mutation)
+            if proof is not None:
+                return {
+                    "protected": True,
+                    "sink": sink,
+                    "guards_seen": proof,
+                    "reason": (
+                        "A project helper that verifies the caller's identity "
+                        "rejects the request on failure before the mutation."
+                    ),
+                }
+            guards_seen.append("project authentication helper result is not enforced")
             continue
         if not _is_trusted_auth_call(flow, event):
             if _is_auth_candidate(event):
@@ -957,6 +991,26 @@ def _assess_auth_boundary(
             else:
                 guards_seen.append("authentication result has no rejecting guard")
 
+    authorization = _authorization_guard(flow, route, boundary)
+    if (
+        authorization is not None
+        and flow.analysis_complete
+        and flow.scope(route.scope_id).complete
+    ):
+        guard, callee = authorization
+        return {
+            "protected": True,
+            "sink": sink,
+            "guards_seen": [
+                f"authorization check `{callee}`",
+                f"rejecting guard at line {guard.start_point[0] + 1}",
+            ],
+            "reason": (
+                "An explicit authorization check rejects the request with "
+                "401/403 before the mutation."
+            ),
+        }
+
     return {
         "protected": False,
         "sink": sink,
@@ -1039,12 +1093,23 @@ def _is_route_side_effect(
         )
     if path[0] in request_names and leaf in {
         "arrayBuffer",
+        "blob",
+        "clone",
         "formData",
+        "get",
+        "getAll",
+        "has",
         "json",
         "text",
     }:
+        # Reading the request (`request.headers.get('authorization')`).
         return False
     identity = event.callee.import_id
+    if identity is not None and identity.module in _PURE_SCHEMA_MODULES:
+        # Building a validation schema (`z.object({...})`) changes nothing.
+        return False
+    if _inside_schema_builder(flow, event) or _returns_response_helper(flow, event):
+        return False
     if (
         identity is not None
         and identity.module == "next/headers"
@@ -1074,6 +1139,74 @@ def _is_route_side_effect(
     if leaf in _MUTATION_CALLEES:
         return True
     return True
+
+
+_RESPONSE_HELPER_NAMES = frozenset(
+    {
+        "json",
+        "ok",
+        "created",
+        "noContent",
+        "text",
+        "html",
+        "error",
+        "badRequest",
+        "unauthorized",
+        "forbidden",
+        "notFound",
+        "methodNotAllowed",
+        "conflict",
+        "tooManyRequests",
+        "serverError",
+        "serviceUnavailable",
+    }
+)
+
+
+def _inside_schema_builder(flow: SecurityFlow, event: FlowEvent) -> bool:
+    """``z.object({ parameters: anyObjectParam.optional() })``: a call inside
+    the arguments of a schema-library call only builds the schema."""
+    current = event._node.parent
+    while current is not None and current.type not in {
+        "expression_statement",
+        "lexical_declaration",
+        "variable_declaration",
+        "return_statement",
+        "statement_block",
+    }:
+        if current.type == "call_expression":
+            callee = flow.unwrap(current.child_by_field_name("function"))
+            root = callee
+            while root is not None and root.type in {
+                "member_expression",
+                "call_expression",
+            }:
+                root = flow.unwrap(
+                    root.child_by_field_name("object")
+                    if root.type == "member_expression"
+                    else root.child_by_field_name("function")
+                )
+            if root is not None and root.type == "identifier":
+                identity = flow.imports.get(flow.node_text(root))
+                if identity is not None and identity.module in _PURE_SCHEMA_MODULES:
+                    return True
+        current = current.parent
+    return False
+
+
+def _returns_response_helper(flow: SecurityFlow, event: FlowEvent) -> bool:
+    """``return notFound();``: the call builds the HTTP response that ends the
+    handler."""
+    path = event.callee.member_path if event.callee is not None else ()
+    if len(path) != 1 or path[0] not in _RESPONSE_HELPER_NAMES:
+        return False
+    parent = event._node.parent
+    while parent is not None and parent.type in {
+        "await_expression",
+        "parenthesized_expression",
+    }:
+        parent = parent.parent
+    return parent is not None and parent.type == "return_statement"
 
 
 def _dominant_auth_guard(
@@ -1293,6 +1426,390 @@ def _same_node(left, right) -> bool:
         and left.start_byte == right.start_byte
         and left.end_byte == right.end_byte
     )
+
+
+_ERROR_RESULT_NAMES = frozenset(
+    {
+        "error",
+        "err",
+        "errors",
+        "failure",
+        "denied",
+        "rejection",
+        "response",
+        "redirect",
+        "unauthorized",
+        "forbidden",
+    }
+)
+_IDENTITY_RESULT_NAMES = frozenset(
+    {
+        "auth",
+        "user",
+        "session",
+        "identity",
+        "principal",
+        "account",
+        "claims",
+        "token",
+        "payload",
+        "me",
+        "viewer",
+        "actor",
+        "member",
+        "currentUser",
+        "userId",
+        "ok",
+        "success",
+        "valid",
+        "isValid",
+        "authenticated",
+        "isAuthenticated",
+        "authorized",
+    }
+)
+_SKIP_AUTH_OPTION_RE = re.compile(
+    r"^(?:(?:skip|no|bypass|disable|without|optional|allow)_?"
+    r"(?:auth\w*|anonymous|unauthenticated|public)|public|anonymous|"
+    r"unauthenticated|optionalAuth|authOptional|isPublic)$",
+    re.IGNORECASE,
+)
+_AUTHORIZATION_CALL_RE = re.compile(
+    r"^(?:can[A-Z_]\w*|has\w*(?:Permission|Access|Role)s?\w*|"
+    r"is(?:Authori[sz]ed|Allowed|Permitted)\w*|authori[sz]e\w*|"
+    r"(?:check|verify|ensure|require|assert)\w*(?:Permission|Access|Role|"
+    r"Authori[sz]ation|Ownership)s?\w*)$"
+)
+_REJECTION_CALL_RE = re.compile(
+    r"(?:unauthori[sz]ed|forbidden|notAuthori[sz]ed|accessDenied|denied|"
+    r"notFound|permissionDenied)",
+    re.IGNORECASE,
+)
+_REJECTION_STATUS_RE = re.compile(r"(?<![\w.])(?:401|403|404)(?![\w.])")
+
+
+def _error_result_name(name: str) -> bool:
+    return name in _ERROR_RESULT_NAMES or name.endswith(("Error", "Response"))
+
+
+def _identity_call_ids(
+    flow: SecurityFlow, route: RouteScope, calls: tuple[FlowEvent, ...]
+) -> set[int]:
+    ids = {event.id for event in calls if _is_project_auth_helper_call(flow, event)}
+    checked_names: set[str] = set()
+    for event in calls:
+        if not _is_authorization_call(event):
+            continue
+        ids.add(event.id)
+        for argument in flow.call_arguments(event):
+            for node in flow.iter_nodes(argument, skip_nested_functions=True):
+                if node.type == "identifier":
+                    checked_names.add(flow.node_text(node))
+    if not checked_names:
+        return ids
+    for event in calls:
+        if event.callee is None or not event.callee.member_path:
+            continue
+        if event.callee.member_path[-1] in _MUTATION_CALLEES:
+            continue
+        declarator = _enclosing_declarator(event._node)
+        if declarator is None:
+            continue
+        value = flow.unwrap(declarator.child_by_field_name("value"))
+        if value is None or not _same_node(value, event._node):
+            continue
+        name_node = declarator.child_by_field_name("name")
+        if name_node is None:
+            continue
+        bound = {
+            flow.node_text(node)
+            for node in flow.iter_nodes(name_node, skip_nested_functions=True)
+            if node.type in {"identifier", "shorthand_property_identifier_pattern"}
+        }
+        if bound & checked_names:
+            ids.add(event.id)
+    return ids
+
+
+def _is_authorization_call(event: FlowEvent) -> bool:
+    if event.callee is None or not event.callee.member_path:
+        return False
+    return bool(_AUTHORIZATION_CALL_RE.match(event.callee.member_path[-1]))
+
+
+_PROJECT_HELPER_CACHE_ATTR = "_skylos_project_auth_helpers"
+
+
+def _is_project_auth_helper_call(flow: SecurityFlow, event: FlowEvent) -> bool:
+    """A call to a function imported from the project whose source reaches a
+    recognised identity verification (``project_helpers``), without an option
+    such as ``skipAuth: true`` that turns the check off."""
+    callee = event.callee
+    if callee is None or not callee.member_path or callee.import_id is None:
+        return False
+    identity = callee.import_id
+    path = callee.member_path
+    if identity.exported == "*":
+        if len(path) != 2 or path[0] != identity.local:
+            return False
+        exported = path[1]
+    else:
+        if path != (identity.local,):
+            return False
+        exported = identity.exported
+    from skylos.visitors.languages.typescript.project_helpers import (
+        _is_project_module,
+        helper_authenticates,
+    )
+
+    if not _is_project_module(identity.module) or _call_skips_auth(flow, event):
+        return False
+    cache = getattr(flow, _PROJECT_HELPER_CACHE_ATTR, None)
+    if cache is None:
+        cache = {}
+        try:
+            setattr(flow, _PROJECT_HELPER_CACHE_ATTR, cache)
+        except AttributeError:
+            pass
+    key = (identity.module, exported)
+    if key in cache:
+        return cache[key]
+    importer = os.path.realpath(flow.file_path)
+    project_root = _nearest_ts_project_root(importer)
+    result = bool(
+        project_root is not None
+        and helper_authenticates(project_root, importer, identity.module, exported)
+    )
+    cache[key] = result
+    return result
+
+
+def _call_skips_auth(flow: SecurityFlow, event: FlowEvent) -> bool:
+    for argument in flow.call_arguments(event):
+        argument = flow.unwrap(argument)
+        if argument is None or argument.type != "object":
+            continue
+        for pair in argument.named_children:
+            if pair.type == "shorthand_property_identifier":
+                if _SKIP_AUTH_OPTION_RE.match(flow.node_text(pair)):
+                    return True
+                continue
+            if pair.type != "pair":
+                continue
+            key = pair.child_by_field_name("key")
+            value = flow.unwrap(pair.child_by_field_name("value"))
+            if key is None or not _SKIP_AUTH_OPTION_RE.match(
+                flow.node_text(key).strip("'\"")
+            ):
+                continue
+            if value is None or value.type not in {"false", "null", "undefined"}:
+                return True
+    return False
+
+
+def _project_helper_guard(
+    flow: SecurityFlow,
+    route: RouteScope,
+    event: FlowEvent,
+    boundary: int,
+    mutation: FlowEvent | None,
+) -> list[str] | None:
+    """The helper result is rejected on failure before the mutation:
+    ``if (error) return error();``, ``if (!auth) return ...``,
+    ``if (access.response) return access.response;``."""
+    if not (
+        flow.analysis_complete
+        and flow.scope(route.scope_id).complete
+        and _call_is_awaited(event, route)
+        and _event_executes_unconditionally(flow, event, route)
+    ):
+        return None
+    declarator = _enclosing_declarator(event._node)
+    if declarator is None:
+        return None
+    value = flow.unwrap(declarator.child_by_field_name("value"))
+    if value is None or not _same_node(value, event._node):
+        return None
+    name_node = declarator.child_by_field_name("name")
+    if name_node is None:
+        return None
+    subjects: list[tuple[str, str]] = []
+    if name_node.type == "identifier":
+        subjects.append((flow.node_text(name_node), "result"))
+    elif name_node.type == "object_pattern":
+        for child in name_node.named_children:
+            field = local = None
+            if child.type == "shorthand_property_identifier_pattern":
+                field = local = flow.node_text(child)
+            elif child.type == "pair_pattern":
+                key = child.child_by_field_name("key")
+                target = child.child_by_field_name("value")
+                if (
+                    key is not None
+                    and target is not None
+                    and target.type == "identifier"
+                ):
+                    field = flow.node_text(key).strip("'\"")
+                    local = flow.node_text(target)
+            if field is None or local is None:
+                continue
+            if _error_result_name(field):
+                subjects.append((local, "error"))
+            elif field in _IDENTITY_RESULT_NAMES:
+                subjects.append((local, "identity"))
+    for subject, kind in subjects:
+        guard = flow.dominant_guard(
+            route,
+            boundary,
+            lambda node, subject=subject, kind=kind: _helper_failure_guard(
+                flow, node, subject, kind
+            ),
+        )
+        if (
+            guard is not None
+            and guard.start_byte > event.span.end_byte
+            and _binding_is_stable(
+                flow, route, subject, declarator.start_byte, guard.start_byte
+            )
+        ):
+            callee = _event_callee(event) or "helper"
+            return [
+                f"project authentication helper `{callee}`",
+                f"rejecting guard at line {guard.start_point[0] + 1}",
+            ]
+    return None
+
+
+def _helper_failure_guard(flow: SecurityFlow, if_node, subject: str, kind: str) -> bool:
+    if if_node is None or if_node.type != "if_statement":
+        return False
+    consequence = if_node.child_by_field_name("consequence")
+    if not terminates(consequence):
+        return False
+    compact = _compact(flow.node_text(if_node.child_by_field_name("condition")))
+    while compact.startswith("(") and compact.endswith(")"):
+        compact = compact[1:-1]
+    if kind == "error":
+        return compact in {
+            subject,
+            f"{subject}!=null",
+            f"{subject}!==undefined",
+            f"{subject}!==null",
+        }
+    if kind == "identity":
+        return negative_guard_fallthrough(if_node, subject, flow.source)
+    # A whole result object: a missing result, a failed flag or an error
+    # member rejects.
+    if negative_guard_fallthrough(if_node, subject, flow.source):
+        negated = re.fullmatch(
+            rf"!\(?{re.escape(subject)}((?:\??\.[A-Za-z_$][A-Za-z0-9_$]*)*)\)?",
+            compact,
+        )
+        members = (
+            re.findall(r"[A-Za-z_$][A-Za-z0-9_$]*", negated.group(1)) if negated else []
+        )
+        return not members or members[0] in _IDENTITY_RESULT_NAMES
+    match = re.fullmatch(
+        rf"{re.escape(subject)}(?:\?\.|\.)([A-Za-z_$][A-Za-z0-9_$]*)", compact
+    )
+    if match is not None:
+        return _error_result_name(match.group(1))
+    return compact in {
+        f"{subject}instanceofResponse",
+        f"{subject}instanceofNextResponse",
+    }
+
+
+def _authorization_guard(flow: SecurityFlow, route: RouteScope, boundary: int):
+    """``if (!(await canUpdateWebsite(auth, id))) return unauthorized();``
+    (also through ``const allowed = await can...(...)``) before the boundary,
+    whose branch rejects with 401/403/404."""
+    allowed_names: dict[str, str] = {}
+    for statement in flow.direct_statements(route):
+        if statement.start_byte >= boundary:
+            break
+        if statement.type in {"lexical_declaration", "variable_declaration"}:
+            for declarator in statement.named_children:
+                if declarator.type != "variable_declarator":
+                    continue
+                name = declarator.child_by_field_name("name")
+                callee = _authorization_callee(
+                    flow, declarator.child_by_field_name("value")
+                )
+                if name is not None and name.type == "identifier" and callee:
+                    allowed_names[flow.node_text(name)] = callee
+            continue
+        if statement.type != "if_statement":
+            continue
+        consequence = statement.child_by_field_name("consequence")
+        if not terminates(consequence) or not _rejects(flow, consequence):
+            continue
+        condition = flow.unwrap(statement.child_by_field_name("condition"))
+        callee = _negated_authorization(flow, condition, allowed_names)
+        if callee is not None:
+            return statement, callee
+    return None
+
+
+def _negated_authorization(flow: SecurityFlow, condition, allowed_names) -> str | None:
+    condition = flow.unwrap(condition)
+    if condition is None:
+        return None
+    if condition.type == "unary_expression":
+        operator = condition.child_by_field_name("operator")
+        argument = condition.child_by_field_name("argument")
+        if operator is None or flow.node_text(operator) != "!":
+            return None
+        argument = flow.unwrap(argument)
+        if argument is not None and argument.type == "identifier":
+            return allowed_names.get(flow.node_text(argument))
+        return _authorization_callee(flow, argument)
+    if condition.type == "binary_expression":
+        operator = condition.child_by_field_name("operator")
+        right = flow.unwrap(condition.child_by_field_name("right"))
+        if (
+            operator is not None
+            and flow.node_text(operator) in {"===", "=="}
+            and right is not None
+            and right.type == "false"
+        ):
+            left = flow.unwrap(condition.child_by_field_name("left"))
+            if left is not None and left.type == "identifier":
+                return allowed_names.get(flow.node_text(left))
+            return _authorization_callee(flow, left)
+    return None
+
+
+def _authorization_callee(flow: SecurityFlow, node) -> str | None:
+    node = flow.unwrap(node)
+    while node is not None and node.type in {
+        "await_expression",
+        "parenthesized_expression",
+    }:
+        node = flow.unwrap(next(iter(node.named_children), None))
+    if node is None or node.type != "call_expression":
+        return None
+    path = flow.callee_path(node)
+    if not path or not _AUTHORIZATION_CALL_RE.match(path[-1]):
+        return None
+    return ".".join(path)
+
+
+def _rejects(flow: SecurityFlow, branch) -> bool:
+    if branch is None:
+        return False
+    for node in flow.iter_nodes(branch, skip_nested_functions=True):
+        if node.type == "throw_statement":
+            return True
+        if node.type == "number" and _REJECTION_STATUS_RE.fullmatch(
+            flow.node_text(node)
+        ):
+            return True
+        if node.type == "call_expression":
+            path = flow.callee_path(node)
+            if path and _REJECTION_CALL_RE.search(path[-1]):
+                return True
+    return False
 
 
 def _is_trusted_auth_call(flow: SecurityFlow, event: FlowEvent) -> bool:

@@ -116,10 +116,17 @@ more_examples:
 
 how_skylos_decides:
   - >-
-    Only checks files that import a MongoDB library: `mongoose`, `mongodb`,
-    `@nestjs/mongoose`, `@typegoose/typegoose`, `mongojs` or `monk`. Skips
-    a file that calls `express-mongo-sanitize` or turns on Mongoose's
-    `sanitizeFilter` option, which strip or escape `$` keys.
+    Checks files that import a MongoDB library (`mongoose`, `mongodb`,
+    `@nestjs/mongoose`, `@typegoose/typegoose`, `mongojs` or `monk`), and
+    elsewhere queries on a collection-shaped receiver (`db.ordersCollection`,
+    `db.collection('x')`, a DAO's `usersCol`, as with MarsDB or a wrapper
+    module) or with a literal `$where` key. Skips a file that calls
+    `express-mongo-sanitize` or turns on Mongoose's `sanitizeFilter`
+    option, which strip or escape `$` keys.
+  - >-
+    Also reports, without request proof, a `$where` string built from a
+    parameter of the enclosing function, as in a DAO method that receives
+    the request value from its caller.
   - >-
     Follows request data inside one route handler (Express, Fastify, Koa,
     Hapi, NestJS, Next.js and others) to the filter of `find`, `findOne`,

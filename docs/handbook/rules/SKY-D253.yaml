@@ -10,10 +10,12 @@ cwe: [CWE-208]
 what_it_is: >-
   `===` and `==` stop at the first character that differs, so comparing a
   secret this way takes slightly longer the more leading characters match.
-  SKY-D253 reports an equality check in TypeScript or JavaScript where one
-  side is named like a password, token, signature, hash or key. In Python it
-  recognizes a keyed digest produced by the standard hmac module compared
-  with a runtime value using ordinary equality or inequality.
+  SKY-D253 reports an equality check in TypeScript or JavaScript that puts
+  a secret the server holds (an environment or config credential, an HMAC
+  it computes, a stored token or password) against a value the attacker
+  sends. In Python it recognizes a keyed digest produced by the standard
+  hmac module compared with a runtime value using ordinary equality or
+  inequality.
 
 why_it_matters: >-
   That time difference is a "timing side channel". An attacker who can send
@@ -64,34 +66,40 @@ not_flagged_example:
     }
   why: >-
     `signature.length !== expected.length` compares two lengths, which are
-    public (`timingSafeEqual` needs equal lengths). The rule reads the last
-    name of each side, here `length`. The secret bytes themselves are
-    compared with `crypto.timingSafeEqual()`.
+    public (`timingSafeEqual` needs equal lengths): a length is neither the
+    secret nor the request's guess. The secret bytes themselves are compared
+    with `crypto.timingSafeEqual()`.
 
 how_skylos_decides:
   - >-
     Runs with `--danger` on TypeScript and JavaScript files. Finds every
     `==`, `===`, `!=` and `!==` expression.
   - >-
-    Skips it when one side is the literal `null`, when it is a strict
-    comparison with `true` or `false`, or when it compares a password
-    field with its confirmation field of the same private sign-up form
-    (a Zod schema used only through `zodResolver` in `useForm`).
+    Classifies each side. A secret is an environment or config value whose
+    key names a credential (`process.env.API_KEY`, `config.get('x.secret')`),
+    an HMAC built with `createHmac`, a member the function filled from one
+    of those, or a credential-named value that is neither request data nor
+    a parameter (`user.resetToken`, `storedHash`). The guess is request data
+    in the handler (`req.body.token`, `req.get('x-signature')`,
+    `request.headers.get(...)`, `formData.get(...)`, a destructured
+    `({ body }: Request)` field) or a local bound from it.
   - >-
-    Otherwise takes the last name of each side (`token`, `user.passwordHash`
-    gives `passwordHash`, `process.env.API_SECRET` gives `API_SECRET`),
-    lower-cases it and removes `_`. Reports MEDIUM when it ends in
-    password, passwd, pwd, secret, token, hash, digest, hmac, signature or
-    apikey. One finding per comparison.
+    Reports MEDIUM when request data meets a secret, or when a parameter
+    meets an environment, config or HMAC secret (`key ===
+    process.env.ADMIN_KEY`). One finding per comparison.
+  - >-
+    Skips literals, `null`/`undefined` and booleans, two request fields
+    (a password and its confirmation), two values of unknown origin, hash or
+    digest calls (`hash(input) === stored`: the attacker cannot steer digest
+    bytes) and names that only end in token or hash (`location.hash`,
+    `ts.SyntaxKind.ExclamationToken`).
 
 source_refs:
   - path: skylos/visitors/languages/typescript/danger.py
     symbol: "def _check_timing_comparison"
-  - path: skylos/visitors/languages/typescript/danger.py
-    symbol: "_TIMING_SENSITIVE_SUFFIXES = ("
-  - path: skylos/visitors/languages/typescript/danger.py
-    symbol: "def _compares_one_form_entry_twice"
-    note: the sign-up form exception.
+  - path: skylos/visitors/languages/typescript/timing_compare.py
+    symbol: "def comparison_secret(self, node)"
+    note: the secret and guess classification.
   - path: test/test_typescript_expanded.py
     symbol: "class TestTimingUnsafeComparison"
 
@@ -124,17 +132,14 @@ fix:
 false_alarms_and_suppression:
   misfires:
     - >-
-      Checks that only test whether a value is present are reported:
-      `token === undefined` and `token === ""` both count, because only
-      `null` is skipped. `typeof token !== "string"` and `!token` are not
-      reported.
-    - >-
-      Names that end in a listed word but hold nothing secret are
-      reported, such as `fileHash === previousHash` for a cache check or
-      `commitHash` comparisons.
+      A request value compared with a stored value whose name ends in
+      token, hash or secret is reported even when that value is public,
+      such as `req.query.etag === file.hash`.
     - >-
       Missed: secrets in variables with neutral names (`if (a === b)`),
-      `Buffer.equals()` and comparisons in Python, Go or Java.
+      secrets passed through helpers of other files, secrets added by a
+      schema `.transform()`, `Buffer.equals()`, Python comparisons other
+      than an hmac digest, and comparisons in Go or Java.
   suppress:
     - check: inline
       text: >-

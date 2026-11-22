@@ -93,7 +93,8 @@ how_skylos_decides:
     environment variables belong to whoever runs the program, so they are
     skipped. For a plain helper's parameter, Skylos follows the callers
     through the scanned project: it reports when a resolved caller passes
-    untrusted input, keeps the finding when the trace is cut off, and
+    untrusted input, keeps the finding as an unlisted, non-blocking review
+    signal when the trace is cut off before reaching untrusted input, and
     otherwise moves it to `suppressed` as safe or unknown.
   - >-
     Reports HIGH on the line of the write call. When the path still holds

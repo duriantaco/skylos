@@ -14,6 +14,7 @@ from .conventions import (
     CONF_TOOL_NAMED_EXPORTS,
     convention_reason,
     expo_router_exports,
+    framework_convention_exports,
     is_conf_tool_config,
     is_jest_manual_mock,
     is_package_tool_config,
@@ -170,6 +171,7 @@ class TSFrameworkVisitor:
         self._scan_react_patterns()
         self._scan_custom_hooks()
         self._scan_vscode_contract_methods()
+        self._scan_lit_controller_methods()
 
     def _get_text(self, node) -> str:
         return self._source[node.start_byte : node.end_byte].decode("utf-8")
@@ -224,6 +226,16 @@ class TSFrameworkVisitor:
             if "default" in expo_exports:
                 self._mark_default_export()
             self._mark_named_exports(set(expo_exports) - {"default"})
+            return
+        convention_exports = framework_convention_exports(self._file_path)
+        if convention_exports:
+            # A tool in the plugin table loads the file and reads these exports.
+            if "*" in convention_exports or "default" in convention_exports:
+                self._mark_default_export()
+            if "*" in convention_exports:
+                self._mark_named_exports(self._exported_names())
+            else:
+                self._mark_named_exports(set(convention_exports) - {"default"})
             return
         if is_react_email_template(self._file_path):
             self._mark_default_export()
@@ -380,6 +392,94 @@ class TSFrameworkVisitor:
         for node in self._captures.get("export_var_name", []):
             if self._get_text(node).startswith("use") and len(self._get_text(node)) > 3:
                 self.framework_decorated_lines.add(self._line_of(node))
+
+    def _scan_lit_controller_methods(self) -> None:
+        """Lit calls a reactive controller's lifecycle hooks on its host's
+        updates: ``hostConnected``/``hostDisconnected``/``hostUpdate``/
+        ``hostUpdated`` of a class that implements ``ReactiveController``
+        (imported from a Lit package) or registers itself with
+        ``host.addController(this)``."""
+        contracts = self._lit_controller_bindings()
+        if contracts is None:
+            return
+        stack = [self._root]
+        while stack:
+            node = stack.pop()
+            stack.extend(node.named_children)
+            if node.type not in {"class_declaration", "abstract_class_declaration", "class"}:
+                continue
+            body = node.child_by_field_name("body") or _first_named_child_of_type(
+                node, "class_body"
+            )
+            if body is None:
+                continue
+            if not (
+                self._implements_any(node, contracts) or self._registers_controller(body)
+            ):
+                continue
+            for member in body.named_children:
+                if member.type not in {"method_definition", "method_signature"}:
+                    continue
+                name = member.child_by_field_name("name")
+                if name is not None and self._get_text(name) in _LIT_CONTROLLER_HOOKS:
+                    self.framework_decorated_lines.add(self._line_of(name))
+
+    def _lit_controller_bindings(self) -> set[str] | None:
+        """Local names of ``ReactiveController`` imported from Lit, or None
+        when the file imports no Lit package."""
+        names: set[str] = set()
+        lit = False
+        for src_node in self._captures.get("import_src", []):
+            module = self._get_text(src_node).strip("'\"")
+            if module not in _LIT_PACKAGES and not module.startswith(_LIT_PACKAGE_PREFIXES):
+                continue
+            lit = True
+            statement = _ancestor_of_type(src_node, "import_statement")
+            if statement is None:
+                continue
+            for specifier in _iter_named_import_specifiers(statement):
+                imported = specifier.child_by_field_name("name")
+                alias = specifier.child_by_field_name("alias")
+                if imported is not None and self._get_text(imported) == _LIT_CONTRACT.get(
+                    "interface", "ReactiveController"
+                ):
+                    names.add(self._get_text(alias if alias is not None else imported))
+        return names if lit else None
+
+    def _implements_any(self, class_node, contracts: set[str]) -> bool:
+        heritage = _first_named_child_of_type(class_node, "class_heritage")
+        if heritage is None or not contracts:
+            return False
+        for clause in _named_children_of_type(heritage, "implements_clause"):
+            for contract in clause.named_children:
+                text = self._get_text(contract).split("<", 1)[0].strip()
+                if text in contracts:
+                    return True
+        return False
+
+    def _registers_controller(self, body) -> bool:
+        stack = [body]
+        while stack:
+            node = stack.pop()
+            if node.type == "call_expression":
+                function = node.child_by_field_name("function")
+                arguments = node.child_by_field_name("arguments")
+                if (
+                    function is not None
+                    and function.type == "member_expression"
+                    and self._get_text(function.child_by_field_name("property") or function)
+                    == _LIT_REGISTER_CALL
+                    and arguments is not None
+                    and [
+                        self._get_text(child)
+                        for child in arguments.named_children
+                        if child.type != "comment"
+                    ]
+                    == ["this"]
+                ):
+                    return True
+            stack.extend(node.named_children)
+        return False
 
     def _scan_vscode_contract_methods(self) -> None:
         if "vscode" not in self.detected_frameworks:
@@ -557,6 +657,29 @@ class TSFrameworkVisitor:
         alias_node = specifier.child_by_field_name("alias")
         local_name_node = alias_node if alias_node is not None else name_node
         return self._get_text(local_name_node), contract_name
+
+
+def _lit_contract() -> dict:
+    """The ``ReactiveController`` row of the plugin table (``lit``)."""
+    from .plugin_facts import class_contracts
+
+    for contract in class_contracts():
+        if contract.get("interface") == "ReactiveController":
+            return contract
+    return {}
+
+
+_LIT_CONTRACT = _lit_contract()
+_LIT_PACKAGES = frozenset(_LIT_CONTRACT.get("packages") or ())
+_LIT_PACKAGE_PREFIXES = tuple(_LIT_CONTRACT.get("package_prefixes") or ())
+_LIT_CONTROLLER_HOOKS = frozenset(_LIT_CONTRACT.get("methods") or ())
+_LIT_REGISTER_CALL = _LIT_CONTRACT.get("register_call") or "addController"
+
+
+def _iter_named_import_specifiers(import_statement):
+    for clause in _named_children_of_type(import_statement, "import_clause"):
+        for named in _named_children_of_type(clause, "named_imports"):
+            yield from _named_children_of_type(named, "import_specifier")
 
 
 def _named_children_of_type(node, node_type: str):

@@ -9,13 +9,14 @@ gate:
   note: Reported in unused_variables with its own SKY-U007 ID; counts toward max_dead_code,
     which is unlimited by default.
 run_with: '`skylos .`'
-what_it_is: A member has no literal read in a module-local enum, or in a closed private package
-  whose direct named imports are fully known. Public and opaque enum surfaces remain live.
+what_it_is: A member has no literal read in a module-local enum, or in an exported enum of an
+  internal module whose direct named imports are fully known. Public and opaque enum surfaces
+  remain live.
 why_it_matters: An obsolete enum member can keep a removed state or workflow looking supported.
   Removing numeric members can change later implicit values, so the finding requires review.
 flagged_example:
   language: typescript
-  filename: src/status.ts
+  filename: src/index.ts
   expect_line: 4
   code: |
     export {};
@@ -26,7 +27,7 @@ flagged_example:
     console.log(Status.Ready);
 not_flagged_example:
   language: typescript
-  filename: src/status.ts
+  filename: src/index.ts
   code: |
     export {};
     enum Status {
@@ -38,18 +39,25 @@ not_flagged_example:
     needs, so all members remain live.
 how_skylos_decides:
 - 'Reads implementation enums in explicit TypeScript modules. Local enums can be narrowed
-  inside their module; an exported enum requires an owning package.json with private: true
-  and a complete source inventory.'
-- For a private exported enum, resolves direct named imports and aliases to their provider
-  before combining literal member reads across files. Namespace imports, re-exports, dynamic
-  loaders, unresolved imports and unparsed component consumers prevent this proof.
+  inside their module; an exported enum requires an internal module (not a package.json
+  entry, tool or framework entry, file named by path or module no file imports, the SKY-E004
+  notion) and a complete source inventory. The package need not be private.'
+- For an exported enum, resolves direct named imports and aliases to their provider before
+  combining literal member reads across files. Namespace imports, re-exports and dynamic
+  loaders prevent this proof. A Vue, Svelte or Astro component, HTML module script or MDX
+  document that imports the enum's module is read as an opaque consumer of that module's
+  enums (a template can read members its script never names); other modules keep exact
+  narrowing. An unresolved import holds back only
+  the module its last segment names, or the workspace package a bare specifier names; a
+  relative import that matches no file cannot load an existing enum.
+- '`@public`, `@alpha` and `@beta` JSDoc tags on an enum or member keep it live.'
 - Resolves literal member reads and constant aliases. Dynamic indexing, reflection, mutation,
   escapes, declaration merging and effectful initializers decline member narrowing.
 - Retains members referenced by other initializers. If no member is read, leaves the entire
   enum to the existing unused-owner finding instead of listing every member.
 - Reports LOW at the member declaration. analysis_summary.enum_member_analysis identifies
-  scope local_and_closed_private_enums and records checked enums, abstentions and incomplete
-  source graph reads.
+  scope local_and_internal_module_enums and records checked enums, abstentions, unresolved
+  imports and incomplete source graph reads.
 source_refs:
 - path: skylos/visitors/languages/typescript/unused_enum_members.py
   symbol: def find_unused_ts_enum_members(
@@ -64,7 +72,7 @@ fix:
     and external contracts stay correct. This string-valued example preserves the retained
     member value.
   language: typescript
-  filename: src/status.ts
+  filename: src/index.ts
   code: |
     export {};
     enum Status {
@@ -83,6 +91,7 @@ false_alarms_and_suppression:
 related:
 - SKY-U003
 - SKY-U004
+- SKY-U008
 - SKY-E003
 more_examples:
 - flagged:
@@ -116,5 +125,5 @@ more_examples:
       code: |
         import { Status as Mode } from "./status";
         console.log(Object.values(Mode));
-    why: The private source inventory is known, but reflection makes the member demand opaque.
-      The enum is retained rather than narrowed.
+    why: The source inventory is known, but reflection makes the member demand opaque. The
+      enum is retained rather than narrowed.

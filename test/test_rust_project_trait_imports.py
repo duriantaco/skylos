@@ -65,7 +65,7 @@ fn main() { let value = &Card {}; let _ = value.stamp(); let _ = Active::stamp(&
         "pub trait Other { fn stamp(&self) -> u8; } impl Other for &crate::Card { fn stamp(&self) -> u8 { 2 } }",
     ],
 )
-def test_external_inherent_and_byvalue_precedence_leave_unused_trait(
+def test_external_inherent_and_byvalue_precedence_abstain_on_trait(
     tmp_path, implementation
 ):
     main = DECLARATIONS.replace("stamp(&self)", "stamp(self)")
@@ -75,7 +75,8 @@ def test_external_inherent_and_byvalue_precedence_leave_unused_trait(
     main += "fn main() { let value = &Card {}; let _ = value.stamp(); }\n"
     (tmp_path / "main.rs").write_text(main)
     (tmp_path / "external.rs").write_text(implementation)
-    assert ("Inactive", 7) in _scan(tmp_path)
+    # `stamp` is called in scope, so the Stamp import may supply it: abstain.
+    assert ("Inactive", 7) not in _scan(tmp_path)
 
 
 def test_ordinary_module_file_children_are_relative_to_its_name(tmp_path):
@@ -113,7 +114,9 @@ def test_missing_module_supplies_no_project_trait_proof(tmp_path):
         DECLARATIONS
         + "mod absent;\nuse traits::Stamp as Active;\nfn main() { let _ = Card {}.stamp(); }\n"
     )
-    assert _scan(tmp_path) == {("Active", 7)}
+    # Without the closure proof the import is unproven, and `stamp` is
+    # called in scope: Skylos abstains instead of reporting it.
+    assert _scan(tmp_path) == set()
 
 
 def test_ambiguous_module_supplies_no_project_trait_proof(tmp_path):
@@ -124,7 +127,7 @@ def test_ambiguous_module_supplies_no_project_trait_proof(tmp_path):
     (tmp_path / "external.rs").write_text("")
     (tmp_path / "external").mkdir()
     (tmp_path / "external" / "mod.rs").write_text("")
-    assert _scan(tmp_path) == {("Active", 7)}
+    assert _scan(tmp_path) == set()
 
 
 def test_attributed_module_identity_supplies_no_project_trait_proof(tmp_path):
@@ -134,7 +137,7 @@ def test_attributed_module_identity_supplies_no_project_trait_proof(tmp_path):
     )
     (tmp_path / "external.rs").write_text("")
     (tmp_path / "other.rs").write_text("")
-    assert _scan(tmp_path) == {("Active", 8)}
+    assert _scan(tmp_path) == set()
 
 
 def test_excluded_module_supplies_no_project_trait_proof(tmp_path):

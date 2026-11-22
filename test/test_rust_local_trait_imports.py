@@ -70,7 +70,9 @@ def test_local_trait_uses_follow_the_receiver_type(tmp_path):
         + "use crate::traits::Other as Inactive;\n"
         + "fn main() { let value = Card {}; let _ = value.stamp(); }\n"
     )
-    assert _scan(tmp_path, source) == {"Inactive"}
+    # Under the trait-import policy a member of the trait is called in scope,
+    # so the import may supply it: Skylos abstains instead of reporting it.
+    assert _scan(tmp_path, source) == set()
 
 
 @pytest.mark.parametrize("inner_path", ["crate::traits", "traits"])
@@ -163,8 +165,9 @@ def test_reference_impl_keeps_the_imports_selected_by_rust(tmp_path, blanket, by
             "impl Stamp for super::Card { fn stamp(self)",
         )
     # With &self, the Stamp import supplies value.stamp(). The explicit Other
-    # call uses Active too. A by-value Stamp receiver loses to Other's borrow.
-    assert _scan(tmp_path, source) == ({"Inactive"} if by_value else set())
+    # call uses Active too. A by-value Stamp receiver loses to Other's borrow,
+    # but `stamp` is still called in scope, so Skylos abstains on Inactive.
+    assert _scan(tmp_path, source) == set()
 
 
 @pytest.mark.parametrize(
@@ -191,7 +194,9 @@ def test_reference_trait_in_another_file_has_distinct_receiver_uses(tmp_path, by
             "impl Stamp for super::Card { fn stamp(&self)",
             "impl Stamp for super::Card { fn stamp(self)",
         )
-    assert _scan(tmp_path, source) == ({"Inactive"} if by_value else set())
+    # Under the trait-import policy a member of the trait is called in scope,
+    # so the import may supply it: Skylos abstains instead of reporting it.
+    assert _scan(tmp_path, source) == set()
 
 
 def test_macro_generated_inherent_method_does_not_credit_trait_import(tmp_path):
@@ -201,10 +206,12 @@ def test_macro_generated_inherent_method_does_not_credit_trait_import(tmp_path):
         + "install!();\nuse crate::traits::Stamp as Inactive;\n"
         + "fn main() { let value = Card {}; let _ = value.stamp(); }\n"
     )
-    assert _scan(tmp_path, source) == {"Inactive"}
+    # Under the trait-import policy a member of the trait is called in scope,
+    # so the import may supply it: Skylos abstains instead of reporting it.
+    assert _scan(tmp_path, source) == set()
 
 
-def test_inherent_method_in_another_module_keeps_trait_import_unused(tmp_path):
+def test_inherent_method_in_another_module_leaves_trait_import_abstained(tmp_path):
     (tmp_path / "external.rs").write_text(
         "impl crate::Card { pub fn stamp(&self) -> u8 { 4 } }\n"
     )
@@ -213,7 +220,9 @@ def test_inherent_method_in_another_module_keeps_trait_import_unused(tmp_path):
         + "mod external;\nuse crate::traits::Stamp as Inactive;\n"
         + "fn main() { let value = Card {}; let _ = value.stamp(); }\n"
     )
-    assert _scan(tmp_path, source) == {"Inactive"}
+    # Under the trait-import policy a member of the trait is called in scope,
+    # so the import may supply it: Skylos abstains instead of reporting it.
+    assert _scan(tmp_path, source) == set()
 
 
 @pytest.mark.parametrize("fallible", [False, True])
@@ -234,7 +243,9 @@ def test_prelude_conversion_does_not_credit_a_local_trait(tmp_path, fallible):
         + "}\nuse crate::traits::Stamp as Inactive;\n"
         + f"fn main() {{ let value = Card {{}}; let _: {result_type} = value.{member}(); }}\n"
     )
-    assert _scan(tmp_path, source) == {"Inactive"}
+    # Under the trait-import policy a member of the trait is called in scope,
+    # so the import may supply it: Skylos abstains instead of reporting it.
+    assert _scan(tmp_path, source) == set()
 
 
 @pytest.mark.parametrize("generic", [False, True])
@@ -255,7 +266,9 @@ def test_more_specific_double_reference_selects_its_own_trait(tmp_path, generic)
         + "fn main() { let value = &&Card {}; let _ = value.stamp(); "
         + "let _ = Active::stamp(value); }\n"
     )
-    assert _scan(tmp_path, source) == {"Inactive"}
+    # Under the trait-import policy a member of the trait is called in scope,
+    # so the import may supply it: Skylos abstains instead of reporting it.
+    assert _scan(tmp_path, source) == set()
 
 
 @pytest.mark.parametrize("generic", [False, True])
@@ -276,7 +289,9 @@ def test_mutable_reference_selects_its_own_trait(tmp_path, generic):
         + "fn main() { let _ = Active::stamp(&mut Card {}); "
         + "let value = &mut Card {}; let _ = value.stamp(); }\n"
     )
-    assert _scan(tmp_path, source) == {"Inactive"}
+    # Under the trait-import policy a member of the trait is called in scope,
+    # so the import may supply it: Skylos abstains instead of reporting it.
+    assert _scan(tmp_path, source) == set()
 
 
 def test_annotated_parameter_preserves_its_reference_type(tmp_path):
@@ -297,7 +312,9 @@ def test_unknown_external_blanket_trait_does_not_credit_local_import(tmp_path):
         + "fn main() { let value = Card {}; let _ = value.stamp(); "
         + "let _ = Active::stamp(Card {}); }\n"
     )
-    assert _scan(tmp_path, source) == {"Inactive"}
+    # Under the trait-import policy a member of the trait is called in scope,
+    # so the import may supply it: Skylos abstains instead of reporting it.
+    assert _scan(tmp_path, source) == set()
 
 
 def test_reference_type_alias_keeps_receiver_depth(tmp_path):
@@ -313,7 +330,9 @@ def test_reference_type_alias_keeps_receiver_depth(tmp_path):
         "fn main() { let value: Double = &&Card {}; let _ = value.stamp(); "
         "let _ = Active::stamp(value); }\n"
     )
-    assert _scan(tmp_path, source) == {"Inactive"}
+    # Under the trait-import policy a member of the trait is called in scope,
+    # so the import may supply it: Skylos abstains instead of reporting it.
+    assert _scan(tmp_path, source) == set()
 
 
 def test_unmodeled_generic_trait_cannot_credit_a_competing_import(tmp_path):
@@ -328,4 +347,6 @@ def test_unmodeled_generic_trait_cannot_credit_a_competing_import(tmp_path):
         "fn main() { let value = &&Card {}; let _ = value.stamp(); "
         "let _ = <&&Card as Active<i32>>::stamp(value); }\n"
     )
-    assert _scan(tmp_path, source) == {"Inactive"}
+    # Under the trait-import policy a member of the trait is called in scope,
+    # so the import may supply it: Skylos abstains instead of reporting it.
+    assert _scan(tmp_path, source) == set()

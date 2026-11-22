@@ -8,8 +8,10 @@ severity_note: >-
   formatters are CRITICAL with request data and HIGH otherwise. Java XStream,
   SnakeYAML and Jackson settings, and Json.NET `TypeNameHandling`, range from
   MEDIUM to CRITICAL depending on the setting and whether request data is
-  read.
-languages: [Python, Java, Kotlin, C#]
+  read. TypeScript/JavaScript `node-serialize`-style loaders are CRITICAL
+  with request data and HIGH otherwise; js-yaml 3 `load` of request data is
+  HIGH.
+languages: [Python, Java, Kotlin, C#, TypeScript/JavaScript]
 gate:
   full: critical_blocks
   note: >-
@@ -141,10 +143,18 @@ how_skylos_decides:
     `TypeNameHandling` other than `None`, and `JavaScriptSerializer` with a
     `SimpleTypeResolver`. `pickle` itself is reported as SKY-D204 and
     SKY-D205.
+  - >-
+    In TypeScript and JavaScript, reports `node-serialize` `unserialize`,
+    `serialize-to-js` `deserialize` and `funcster` `deepDeserialize` of a
+    non-literal value (HIGH, CRITICAL with request data), and js-yaml
+    `load`/`loadAll` of request data when `package.json` declares js-yaml
+    below 4, whose default schema runs `!!js/function` (HIGH).
 
 source_refs:
   - path: skylos/rules/danger/calls.py
     symbol: "DANGEROUS_CALLS = {"
+  - path: skylos/visitors/languages/typescript/express_taint.py
+    symbol: "def _deserialize_sink("
     note: the Python sink table; the D233 entries follow `tempfile.mktemp`.
   - path: skylos/rules/danger/calls.py
     symbol: "def _call_findings("

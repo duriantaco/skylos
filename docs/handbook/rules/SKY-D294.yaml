@@ -89,11 +89,14 @@ how_skylos_decides:
     text count: a comparison such as `== 'main'` or a `contains()` result
     does not.
   - >-
-    Decides whether someone else can shape the value. `github.event` fields
-    are classed by GitHub's payload schema: free text such as titles, bodies
-    and branch names counts; fixed values such as `pull_request.number` and
-    `head.sha` do not. `github.head_ref` counts; `secrets.*`, `vars.*`,
-    `github.actor` and `github.ref_name` do not.
+    Decides whether someone else can shape the value. Following GitHub's
+    hardening guide, a `github.event` field is attacker text only when its
+    name ends with `body`, `default_branch`, `email`, `head_ref`, `label`,
+    `message`, `name`, `page_name`, `ref` or `title` (and `head_branch`, a
+    branch name). Logins, node ids, SHAs, URLs and numbers such as
+    `pull_request.number` cannot carry shell syntax and do not count, nor
+    does the base side of a pull request. `github.head_ref` counts;
+    `secrets.*`, `vars.*`, `github.actor` and `github.ref_name` do not.
   - >-
     Follows indirect values to where they are set: `env.*` through step, job
     and workflow `env:`, `matrix.*`, `steps.<id>.outputs.*` back to the line
@@ -104,7 +107,11 @@ how_skylos_decides:
     reachable from a fork are open to outsiders, for the event types an
     outsider can cause, unless the job's `if:` keeps them out or a job it
     `needs` checks the actor's permission. A permission check in the same
-    job does not count. `pull_request` and `push` give LOW.
+    job does not count. `pull_request` and `push` give LOW. An expression
+    whose every value only maintainers set (`workflow_dispatch` inputs,
+    `release` and `repository_dispatch` payloads) or that comes from a
+    caller not visible here is kept as hygiene advice: it stays in the
+    report but is not listed by default.
   - >-
     Reports one finding per expression, on the line where it appears.
 

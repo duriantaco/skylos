@@ -134,6 +134,13 @@ DEFAULTS = {
     "ai_defects_enabled": False,
     # Scan Django migrations and vendored/minified front-end files as app code.
     "include_generated": False,
+    # JS/TS: honour the repository's own Knip config (only keys that remove
+    # findings); ``knip_ignore_workspaces`` also honours ``ignoreWorkspaces``.
+    "knip_config": True,
+    "knip_ignore_workspaces": False,
+    # npm: also report published source whose dependency only an ancestor
+    # package.json declares (SKY-Q408).
+    "strict_dependencies": False,
     "api_signature_modules": [],
     "license_deny": [],
     "license_allow": [],
@@ -195,6 +202,9 @@ _BOOL_CONFIG_KEYS = {
     "typing_coverage_advice",
     "ai_defects_enabled",
     "include_generated",
+    "knip_config",
+    "knip_ignore_workspaces",
+    "strict_dependencies",
 }
 _SYNCED_SECURITY_POLICY_KEYS = {
     "security_contracts",

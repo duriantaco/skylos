@@ -286,7 +286,7 @@ def test_presence_check_against_global_undefined_is_not_a_secret_compare(tmp_pat
 }
 """
     shadowed = """export function compare(token: string, undefined: string) {
-  return token === undefined;
+  return process.env.API_TOKEN === undefined;
 }
 """
     assert _ts_lines(tmp_path, "SKY-D253", presence) == [3]

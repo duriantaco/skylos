@@ -7696,6 +7696,22 @@ def _untrusted_message(finding, source):
     )
 
 
+UNPROVEN_SOURCE_KIND = "unproven_source"
+_UNPROVEN_PREFIX = "Review (not listed, not blocking): "
+
+
+def _unproven_source_message(finding):
+    """Say that no untrusted input was shown, keeping the rule's advice."""
+    message = str(finding.get("message") or "")
+    if message.startswith(_UNPROVEN_PREFIX):
+        return message
+    return (
+        f"{_UNPROVEN_PREFIX}caller analysis stopped before any chain reached "
+        "request data, an upload, a network message or an archive member. "
+        f"{message}"
+    )
+
+
 def _component_review_message(finding, source, review):
     operation = "write" if finding.get("rule_id") == "SKY-D324" else "read"
     validated = ", ".join(review["proofs"])
@@ -7932,6 +7948,11 @@ def _resolve(findings, root, files, complete, suppressed):
             kept.append(updated)
             continue
         if status == INCOMPLETE:
+            if not record.get("shared_temp_path"):
+                # No chain reached attacker input before the analysis
+                # stopped: a review signal, not a listed vulnerability.
+                updated["review_item"] = {"kind": UNPROVEN_SOURCE_KIND, "blocking": False}
+                updated["message"] = _unproven_source_message(updated)
             kept.append(updated)
             continue
         if record.get("shared_temp_path"):

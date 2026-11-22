@@ -1,9 +1,12 @@
-"""Unused members of local and closed private TypeScript enums.
+"""Unused members of local TypeScript enums and enums of internal modules.
 
-Library exports and escaping enum objects remain opaque. Direct named imports
-may narrow a private package's enum only with a complete source inventory.
-Computed keys, reflection, mutation, parse failures and nonliteral initializers
-decline member narrowing. This pass does not infer compiler types or edit enums.
+An exported enum is narrowed only in a module whose export surface is
+internal by the SKY-E004 notion (not a package entry, tool or framework
+entry, file named by path, or wholly consumed module) and only with a
+complete source inventory and direct named imports. Escaping enum objects,
+computed keys, reflection, mutation, parse failures and nonliteral
+initializers decline member narrowing. `@public`/`@alpha`/`@beta` enums and
+members stay live. This pass does not infer compiler types or edit enums.
 """
 
 from __future__ import annotations
@@ -13,18 +16,23 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
+from skylos.core.js_ast import first_call_argument
 from skylos.core.safe_cache_io import read_project_text_no_symlink
 
 from .core import TypeScriptCore
+from .jsdoc_tags import has_public_api_tag, leading_comment_tags
+from .module_consumers import CONSUMER_SUFFIXES, entry_specifier, read_module_consumer
 from .namespace_references import namespace_member_reads
+from .text_fixtures import is_text_fixture
 
 RULE_ID = "SKY-U007"
+SCOPE = "local_and_internal_module_enums"
+_UNSET = object()
 MAX_FILES = 5000
 MAX_SOURCE_BYTES = 2_000_000
 MAX_TOTAL_BYTES = 32_000_000
 MAX_WALK_ENTRIES = 100_000
 _SOURCE_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"}
-_COMPONENT_SUFFIXES = {".vue", ".svelte", ".astro", ".html", ".htm", ".mdx", ".marko"}
 _SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__"}
 _LITERAL_INITIALIZERS = {
     "number", "string", "true", "false", "null", "unary_expression",
@@ -78,8 +86,14 @@ def _members(enum, source):
         if not name or name in names:
             return None
         names.add(name)
-        members.append((name, name_node.start_point[0] + 1))
+        tagged = has_public_api_tag(leading_comment_tags(source, node))
+        members.append((name, name_node.start_point[0] + 1, tagged))
     return members, referenced
+
+
+def _enum_is_tagged(enum, source):
+    statement = enum.parent if enum.parent is not None and enum.parent.type == "export_statement" else enum
+    return has_public_api_tag(leading_comment_tags(source, statement))
 
 
 def _closed_source_graph(files, root, cores, resolver):
@@ -91,8 +105,10 @@ def _closed_source_graph(files, root, cores, resolver):
     root = Path(root).resolve()
     selected = {Path(path).absolute() for path in files if Path(path).suffix in _SOURCE_SUFFIXES}
     if len(selected) > MAX_FILES:
-        return {}, {}, [{"kind": "source_file_budget"}]
-    issues, manifests, walked = [], {}, 0
+        return {}, {}, [{"kind": "source_file_budget"}], []
+    issues, manifests, walked, unresolved = [], {}, 0, []
+    component_consumers = []
+    read_consumers = set()
 
     def unreadable(error):
         issues.append({"kind": "unreadable_source_directory", "file": str(error.filename)})
@@ -108,8 +124,14 @@ def _closed_source_graph(files, root, cores, resolver):
         dirs[:] = [name for name in dirs if name not in _SKIP_DIRS and not (Path(directory) / name).is_symlink()]
         for name in names:
             path = Path(directory) / name
-            if path.suffix in _COMPONENT_SUFFIXES:
-                issues.append({"kind": "unparsed_component_consumer", "file": str(path)})
+            if path.suffix.lower() in CONSUMER_SUFFIXES:
+                consumer = read_module_consumer(root, path)
+                if consumer is None:
+                    issues.append({"kind": "unreadable_module_consumer", "file": str(path)})
+                else:
+                    read_consumers.add(path.absolute())
+                    if consumer.imports or consumer.held or consumer.entries:
+                        component_consumers.append(consumer)
             if path.suffix in _SOURCE_SUFFIXES and path not in selected:
                 issues.append({"kind": "unselected_source", "file": str(path)})
             if name == "package.json":
@@ -138,9 +160,22 @@ def _closed_source_graph(files, root, cores, resolver):
         if core.root_node is None or core.root_node.has_error:
             issues.append({"kind": "source_parse_error", "file": str(path)})
     if issues:
-        return manifests, {}, issues
+        return manifests, {}, issues, unresolved
     resolver = resolver or MonorepoResolver(str(root))
     consumers = defaultdict(list)
+    for consumer in component_consumers:
+        # A component template, MDX expression or page reads what its script
+        # imports without naming members in parsed code: every module it
+        # reaches is an opaque consumer of its enums.
+        specifiers = {item.get("source", "") for item in consumer.imports}
+        specifiers |= consumer.held
+        specifiers |= {entry_specifier(value) for value in consumer.entries}
+        for specifier in sorted(specifier for specifier in specifiers if specifier):
+            target = resolve_ts_module(specifier, consumer.path, resolver)
+            if target is not None:
+                consumers[Path(target).absolute()].append((None, None))
+            elif specifier.startswith((".", "/", "#")) or resolver.claims_local_source(specifier, consumer.path):
+                unresolved.append({"kind": "unresolved_local_import", "file": consumer.path, "specifier": specifier})
     for path in sorted(selected):
         core = cores[path]
         source, tree = core.source, core.root_node
@@ -158,7 +193,7 @@ def _closed_source_graph(files, root, cores, resolver):
                 if name in {"eval", "Function", "createRequire", "import.meta.glob", "import.meta.globEager"} or name.endswith((".createRequire", ".require")):
                     issues.append({"kind": "opaque_module_loader", "file": str(path)})
                 if (function is not None and function.type == "import") or name in {"require", "require.resolve"}:
-                    arg = args.named_children[0] if args is not None and args.named_children else None
+                    arg = first_call_argument(args)
                     literal = _text(source, arg)
                     if arg is None or arg.type != "string" or "\\" in literal:
                         issues.append({"kind": "dynamic_module_load", "file": str(path)})
@@ -168,7 +203,7 @@ def _closed_source_graph(files, root, cores, resolver):
                     if target is not None:
                         consumers[Path(target).absolute()].append((None, None))
                     elif specifier.startswith((".", "/", "#")) or resolver.claims_local_source(specifier, str(path)):
-                        issues.append({"kind": "unresolved_local_import", "file": str(path)})
+                        unresolved.append({"kind": "unresolved_local_import", "file": str(path), "specifier": specifier})
             if node.type not in {"import_statement", "export_statement"}:
                 continue
             source_node = node.child_by_field_name("source")
@@ -184,11 +219,15 @@ def _closed_source_graph(files, root, cores, resolver):
             target = resolve_ts_module(specifier, str(path), resolver)
             if target is None:
                 if specifier.startswith((".", "/", "#")) or resolver.claims_local_source(specifier, str(path)):
-                    issues.append({"kind": "unresolved_local_import", "file": str(path)})
+                    unresolved.append({"kind": "unresolved_local_import", "file": str(path), "specifier": specifier})
                 continue
             target = Path(target).absolute()
             if target not in selected:
-                issues.append({"kind": "unparsed_import_provider", "file": str(target)})
+                # A component, page or document read above already counts as
+                # an opaque consumer of every module it imports, so importing
+                # it cannot hide an enum read. Only an unread provider can.
+                if target not in read_consumers:
+                    issues.append({"kind": "unparsed_import_provider", "file": str(target)})
                 continue
             if node.type == "export_statement":
                 consumers[target].append((None, None))
@@ -201,20 +240,55 @@ def _closed_source_graph(files, root, cores, resolver):
                     consumers[target].append((None, None))
                 else:
                     consumers[target].append((binding.imported, reads.get(binding.local)))
-    return manifests, consumers, issues
+    return manifests, consumers, issues, unresolved
 
 
-def _exported_enum_findings(exported, files, project_root, cores, resolver, receipt):
-    manifests, consumers, issues = _closed_source_graph(files, project_root, cores, resolver)
+def _reached_by_unresolved(path, unresolved, resolver, project_root):
+    """Whether an unresolved import could name the enum's module.
+
+    A relative specifier that matches no file cannot load an existing module
+    unless its last segment names it (``./status.js?raw``). A claimed bare
+    specifier (path alias, workspace package) may also reach any module of
+    the workspace package it names.
+    """
+    from .resolve import MonorepoResolver
+    from .unused_reexports import _names_module, _specifier_tails
+
+    real = os.path.realpath(str(path))
+    tails = set()
+    packages = None
+    for item in unresolved:
+        specifier = item["specifier"]
+        tails.update(_specifier_tails(specifier))
+        if specifier.startswith((".", "/", "#")):
+            continue
+        if packages is None:
+            packages = (resolver or MonorepoResolver(str(project_root)))._ensure_package_map()
+        for name, root in packages.items():
+            if specifier == name or specifier.startswith(f"{name}/"):
+                root = os.path.realpath(root)
+                if real.startswith(root.rstrip(os.sep) + os.sep):
+                    return True
+    return _names_module(real, tails)
+
+
+def _exported_enum_findings(exported, files, project_root, cores, resolver, receipt, surface):
+    _manifests, consumers, issues, unresolved = _closed_source_graph(files, project_root, cores, resolver)
     receipt["exported_scope_reasons"] = issues
+    receipt["unresolved_imports"] = unresolved
+    internal = surface.internal if surface is not None else set()
     findings = []
     for path, core, enum in exported:
         name = _text(core.source, enum.child_by_field_name("name"))
-        owners = [owner for owner in manifests if path.is_relative_to(owner)]
-        owner = max(owners, key=lambda value: len(value.parts)) if owners else None
         reason = None
-        if owner is None or manifests[owner].get("private") is not True:
-            reason = "public_package_enum"
+        if surface is None:
+            reason = "export_surface_unavailable"
+        elif _enum_is_tagged(enum, core.source):
+            reason = "public_api_tag"
+        elif unresolved and _reached_by_unresolved(path, unresolved, resolver, project_root):
+            reason = "unresolved_import_may_reach_module"
+        elif os.path.realpath(str(path)) not in internal:
+            reason = "public_module_enum"
         elif issues:
             reason = "incomplete_project_source_graph"
         members = _members(enum, core.source)
@@ -238,8 +312,8 @@ def _exported_enum_findings(exported, files, project_root, cores, resolver, rece
             receipt["grouped_enums"] += 1
             continue
         entries, initializers = members
-        for member, line in entries:
-            if member in consumed or member in initializers:
+        for member, line, tagged in entries:
+            if member in consumed or member in initializers or tagged:
                 continue
             full_name = f"{name}.{member}"
             findings.append({
@@ -247,19 +321,45 @@ def _exported_enum_findings(exported, files, project_root, cores, resolver, rece
                 "full_name": full_name, "enum": name, "type": "enum_member",
                 "file": str(path), "line": line, "confidence": 100,
                 "severity": "LOW", "category": "DEAD_CODE", "references": 0,
-                "message": f"Enum member '{full_name}' is never read in the closed private source graph.",
+                "message": f"Enum member '{full_name}' is never read by any project file.",
             })
     return findings
 
 
-def find_unused_ts_enum_members(files, *, project_root, analysis_errors=(), resolver=None, workspace_inventory=None, coverage=None):
+def _source_surface(files, project_root, resolver, workspace_inventory, exclude_folders, browser_entry_points, analysis_errors, cores):
+    """Build the E004 export surface for a direct call without analyzer state."""
+    from .unused_reexports import build_ts_export_surface
+
+    raw_imports = {}
+    for file in files:
+        path = Path(file).absolute()
+        if path.suffix not in _SOURCE_SUFFIXES:
+            continue
+        core = cores.get(path)
+        if core is None:
+            text = read_project_text_no_symlink(project_root, path, max_bytes=MAX_SOURCE_BYTES)
+            if text is None:
+                continue
+            core = TypeScriptCore(str(path), text.encode("utf-8"))
+        core.scan()
+        raw_imports[str(path)] = core.raw_imports
+    return build_ts_export_surface(
+        files, raw_imports, project_root=project_root, resolver=resolver,
+        workspace_inventory=workspace_inventory, exclude_folders=exclude_folders,
+        browser_entry_points=browser_entry_points, analysis_errors=analysis_errors,
+    )
+
+
+def find_unused_ts_enum_members(files, *, project_root, analysis_errors=(), resolver=None, workspace_inventory=None, coverage=None, export_surface=_UNSET, exclude_folders=None, browser_entry_points=()):
     """Return enum-member findings in source modules; uncertain enums stay live.
 
-    Direct named imports may narrow exported enums only when the full source
-    graph is closed and their owning npm package explicitly has private:true.
+    Direct named imports may narrow an exported enum only when the full
+    source graph is closed and its module is internal by the SKY-E004 export
+    surface. ``export_surface`` is the analyzer's surface (``None`` when it
+    abstained); a direct call builds one from ``files``.
     """
     receipt = coverage if coverage is not None else {}
-    receipt.update(scope="local_and_closed_private_enums", status="complete", complete=True, analysed_files=0, checked_enums=0, grouped_enums=0, abstained_enums=[], reasons=[])
+    receipt.update(scope=SCOPE, status="complete", complete=True, analysed_files=0, checked_enums=0, grouped_enums=0, abstained_enums=[], reasons=[])
 
     def abstain(path, name, reason):
         receipt["abstained_enums"].append({"file": str(path), "name": name, "reason": reason})
@@ -272,7 +372,7 @@ def find_unused_ts_enum_members(files, *, project_root, analysis_errors=(), reso
             receipt.update(status="bounded", complete=False)
         return findings
 
-    paths = sorted({Path(path).absolute() for path in files if str(path).endswith((".ts", ".tsx", ".mts", ".cts")) and not str(path).endswith((".d.ts", ".d.mts", ".d.cts"))})
+    paths = sorted({Path(path).absolute() for path in files if str(path).endswith((".ts", ".tsx", ".mts", ".cts")) and not str(path).endswith((".d.ts", ".d.mts", ".d.cts")) and not is_text_fixture(path)})
     if len(paths) > MAX_FILES:
         receipt["reasons"].append({"kind": "source_file_budget"})
         return finish([])
@@ -322,6 +422,9 @@ def find_unused_ts_enum_members(files, *, project_root, analysis_errors=(), reso
             name = _text(source, enum.child_by_field_name("name"))
             members = _members(enum, source)
             consumed = reads.get(name)
+            if _enum_is_tagged(enum, source):
+                abstain(path, name, "public_api_tag")
+                continue
             if members is None:
                 abstain(path, name, "unsupported_enum_initializer_or_members")
                 continue
@@ -334,8 +437,8 @@ def find_unused_ts_enum_members(files, *, project_root, analysis_errors=(), reso
                 # Let the existing unused-enum/class finding group the owner.
                 receipt["grouped_enums"] += 1
                 continue
-            for member, line in entries:
-                if member in consumed or member in initializers:
+            for member, line, tagged in entries:
+                if member in consumed or member in initializers or tagged:
                     continue
                 full_name = f"{name}.{member}"
                 findings.append({
@@ -346,5 +449,10 @@ def find_unused_ts_enum_members(files, *, project_root, analysis_errors=(), reso
                     "message": f"Enum member '{full_name}' is never read in this module.",
                 })
     if exported:
-        findings.extend(_exported_enum_findings(exported, files, project_root, cores, resolver, receipt))
+        if export_surface is _UNSET:
+            export_surface = _source_surface(
+                files, project_root, resolver, workspace_inventory, exclude_folders,
+                browser_entry_points, analysis_errors, cores,
+            )
+        findings.extend(_exported_enum_findings(exported, files, project_root, cores, resolver, receipt, export_surface))
     return finish(findings)

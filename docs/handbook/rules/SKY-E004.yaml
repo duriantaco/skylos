@@ -1,0 +1,144 @@
+id: SKY-E004
+title: Unnecessary TypeScript/JavaScript export
+family: dead-code
+severity: LOW
+languages: [TypeScript, JavaScript]
+run_with: "`skylos .` (every scan)"
+gate:
+  full: counted
+  note: >-
+    Reported in `unused_exports`. Counts toward `max_dead_code`, which has no
+    limit by default, so it only fails a gate where you set one.
+
+what_it_is: >-
+  An `export` that no other project file uses. It covers a value used only
+  inside its own file, a re-export entry (`export { a } from "./a"`) that
+  nothing requests, and an exported TypeScript type or interface that no
+  file imports from its module, including one used only in its own file.
+
+why_it_matters: >-
+  An unnecessary export widens a module's interface. Readers assume another
+  file depends on it, so dead types and helpers survive refactors and keep
+  their own dependencies alive.
+
+flagged_example:
+  language: typescript
+  expect_file: src/cart.ts
+  expect_line: 1
+  files:
+    - filename: src/cart.ts
+      code: |
+        export interface LegacyCartLine {
+          sku: string;
+          qty: number;
+        }
+
+        export function cartTotal(prices: number[]): number {
+          return prices.reduce((sum, price) => sum + price, 0);
+        }
+    - filename: src/main.ts
+      code: |
+        import { cartTotal } from "./cart";
+
+        console.log(cartTotal([1, 2]));
+    - filename: package.json
+      language: json
+      code: |
+        {"name": "shop-web", "private": true, "main": "src/main.ts"}
+
+not_flagged_example:
+  language: typescript
+  files:
+    - filename: src/cart.ts
+      code: |
+        export interface CartLine {
+          sku: string;
+          qty: number;
+        }
+
+        export function cartTotal(lines: CartLine[]): number {
+          return lines.reduce((sum, line) => sum + line.qty, 0);
+        }
+    - filename: src/main.ts
+      code: |
+        import { cartTotal } from "./cart";
+
+        console.log(cartTotal([{ sku: "a", qty: 1 }]));
+    - filename: package.json
+      language: json
+      code: |
+        {"name": "shop-web", "private": true, "main": "src/main.ts"}
+  why: >-
+    `CartLine` is the parameter type of `cartTotal`, which another file
+    imports. A type in the shape of a requested export stays exported so
+    callers can name it.
+
+how_skylos_decides:
+  - >-
+    Builds the project's module demand: named, default, type-only and
+    namespace-member imports, `import("./m").T` type references, re-exports
+    and `export *` chains. A name is unnecessary when no file requests it
+    from the module.
+  - >-
+    Public modules stay silent: package.json `main`, `module`, `types`,
+    `exports`, `bin` and `browser` targets, tool, framework and test
+    entries, files named by path, `index`/`main`/`cli` at a package root,
+    modules no file imports and modules consumed whole.
+  - >-
+    A type stays silent when it is merged with a value of the same name,
+    lives in a `.d.ts` file or a `declare global`/`declare module` block, or
+    is named in the shape of a value export another file requests. A
+    requested type does not keep the types it mentions.
+  - >-
+    `@public`, `@alpha`, `@beta` and `@alias` JSDoc tags mark published API
+    and are never reported; `@internal` gives no protection.
+  - >-
+    Vue, Svelte and Astro component scripts, inline `<script type="module">`
+    blocks in HTML and MDX `import`/`export` statements are read as text and
+    request their names like any importer. A part that does not parse (another
+    script language, a syntax error, an MDX `import()` expression, a Marko
+    template) holds back only the modules its text names. Only an unreadable
+    consumer turns the check off.
+  - >-
+    A wildcard export with only a `types` condition publishes each module's
+    declarations: its type exports stay silent, its value exports are still
+    checked. Files in `__testfixtures__`/`__fixtures__` folders are test data
+    and never reported.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/export_hygiene.py
+    symbol: "def unused_type_export_findings("
+  - path: skylos/visitors/languages/typescript/unused_reexports.py
+    symbol: "def build_ts_export_surface("
+  - path: test/test_typescript_export_hygiene.py
+    symbol: "def test_type_in_the_shape_of_a_requested_export_stays_silent"
+  - path: skylos/visitors/languages/typescript/module_consumers.py
+    symbol: "def collect_module_consumers("
+
+fix:
+  explanation: >-
+    Remove the unused type, or drop its `export` keyword when the file still
+    uses it.
+  language: typescript
+  filename: src/cart.ts
+  code: |
+    export function cartTotal(prices: number[]): number {
+      return prices.reduce((sum, price) => sum + price, 0);
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Code outside the scanned project (another repository, a code generator
+      that reads types by name) can consume an export Skylos cannot see.
+  suppress:
+    - check: inline
+      text: >-
+        Add `// skylos: ignore[SKY-E004]` on the export's line.
+    - check: config
+      text: Set `[tool.skylos] ignore = ["SKY-E004"]` to disable this rule project-wide.
+
+related:
+  - SKY-E003
+  - SKY-E005
+  - SKY-U008

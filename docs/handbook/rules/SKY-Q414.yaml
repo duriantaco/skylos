@@ -1,0 +1,101 @@
+id: SKY-Q414
+title: Unresolved import
+family: quality
+severity: MEDIUM
+languages:
+- TypeScript
+- JavaScript
+- Vue
+- Svelte
+- Astro
+gate:
+  full: counted
+  note: Reported as quality; counts toward max_quality.
+run_with: '`skylos . --quality`'
+what_it_is: A literal relative import, or one that matches a tsconfig `paths` alias or a package.json
+  `imports` key, names no file in the project. Extensions, index files, TypeScript source for
+  `.js` specifiers and directory package.json files have all been tried.
+why_it_matters: The build or the first run of the importing module fails with a module-not-found
+  error. A renamed or deleted file usually leaves such imports behind.
+flagged_example:
+  language: typescript
+  expect_file: src/index.ts
+  expect_line: 1
+  files:
+  - filename: package.json
+    language: json
+    code: |
+      {"name":"shop","version":"1.0.0"}
+  - filename: src/formatting.ts
+    code: |
+      export const price = (cents: number) => (cents / 100).toFixed(2);
+  - filename: src/index.ts
+    code: |
+      import { price } from "./format";
+      console.log(price(1999));
+not_flagged_example:
+  language: typescript
+  files:
+  - filename: package.json
+    language: json
+    code: |
+      {"name":"shop","version":"1.0.0"}
+  - filename: src/formatting.ts
+    code: |
+      export const price = (cents: number) => (cents / 100).toFixed(2);
+  - filename: src/index.ts
+    code: |
+      import { price } from "./formatting.js";
+      console.log(price(1999));
+  why: The `.js` specifier maps to the TypeScript source `formatting.ts`, as tsc and bundlers
+    resolve it.
+how_skylos_decides:
+- Runs with quality analysis on literal `import`, `export ... from`, `require()` and `import()`
+  requests in scanned JS/TS files and in Vue, Svelte and Astro script blocks. Type-only imports
+  are erased at build time and left to the type checker; bare package names are SKY-Q408's
+  concern; config files are parsed, never executed.
+- Tries the exact path, source, declaration, component and data extensions, platform variants,
+  `.js` to TypeScript source, index files, a directory package.json and tsconfig `rootDirs`.
+  An alias is tried through every mapped target, with build output mapped to source.
+- Stays quiet for query or loader suffixes, virtual modules (`virtual:`, `astro:`, `~icons/`,
+  `$app/`, `$env/`), loads in a `try` body or with `.catch`, ambient `declare module` names,
+  prefixes aliased by a JS bundler config (an unreadable alias holds back every alias below
+  it), targets in node_modules, outside the project, excluded or Git-ignored, fixture, snapshot
+  and template directories, unimported non-test files under test directories, and aliases under
+  a tsconfig extending a generated config that is missing.
+- Reports MEDIUM at the import line. `analysis_summary.unresolved_import_analysis` counts the
+  requests checked and why others were held back.
+source_refs:
+- path: skylos/visitors/languages/typescript/unresolved_imports.py
+  symbol: def find_unresolved_imports(
+- path: skylos/visitors/languages/typescript/module_requests.py
+  symbol: def collect_module_requests(
+- path: test/test_ts_import_graph.py
+  symbol: def test_project_resolution_rules_keep_existing_targets_quiet
+fix:
+  explanation: Point the import at the file that exists, restore the missing file, or remove
+    the import.
+  language: typescript
+  filename: src/index.ts
+  code: |
+    import { price } from "./formatting";
+    console.log(price(1999));
+false_alarms_and_suppression:
+  misfires:
+  - A file produced by a build step that is neither Git-ignored nor in an excluded directory
+    is missing from a clean checkout and is reported.
+  - Aliases defined only in code Skylos does not read (a plugin computing aliases, a tsconfig
+    other than the nearest tsconfig.json) are not recognised, so their imports are not checked.
+  suppress:
+  - check: inline
+    text: 'Add `// skylos: ignore[SKY-Q414]` to the import line to accept one import.'
+    language: typescript
+    code: |
+      import { price } from "./format"; // skylos: ignore[SKY-Q414] generated in CI
+  - check: config
+    text: Set `[tool.skylos] ignore = ["SKY-Q414"]` to disable this rule project-wide.
+related:
+- SKY-Q408
+- SKY-L012
+- SKY-E003
+- SKY-CIRC

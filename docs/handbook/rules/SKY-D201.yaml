@@ -92,7 +92,7 @@ more_examples:
       why: >-
         `JSON.parse()` turns text into data and cannot run code. In
         TypeScript and JavaScript every call to the global `eval` is
-        reported, whatever its argument.
+        reported unless its argument is a constant.
 
 how_skylos_decides:
   - >-
@@ -113,7 +113,13 @@ how_skylos_decides:
     is counted by the gate.
   - >-
     TypeScript and JavaScript: every call to the global `eval(...)` is
-    reported as CRITICAL. There is no constant-argument exception.
+    reported as CRITICAL unless its argument is a constant: literals,
+    `Math.random()`/`Math.floor()` arithmetic, `.toString()` of those,
+    elements of a literal array and `const` names bound to them (a captcha
+    that evaluates `3+7*2`). Request data reaching mathjs
+    `eval`/`evaluate`, notevil or safe-eval is reported too (CRITICAL for
+    mathjs, HIGH for the sandboxes), also when a fixed `vm.runInContext`
+    code string calls them on sandbox data.
   - >-
     PHP: `eval()`, `create_function()` and `preg_replace()` with the `/e`
     modifier are CRITICAL when request data reaches the code and HIGH when

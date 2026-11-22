@@ -38,6 +38,10 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-U008", "Unused TypeScript namespace member", "dead_code", "LOW",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-UC001", "Unreachable Python code", "dead_code", finding_type="defect"
     ),
     RuleCatalogEntry(
@@ -330,6 +334,22 @@ _RULES = (
         "SKY-Q410", "Discarded local async result", "quality", "MEDIUM",
         finding_type="defect",
     ),
+    RuleCatalogEntry(
+        "SKY-Q411", "Unused pnpm catalog entry", "quality", "LOW",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-Q412", "Unresolved pnpm catalog reference", "quality", "MEDIUM",
+        finding_type="defect",
+    ),
+    RuleCatalogEntry(
+        "SKY-Q413", "Referenced optional peer dependency", "quality", "LOW",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-Q414", "Unresolved import", "quality", "MEDIUM",
+        finding_type="defect",
+    ),
     RuleCatalogEntry("SKY-Q501", "God class", "quality", finding_type="advice"),
     RuleCatalogEntry("SKY-Q502", "File too large", "quality", finding_type="advice"),
     RuleCatalogEntry("SKY-Q701", "High coupling", "quality", finding_type="advice"),
@@ -590,6 +610,20 @@ _RULES = (
     RuleCatalogEntry(
         "SKY-E003",
         "Unused TypeScript/JavaScript file",
+        "dead_code",
+        "LOW",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-E004",
+        "Unnecessary TypeScript/JavaScript export",
+        "dead_code",
+        "LOW",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-E005",
+        "Duplicate TypeScript/JavaScript export",
         "dead_code",
         "LOW",
         finding_type="review",

@@ -148,6 +148,8 @@ namespaces = false
 "skylos.rules.config.cicd" = ["data/*.json", "data/NOTICE.txt"]
 # The local `skylos graph open` viewer page.
 "skylos.graph.viewer" = ["index.html", "app.js", "app.css"]
+# JS/TS tool knowledge (a table of static facts, each row with its source).
+"skylos.visitors.languages.typescript" = ["data/plugin_facts.json"]
 [tool.skylos]
 complexity = 10
 nesting = 3
