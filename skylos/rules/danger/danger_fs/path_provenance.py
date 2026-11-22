@@ -7699,9 +7699,19 @@ def _untrusted_message(finding, source):
 def _component_review_message(finding, source, review):
     operation = "write" if finding.get("rule_id") == "SKY-D324" else "read"
     validated = ", ".join(review["proofs"])
+    unresolved = review.get("unresolved_sources") or []
+    shown = "; ".join(unresolved[:_REVIEW_SHOWN_SOURCES])
+    if len(unresolved) > _REVIEW_SHOWN_SOURCES:
+        shown += f"; and {len(unresolved) - _REVIEW_SHOWN_SOURCES} more"
+    uncovered = (
+        f" The trace could not follow other sources of this path, so this "
+        f"validation does not cover them: {shown}."
+        if unresolved
+        else ""
+    )
     return (
         f"Review (not blocking): {source} selects only one filename component "
-        f"of this {operation} path, validated by {validated}. Following a "
+        f"of this {operation} path, validated by {validated}.{uncovered} Following a "
         "symlink here also needs an untrusted party to create or replace an "
         "entry in this directory or its parents, which the trace does not "
         "show. Close it for a deployment where only trusted writers control "
@@ -8026,6 +8036,7 @@ def _classify(project, tracers, finding):
 _SYMLINK_RULES = frozenset({"SKY-D324", "SKY-D325"})
 # Chains kept per kind while checking a symlink finding for a review item.
 _REVIEW_MAX_CHAINS = 128
+_REVIEW_SHOWN_SOURCES = 3
 _SHARED_TEMP_CALLS = ("tempfile.gettempdir", "tempfile.gettempdirb", "tempfile.mktemp")
 _SHARED_TEMP_PREFIXES = (
     "/tmp/", "/var/tmp/", "/dev/shm/", "/private/tmp/", "/private/var/tmp/"
@@ -8103,15 +8114,20 @@ def _component_review_record(tracer, unit, operand, rule):
     directory = _review_directory(tracer, unit, operand)
     if directory is None:
         directory = ("site", unit.rel, operand.lineno, operand.col_offset, rule)
+    unresolved = sorted({chain[0] for chain in traversal.chains[UNKNOWN] if chain})
     # Keep source literals out of the report. A shared validator alone
     # says nothing about who administers two different directories.
-    group = hashlib.sha256(repr((directory, proofs)).encode()).hexdigest()
-    return {
+    key = (directory, proofs, unresolved) if unresolved else (directory, proofs)
+    group = hashlib.sha256(repr(key).encode()).hexdigest()
+    record = {
         "status": "caller_selects_one_filename_component",
         "proofs": proofs,
         "open_prerequisite": COMPONENT_REVIEW_PREREQUISITE,
         "group": "symlink-entry-access|" + group,
     }
+    if unresolved:
+        record["unresolved_sources"] = unresolved
+    return record
 
 
 def _review_directory(tracer, unit, operand):

@@ -421,8 +421,12 @@ guard, a full-match filename pattern, a constant allowlist) show that request
 input selects only one filename component, the D324/D325 finding stays reported
 as a review item: `review_item.blocking` is `false`,
 `metadata.path_provenance.component_review` names the validators and the open
-prerequisite. Findings share a `review_item.group` when the analyzer can
-establish both a common directory and the same validators. If the directory
+prerequisite. Sources the trace cannot follow (for example the return value of
+a call outside the project) are not reported on their own, so they do not block
+the review item either; `component_review.unresolved_sources` and the message
+name them as not covered by the validation. Findings share a
+`review_item.group` when the analyzer can establish a common directory, the
+same validators and the same unresolved sources. If the directory
 is unresolved, each site stays listed separately. A grouped finding names the rest in
 `listing.combines`; the others are `combined` under its `listing.lead`. Review
 items do not count toward gates. Close the group for a deployment where only
