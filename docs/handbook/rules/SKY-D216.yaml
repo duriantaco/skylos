@@ -7,7 +7,7 @@ severity_note: >-
   data that chooses the URL of `fetch`, axios, got or a similar client in a
   route handler is HIGH, and a `fetch()` or axios call with any other
   variable URL is MEDIUM.
-languages: [Python, TypeScript/JavaScript, Go, Java, Kotlin, C#, PHP, Dart, Shell]
+languages: [Python, TypeScript/JavaScript, Go, Java, Kotlin, C#, PHP, Dart, Shell, Ruby]
 gate:
   full: critical_blocks
   note: >-
@@ -20,6 +20,7 @@ what_it_is: >-
   your server sends an HTTP request. Skylos reports SKY-D216 when request
   data, a route or tool argument, or `input()` can pick the host of a call
   such as `requests.get()`, `httpx.post()` or `urlopen()`.
+  In Rails controllers, it checks whether request data selects an outbound HTTP destination.
 
 why_it_matters: >-
   The server can reach places a visitor cannot. A link-preview endpoint

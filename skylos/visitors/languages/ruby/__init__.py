@@ -8,6 +8,7 @@ from skylos.core.safe_cache_io import read_text_no_symlink
 from skylos.core.inline_directives import directive_ignores
 
 from .core import RubyCore, descendants
+from .rails_security import RailsScan
 from .security import scan_commands
 
 MAX_RUBY_SOURCE_BYTES = 2_000_000
@@ -137,6 +138,8 @@ def scan_ruby_file(
         if enable_danger_rules
         else ([], {"status": "disabled", "unresolved": []})
     )
+    if enable_danger_rules:
+        danger.extend(RailsScan(core, coverage).scan())
     visitor.security_coverage = coverage
     comments = (
         [
