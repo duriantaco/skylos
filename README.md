@@ -358,13 +358,13 @@ provider you configure. Every request, its trigger and how to turn it off:
 
 ## Results
 
-10 Skylos-assisted dead-code cleanup PRs have been merged in 9 open-source
-projects, including [Black](https://github.com/psf/black/pull/5041),
+21 Skylos-assisted dead-code cleanup PRs have been merged into the default
+branches of 19 open-source projects, including [Black](https://github.com/psf/black/pull/5041),
 [NetworkX](https://github.com/networkx/networkx/pull/8572),
 [Optuna](https://github.com/optuna/optuna/pull/6547),
 [mitmproxy](https://github.com/mitmproxy/mitmproxy/pull/8136) and
 [pypdf](https://github.com/py-pdf/pypdf/pull/3685).
-[Real-World Results](./REAL_WORLD_RESULTS.md) lists all 26 PRs we recorded,
+[Real-World Results](./REAL_WORLD_RESULTS.md) lists all 43 PRs we recorded,
 including the ones that were closed or reverted. These are accepted cleanups,
 not endorsements.
 

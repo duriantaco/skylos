@@ -338,14 +338,14 @@ sie abschaltet: [Privacy and network](../privacy-and-network.md).
 
 ## Ergebnisse
 
-10 mit Skylos unterstützte Aufräum-PRs für toten Code wurden in 9
-Open-Source-Projekten gemergt, darunter
+21 mit Skylos unterstützte Aufräum-PRs für toten Code wurden in die
+Standardbranches von 19 Open-Source-Projekten gemergt, darunter
 [Black](https://github.com/psf/black/pull/5041),
 [NetworkX](https://github.com/networkx/networkx/pull/8572),
 [Optuna](https://github.com/optuna/optuna/pull/6547),
 [mitmproxy](https://github.com/mitmproxy/mitmproxy/pull/8136) und
 [pypdf](https://github.com/py-pdf/pypdf/pull/3685).
-[Real-World Results](../../REAL_WORLD_RESULTS.md) listet alle 26 erfassten PRs,
+[Real-World Results](../../REAL_WORLD_RESULTS.md) listet alle 43 erfassten PRs,
 auch die geschlossenen oder zurückgenommenen. Das sind angenommene Aufräum-PRs,
 keine Empfehlungen.
 
