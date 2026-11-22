@@ -15,6 +15,37 @@ except ImportError:  # pragma: no cover - pyyaml is a runtime dependency.
     yaml = None
 
 
+# A manifest owns files when it can declare something about them: a package
+# name, a dependency map, workspaces, scripts or binaries.
+_OWNING_MANIFEST_FIELDS = (
+    "name",
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+    "bundleDependencies",
+    "bundledDependencies",
+    "workspaces",
+    "scripts",
+    "bin",
+)
+
+
+def is_marker_manifest(data) -> bool:
+    """A ``package.json`` that only marks module format, like ``{"type": "commonjs"}``.
+
+    Node resolves bare imports from such a folder through the enclosing
+    package's ``node_modules``, and the manifest declares no name, dependency,
+    workspace, script or binary that a rule could compare against. Only the
+    root and declared workspaces own files, so a nested marker is
+    transparent: its files belong to the enclosing package. The scan root and
+    a manifest with no enclosing package keep ownership.
+    """
+    if not isinstance(data, dict):
+        return False
+    return not any(data.get(key) for key in _OWNING_MANIFEST_FIELDS)
+
+
 @dataclass
 class WorkspaceInfo:
     root: Path

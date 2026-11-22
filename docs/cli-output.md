@@ -864,6 +864,16 @@ count the shared listed view. `advice_visibility` gives `total_checks`,
 Cloud consumers must support listing policy version 1 to use the same view.
 Analyzer thresholds and original severities are unchanged.
 
+A security sink the analysis could not connect to attacker input is a review
+signal, not a listed vulnerability: it keeps
+`"review_item": {"kind": "unproven_source", "blocking": false}`, its message
+starts "Review (not listed, not blocking)" and its listing reason is
+`unproven-source`. This covers Python path and symlink findings whose caller
+analysis stopped before reaching request data ("callers not visible"),
+TypeScript/JavaScript `fetch`/axios calls whose URL no request data reaches,
+and shell findings whose only source is the script's own arguments. Gates do
+not count these; `--all-advice` lists them.
+
 Gates enforce listed findings plus rules explicitly named in configuration or
 with `--select`. An explicit rule can be enforced without listing all Advice:
 

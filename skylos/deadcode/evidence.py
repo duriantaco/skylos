@@ -450,8 +450,17 @@ def build_dead_code_evidence(
 
     for definition in definitions.values():
         kind = getattr(definition, "type", None)
-        dart_import = kind == "import" and str(definition.filename).endswith(".dart")
-        if kind not in DEAD_CODE_SYMBOL_TYPES and not dart_import:
+        # Dart and Rust imports can be used without their name being read
+        # (extension members, trait methods), so they carry uncertainty.
+        filename = str(definition.filename)
+        abstainable_import = kind == "import" and (
+            filename.endswith(".dart")
+            or (
+                filename.endswith(".rs")
+                and bool(getattr(definition, "why_confidence_reduced", None))
+            )
+        )
+        if kind not in DEAD_CODE_SYMBOL_TYPES and not abstainable_import:
             continue
 
         symbol = SymbolKey.from_definition(definition)

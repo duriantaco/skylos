@@ -65,10 +65,10 @@ def test_invalid_parse_declines_member_absence(tmp_path):
 def test_coverage_records_public_and_opaque_boundaries(tmp_path):
     coverage = {}
     assert _scan(tmp_path, 'export enum Public {Ready, Spare}; enum Local {Ready, Spare}; consume(Local);', coverage=coverage) == []
-    assert coverage["scope"] == "local_and_closed_private_enums"
+    assert coverage["scope"] == "local_and_internal_module_enums"
     assert coverage["complete"] is False
     assert coverage["status"] == "bounded"
-    assert {item["reason"] for item in coverage["abstained_enums"]} == {"public_package_enum", "opaque_enum_use"}
+    assert {item["reason"] for item in coverage["abstained_enums"]} == {"public_module_enum", "opaque_enum_use"}
 
 
 def test_coverage_does_not_mark_parser_failure_complete(tmp_path):
@@ -108,6 +108,8 @@ def _analyse(root):
 
 def test_analysis_reports_enum_member_as_dead_code_without_quality_flag(tmp_path):
     _scan(tmp_path, 'export {}; enum Status {Ready, Spare}; console.log(Status.Ready);')
+    # An entry file: members of an unused file fold into its SKY-E003 finding.
+    (tmp_path / "package.json").write_text('{"main": "app.ts"}', encoding="utf-8")  # skylos: ignore[SKY-D324] fresh pytest tmp_path, fixed filename
     result = _analyse(tmp_path)
     found = [item for item in result.get("unused_variables", []) if item.get("rule_id") == "SKY-U007"]
     assert [item["full_name"] for item in found] == ["Status.Spare"]
@@ -129,11 +131,11 @@ def test_analysis_honours_enum_member_project_ignore(tmp_path):
     assert not any(item.get("rule_id") == "SKY-U007" for item in result.get("unused_variables", []))
 
 
-def _cross_file(root, consumer, *, private=True, provider=None, extra=None, selected=None):
+def _cross_file(root, consumer, *, private=True, provider=None, extra=None, selected=None, package=None):
     import json
 
     sources = {
-        "package.json": json.dumps({"name":"app", "private":private, "main":"app.ts"}),
+        "package.json": json.dumps(package or {"name":"app", "private":private, "main":"app.ts"}),
         "status.ts": provider or 'export enum Status {Ready="ready", Spare="spare"};',
         "app.ts": consumer,
         **(extra or {}),
@@ -178,10 +180,35 @@ def test_private_enum_opaque_consumers_decline_member_absence(tmp_path, consumer
     assert coverage["complete"] is False
 
 
-def test_library_enum_stays_public_despite_selected_internal_read(tmp_path):
+def test_internal_module_of_public_package_reports_unused_member(tmp_path):
+    # The package is published, but status.ts is no entry: only app.ts reads it.
     found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; console.log(Status.Ready);', private=False)
+    assert [item["full_name"] for item in found] == ["Status.Spare"]
+    assert coverage["complete"] is True
+
+
+@pytest.mark.parametrize("package", [
+    {"name": "lib", "main": "status.ts"},
+    {"name": "lib", "exports": {".": "./app.ts", "./status": "./status.ts"}},
+    {"name": "lib", "types": "status.ts", "main": "app.ts"},
+])
+def test_package_entry_enum_stays_public_despite_internal_read(tmp_path, package):
+    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; console.log(Status.Ready);', package=package)
     assert found == []
-    assert coverage["abstained_enums"][0]["reason"] == "public_package_enum"
+    assert coverage["abstained_enums"][0]["reason"] == "public_module_enum"
+
+
+def test_public_tagged_enum_and_member_stay_live(tmp_path):
+    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; console.log(Status.Ready);', provider='/** @public */\nexport enum Status {Ready="ready", Spare="spare"};')
+    assert found == []
+    assert coverage["abstained_enums"][0]["reason"] == "public_api_tag"
+    found, _ = _cross_file(tmp_path, 'import {Status} from "./status"; console.log(Status.Ready);', provider='export enum Status {\nReady="ready",\n/** @beta */\nSpare="spare",\nOld="old"\n};')
+    assert [item["full_name"] for item in found] == ["Status.Old"]
+
+
+def test_internal_tag_gives_no_protection(tmp_path):
+    found, _ = _cross_file(tmp_path, 'import {Status} from "./status"; console.log(Status.Ready);', provider='/** @internal */\nexport enum Status {Ready="ready", Spare="spare"};')
+    assert [item["full_name"] for item in found] == ["Status.Spare"]
 
 
 def test_unselected_source_cannot_close_private_enum_graph(tmp_path):
@@ -190,16 +217,70 @@ def test_unselected_source_cannot_close_private_enum_graph(tmp_path):
     assert any(item["kind"] == "unselected_source" for item in coverage["exported_scope_reasons"])
 
 
-def test_unparsed_component_cannot_close_private_enum_graph(tmp_path):
-    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; console.log(Status.Ready);', extra={"View.vue":'<script setup>import {Status} from "./status"; console.log(Status.Spare)</script>'})
+def test_component_importing_the_enum_is_an_opaque_consumer(tmp_path):
+    # A template can read ``Status.Spare`` without the script naming it.
+    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; console.log(Status.Ready);', extra={"View.vue":'<script setup>import {Status} from "./status";</script><template>{{ Status.Spare }}</template>'})
     assert found == []
-    assert any(item["kind"] == "unparsed_component_consumer" for item in coverage["exported_scope_reasons"])
+    assert coverage["exported_scope_reasons"] == []
+    assert coverage["abstained_enums"][0]["reason"] == "opaque_or_indirect_enum_import"
 
 
-def test_missing_local_import_cannot_close_private_enum_graph(tmp_path):
-    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; import "./generated"; console.log(Status.Ready);')
+def test_component_importing_other_modules_keeps_the_enum_graph_closed(tmp_path):
+    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; console.log(Status.Ready);', extra={"View.vue":'<script setup>import {used} from "./other";</script>', "other.ts": "export const used = 1;"})
+    assert [item["full_name"] for item in found] == ["Status.Spare"]
+    assert coverage["exported_scope_reasons"] == []
+
+
+
+def test_importing_a_readable_component_keeps_the_enum_graph_closed(tmp_path):
+    # app.ts imports View.vue; the component's own imports are already read,
+    # so the import cannot hide a read of Status.Spare.
+    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; import View from "./View.vue"; console.log(Status.Ready, View);', extra={"View.vue":'<script setup>import {used} from "./other";</script><template>{{ used }}</template>', "other.ts": "export const used = 1;"})
+    assert [item["full_name"] for item in found] == ["Status.Spare"]
+    assert coverage["exported_scope_reasons"] == []
+
+
+def test_importing_a_component_that_imports_the_enum_keeps_it_opaque(tmp_path):
+    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; import View from "./View.vue"; console.log(Status.Ready, View);', extra={"View.vue":'<script setup>import {Status} from "./status";</script><template>{{ Status.Spare }}</template>'})
     assert found == []
-    assert any(item["kind"] == "unresolved_local_import" for item in coverage["exported_scope_reasons"])
+    assert coverage["abstained_enums"][0]["reason"] == "opaque_or_indirect_enum_import"
+
+def test_unparsed_component_holds_back_the_modules_its_text_names(tmp_path):
+    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; console.log(Status.Ready);', extra={"View.vue":'<script lang="coffee">\nimport {Status} from "./status"\n</script>'})
+    assert found == []
+    # The export surface treats the named module as wholly used.
+    assert coverage["abstained_enums"][0]["reason"] == "public_module_enum"
+
+
+def test_missing_relative_import_cannot_consume_an_existing_enum(tmp_path):
+    # "./generated" matches no file, so it cannot load status.ts.
+    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; import "./generated"; import missing from "./missing"; console.log(Status.Ready, missing);')
+    assert [item["full_name"] for item in found] == ["Status.Spare"]
+    assert coverage["exported_scope_reasons"] == []
+    assert {item["specifier"] for item in coverage["unresolved_imports"]} == {"./generated", "./missing"}
+
+
+@pytest.mark.parametrize("unresolved", [
+    'import raw from "./status.js?raw";',
+    'const load = () => import("./status.mjs?worker");',
+])
+def test_unresolved_import_naming_the_enum_module_holds_it_back(tmp_path, unresolved):
+    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; ' + unresolved + ' console.log(Status.Ready);')
+    assert found == []
+    assert coverage["abstained_enums"][0]["reason"] == "unresolved_import_may_reach_module"
+
+
+def test_unresolved_path_alias_holds_back_only_the_module_it_names(tmp_path):
+    import json
+
+    (tmp_path / "tsconfig.json").write_text(json.dumps({"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["./*"]}}}), encoding="utf-8")  # skylos: ignore[SKY-D324] fresh pytest tmp_path, literal name
+    found, coverage = _cross_file(
+        tmp_path,
+        'import {Status} from "./status"; import {Mode} from "./mode"; import {gone} from "@/lib/status"; console.log(Status.Ready, Mode.On, gone);',
+        extra={"mode.ts": 'export enum Mode {On="on", Off="off"};'},
+    )
+    assert [item["full_name"] for item in found] == ["Mode.Off"]
+    assert coverage["abstained_enums"] == [{"file": str(tmp_path / "status.ts"), "name": "Status", "reason": "unresolved_import_may_reach_module"}]
 
 
 def test_effectful_exported_enum_initializer_is_retained(tmp_path):
@@ -216,3 +297,18 @@ def test_analysis_counts_cross_file_private_enum_members(tmp_path):
     assert [item["full_name"] for item in found] == ["Status.Spare"]
     assert result["analysis_summary"]["enum_member_analysis"]["complete"] is True
     assert any(row.get("rules", {}).get("SKY-U007") == 1 for row in result["analysis_summary"]["by_directory"])
+
+
+def test_import_free_mdx_document_does_not_open_the_private_enum_graph(tmp_path):
+    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; console.log(Status.Ready);', extra={"post.mdx": "# Post\n\n```ts\nimport {Status} from './status';\nconsole.log(Status.Spare);\n```\n"})
+    assert [item["full_name"] for item in found] == ["Status.Spare"]
+    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; console.log(Status.Ready);', extra={"post.mdx": "import {Status} from './status';\n\n{Status.Spare}\n"})
+    assert found == []
+    assert coverage["exported_scope_reasons"] == []
+    assert coverage["abstained_enums"][0]["reason"] == "opaque_or_indirect_enum_import"
+
+
+def test_html_pages_without_module_imports_keep_the_enum_graph_closed(tmp_path):
+    found, coverage = _cross_file(tmp_path, 'import {Status} from "./status"; console.log(Status.Ready);', extra={"index.html": "<html><body><script>window.x = 1;</script></body></html>"})
+    assert [item["full_name"] for item in found] == ["Status.Spare"]
+    assert coverage["exported_scope_reasons"] == []

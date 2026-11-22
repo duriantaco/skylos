@@ -1,0 +1,111 @@
+id: SKY-E005
+title: Duplicate TypeScript/JavaScript export
+family: dead-code
+severity: LOW
+languages: [TypeScript, JavaScript]
+run_with: "`skylos .` (every scan)"
+gate:
+  full: counted
+  note: >-
+    Reported in `unused_exports`. Counts toward `max_dead_code`, which has no
+    limit by default, so it only fails a gate where you set one.
+
+what_it_is: >-
+  One binding exported from a module under two names. Typical forms are
+  `export const B = A` where `A` is already exported, and a component
+  exported both by name and as `export default`.
+
+why_it_matters: >-
+  Importers split between the two names, so a search for one misses the
+  other and a rename or removal has to chase both. The second name usually
+  survives from an old refactor.
+
+flagged_example:
+  language: typescript
+  expect_file: src/nav.ts
+  expect_line: 2
+  files:
+    - filename: src/nav.ts
+      code: |
+        export const NAV_ITEMS = ["home", "cart"];
+        export const ALL_NAV_ITEMS = NAV_ITEMS;
+    - filename: src/main.ts
+      code: |
+        import { NAV_ITEMS, ALL_NAV_ITEMS } from "./nav";
+
+        console.log(NAV_ITEMS.length, ALL_NAV_ITEMS.length);
+    - filename: package.json
+      language: json
+      code: |
+        {"name": "shop-web", "private": true, "main": "src/main.ts"}
+
+not_flagged_example:
+  language: typescript
+  files:
+    - filename: src/nav.ts
+      code: |
+        export const NAV_ITEMS = ["home", "cart"];
+        /** @alias Kept for the v1 menu API. */
+        export const ALL_NAV_ITEMS = NAV_ITEMS;
+    - filename: src/main.ts
+      code: |
+        import { NAV_ITEMS, ALL_NAV_ITEMS } from "./nav";
+
+        console.log(NAV_ITEMS.length, ALL_NAV_ITEMS.length);
+    - filename: package.json
+      language: json
+      code: |
+        {"name": "shop-web", "private": true, "main": "src/main.ts"}
+  why: >-
+    The `@alias` tag marks the second name as deliberate.
+
+how_skylos_decides:
+  - >-
+    Reports one binding exported twice: `export const B = A` where `A` is
+    an earlier export of the module, and `export default A` where `A` was
+    exported by its own declaration.
+  - >-
+    Requires one unchanging binding: `A` is a `const`, function or class
+    that is never reassigned and `B` is a `const`. Imported bindings and
+    specifier lists (`export { a, a as b }`) are not grouped.
+  - >-
+    Public modules (package entries, tests, `export *` targets) are checked
+    too. Internal modules an importer uses whole
+    (`Object.keys(ns)`, `import()`) and what they forward, `.d.ts` files,
+    `__fixtures__`/`__testfixtures__` data, stories and tool configs stay
+    silent, as do `@alias`-tagged statements.
+    A name already reported as an unused SKY-E004 alias is not repeated
+    here.
+  - Reports the group (`NAV_ITEMS|ALL_NAV_ITEMS`) on the alias's line.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/export_facts.py
+    symbol: "class _DuplicateScanner:"
+  - path: skylos/visitors/languages/typescript/export_hygiene.py
+    symbol: "def duplicate_export_findings("
+  - path: test/test_typescript_export_hygiene.py
+    symbol: "def test_non_duplicates_stay_silent"
+
+fix:
+  explanation: >-
+    Keep one name and point importers of the other at it.
+  language: typescript
+  filename: src/nav.ts
+  code: |
+    export const NAV_ITEMS = ["home", "cart"];
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deliberate compatibility alias, for example a renamed name a package
+      keeps exporting for its users. Tag it with `/** @alias */` instead of
+      suppressing the rule.
+  suppress:
+    - check: inline
+      text: >-
+        Add `// skylos: ignore[SKY-E005]` on the alias's line.
+    - check: config
+      text: Set `[tool.skylos] ignore = ["SKY-E005"]` to disable this rule project-wide.
+
+related:
+  - SKY-E004

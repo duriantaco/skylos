@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 
+from skylos.core.js_ast import call_arguments, first_call_argument
 from skylos.core.safe_cache_io import read_text_no_symlink
 
 _MAX_NODES = 20_000
@@ -121,7 +122,7 @@ class DiscardedPathValues:
         if self.text(call.child_by_field_name("function")) != "require":
             return None
         arguments = call.child_by_field_name("arguments")
-        if arguments is None or len(arguments.named_children) != 1:
+        if len(call_arguments(arguments)) != 1:
             return None
         from .file_references import (
             _static_string,
@@ -129,7 +130,9 @@ class DiscardedPathValues:
             static_path_join,
         )
 
-        argument = arguments.named_children[0]
+        argument = first_call_argument(arguments)
+        if argument is None:
+            return None
         literal = _static_string(self.source, argument)
         if literal is not None:
             if not literal.startswith("."):

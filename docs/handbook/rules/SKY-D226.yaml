@@ -3,7 +3,9 @@ title: Cross-site scripting through raw HTML
 family: security
 severity: CRITICAL
 severity_note: >-
-  TypeScript and JavaScript findings are reported as HIGH, as are Java,
+  TypeScript and JavaScript findings are reported as HIGH (an Angular
+  `bypassSecurityTrust*` value that is not from the URL or browser storage
+  is MEDIUM), as are Java,
   Kotlin, C# and PHP findings. Python `Markup()`/`mark_safe()` and Go
   `html/template` findings built from request data are CRITICAL.
 languages: [TypeScript/JavaScript, Python, Go, Java, Kotlin, C#, PHP]
@@ -65,6 +67,14 @@ how_skylos_decides:
     `$`-prefixed variable, and the JSX `dangerouslySetInnerHTML` attribute.
     `.vue` and `.svelte` templates are not read.
   - >-
+    In a file that imports `@angular/platform-browser`, also reports
+    `DomSanitizer.bypassSecurityTrustHtml`, `Script`, `Style`, `Url` and
+    `ResourceUrl` of a non-constant value: HIGH when the value comes from the
+    URL (route and query params, `location`), `document.cookie` or browser
+    storage, MEDIUM otherwise (for example HTTP response data). A literal,
+    or a `Url`/`ResourceUrl` with a fixed `https://host/` prefix, is not
+    reported.
+  - >-
     It does not need to find where the value came from: every sink is
     reported unless the value is proven safe.
   - >-
@@ -79,6 +89,16 @@ how_skylos_decides:
     `isomorphic-dompurify`, or `sanitizeHtml(x)` from `sanitize-html`. This
     proof holds only while every use of the sanitizer in the file is such a
     one-argument call.
+  - >-
+    A template or `+` join is also safe when every interpolated part is a
+    constant, a number (arithmetic, `Number()`, `parseInt()`, `Math.*()`,
+    `toFixed()` and the like) or the result of an escaper in a place the
+    escaper covers: global `encodeURIComponent`/`encodeURI`, an imported HTML
+    escaper (`escape-html`, lodash or underscore `escape`, `html-escaper`,
+    `he`, `validator.escape`) or a same-file function that only returns one.
+    Escaped text is safe in element text and quoted attributes, but not in an
+    event handler, `style`, an unquoted attribute, a tag name or at the start
+    of a link.
   - >-
     Only `dangerouslySetInnerHTML={{ __html: value }}` can be proven safe;
     any other form is reported. jQuery `.append()` and its siblings count

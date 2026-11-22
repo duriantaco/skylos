@@ -30,6 +30,14 @@ def unused_imports(result):
     return {finding["name"] for finding in result.get("unused_imports", [])}
 
 
+def abstained_imports(result):
+    return {
+        item["name"]
+        for item in result.get("dead_code_abstentions", [])
+        if item.get("type") == "import"
+    }
+
+
 @pytest.mark.parametrize("alias", ["fs", "fs as files"])
 @pytest.mark.parametrize("grep_verify", [False, True])
 def test_module_import_used_in_a_qualified_type_path(tmp_path, alias, grep_verify):
@@ -66,7 +74,10 @@ def test_attribute_expressions_and_macros_reference_actual_imports(
         fn main() {{}}
         """,
     )
-    assert unused_imports(result) == {"UnusedMode", "unused_format"}
+    # `Mode::SetTrue` names an associated item, which an unknown external
+    # trait could supply: `UnusedMode` abstains; the function import is
+    # never a trait and is still reported.
+    assert unused_imports(result) == {"unused_format"}
 
 
 @pytest.mark.parametrize(
@@ -155,7 +166,10 @@ def test_same_trait_spelling_from_an_unproven_provider_is_not_a_use(
         fn main() {{}}
         """,
     )
-    assert trait in unused_imports(result)
+    # The spelling gives no proof of use, but an unresolvable import whose
+    # scope calls methods may be a trait: abstain, do not report.
+    assert trait not in unused_imports(result)
+    assert trait in abstained_imports(result)
 
 
 @pytest.mark.parametrize("provider,trait,body", TRAIT_USES)
@@ -232,7 +246,10 @@ def test_nested_lookalike_provider_does_not_get_trait_api_proof(tmp_path):
         fn main() {}
         """,
     )
-    assert unused_imports(result) == {"Context"}
+    # No proof credits the lookalike provider, and a method is called in
+    # scope: the unknown item may be a trait, so Skylos abstains.
+    assert unused_imports(result) == set()
+    assert "Context" in abstained_imports(result)
 
 
 @pytest.mark.parametrize(

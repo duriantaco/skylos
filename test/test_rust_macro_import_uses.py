@@ -139,7 +139,9 @@ def test_inner_attribute_import_does_not_credit_outer_binding(tmp_path):
 
 def test_unknown_glob_cannot_prove_a_prelude_vec_writer(tmp_path):
     source = 'use foreign::*;\nuse std::io::Write as Spare;\nfn main() { let mut buffer = Vec::new(); write!(&mut buffer, "text").unwrap(); }\n'
-    assert "Spare" in _imports(tmp_path, source)
+    # No proof credits Spare, but `write!` on a byte buffer reaches
+    # io::Write::write_fmt in scope: Skylos abstains instead of reporting it.
+    assert "Spare" not in _imports(tmp_path, source)
 
 
 def test_local_shared_write_fmt_trait_can_outrank_io_write(tmp_path):
@@ -149,4 +151,6 @@ def test_local_shared_write_fmt_trait_can_outrank_io_write(tmp_path):
         "impl Formatter for Vec<u8> { fn write_fmt(&self, _: std::fmt::Arguments<'_>) -> std::fmt::Result { Ok(()) } }\n"
         'fn main() { let buffer: Vec<u8> = Vec::with_capacity(8); write!(buffer, "{}", 1).unwrap(); }\n'
     )
-    assert _imports(tmp_path, source) == {"Inactive"}
+    # The local trait may outrank io::Write, but the macro still reaches a
+    # `write_fmt` that io::Write supplies: abstain rather than report.
+    assert _imports(tmp_path, source) == set()

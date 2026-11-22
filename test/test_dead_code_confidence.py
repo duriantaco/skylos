@@ -32,7 +32,11 @@ def _scan(root: Path, conf: int = 60, **kwargs) -> dict:
 
 
 def _by_name(result: dict, key: str) -> dict[str, dict]:
-    return {item.get("name"): item for item in result.get(key) or []}
+    return {
+        item.get("name"): item
+        for item in result.get(key) or []
+        if not item.get("folded_into")
+    }
 
 
 def _definition(name, kind, filename, **attrs) -> Definition:
@@ -108,11 +112,11 @@ def test_deprecated_functions_are_hidden_by_default(tmp_path):
         "    warnings.warn('use other()', DeprecationWarning, stacklevel=2)\n\n\n"
         "@deprecated('use other()')\n"
         "def decorated():\n    return 1\n\n\n"
-        "def documented():\n    \"\"\"Deprecated, does nothing.\"\"\"\n\n\n"
+        'def documented():\n    """Deprecated, does nothing."""\n\n\n'
         "def compatibility():\n"
-        "    \"\"\"Old entry point kept for backwards compatibility.\"\"\"\n\n\n"
+        '    """Old entry point kept for backwards compatibility."""\n\n\n'
         "def replacement():\n"
-        "    \"\"\"Replaces the deprecated documented().\"\"\"\n    return 2\n",
+        '    """Replaces the deprecated documented()."""\n    return 2\n',
     )
 
     shown = _by_name(_scan(tmp_path), "unused_functions")
@@ -154,7 +158,15 @@ def test_scan_reports_varied_confidence_and_threshold_filters_weak_findings(tmp_
     files = {Path(f["file"]).name: f for f in result.get("unused_files") or []}
 
     assert functions["neverImported"]["confidence"] == 85
-    assert functions["Orphan"]["confidence"] == 60
+    # orphan.ts is an unused file: Orphan is folded into that finding.
+    assert "Orphan" not in functions
+    (orphan,) = files_folded = [
+        folded
+        for row in result.get("unused_files") or []
+        for folded in row.get("folded_findings", ())
+        if folded["name"] == "Orphan"
+    ]
+    assert files_folded and orphan["confidence"] == 60
     assert functions["public_helper"]["confidence"] == 90
     assert _by_name(result, "unused_imports")["os"]["confidence"] == 100
     assert files["orphan.ts"]["confidence"] == 80
@@ -283,7 +295,8 @@ def test_generated_source_findings_are_dropped_but_its_references_count(tmp_path
 
     assert not any(name == "routeTree.gen.ts" for name, _ in reported)
     assert ("home.tsx", "Home") not in reported
-    assert ("stale.ts", "stale") in reported
+    # stale.ts is an unused file: its function is folded into that finding.
+    assert ("stale.ts", None) in reported
     generated = result["analysis_summary"]["generated_files"]["by_reason"]
     assert generated.get(REASON_GENERATED_SOURCE) == 1
 

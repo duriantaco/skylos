@@ -244,6 +244,41 @@ def test_callable_work_limit_retains_existing_warning(tmp_path):
     )
 
 
+SELF_ATTRIBUTE_ARGUMENTS = "from helpers import thing\n\nclass T:\n    def test(self):\n        self.use(thing)\n{calls}\n        eval(source)\n"
+MODULE_ATTRIBUTE_ARGUMENTS_IN_LOOP = "import cv2\n\ndef test(images):\n    for part in images:\n{calls}\n    eval(source)\n"
+
+
+@pytest.mark.parametrize(
+    "template,call,count",
+    [
+        # linkding bookmarks/tests/test_settings_general_view.py (Django tests)
+        (SELF_ATTRIBUTE_ARGUMENTS, "        self.check(self.attr{index})", 20),
+        # thumbor thumbor/filters/redeye.py (OpenCV calls inside loops)
+        (MODULE_ATTRIBUTE_ARGUMENTS_IN_LOOP, "        cv2.f(part, cv2.A{index}, cv2.B{index})", 2),
+    ],
+    ids=["self_attribute_arguments", "module_attribute_arguments_in_loop"],
+)
+def test_receiver_given_its_own_attributes_gives_up_and_keeps_warning(
+    tmp_path, template, call, count
+):
+    # Each call may store the receiver's own attributes in it, so its labels
+    # multiply per call (and per loop pass). With more calls Skylos 5.7.0 ran
+    # for over 11 hours; these sizes build ~1M labels uncounted. The budget
+    # now counts label work, so the flow gives up and keeps the warning.
+    calls = "\n".join(call.format(index=index) for index in range(count))
+    tree = ast.parse(template.format(calls=calls))
+    target = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "eval"
+    )
+    assert callable_names(target, "eval", tree, str(tmp_path / "app.py")) == ("eval",)
+    scope = next(
+        node for node in ast.walk(tree) if getattr(node, "name", None) == "test"
+    )
+    assert tree._skylos_danger_callable_index.flows[id(scope)] is None
+
+
 def test_dynamic_namespace_does_not_certify_a_rebound_provider_safe(tmp_path):
     source = "import pickle, json\npickle=json\nglobals().update(providers)\ndef run(data):\n    return pickle.loads(data)\n"
     app = tmp_path / "app.py"

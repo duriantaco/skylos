@@ -1375,6 +1375,12 @@ def test_nextjs_first_run_reports_only_real_dead_code(tmp_path):
         for key in ("unused_functions", "unused_variables", "unused_classes")
         for finding in result[key]
     }
+    # orphan.tsx is an unused file: Orphan is folded into that finding.
+    dead_symbols.update(
+        (Path(finding["file"]).name, folded["name"])
+        for finding in result["unused_files"]
+        for folded in finding.get("folded_findings", ())
+    )
     # getData is called only by the page's default export, which Next.js
     # calls; the unused chain in the same file is still reported.
     assert dead_symbols == {
@@ -1393,13 +1399,24 @@ def _dead_function_names(tmp_path) -> set[tuple[str, str]]:
 
     result = json.loads(analyze(str(tmp_path), conf=0))
     assert result["analysis_errors"] == []
-    return {
+    dead = {
         (
             Path(finding["file"]).relative_to(tmp_path.resolve()).as_posix(),
             finding["name"],
         )
         for finding in result["unused_functions"]
     }
+    # Functions of an unused file are folded into its SKY-E003 finding.
+    dead.update(
+        (
+            Path(finding["file"]).relative_to(tmp_path.resolve()).as_posix(),
+            folded["name"],
+        )
+        for finding in result["unused_files"]
+        for folded in finding.get("folded_findings", ())
+        if folded["rule_id"] == "unused_functions"
+    )
+    return dead
 
 
 def test_name_only_framework_marks_do_not_keep_helpers_live_in_nextjs(tmp_path):

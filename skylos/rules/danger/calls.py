@@ -1,13 +1,15 @@
 import ast
 import bisect
 import re
+from pathlib import Path
 from .weak_random_context import private_model_slug_evidence
 from skylos.rules.base import SkylosRule
 from .pickle_provenance import safe_pickle_loads
 from .source_owned_code import source_owned_code_calls
 from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
 from .untrusted_sources import UntrustedSourceIndex, _unsafe_import_roots
-from .import_proof import provider_binding_is_stable
+from .import_proof import provider_binding_is_stable, provider_is_unshadowed
+from .project_source import project_source_snapshot
 from .tls_provenance import tls_verification_disabled as _tls_verification_disabled
 from .flow_env import ValueFlow, _scope_bindings, _scope_children
 from .module_namespace import module_name_for, module_rebinding
@@ -21,6 +23,7 @@ from skylos.security.command_guard_types import (
     REMOTE_SCRIPT_RULE,
     SCOPE_VIOLATION_RULE,
 )
+from skylos.reporting.listing import UNPROVEN_SOURCE_KIND, YAML_PROJECT_TOO_LARGE
 
 # Command-guard risks that make even a fixed shell command dangerous:
 # exfiltration, remote script execution, broad deletion, credential reads.
@@ -1349,6 +1352,53 @@ def _yaml_load_without_safeloader(
     ):
         return False
     return True
+
+
+def yaml_loader_unproven_for_project_size(
+    node: ast.Call,
+    aliases,
+    loader_classes,
+    filename=None,
+    project_root=None,
+    module=None,
+) -> bool:
+    """A flagged ``yaml.load`` whose loader this file alone proves safe.
+
+    The whole-project proof (no other module replaces ``yaml.SafeLoader``)
+    needs every Python file of the project; past the source snapshot limits
+    it is unavailable, so ``yaml.load(text, Loader=yaml.SafeLoader)`` in a
+    project with more than 2,048 Python files was a listed HIGH finding. The
+    call stays reported, as a review item that is not listed and does not
+    block, only when the snapshot is incomplete and the file-only proof holds.
+    """
+    if not filename or not project_root:
+        return False
+    try:
+        if project_source_snapshot(project_root)[1]:
+            return False
+        # A project module named ``yaml`` would replace PyYAML entirely; that
+        # check reads the file system, not the snapshot, so it still applies.
+        if not provider_is_unshadowed("yaml.SafeLoader", filename, project_root):
+            return False
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return False
+    # The file-only proof: the same module name, no path on disk, so no
+    # project snapshot is consulted.
+    tree_only = f"<tree-only>/{Path(str(filename)).name}"
+    return not _yaml_load_without_safeloader(
+        node, aliases, loader_classes, tree_only, None, module
+    )
+
+
+def mark_yaml_loader_review(finding: dict) -> dict:
+    finding["message"] = (
+        "Review (not listed, not blocking): the loader is a safe YAML loader in "
+        "this file, but the project is too large to prove no other module "
+        "replaces it. " + finding["message"]
+    )
+    finding["review_item"] = {"kind": UNPROVEN_SOURCE_KIND, "blocking": False}
+    finding.setdefault("metadata", {})["yaml_loader_proof"] = YAML_PROJECT_TOO_LARGE
+    return finding
 
 
 _UNKNOWN = "unknown"
@@ -3233,6 +3283,7 @@ class DangerousCallsRule(SkylosRule):
             if weak_hash_key is not None:
                 opts = {**opts, "hash_data_index": 1}
 
+            yaml_review = False
             if rule_key in {"yaml.load", "yaml.load_all"}:
                 if not _yaml_load_without_safeloader(
                     node,
@@ -3243,6 +3294,14 @@ class DangerousCallsRule(SkylosRule):
                     self._module,
                 ):
                     continue
+                yaml_review = yaml_loader_unproven_for_project_size(
+                    node,
+                    self.aliases,
+                    self._yaml_loader_classes(),
+                    context.get("filename"),
+                    context.get("project_root"),
+                    self._module,
+                )
 
             if opts and opts.get("ruamel_unsafe_type"):
                 if not _ruamel_unsafe_type(node):
@@ -3291,6 +3350,8 @@ class DangerousCallsRule(SkylosRule):
                 evidence = private_model_slug_evidence(node)
                 if evidence:
                     finding["security_evidence"] = evidence
+            if yaml_review:
+                mark_yaml_loader_review(finding)
             findings.append(finding)
             break
 

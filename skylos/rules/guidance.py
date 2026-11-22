@@ -167,6 +167,7 @@ _DESERIALIZE = {
     "java": "Avoid ObjectInputStream, XMLDecoder, XStream and default-typed Jackson on untrusted data; use JSON with fixed types or an allowlisting filter.",
     "php": "Replace unserialize on untrusted data with json_decode.",
     "csharp": "Replace BinaryFormatter-family serializers with System.Text.Json; keep Json.NET TypeNameHandling.None or set an allowlisting ISerializationBinder.",
+    "js": "Parse untrusted data with JSON.parse instead of node-serialize, serialize-to-js or funcster, and upgrade js-yaml to 4 (or use safeLoad) instead of js-yaml 3 load.",
 }
 _SECRET = {
     "default": "Remove the secret from the code, rotate it, and load it from the environment or a secret manager.",
@@ -328,6 +329,7 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-D236": {
         "default": "Disable DTDs on the XML parser before parsing untrusted XML.",
         "java": 'Call setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) on the factory before creating the parser, or turn off external general and parameter entities.',
+        "js": "Parse XML without entity substitution: drop noent: true from libxmljs options and XML_PARSE_NOENT from libxml2 parse options.",
     },
     "SKY-D237": {
         "default": "Never evaluate request data as an expression, script or JNDI name; use fixed expressions and pass input as variables.",
@@ -660,6 +662,12 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-E003": {
         "default": "Delete the file if nothing imports it; otherwise add it as an entry point."
     },
+    "SKY-E004": {
+        "default": "Remove the `export` keyword (or the unused re-export entry); tag deliberate public API with `/** @public */`."
+    },
+    "SKY-E005": {
+        "default": "Keep one export name for the binding and update importers of the other; tag a deliberate alias with `/** @alias */`."
+    },
     "SKY-F101": {
         "default": "Follow the framework's recommended handler pattern described in the message."
     },
@@ -864,6 +872,18 @@ RULE_FIXES: dict[str, dict[str, str]] = {
     "SKY-Q410": {
         "default": "Await or return the local async result, handle rejection with .catch(...), or use void for intentional fire-and-forget work."
     },
+    "SKY-Q411": {
+        "default": "Remove the unused entry from the pnpm catalog, or reference it from a workspace package.json with the catalog: protocol."
+    },
+    "SKY-Q412": {
+        "default": "Add the package to the named pnpm catalog in pnpm-workspace.yaml, or replace the catalog: reference with a version range."
+    },
+    "SKY-Q413": {
+        "default": "Load the optional peer lazily with a handled dynamic import, move it to a subpath entry, or declare it as a regular dependency."
+    },
+    "SKY-Q414": {
+        "default": "Fix the import path or alias, restore the missing file, or remove the import."
+    },
     "SKY-Q501": {"default": "Split the class by responsibility into smaller classes."},
     "SKY-Q502": {"default": "Split the file into modules by responsibility."},
     "SKY-Q701": {
@@ -962,7 +982,16 @@ RULE_FIXES: dict[str, dict[str, str]] = {
 }
 
 _DEAD_CODE_RULES = frozenset(
-    {"SKY-U001", "SKY-U002", "SKY-U003", "SKY-U004", "SKY-U005", "SKY-U006", "SKY-U007"}
+    {
+        "SKY-U001",
+        "SKY-U002",
+        "SKY-U003",
+        "SKY-U004",
+        "SKY-U005",
+        "SKY-U006",
+        "SKY-U007",
+        "SKY-U008",
+    }
 )
 _CATEGORY_RULES = {
     "unused_functions": "SKY-U001",

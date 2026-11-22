@@ -1,0 +1,6109 @@
+{
+ "schema": 1,
+ "source": "Each row's facts (enabling packages, config file names, entry and production globs) were verified at that tool's own documentation or published package; see the row's source URLs. Every skylos block is Skylos's own analysis logic.",
+ "plugins": [
+  {
+   "name": "amplify",
+   "title": "AWS Amplify Gen 2",
+   "origin": "skylos",
+   "enablers": [
+    "@aws-amplify/backend",
+    "@aws-amplify/backend-cli"
+   ],
+   "config": [],
+   "entry": [
+    "amplify/backend.ts",
+    "amplify/auth/resource.ts",
+    "amplify/data/resource.ts"
+   ],
+   "production": [
+    "amplify/backend.ts",
+    "amplify/auth/resource.ts",
+    "amplify/data/resource.ts"
+   ],
+   "project": [],
+   "source": [
+    "https://docs.amplify.aws/react/how-amplify-works/concepts/"
+   ]
+  },
+  {
+   "name": "analog",
+   "title": "Analog",
+   "origin": "skylos",
+   "enablers": [
+    "@analogjs/platform"
+   ],
+   "config": [],
+   "entry": [
+    "src/main.ts",
+    "src/main.server.ts",
+    "src/app/pages/**/*.page.ts",
+    "src/app/pages/**/*.server.ts",
+    "src/app/routes/**/*.ts",
+    "app/routes/**/*.ts",
+    "src/server/routes/**/*.ts"
+   ],
+   "production": [
+    "src/main.ts",
+    "src/main.server.ts",
+    "src/app/pages/**/*.page.ts",
+    "src/app/pages/**/*.server.ts",
+    "src/app/routes/**/*.ts",
+    "app/routes/**/*.ts",
+    "src/server/routes/**/*.ts"
+   ],
+   "project": [],
+   "source": [
+    "https://analogjs.org/docs/features/routing/overview",
+    "https://analogjs.org/docs/features/api/overview",
+    "https://cdn.jsdelivr.net/npm/@analogjs/platform@2.9.7/src/lib/route-file-discovery.js",
+    "https://cdn.jsdelivr.net/npm/@analogjs/platform@2.9.7/AGENTS.md"
+   ]
+  },
+  {
+   "name": "angular",
+   "title": "Angular CLI",
+   "origin": "skylos",
+   "enablers": [
+    "@angular/cli"
+   ],
+   "config": [
+    "angular.json",
+    ".angular.json"
+   ],
+   "entry": [
+    "src/main.ts",
+    "src/index.html",
+    "src/public-api.ts",
+    "**/*.spec.ts",
+    "**/*.test.ts"
+   ],
+   "production": [
+    "src/main.ts",
+    "src/index.html",
+    "src/public-api.ts"
+   ],
+   "project": [],
+   "source": [
+    "https://angular.dev/reference/configs/file-structure",
+    "https://angular.dev/reference/configs/workspace-config",
+    "https://github.com/angular/angular/blob/main/adev/src/content/reference/configs/file-structure.md",
+    "https://cdn.jsdelivr.net/npm/@angular/cli@22.3.0/lib/chunk-CGRNL7CG.js",
+    "https://cdn.jsdelivr.net/npm/@angular/build@22.3.0/src/builders/unit-test/schema.json",
+    "https://cdn.jsdelivr.net/npm/@angular/build@22.3.0/src/builders/karma/schema.json"
+   ]
+  },
+  {
+   "name": "api-documenter",
+   "title": "API Documenter (Microsoft)",
+   "origin": "skylos",
+   "enablers": [
+    "@microsoft/api-documenter"
+   ],
+   "config": [
+    "api-documenter.json",
+    "config/api-documenter.json"
+   ],
+   "entry": [
+    "input/*.api.json"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@microsoft/api-documenter@7.30.20/lib-commonjs/cli/GenerateAction.js",
+    "https://cdn.jsdelivr.net/npm/@microsoft/api-documenter@7.30.20/lib-commonjs/documenters/DocumenterConfig.js",
+    "https://cdn.jsdelivr.net/npm/@microsoft/api-documenter@7.30.20/lib-commonjs/cli/BaseAction.js"
+   ]
+  },
+  {
+   "name": "api-extractor",
+   "title": "API Extractor",
+   "origin": "skylos",
+   "enablers": [
+    "@microsoft/api-extractor"
+   ],
+   "config": [
+    "api-extractor.json",
+    "config/api-extractor.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@microsoft/api-extractor@7.60.1/lib-commonjs/api/ExtractorConfig.js"
+   ]
+  },
+  {
+   "name": "apollo",
+   "title": "Apollo CLI / Apollo project config",
+   "origin": "skylos",
+   "enablers": [
+    "apollo"
+   ],
+   "config": [
+    "apollo.config.{js,ts,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/apollo-language-server@1.26.9/lib/config/loadConfig.js",
+    "https://cdn.jsdelivr.net/npm/apollo@2.34.0/package.json"
+   ]
+  },
+  {
+   "name": "astro",
+   "title": "Astro",
+   "origin": "skylos",
+   "enablers": [
+    "astro"
+   ],
+   "config": [
+    "astro.config.{mjs,js,ts,mts}"
+   ],
+   "entry": [
+    "src/pages/**/*.{astro,html,md,mdx,markdown,mdown,mkdn,mkd,mdwn,js,ts}",
+    "src/middleware.{js,ts}",
+    "src/middleware/index.{js,ts}",
+    "src/actions.{js,ts}",
+    "src/actions/index.{js,ts}",
+    "src/content.config.{mjs,js,mts,ts}",
+    "src/content/config.{ts,js,mjs,mts}",
+    "src/live.config.{mjs,js,mts,ts}",
+    "!src/pages/**/_*",
+    "!src/pages/**/_*/**"
+   ],
+   "production": [
+    "src/pages/**/*.{astro,html,md,mdx,markdown,mdown,mkdn,mkd,mdwn,js,ts}",
+    "src/middleware.{js,ts}",
+    "src/middleware/index.{js,ts}",
+    "src/actions.{js,ts}",
+    "src/actions/index.{js,ts}",
+    "src/content.config.{mjs,js,mts,ts}",
+    "src/content/config.{ts,js,mjs,mts}",
+    "src/live.config.{mjs,js,mts,ts}",
+    "!src/pages/**/_*",
+    "!src/pages/**/_*/**"
+   ],
+   "project": [],
+   "source": [
+    "https://docs.astro.build/en/basics/project-structure/",
+    "https://docs.astro.build/en/guides/routing/",
+    "https://docs.astro.build/en/guides/middleware/",
+    "https://docs.astro.build/en/guides/actions/",
+    "https://cdn.jsdelivr.net/npm/astro@7.4.13/dist/core/config/config.js",
+    "https://cdn.jsdelivr.net/npm/astro@7.4.13/dist/core/config/settings.js",
+    "https://cdn.jsdelivr.net/npm/astro@7.4.13/dist/content/utils.js",
+    "https://cdn.jsdelivr.net/npm/astro@7.4.13/dist/core/constants.js",
+    "https://docs.astro.build/en/guides/routing/#excluding-pages"
+   ],
+   "skylos": {
+    "enable_files": [
+     "astro.config.{ts,js,mjs,mts,cjs,cts}"
+    ],
+    "extra_production": [
+     "src/pages/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+    ],
+    "export_rules": [
+     {
+      "globs": [
+       "src/pages/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+      ],
+      "exports": [
+       "default",
+       "GET",
+       "POST",
+       "PUT",
+       "PATCH",
+       "DELETE",
+       "ALL",
+       "HEAD",
+       "OPTIONS",
+       "getStaticPaths",
+       "prerender",
+       "partial"
+      ]
+     },
+     {
+      "globs": [
+       "src/content.config.{ts,js,mjs,mts,cjs,cts}",
+       "src/content/config.{ts,js,mjs,mts,cjs,cts}"
+      ],
+      "exports": [
+       "collections"
+      ]
+     },
+     {
+      "globs": [
+       "src/middleware.{ts,js,mjs,mts,cjs,cts}",
+       "src/middleware/index.{ts,js,mjs,mts,cjs,cts}"
+      ],
+      "exports": [
+       "onRequest"
+      ]
+     },
+     {
+      "globs": [
+       "src/actions/index.{ts,js,mjs,mts,cjs,cts}"
+      ],
+      "exports": [
+       "server"
+      ]
+     }
+    ],
+    "extra_entry": [
+     "src/content.config.{ts,js,mjs,mts,cjs,cts}",
+     "src/content/config.{ts,js,mjs,mts,cjs,cts}",
+     "src/middleware.{ts,js,mjs,mts,cjs,cts}",
+     "src/middleware/index.{ts,js,mjs,mts,cjs,cts}",
+     "src/actions/index.{ts,js,mjs,mts,cjs,cts}"
+    ]
+   }
+  },
+  {
+   "name": "auto",
+   "title": "auto (Intuit)",
+   "origin": "skylos",
+   "enablers": [
+    "auto",
+    "@auto-it/core"
+   ],
+   "config": [
+    ".autorc",
+    ".autorc.{json,yaml,yml,ts,js}",
+    "auto.config.{js,ts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/intuit/auto/blob/main/docs/pages/docs/configuration/autorc.mdx"
+   ]
+  },
+  {
+   "name": "ava",
+   "title": "AVA",
+   "origin": "skylos",
+   "enablers": [
+    "ava"
+   ],
+   "config": [
+    "ava.config.{js,mjs}"
+   ],
+   "entry": [
+    "test.{mjs,js}",
+    "{src,source}/test.{mjs,js}",
+    "**/__tests__/**/*.{mjs,js}",
+    "**/*.spec.{mjs,js}",
+    "**/*.test.{mjs,js}",
+    "**/test-*.{mjs,js}",
+    "**/test/**/*.{mjs,js}",
+    "**/tests/**/*.{mjs,js}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/avajs/ava/blob/main/docs/06-configuration.md",
+    "https://cdn.jsdelivr.net/npm/ava@8.4.0/lib/globs.js",
+    "https://cdn.jsdelivr.net/npm/ava@8.4.0/lib/load-config.js",
+    "https://cdn.jsdelivr.net/npm/ava@8.4.0/lib/extensions.js"
+   ],
+   "skylos": {
+    "entry_keys": [
+     {
+      "key": "files",
+      "kind": "glob",
+      "base": "config"
+     },
+     {
+      "key": "require",
+      "kind": "file",
+      "base": "config"
+     }
+    ],
+    "package_json_key": "ava",
+    "abstain": [
+     "test/**",
+     "tests/**",
+     "**/__tests__/**"
+    ],
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "aws-cdk",
+   "title": "AWS CDK",
+   "origin": "skylos",
+   "enablers": [
+    "aws-cdk",
+    "aws-cdk-lib"
+   ],
+   "config": [
+    "cdk.json",
+    "cdk.context.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://docs.aws.amazon.com/cdk/v2/guide/projects.html",
+    "https://docs.aws.amazon.com/cdk/v2/guide/context.html"
+   ]
+  },
+  {
+   "name": "azure-static-web-apps",
+   "title": "Azure Static Web Apps CLI",
+   "origin": "skylos",
+   "enablers": [
+    "@azure/static-web-apps-cli"
+   ],
+   "config": [
+    "swa-cli.config.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://azure.github.io/static-web-apps-cli/docs/cli/swa-config"
+   ]
+  },
+  {
+   "name": "babel",
+   "title": "Babel",
+   "origin": "skylos",
+   "enablers": [
+    "@babel/core",
+    "@babel/cli"
+   ],
+   "config": [
+    "babel.config.{js,cjs,mjs,json,cts,ts,mts}",
+    ".babelrc",
+    ".babelrc.{js,cjs,mjs,json,cts}",
+    ".babelignore"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://babeljs.io/docs/config-files",
+    "https://cdn.jsdelivr.net/npm/@babel/core@8.1.3/lib/config/files/index.js"
+   ]
+  },
+  {
+   "name": "beachball",
+   "title": "Beachball",
+   "origin": "skylos",
+   "enablers": [
+    "beachball"
+   ],
+   "config": [
+    "beachball.config.{js,cjs,mjs,ts,cts,mts}",
+    ".beachballrc",
+    ".beachballrc.json",
+    ".beachballrc.{js,cjs,mjs,ts,cts,mts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://microsoft.github.io/beachball/overview/configuration"
+   ]
+  },
+  {
+   "name": "biome",
+   "title": "Biome",
+   "origin": "skylos",
+   "enablers": [
+    "@biomejs/biome"
+   ],
+   "config": [
+    "biome.json",
+    "biome.jsonc",
+    ".biome.json",
+    ".biome.jsonc"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://biomejs.dev/guides/configure-biome/"
+   ]
+  },
+  {
+   "name": "browserslist",
+   "title": "Browserslist",
+   "origin": "skylos",
+   "enablers": [
+    "browserslist"
+   ],
+   "config": [
+    ".browserslistrc",
+    "browserslist"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/browserslist@4.29.6/node.js",
+    "https://github.com/browserslist/browserslist#readme"
+   ]
+  },
+  {
+   "name": "buf",
+   "title": "Buf CLI",
+   "origin": "skylos",
+   "enablers": [
+    "@bufbuild/buf"
+   ],
+   "config": [
+    "buf.yaml",
+    "buf.gen.yaml",
+    "buf.work.yaml"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://buf.build/docs/configuration/v2/buf-yaml/",
+    "https://buf.build/docs/configuration/v2/buf-gen-yaml/",
+    "https://buf.build/docs/reference/cli/buf/generate/",
+    "https://buf.build/docs/configuration/v1/buf-work-yaml/"
+   ]
+  },
+  {
+   "name": "bumpp",
+   "title": "bumpp",
+   "origin": "skylos",
+   "enablers": [
+    "bumpp"
+   ],
+   "config": [
+    "bump.config.ts"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/antfu-collective/bumpp/blob/main/README.md"
+   ]
+  },
+  {
+   "name": "bun",
+   "title": "Bun (runtime and bun test)",
+   "origin": "skylos",
+   "enablers": [
+    "@types/bun",
+    "bun"
+   ],
+   "config": [
+    "bunfig.toml"
+   ],
+   "entry": [
+    "**/*.test.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+    "**/*_test.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+    "**/*.spec.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+    "**/*_spec.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://bun.sh/docs/runtime/bunfig",
+    "https://bun.sh/docs/cli/test",
+    "https://bun.sh/docs/typescript",
+    "https://bun.sh/docs/installation"
+   ]
+  },
+  {
+   "name": "bunchee",
+   "title": "bunchee",
+   "origin": "skylos",
+   "enablers": [
+    "bunchee"
+   ],
+   "config": [],
+   "entry": [
+    "src/index.{js,cjs,mjs,jsx,ts,tsx,cts,mts}"
+   ],
+   "production": [
+    "src/index.{js,cjs,mjs,jsx,ts,tsx,cts,mts}"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/bunchee@7.1.0/README.md",
+    "https://cdn.jsdelivr.net/npm/bunchee@7.1.0/dist/bundle-ntx4xp0h.js"
+   ]
+  },
+  {
+   "name": "c8",
+   "title": "c8",
+   "origin": "skylos",
+   "enablers": [
+    "c8"
+   ],
+   "config": [
+    ".c8rc",
+    ".c8rc.json",
+    ".nycrc",
+    ".nycrc.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/bcoe/c8/blob/main/README.md"
+   ],
+   "skylos": {
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "capacitor",
+   "title": "Capacitor",
+   "origin": "skylos",
+   "enablers": [
+    "@capacitor/cli",
+    "@capacitor/core"
+   ],
+   "config": [
+    "capacitor.config.{ts,js,json}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://capacitorjs.com/docs/config",
+    "https://cdn.jsdelivr.net/npm/@capacitor/cli@8.6.2/dist/config.js"
+   ]
+  },
+  {
+   "name": "changelogen",
+   "title": "changelogen",
+   "origin": "skylos",
+   "enablers": [
+    "changelogen"
+   ],
+   "config": [
+    "changelog.config.{json,ts,js,mjs,cjs}",
+    ".changelogrc"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/unjs/changelogen/blob/main/README.md"
+   ]
+  },
+  {
+   "name": "changesets",
+   "title": "Changesets",
+   "origin": "skylos",
+   "enablers": [
+    "@changesets/cli"
+   ],
+   "config": [
+    ".changeset/config.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/changesets/changesets/blob/main/docs/guide/config.md",
+    "https://github.com/changesets/changesets/blob/maintenance/v2/docs/config-file-options.md"
+   ]
+  },
+  {
+   "name": "chromatic",
+   "title": "Chromatic CLI",
+   "origin": "skylos",
+   "enablers": [
+    "chromatic"
+   ],
+   "config": [
+    "chromatic.config.{json,jsonc,json5}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://www.chromatic.com/docs/cli/",
+    "https://cdn.jsdelivr.net/npm/chromatic@18.15.1/dist/getConfiguration-CWNd4Fym.cjs"
+   ]
+  },
+  {
+   "name": "codeceptjs",
+   "title": "CodeceptJS",
+   "origin": "skylos",
+   "enablers": [
+    "codeceptjs"
+   ],
+   "config": [
+    "codecept.config.{js,cjs,ts}",
+    "codecept.conf.{js,cjs,ts}",
+    "codecept.js"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://codecept.io/configuration/",
+    "https://cdn.jsdelivr.net/npm/codeceptjs@4.2.5/lib/config.js"
+   ]
+  },
+  {
+   "name": "commit-and-tag-version",
+   "title": "commit-and-tag-version",
+   "origin": "skylos",
+   "enablers": [
+    "commit-and-tag-version"
+   ],
+   "config": [
+    ".versionrc",
+    ".versionrc.{json,js,cjs,mjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/absolute-version/commit-and-tag-version/blob/master/README.md"
+   ]
+  },
+  {
+   "name": "commitizen",
+   "title": "Commitizen",
+   "origin": "skylos",
+   "enablers": [
+    "commitizen"
+   ],
+   "config": [
+    ".czrc",
+    ".cz.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/commitizen/cz-cli/blob/master/README.md",
+    "https://cdn.jsdelivr.net/npm/commitizen@4.3.2/dist/commitizen/configLoader.js"
+   ]
+  },
+  {
+   "name": "commitlint",
+   "title": "commitlint",
+   "origin": "skylos",
+   "enablers": [
+    "@commitlint/cli",
+    "commitlint"
+   ],
+   "config": [
+    ".commitlintrc",
+    ".commitlintrc.{json,yaml,yml,js,cjs,mjs,ts,cts,mts}",
+    "commitlint.config.{js,cjs,mjs,ts,cts,mts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://commitlint.js.org/reference/configuration.html",
+    "https://cdn.jsdelivr.net/npm/@commitlint/load@21.2.4/lib/utils/load-config.js"
+   ]
+  },
+  {
+   "name": "compodoc",
+   "title": "Compodoc",
+   "origin": "skylos",
+   "enablers": [
+    "@compodoc/compodoc"
+   ],
+   "config": [
+    ".compodocrc",
+    ".compodocrc.{json,yaml,yml,js,ts,cjs}",
+    ".config/compodocrc",
+    ".config/compodocrc.{json,yaml,yml,js,ts,cjs}",
+    "compodoc.config.{js,ts,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://compodoc.app/guides/options.html",
+    "https://cdn.jsdelivr.net/npm/@compodoc/compodoc@2.0.0/dist/index-cli-C984OhHZ.js",
+    "https://cdn.jsdelivr.net/npm/cosmiconfig@9.0.2/dist/defaults.js"
+   ]
+  },
+  {
+   "name": "content-collections",
+   "title": "Content Collections",
+   "origin": "skylos",
+   "enablers": [
+    "@content-collections/core",
+    "@content-collections/cli",
+    "@content-collections/next",
+    "@content-collections/vite"
+   ],
+   "config": [
+    "content-collections.ts"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@content-collections/cli@0.1.9/dist/index.js",
+    "https://cdn.jsdelivr.net/npm/@content-collections/next@0.2.11/dist/index.js",
+    "https://cdn.jsdelivr.net/npm/@content-collections/vite@0.3.1/dist/index.js"
+   ]
+  },
+  {
+   "name": "contentlayer",
+   "title": "Contentlayer",
+   "origin": "skylos",
+   "enablers": [
+    "contentlayer",
+    "next-contentlayer",
+    "contentlayer2",
+    "next-contentlayer2"
+   ],
+   "config": [
+    "contentlayer.config.{ts,js}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@contentlayer/core@0.3.4/dist/getConfig/index.js",
+    "https://cdn.jsdelivr.net/npm/@contentlayer2/core@0.5.8/dist/getConfig/index.js"
+   ]
+  },
+  {
+   "name": "convex",
+   "title": "Convex",
+   "origin": "skylos",
+   "enablers": [
+    "convex"
+   ],
+   "config": [
+    "convex.json"
+   ],
+   "entry": [
+    "convex/**/*.{js,mjs,cjs,ts,tsx,mts,cts,jsx}"
+   ],
+   "production": [
+    "convex/**/*.{js,mjs,cjs,ts,tsx,mts,cts,jsx}"
+   ],
+   "project": [],
+   "source": [
+    "https://docs.convex.dev/production/project-configuration",
+    "https://cdn.jsdelivr.net/npm/convex@1.51.0/dist/esm/bundler/index.js"
+   ],
+   "skylos": {
+    "dir_keys": {
+     "functions": {
+      "default": "convex",
+      "applies_to": [
+       "production"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "cspell",
+   "title": "CSpell",
+   "origin": "skylos",
+   "enablers": [
+    "cspell"
+   ],
+   "config": [
+    "{.cspell,cspell,.cSpell,cSpell}.json",
+    "{.cspell,cspell}.jsonc",
+    "{.cspell,cspell}.{yaml,yml}",
+    ".vscode/{cspell,cSpell,.cspell}.json",
+    "{.cspell,cspell}.config.{json,jsonc,yaml,yml,mjs,cjs,js,toml,mts,ts,cts}",
+    ".config/{.cspell,cspell,.cSpell,cSpell}.json",
+    ".config/{.cspell,cspell}.jsonc",
+    ".config/{cspell,.cspell}.config.{json,jsonc,yaml,yml,mjs,cjs,js,toml,mts,ts,cts}",
+    ".config/cspell.{yaml,yml}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cspell.org/docs/Configuration",
+    "https://cdn.jsdelivr.net/npm/cspell-lib@10.5.2/dist/lib/Settings/Controller/configLoader/configLocations.js"
+   ],
+   "skylos": {
+    "config_strings": false
+   }
+  },
+  {
+   "name": "cucumber",
+   "title": "Cucumber.js",
+   "origin": "skylos",
+   "enablers": [
+    "@cucumber/cucumber"
+   ],
+   "config": [
+    "cucumber.{json,yaml,yml,js,cjs,mjs}"
+   ],
+   "entry": [
+    "features/**/*.{feature,feature.md}",
+    "features/**/*.@(js|cjs|mjs)"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/cucumber/cucumber-js/blob/main/docs/configuration.md"
+   ],
+   "skylos": {
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "cypress",
+   "title": "Cypress",
+   "origin": "skylos",
+   "enablers": [
+    "cypress"
+   ],
+   "config": [
+    "cypress.config.{js,ts,mjs,cjs,mts,cts}"
+   ],
+   "entry": [
+    "cypress/e2e/**/*.cy.{js,jsx,ts,tsx}",
+    "cypress/support/e2e.{js,jsx,ts,tsx}",
+    "**/*.cy.{js,jsx,ts,tsx}",
+    "cypress/support/component.{js,jsx,ts,tsx}",
+    "cypress/support/component-index.html"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://docs.cypress.io/app/references/configuration"
+   ],
+   "skylos": {
+    "entry_keys": [
+     {
+      "key": "e2e.specPattern",
+      "kind": "glob",
+      "base": "config"
+     },
+     {
+      "key": "e2e.supportFile",
+      "kind": "file",
+      "base": "config"
+     },
+     {
+      "key": "component.specPattern",
+      "kind": "glob",
+      "base": "config"
+     },
+     {
+      "key": "component.supportFile",
+      "kind": "file",
+      "base": "config"
+     }
+    ],
+    "abstain": [
+     "cypress/**"
+    ],
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "cz-git",
+   "title": "cz-git / czg",
+   "origin": "skylos",
+   "enablers": [
+    "cz-git",
+    "czg"
+   ],
+   "config": [
+    ".czrc",
+    "cz.config.{js,cjs,mjs,ts,cts,mts}",
+    ".commitlintrc",
+    ".commitlintrc.{json,yaml,yml,js,cjs,mjs,ts,cts,mts}",
+    "commitlint.config.{js,cjs,mjs,ts,cts,mts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cz-git.qbb.sh/config/",
+    "https://cz-git.qbb.sh/guide/",
+    "https://cdn.jsdelivr.net/npm/cz-git@1.14.0/lib/index.js",
+    "https://cz-git.qbb.sh/cli/"
+   ]
+  },
+  {
+   "name": "danger",
+   "title": "Danger JS",
+   "origin": "skylos",
+   "enablers": [
+    "danger"
+   ],
+   "config": [],
+   "entry": [
+    "{dangerfile,Dangerfile}.{mts,mjs,ts,js}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/danger@14.1.0/distribution/commands/utils/fileUtils.js",
+    "https://danger.systems/js/"
+   ]
+  },
+  {
+   "name": "depcheck",
+   "title": "depcheck",
+   "origin": "skylos",
+   "enablers": [
+    "depcheck"
+   ],
+   "config": [
+    ".depcheckrc",
+    ".depcheckrc.{json,yaml,yml}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/depcheck/depcheck/blob/master/README.md#usage-with-a-configuration-file",
+    "https://cdn.jsdelivr.net/npm/depcheck@1.4.7/dist/utils/configuration-reader.js"
+   ]
+  },
+  {
+   "name": "dependency-cruiser",
+   "title": "dependency-cruiser",
+   "origin": "skylos",
+   "enablers": [
+    "dependency-cruiser"
+   ],
+   "config": [
+    ".dependency-cruiser.{json,js,cjs,mjs,ts,cts,mts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/dependency-cruiser@18.8.0/src/cli/defaults.mjs",
+    "https://cdn.jsdelivr.net/npm/dependency-cruiser@18.8.0/src/cli/normalize-cli-options.mjs"
+   ]
+  },
+  {
+   "name": "detox",
+   "title": "Detox",
+   "origin": "skylos",
+   "enablers": [
+    "detox"
+   ],
+   "config": [
+    ".detoxrc.{js,json}",
+    ".detoxrc",
+    "detox.config.{js,json}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://wix.github.io/Detox/docs/config/overview"
+   ]
+  },
+  {
+   "name": "directus",
+   "title": "Directus (extensions SDK)",
+   "origin": "skylos",
+   "enablers": [
+    "directus",
+    "@directus/extensions-sdk"
+   ],
+   "config": [
+    "extension.config.{js,mjs,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@directus/extensions-sdk@18.1.2/dist/cli/commands/helpers/load-config.js",
+    "https://cdn.jsdelivr.net/npm/@directus/constants@14.6.0/dist/index.js"
+   ]
+  },
+  {
+   "name": "docsify",
+   "title": "docsify",
+   "origin": "skylos",
+   "enablers": [
+    "docsify",
+    "docsify-cli"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/docsifyjs/docsify/blob/develop/docs/quickstart.md",
+    "https://cdn.jsdelivr.net/npm/docsify-cli@5.0.0/lib/commands/init.js"
+   ]
+  },
+  {
+   "name": "docusaurus",
+   "title": "Docusaurus",
+   "origin": "skylos",
+   "enablers": [
+    "@docusaurus/core",
+    "@docusaurus/preset-classic"
+   ],
+   "config": [
+    "docusaurus.config.{ts,mts,cts,js,mjs,cjs}"
+   ],
+   "entry": [
+    "docs/**/*.{md,mdx}",
+    "blog/**/*.{md,mdx}",
+    "src/pages/**/*.{js,jsx,ts,tsx,md,mdx}",
+    "src/theme/**/*.{js,jsx,ts,tsx}"
+   ],
+   "production": [
+    "docs/**/*.{md,mdx}",
+    "blog/**/*.{md,mdx}",
+    "src/pages/**/*.{js,jsx,ts,tsx,md,mdx}",
+    "src/theme/**/*.{js,jsx,ts,tsx}"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@docusaurus/core@3.10.2/lib/server/config.js",
+    "https://cdn.jsdelivr.net/npm/@docusaurus/utils@3.10.2/lib/constants.js",
+    "https://cdn.jsdelivr.net/npm/@docusaurus/plugin-content-docs@3.10.2/lib/options.js",
+    "https://cdn.jsdelivr.net/npm/@docusaurus/plugin-content-blog@3.10.2/lib/options.js",
+    "https://cdn.jsdelivr.net/npm/@docusaurus/plugin-content-pages@3.10.2/lib/options.js",
+    "https://cdn.jsdelivr.net/npm/@docusaurus/core@3.10.2/lib/webpack/aliases/index.js"
+   ],
+   "skylos": {
+    "extra_production": [
+     "docusaurus.config.{ts,js,mjs,mts,cjs,cts}",
+     "sidebars.{ts,js,mjs,mts,cjs,cts}",
+     "src/pages/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+     "src/theme/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+    ],
+    "export_rules": [
+     {
+      "globs": [
+       "docusaurus.config.{ts,js,mjs,mts,cjs,cts}",
+       "sidebars.{ts,js,mjs,mts,cjs,cts}",
+       "src/pages/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+       "src/theme/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+      ],
+      "exports": [
+       "default"
+      ]
+     }
+    ],
+    "aliases": {
+     "@site": ".",
+     "@theme": "src/theme"
+    }
+   }
+  },
+  {
+   "name": "docusaurus-v1",
+   "title": "Docusaurus 1 (classic)",
+   "origin": "skylos",
+   "enablers": [
+    "docusaurus"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [
+    "siteConfig.js",
+    "core/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+    "pages/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+   ],
+   "skylos": {
+    "export_rules": [
+     {
+      "globs": [
+       "**"
+      ],
+      "exports": [
+       "default"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "docz",
+   "title": "Docz",
+   "origin": "skylos",
+   "enablers": [
+    "docz",
+    "docz-core"
+   ],
+   "config": [
+    "doczrc.js"
+   ],
+   "entry": [
+    "**/*.{md,markdown,mdx}"
+   ],
+   "production": [
+    "**/*.{md,markdown,mdx}"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/docz-core@2.4.0/dist/index.esm.js"
+   ]
+  },
+  {
+   "name": "dotenv",
+   "title": "dotenv",
+   "origin": "skylos",
+   "enablers": [
+    "dotenv"
+   ],
+   "config": [
+    ".env"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/motdotla/dotenv/blob/master/README.md"
+   ]
+  },
+  {
+   "name": "dprint",
+   "title": "dprint",
+   "origin": "skylos",
+   "enablers": [
+    "dprint"
+   ],
+   "config": [
+    "dprint.{json,jsonc}",
+    ".dprint.{json,jsonc}",
+    ".config/dprint.{json,jsonc}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://dprint.dev/setup/",
+    "https://dprint.dev/install/"
+   ]
+  },
+  {
+   "name": "drizzle",
+   "title": "Drizzle ORM / Drizzle Kit",
+   "origin": "skylos",
+   "enablers": [
+    "drizzle-kit",
+    "drizzle-orm"
+   ],
+   "config": [
+    "drizzle.config.{ts,js,json}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://orm.drizzle.team/docs/drizzle-config-file",
+    "https://cdn.jsdelivr.net/npm/drizzle-kit@0.31.11/bin.cjs"
+   ]
+  },
+  {
+   "name": "dts-bundle-generator",
+   "title": "dts-bundle-generator",
+   "origin": "skylos",
+   "enablers": [
+    "dts-bundle-generator"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/dts-bundle-generator@10.0.0/README.md"
+   ]
+  },
+  {
+   "name": "dumi",
+   "title": "dumi",
+   "origin": "skylos",
+   "enablers": [
+    "dumi"
+   ],
+   "config": [
+    ".dumirc.{ts,js}",
+    "config/config.ts"
+   ],
+   "entry": [
+    "docs/**/*.md",
+    "src/{*,*/index,*/index.*,*/README,*/README.*}.md",
+    ".dumi/pages/**/*.{js,jsx,ts,tsx,md}",
+    ".dumi/theme/layouts/{GlobalLayout,DocLayout,DemoLayout}{.,/index.}{js,jsx,ts,tsx}",
+    ".dumi/theme/locales/*.json",
+    ".dumi/theme/{plugin/index.{js,ts},plugin.{js,ts}}"
+   ],
+   "production": [
+    "docs/**/*.md",
+    "src/{*,*/index,*/index.*,*/README,*/README.*}.md",
+    ".dumi/pages/**/*.{js,jsx,ts,tsx,md}",
+    ".dumi/theme/layouts/{GlobalLayout,DocLayout,DemoLayout}{.,/index.}{js,jsx,ts,tsx}",
+    ".dumi/theme/locales/*.json"
+   ],
+   "project": [],
+   "source": [
+    "https://d.umijs.org/config",
+    "https://cdn.jsdelivr.net/npm/dumi@2.4.57/dist/service/constants.js",
+    "https://cdn.jsdelivr.net/npm/dumi@2.4.57/dist/constants.js",
+    "https://cdn.jsdelivr.net/npm/dumi@2.4.57/dist/features/configPlugins/index.js",
+    "https://cdn.jsdelivr.net/npm/dumi@2.4.57/dist/features/routes.js",
+    "https://cdn.jsdelivr.net/npm/dumi@2.4.57/dist/features/derivative.js",
+    "https://cdn.jsdelivr.net/npm/dumi@2.4.57/dist/features/theme/loader.js"
+   ]
+  },
+  {
+   "name": "editorconfig-checker",
+   "title": "editorconfig-checker",
+   "origin": "skylos",
+   "enablers": [
+    "editorconfig-checker"
+   ],
+   "config": [
+    ".editorconfig-checker.json",
+    ".editorconfig"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/editorconfig-checker/editorconfig-checker/blob/main/README.md#configuration",
+    "https://github.com/editorconfig-checker/editorconfig-checker.javascript/blob/master/README.md"
+   ]
+  },
+  {
+   "name": "electron",
+   "title": "Electron",
+   "origin": "skylos",
+   "enablers": [
+    "electron"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/electron/electron/blob/main/docs/tutorial/tutorial-2-first-app.md"
+   ]
+  },
+  {
+   "name": "electron-builder",
+   "title": "electron-builder",
+   "origin": "skylos",
+   "enablers": [
+    "electron-builder"
+   ],
+   "config": [
+    "electron-builder.{yml,yaml,json,json5,toml,js,cjs,ts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/app-builder-lib@26.18.0/out/util/config/load.js",
+    "https://cdn.jsdelivr.net/npm/app-builder-lib@26.18.0/out/util/config/config.js"
+   ]
+  },
+  {
+   "name": "electron-forge",
+   "title": "Electron Forge",
+   "origin": "skylos",
+   "enablers": [
+    "@electron-forge/cli"
+   ],
+   "config": [
+    "forge.config.{js,mjs,cjs,ts,mts,cts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://www.electronforge.io/config/configuration",
+    "https://cdn.jsdelivr.net/npm/@electron-forge/core@8.0.1/dist/util/forge-config.js"
+   ]
+  },
+  {
+   "name": "electron-vite",
+   "title": "electron-vite",
+   "origin": "skylos",
+   "enablers": [
+    "electron-vite"
+   ],
+   "config": [
+    "electron.vite.config.{js,ts,mjs,cjs,mts,cts}"
+   ],
+   "entry": [
+    "src/main/{index,main}.{js,ts,mjs,cjs}",
+    "src/preload/{index,preload}.{js,ts,mjs,cjs}",
+    "src/renderer/index.html"
+   ],
+   "production": [
+    "src/main/{index,main}.{js,ts,mjs,cjs}",
+    "src/preload/{index,preload}.{js,ts,mjs,cjs}",
+    "src/renderer/index.html"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/electron-vite@6.0.0/dist/chunks/lib-DoUt4oMD.js"
+   ]
+  },
+  {
+   "name": "eleventy",
+   "title": "Eleventy (11ty)",
+   "origin": "skylos",
+   "enablers": [
+    "@11ty/eleventy"
+   ],
+   "config": [
+    ".eleventy.js",
+    "eleventy.config.{js,mjs,cjs}"
+   ],
+   "entry": [
+    "**/*.11ty.{js,cjs,mjs}",
+    "_data/**/*.{js,cjs,mjs,json}",
+    "**/*.11tydata.{js,cjs,mjs,json}"
+   ],
+   "production": [
+    "**/*.11ty.{js,cjs,mjs}",
+    "_data/**/*.{js,cjs,mjs,json}",
+    "**/*.11tydata.{js,cjs,mjs,json}"
+   ],
+   "project": [],
+   "source": [
+    "https://www.11ty.dev/docs/config/",
+    "https://www.11ty.dev/docs/languages/javascript/",
+    "https://www.11ty.dev/docs/data-global/",
+    "https://www.11ty.dev/docs/data-template-dir/",
+    "https://cdn.jsdelivr.net/npm/@11ty/eleventy@3.1.8/src/TemplateConfig.js",
+    "https://cdn.jsdelivr.net/npm/@11ty/eleventy@3.1.8/src/defaultConfig.js",
+    "https://cdn.jsdelivr.net/npm/@11ty/eleventy@3.1.8/src/EleventyExtensionMap.js",
+    "https://cdn.jsdelivr.net/npm/@11ty/eleventy@3.1.8/src/Data/TemplateData.js"
+   ]
+  },
+  {
+   "name": "ember",
+   "title": "Ember CLI",
+   "origin": "skylos",
+   "enablers": [
+    "ember-cli"
+   ],
+   "config": [
+    "ember-cli-build.{js,mjs,cjs}",
+    ".ember-cli",
+    "config/environment.js",
+    "testem.js"
+   ],
+   "entry": [
+    "app/**/*.{js,ts,gjs,gts,hbs}",
+    "app/index.html",
+    "tests/index.html",
+    "tests/test-helper.{js,ts}",
+    "tests/**/*{-,_}test.{js,ts,gjs,gts}"
+   ],
+   "production": [
+    "app/**/*.{js,ts,gjs,gts,hbs}",
+    "app/index.html"
+   ],
+   "project": [],
+   "source": [
+    "https://cli.emberjs.com/release/basic-use/folder-layout/",
+    "https://cli.emberjs.com/release/basic-use/configurations/",
+    "https://github.com/ember-learn/cli-guides/blob/master/guides/basic-use/folder-layout.md",
+    "https://cdn.jsdelivr.net/npm/ember-cli@7.4.0/lib/utilities/find-build-file.js",
+    "https://cdn.jsdelivr.net/npm/ember-cli@7.4.0/lib/models/project.js",
+    "https://cdn.jsdelivr.net/npm/ember-qunit@9.2.1/dist/test-loader.js"
+   ]
+  },
+  {
+   "name": "env-cmd",
+   "title": "env-cmd",
+   "origin": "skylos",
+   "enablers": [
+    "env-cmd"
+   ],
+   "config": [
+    ".env",
+    ".env-cmdrc",
+    ".env-cmdrc.{js,cjs,mjs,json}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/toddbluhm/env-cmd/blob/master/README.md"
+   ]
+  },
+  {
+   "name": "esbuild",
+   "title": "esbuild",
+   "origin": "skylos",
+   "enablers": [
+    "esbuild"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://esbuild.github.io/getting-started/#install-esbuild"
+   ]
+  },
+  {
+   "name": "eslint",
+   "title": "ESLint",
+   "origin": "skylos",
+   "enablers": [
+    "eslint"
+   ],
+   "config": [
+    "eslint.config.{js,mjs,cjs,ts,mts,cts}",
+    ".eslintrc.{js,cjs,yaml,yml,json}",
+    ".eslintrc",
+    ".eslintignore"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://eslint.org/docs/latest/use/configure/configuration-files",
+    "https://cdn.jsdelivr.net/npm/eslint@10.15.0/lib/config/config-loader.js",
+    "https://eslint.org/docs/v8.x/use/configure/configuration-files",
+    "https://cdn.jsdelivr.net/npm/@eslint/eslintrc@3.3.7/lib/config-array-factory.js",
+    "https://eslint.org/docs/v8.x/use/configure/ignore"
+   ]
+  },
+  {
+   "name": "expo",
+   "title": "Expo (incl. Expo Router)",
+   "origin": "skylos",
+   "enablers": [
+    "expo"
+   ],
+   "config": [
+    "app.json",
+    "app.config.json",
+    "app.config.{ts,mts,cts,mjs,cjs,js}"
+   ],
+   "entry": [
+    "index.{js,jsx,mjs,ts,tsx}",
+    "App.{js,jsx,ts,tsx}"
+   ],
+   "production": [
+    "index.{js,jsx,mjs,ts,tsx}",
+    "App.{js,jsx,ts,tsx}"
+   ],
+   "project": [],
+   "source": [
+    "https://docs.expo.dev/workflow/configuration/",
+    "https://cdn.jsdelivr.net/npm/@expo/config@58.0.12/build/Config.js",
+    "https://cdn.jsdelivr.net/npm/@expo/config@58.0.12/build/paths/paths.js",
+    "https://cdn.jsdelivr.net/npm/expo@58.0.26/AppEntry.js",
+    "https://docs.expo.dev/router/basics/core-concepts/",
+    "https://cdn.jsdelivr.net/npm/@expo/cli@58.1.21/build/src/start/server/metro/router.js",
+    "https://cdn.jsdelivr.net/npm/expo-router@58.0.32/_ctx.js"
+   ]
+  },
+  {
+   "name": "expo-router",
+   "title": "Expo Router",
+   "origin": "skylos",
+   "enablers": [
+    "expo-router"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "skylos": {
+    "defer_to": "conventions.py (expo_router_root)"
+   },
+   "source": [
+    "https://docs.expo.dev/router/introduction/"
+   ]
+  },
+  {
+   "name": "farm",
+   "title": "Farm",
+   "origin": "skylos",
+   "enablers": [
+    "@farmfe/cli",
+    "@farmfe/core"
+   ],
+   "config": [
+    "farm.config.{ts,js,cjs,mjs,cts,mts}"
+   ],
+   "entry": [
+    "index.html"
+   ],
+   "production": [
+    "index.html"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@farmfe/core@2.0.1/dist/config/constants.js",
+    "https://cdn.jsdelivr.net/npm/@farmfe/core@2.0.1/dist/config/normalize-config/index.js"
+   ]
+  },
+  {
+   "name": "firebase",
+   "title": "Firebase CLI",
+   "origin": "skylos",
+   "enablers": [
+    "firebase-tools"
+   ],
+   "config": [
+    "firebase.json",
+    ".firebaserc"
+   ],
+   "entry": [
+    "functions/index.js"
+   ],
+   "production": [
+    "functions/index.js"
+   ],
+   "project": [],
+   "source": [
+    "https://firebase.google.com/docs/cli",
+    "https://firebase.google.com/docs/functions/get-started"
+   ]
+  },
+  {
+   "name": "fumadocs",
+   "title": "Fumadocs",
+   "origin": "skylos",
+   "enablers": [
+    "fumadocs-mdx",
+    "fumadocs-core",
+    "fumadocs-ui"
+   ],
+   "config": [
+    "source.config.ts"
+   ],
+   "entry": [
+    "content/docs/**/*.{mdx,md}",
+    "content/docs/**/{*.{json,yaml},meta{,.*}.{js,ts}}"
+   ],
+   "production": [
+    "content/docs/**/*.{mdx,md}",
+    "content/docs/**/{*.{json,yaml},meta{,.*}.{js,ts}}"
+   ],
+   "project": [],
+   "source": [
+    "https://fumadocs.dev/docs/mdx",
+    "https://cdn.jsdelivr.net/npm/fumadocs-mdx@15.6.4/dist/core-r1WHKfaI.js",
+    "https://cdn.jsdelivr.net/npm/fumadocs-mdx@15.6.4/dist/define-C2jwQBlt.js",
+    "https://cdn.jsdelivr.net/npm/fumadocs-mdx@15.6.4/dist/build-Dc0aOaCg.js"
+   ]
+  },
+  {
+   "name": "gatsby",
+   "title": "Gatsby",
+   "origin": "skylos",
+   "enablers": [
+    "gatsby"
+   ],
+   "config": [
+    "gatsby-config.{js,mjs,ts}"
+   ],
+   "entry": [
+    "gatsby-node.{js,mjs,ts}",
+    "gatsby-browser.{js,jsx,ts,tsx}",
+    "gatsby-ssr.{js,jsx,ts,tsx}",
+    "src/pages/**/*.{js,jsx,ts,tsx}",
+    "src/api/**/*.{js,ts}",
+    "src/html.js"
+   ],
+   "production": [
+    "gatsby-browser.{js,jsx,ts,tsx}",
+    "gatsby-ssr.{js,jsx,ts,tsx}",
+    "src/pages/**/*.{js,jsx,ts,tsx}",
+    "src/api/**/*.{js,ts}",
+    "src/html.js"
+   ],
+   "project": [],
+   "source": [
+    "https://www.gatsbyjs.com/docs/reference/gatsby-project-structure/",
+    "https://www.gatsbyjs.com/docs/how-to/custom-configuration/typescript/",
+    "https://github.com/gatsbyjs/gatsby/blob/master/docs/docs/reference/gatsby-project-structure.md",
+    "https://cdn.jsdelivr.net/npm/gatsby@5.16.1/dist/utils/parcel/compile-gatsby-files.js",
+    "https://cdn.jsdelivr.net/npm/gatsby@5.16.1/dist/bootstrap/resolve-js-file-path.js",
+    "https://cdn.jsdelivr.net/npm/gatsby@5.16.1/dist/internal-plugins/functions/gatsby-node.js"
+   ]
+  },
+  {
+   "name": "graphql-codegen",
+   "title": "GraphQL Code Generator",
+   "origin": "skylos",
+   "enablers": [
+    "@graphql-codegen/cli"
+   ],
+   "config": [
+    "codegen.{json,yaml,yml,js,ts}",
+    "codegen.config.js",
+    ".codegenrc.{json,yaml,yml,js,ts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://the-guild.dev/graphql/codegen/docs/config-reference/codegen-config",
+    "https://cdn.jsdelivr.net/npm/@graphql-codegen/cli@8.0.0/esm/config.js"
+   ]
+  },
+  {
+   "name": "graphql-config",
+   "title": "GraphQL Config",
+   "origin": "skylos",
+   "enablers": [
+    "graphql-config"
+   ],
+   "config": [
+    "graphql.config.{ts,cts,mts,js,cjs,mjs,json,yaml,yml,toml}",
+    ".graphqlrc",
+    ".graphqlrc.{ts,cts,mts,js,cjs,mjs,json,yml,yaml,toml}",
+    ".graphqlconfig",
+    ".graphqlconfig.{json,yaml,yml}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/graphql-config@6.0.0/esm/helpers/cosmiconfig.js",
+    "https://cdn.jsdelivr.net/npm/graphql-config@6.0.0/esm/config.js"
+   ]
+  },
+  {
+   "name": "grunt",
+   "title": "Grunt",
+   "origin": "skylos",
+   "enablers": [
+    "grunt"
+   ],
+   "config": [
+    "{Gruntfile,gruntfile}.{js,cjs,coffee}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/grunt@1.6.3/lib/grunt/task.js",
+    "https://cdn.jsdelivr.net/npm/grunt-cli@1.5.0/bin/grunt"
+   ]
+  },
+  {
+   "name": "gulp",
+   "title": "gulp",
+   "origin": "skylos",
+   "enablers": [
+    "gulp"
+   ],
+   "config": [
+    "{gulpfile,Gulpfile}.js",
+    "gulpfile.ts",
+    "gulpfile.babel.js",
+    "gulpfile.esm.js",
+    ".gulp.{js,ts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://gulpjs.com/docs/en/getting-started/javascript-and-gulpfiles",
+    "https://cdn.jsdelivr.net/npm/gulp-cli@3.1.0/README.md",
+    "https://cdn.jsdelivr.net/npm/gulp-cli@3.1.0/index.js"
+   ]
+  },
+  {
+   "name": "hardhat",
+   "title": "Hardhat",
+   "origin": "skylos",
+   "enablers": [
+    "hardhat"
+   ],
+   "config": [
+    "hardhat.config.{ts,js,cjs,cts}"
+   ],
+   "entry": [
+    "test/**/*.{js,cjs,mjs,ts,cts,mts}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/hardhat@3.22.0/dist/src/internal/config-loading.js",
+    "https://cdn.jsdelivr.net/npm/hardhat@2.29.2/internal/core/project-structure.js",
+    "https://cdn.jsdelivr.net/npm/hardhat@2.29.2/internal/core/config/config-resolution.js",
+    "https://cdn.jsdelivr.net/npm/hardhat@2.29.2/builtin-tasks/test.js",
+    "https://cdn.jsdelivr.net/npm/hardhat@2.29.2/internal/core/typescript-support.js"
+   ]
+  },
+  {
+   "name": "hey-api",
+   "title": "Hey API openapi-ts",
+   "origin": "skylos",
+   "enablers": [
+    "@hey-api/openapi-ts"
+   ],
+   "config": [
+    "openapi-ts.config.{js,ts,mjs,cjs,mts,cts,json,jsonc,json5,yaml,yml,toml}",
+    ".config/openapi-ts.{js,ts,mjs,cjs,mts,cts,json,jsonc,json5,yaml,yml,toml}",
+    ".config/openapi-ts.config.{js,ts,mjs,cjs,mts,cts,json,jsonc,json5,yaml,yml,toml}",
+    ".openapi-tsrc"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://heyapi.dev/openapi-ts/configuration",
+    "https://cdn.jsdelivr.net/npm/@hey-api/openapi-ts@0.99.0/dist/init-D6Y8JFUS.mjs",
+    "https://cdn.jsdelivr.net/npm/@hey-api/codegen-core@0.9.1/dist/index.mjs",
+    "https://cdn.jsdelivr.net/npm/c12@3.3.4/dist/index.mjs"
+   ]
+  },
+  {
+   "name": "histoire",
+   "title": "Histoire",
+   "origin": "skylos",
+   "enablers": [
+    "histoire",
+    "@histoire/plugin-vue",
+    "@histoire/plugin-svelte"
+   ],
+   "config": [
+    "histoire.config.{ts,js}",
+    ".histoire.{ts,js}"
+   ],
+   "entry": [
+    "**/*.story.vue",
+    "**/*.story.svelte",
+    "**/*.story.md"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/histoire@0.17.17/dist/node/config.js",
+    "https://cdn.jsdelivr.net/npm/histoire@1.0.0-beta.1/dist/node/config.js",
+    "https://cdn.jsdelivr.net/npm/histoire@1.0.0-beta.1/dist/node/markdown.js"
+   ]
+  },
+  {
+   "name": "houdini",
+   "title": "Houdini",
+   "origin": "skylos",
+   "enablers": [
+    "houdini"
+   ],
+   "config": [
+    "houdini.config.{js,ts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/houdini@2.0.13/build/lib/project.js"
+   ]
+  },
+  {
+   "name": "htmlhint",
+   "title": "HTMLHint",
+   "origin": "skylos",
+   "enablers": [
+    "htmlhint"
+   ],
+   "config": [
+    ".htmlhintrc"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://htmlhint.com/configuration/",
+    "https://htmlhint.com/usage/cli/",
+    "https://cdn.jsdelivr.net/npm/htmlhint@1.9.2/dist/cli/htmlhint.js"
+   ]
+  },
+  {
+   "name": "husky",
+   "title": "Husky",
+   "origin": "skylos",
+   "enablers": [
+    "husky"
+   ],
+   "config": [],
+   "entry": [
+    ".husky/{pre-commit,pre-merge-commit,prepare-commit-msg,commit-msg,post-commit,applypatch-msg,pre-applypatch,post-applypatch,pre-rebase,post-rewrite,post-checkout,post-merge,pre-push,pre-auto-gc}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://typicode.github.io/husky/get-started.html",
+    "https://typicode.github.io/husky/how-to.html",
+    "https://cdn.jsdelivr.net/npm/husky@9.1.7/index.js",
+    "https://cdn.jsdelivr.net/npm/husky@9.1.7/husky"
+   ]
+  },
+  {
+   "name": "hygen",
+   "title": "Hygen",
+   "origin": "skylos",
+   "enablers": [
+    "hygen"
+   ],
+   "config": [
+    ".hygen.js"
+   ],
+   "entry": [
+    "_templates/*/*/{index.js,index.ts,prompt.cjs,prompt.js,prompt.ts}",
+    "_templates/**"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/hygen@6.2.11/dist/config-resolver.js",
+    "https://cdn.jsdelivr.net/npm/hygen@6.2.11/dist/prompt.js",
+    "https://github.com/jondot/hygen/blob/master/README.md"
+   ]
+  },
+  {
+   "name": "i18next-cli",
+   "title": "i18next CLI",
+   "origin": "skylos",
+   "enablers": [
+    "i18next-cli"
+   ],
+   "config": [
+    "i18next.config.{ts,js,mjs,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/i18next-cli@1.93.0/dist/esm/config.js"
+   ]
+  },
+  {
+   "name": "i18next-parser",
+   "title": "i18next-parser",
+   "origin": "skylos",
+   "enablers": [
+    "i18next-parser"
+   ],
+   "config": [
+    "i18next-parser.config.{js,mjs,json,ts,yaml,yml}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/i18next-parser@9.4.0/bin/cli.js"
+   ]
+  },
+  {
+   "name": "ionic",
+   "title": "Ionic",
+   "origin": "skylos",
+   "enablers": [
+    "@ionic/cli",
+    "@ionic/angular",
+    "@ionic/react",
+    "@ionic/vue"
+   ],
+   "config": [
+    "ionic.config.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://ionicframework.com/docs/cli/configuration",
+    "https://cdn.jsdelivr.net/npm/@ionic/cli@7.2.1/constants.js"
+   ]
+  },
+  {
+   "name": "japa",
+   "title": "Japa",
+   "origin": "skylos",
+   "enablers": [
+    "@japa/runner"
+   ],
+   "config": [],
+   "entry": [
+    "bin/test.{js,ts}",
+    "tests/**/*.spec.{js,ts}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://japa.dev/docs/installation"
+   ]
+  },
+  {
+   "name": "jasmine",
+   "title": "Jasmine",
+   "origin": "skylos",
+   "enablers": [
+    "jasmine"
+   ],
+   "config": [
+    "spec/support/jasmine.{mjs,json,js}"
+   ],
+   "entry": [
+    "spec/**/*[sS]pec.?(m)js",
+    "spec/helpers/**/*.?(m)js"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://jasmine.github.io/setup/nodejs.html",
+    "https://cdn.jsdelivr.net/npm/jasmine@7.0.0/lib/runner_base.js",
+    "https://cdn.jsdelivr.net/npm/jasmine@7.0.0/lib/examples/jasmine.mjs"
+   ],
+   "skylos": {
+    "entry_keys": [
+     {
+      "key": "spec_files",
+      "kind": "glob",
+      "base": "key:spec_dir"
+     },
+     {
+      "key": "helpers",
+      "kind": "glob",
+      "base": "key:spec_dir"
+     }
+    ],
+    "abstain": [
+     "spec/**"
+    ],
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "jest",
+   "title": "Jest",
+   "origin": "skylos",
+   "enablers": [
+    "jest"
+   ],
+   "config": [
+    "jest.config.{js,ts,mjs,mts,cjs,cts,json}"
+   ],
+   "entry": [
+    "**/__tests__/**/*.?([mc])[jt]s?(x)",
+    "**/?(*.)+(spec|test).?([mc])[jt]s?(x)",
+    "__mocks__/**"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://jestjs.io/docs/configuration",
+    "https://jestjs.io/docs/configuration#testmatch-arraystring",
+    "https://jestjs.io/docs/manual-mocks"
+   ],
+   "skylos": {
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "jscodeshift",
+   "title": "jscodeshift test utilities",
+   "origin": "skylos",
+   "enablers": [],
+   "enable": {
+    "always": true
+   },
+   "config": [],
+   "entry": [],
+   "production": [],
+   "skylos": {
+    "test_call_entries": {
+     "calls": [
+      "defineTest",
+      "runTest"
+     ],
+     "base": ".."
+    },
+    "text_fixture_dirs": [
+     "__testfixtures__",
+     "__fixtures__"
+    ]
+   }
+  },
+  {
+   "name": "jscpd",
+   "title": "jscpd",
+   "origin": "skylos",
+   "enablers": [
+    "jscpd"
+   ],
+   "config": [
+    ".jscpd.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/jscpd@5.4.3/README.md",
+    "https://github.com/kucherenko/jscpd"
+   ]
+  },
+  {
+   "name": "jsdoc",
+   "title": "JSDoc",
+   "origin": "skylos",
+   "enablers": [
+    "jsdoc"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://jsdoc.app/about-configuring-jsdoc",
+    "https://cdn.jsdelivr.net/npm/jsdoc@4.0.5/cli.js"
+   ]
+  },
+  {
+   "name": "karma",
+   "title": "Karma",
+   "origin": "skylos",
+   "enablers": [
+    "karma"
+   ],
+   "config": [
+    "karma.conf.{js,coffee,ts}",
+    ".config/karma.conf.{js,coffee,ts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://karma-runner.github.io/latest/config/configuration-file.html"
+   ],
+   "skylos": {
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "keystone",
+   "title": "Keystone 6",
+   "origin": "skylos",
+   "enablers": [
+    "@keystone-6/core"
+   ],
+   "config": [
+    "keystone.{ts,js}"
+   ],
+   "entry": [
+    "admin/config.{ts,tsx,js}",
+    "admin/pages/**/*.{js,jsx,ts,tsx}"
+   ],
+   "production": [
+    "admin/config.{ts,tsx,js}",
+    "admin/pages/**/*.{js,jsx,ts,tsx}"
+   ],
+   "project": [],
+   "source": [
+    "https://keystonejs.com/docs/config/config",
+    "https://keystonejs.com/docs/guides/custom-admin-ui-pages",
+    "https://cdn.jsdelivr.net/npm/@keystone-6/core@8.3.0/dist/keystone-6-core-scripts-cli.js"
+   ]
+  },
+  {
+   "name": "knex",
+   "title": "Knex.js",
+   "origin": "skylos",
+   "enablers": [
+    "knex"
+   ],
+   "config": [
+    "knexfile.{js,mjs,coffee,ts,eg,ls}"
+   ],
+   "entry": [
+    "migrations/*.{co,coffee,eg,iced,js,cjs,litcoffee,ls,ts}",
+    "seeds/*.{co,coffee,eg,iced,js,cjs,litcoffee,ls,ts}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/knex@3.3.0/bin/cli.js",
+    "https://cdn.jsdelivr.net/npm/knex@3.3.0/lib/migrations/common/MigrationsLoader.js",
+    "https://cdn.jsdelivr.net/npm/knex@3.3.0/lib/migrations/migrate/migrator-configuration-merger.js",
+    "https://cdn.jsdelivr.net/npm/knex@3.3.0/lib/migrations/seed/seeder-configuration-merger.js"
+   ]
+  },
+  {
+   "name": "kubb",
+   "title": "Kubb",
+   "origin": "skylos",
+   "enablers": [
+    "kubb",
+    "@kubb/cli",
+    "@kubb/core"
+   ],
+   "config": [
+    "kubb.config.{ts,mts,cts,js,mjs,cjs}",
+    ".kubbrc.{ts,mts,cts,js,mjs,cjs}",
+    ".config/kubb.config.{ts,mts,cts,js,mjs,cjs}",
+    ".config/.kubbrc.{ts,mts,cts,js,mjs,cjs}",
+    "configs/kubb.config.{ts,mts,cts,js,mjs,cjs}",
+    "configs/.kubbrc.{ts,mts,cts,js,mjs,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@kubb/cli@5.23.1/dist/config-re864UnO.js"
+   ]
+  },
+  {
+   "name": "kysely-ctl",
+   "title": "kysely-ctl",
+   "origin": "skylos",
+   "enablers": [
+    "kysely-ctl"
+   ],
+   "config": [
+    "kysely.config.{ts,mts,cts,js,mjs,cjs}",
+    ".config/kysely.config.{ts,mts,cts,js,mjs,cjs}"
+   ],
+   "entry": [
+    "migrations/*.{ts,mts,cts}",
+    "seeds/*.{ts,mts,cts}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/kysely-ctl@0.22.0/dist/bin.mjs",
+    "https://cdn.jsdelivr.net/npm/kysely-ctl@0.22.0/dist/seeder-vVdQ52e5.mjs"
+   ]
+  },
+  {
+   "name": "lab",
+   "title": "hapi lab",
+   "origin": "skylos",
+   "enablers": [
+    "@hapi/lab"
+   ],
+   "config": [
+    ".labrc.js"
+   ],
+   "entry": [
+    "test/**/*.{js,cjs,mjs}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/hapijs/lab/blob/master/API.md",
+    "https://cdn.jsdelivr.net/npm/@hapi/lab@26.0.1/lib/cli.js"
+   ]
+  },
+  {
+   "name": "ladle",
+   "title": "Ladle",
+   "origin": "skylos",
+   "enablers": [
+    "@ladle/react"
+   ],
+   "config": [
+    ".ladle/config.mjs"
+   ],
+   "entry": [
+    "src/**/*.stories.{js,jsx,ts,tsx,mdx}",
+    ".ladle/components.{js,jsx,tsx,ts}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@ladle/react@5.1.1/lib/shared/default-config.js",
+    "https://cdn.jsdelivr.net/npm/@ladle/react@5.1.1/lib/cli/load-config.js",
+    "https://cdn.jsdelivr.net/npm/@ladle/react@5.1.1/lib/cli/apply-cli-config.js",
+    "https://cdn.jsdelivr.net/npm/@ladle/react@5.1.1/lib/cli/vite-base.js"
+   ]
+  },
+  {
+   "name": "lage",
+   "title": "Lage",
+   "origin": "skylos",
+   "enablers": [
+    "lage"
+   ],
+   "config": [
+    "lage.config.{js,mjs,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/microsoft/lage/blob/main/docs/docs/reference/config.md",
+    "https://github.com/microsoft/lage/blob/main/packages/config/src/readConfigFile.ts",
+    "https://cdn.jsdelivr.net/npm/lage@2.17.1/dist/lage.js"
+   ]
+  },
+  {
+   "name": "lefthook",
+   "title": "Lefthook",
+   "origin": "skylos",
+   "enablers": [
+    "lefthook",
+    "@evilmartians/lefthook",
+    "@evilmartians/lefthook-installer"
+   ],
+   "config": [
+    "{lefthook,.lefthook}.{yml,yaml,toml,json,jsonc}",
+    ".config/lefthook.{yml,yaml,toml,json,jsonc}",
+    "{lefthook-local,.lefthook-local}.{yml,yaml,toml,json,jsonc}"
+   ],
+   "entry": [
+    ".lefthook/**",
+    ".lefthook-local/**"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://lefthook.dev/configuration/",
+    "https://lefthook.dev/configuration/source_dir",
+    "https://lefthook.dev/configuration/source_dir_local",
+    "https://lefthook.dev/installation/node"
+   ]
+  },
+  {
+   "name": "lerna",
+   "title": "Lerna",
+   "origin": "skylos",
+   "enablers": [
+    "lerna"
+   ],
+   "config": [
+    "lerna.json",
+    "nx.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/lerna/lerna/blob/main/website/docs/api-reference/configuration.md"
+   ]
+  },
+  {
+   "name": "lerna-lite",
+   "title": "Lerna-Lite",
+   "origin": "skylos",
+   "enablers": [
+    "@lerna-lite/cli"
+   ],
+   "config": [
+    "lerna.{json,jsonc,json5}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/lerna-lite/lerna-lite/blob/main/README.md"
+   ]
+  },
+  {
+   "name": "lighthouse-ci",
+   "title": "Lighthouse CI",
+   "origin": "skylos",
+   "enablers": [
+    "@lhci/cli"
+   ],
+   "config": [
+    ".lighthouserc.{cjs,mjs,js,json,yml,yaml}",
+    "lighthouserc.{cjs,mjs,js,json,yml,yaml}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/GoogleChrome/lighthouse-ci/blob/main/docs/configuration.md"
+   ]
+  },
+  {
+   "name": "lingui",
+   "title": "Lingui",
+   "origin": "skylos",
+   "enablers": [
+    "@lingui/cli",
+    "@lingui/core",
+    "@lingui/conf"
+   ],
+   "config": [
+    "lingui.config.{js,cjs,ts,mjs}",
+    ".linguirc",
+    ".linguirc.{json,ts,js}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@lingui/conf@6.12.0/dist/index.mjs"
+   ]
+  },
+  {
+   "name": "lint-staged",
+   "title": "lint-staged",
+   "origin": "skylos",
+   "enablers": [
+    "lint-staged"
+   ],
+   "config": [
+    ".lintstagedrc",
+    ".lintstagedrc.{json,yaml,yml,mjs,mts,js,ts,cjs,cts}",
+    "lint-staged.config.{mjs,mts,js,ts,cjs,cts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/lint-staged/lint-staged/blob/main/README.md#configuration",
+    "https://cdn.jsdelivr.net/npm/lint-staged@17.6.1/lib/configFiles.js"
+   ]
+  },
+  {
+   "name": "lit",
+   "title": "Lit",
+   "origin": "skylos",
+   "enablers": [
+    "lit",
+    "lit-element",
+    "lit-html"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "skylos": {
+    "class_contracts": [
+     {
+      "interface": "ReactiveController",
+      "packages": [
+       "lit",
+       "lit-element",
+       "lit-html"
+      ],
+      "package_prefixes": [
+       "@lit/"
+      ],
+      "register_call": "addController",
+      "methods": [
+       "hostConnected",
+       "hostDisconnected",
+       "hostUpdate",
+       "hostUpdated"
+      ]
+     }
+    ]
+   },
+   "source": [
+    "https://lit.dev/docs/composition/controllers/"
+   ]
+  },
+  {
+   "name": "ls-lint",
+   "title": "ls-lint",
+   "origin": "skylos",
+   "enablers": [
+    "@ls-lint/ls-lint"
+   ],
+   "config": [
+    ".ls-lint.yml"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://ls-lint.org/2.3/configuration/the-basics.html",
+    "https://ls-lint.org/2.3/getting-started/installation.html"
+   ]
+  },
+  {
+   "name": "madge",
+   "title": "Madge",
+   "origin": "skylos",
+   "enablers": [
+    "madge"
+   ],
+   "config": [
+    ".madgerc"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/pahen/madge/blob/master/README.md#configuration",
+    "https://cdn.jsdelivr.net/npm/madge@8.0.0/bin/cli.js"
+   ]
+  },
+  {
+   "name": "manypkg",
+   "title": "Manypkg",
+   "origin": "skylos",
+   "enablers": [
+    "@manypkg/cli"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/Thinkmill/manypkg/blob/main/README.md#configuration"
+   ]
+  },
+  {
+   "name": "markdownlint-cli",
+   "title": "markdownlint-cli",
+   "origin": "skylos",
+   "enablers": [
+    "markdownlint-cli"
+   ],
+   "config": [
+    ".markdownlint.{jsonc,json,yaml,yml}",
+    ".markdownlintrc",
+    ".markdownlintignore"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/igorshubovych/markdownlint-cli/blob/master/README.md",
+    "https://cdn.jsdelivr.net/npm/markdownlint-cli@0.50.0/markdownlint.js",
+    "https://cdn.jsdelivr.net/npm/run-con@1.3.3/README.md"
+   ],
+   "skylos": {
+    "config_strings": false
+   }
+  },
+  {
+   "name": "markdownlint-cli2",
+   "title": "markdownlint-cli2",
+   "origin": "skylos",
+   "enablers": [
+    "markdownlint-cli2"
+   ],
+   "config": [
+    ".markdownlint-cli2.{jsonc,yaml,cjs,mjs}",
+    ".markdownlint.{jsonc,json,yaml,yml,cjs,mjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/DavidAnson/markdownlint-cli2/blob/main/README.md#configuration"
+   ],
+   "skylos": {
+    "config_strings": false
+   }
+  },
+  {
+   "name": "mastra",
+   "title": "Mastra",
+   "origin": "skylos",
+   "enablers": [
+    "mastra",
+    "@mastra/core"
+   ],
+   "config": [],
+   "entry": [
+    "src/mastra/index.{ts,js}"
+   ],
+   "production": [
+    "src/mastra/index.{ts,js}"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/mastra@1.40.1/dist/docs/references/reference-cli-mastra.md",
+    "https://cdn.jsdelivr.net/npm/mastra@1.40.1/dist/index.js"
+   ]
+  },
+  {
+   "name": "medusa",
+   "title": "Medusa",
+   "origin": "skylos",
+   "enablers": [
+    "@medusajs/medusa",
+    "@medusajs/framework"
+   ],
+   "config": [
+    "medusa-config.{ts,js}"
+   ],
+   "entry": [
+    "src/api/**/route.{ts,js}",
+    "src/api/middlewares.{ts,js}",
+    "src/subscribers/**/*.{ts,js}",
+    "src/jobs/**/*.{ts,js}",
+    "src/workflows/**/*.{ts,js}",
+    "src/links/**/*.{ts,js}",
+    "src/modules/*/index.{ts,js}",
+    "src/scripts/**/*.{ts,js}",
+    "src/admin/widgets/**/*.{tsx,jsx,js,ts}",
+    "src/admin/routes/**/page.{tsx,jsx,js,ts}"
+   ],
+   "production": [
+    "src/api/**/route.{ts,js}",
+    "src/api/middlewares.{ts,js}",
+    "src/subscribers/**/*.{ts,js}",
+    "src/jobs/**/*.{ts,js}",
+    "src/workflows/**/*.{ts,js}",
+    "src/links/**/*.{ts,js}",
+    "src/modules/*/index.{ts,js}",
+    "src/admin/widgets/**/*.{tsx,jsx,js,ts}",
+    "src/admin/routes/**/page.{tsx,jsx,js,ts}"
+   ],
+   "project": [],
+   "source": [
+    "https://docs.medusajs.com/learn/configurations/medusa-config",
+    "https://docs.medusajs.com/learn/fundamentals/api-routes",
+    "https://docs.medusajs.com/learn/fundamentals/api-routes/middlewares",
+    "https://docs.medusajs.com/learn/fundamentals/events-and-subscribers",
+    "https://docs.medusajs.com/learn/fundamentals/scheduled-jobs",
+    "https://docs.medusajs.com/learn/fundamentals/workflows",
+    "https://docs.medusajs.com/learn/fundamentals/module-links",
+    "https://docs.medusajs.com/learn/fundamentals/modules",
+    "https://docs.medusajs.com/learn/fundamentals/custom-cli-scripts",
+    "https://docs.medusajs.com/learn/fundamentals/admin/widgets",
+    "https://docs.medusajs.com/learn/fundamentals/admin/ui-routes",
+    "https://cdn.jsdelivr.net/npm/@medusajs/framework@2.23.0/dist/config/loader.js",
+    "https://cdn.jsdelivr.net/npm/@medusajs/framework@2.23.0/dist/http/routes-loader.js",
+    "https://cdn.jsdelivr.net/npm/@medusajs/framework@2.23.0/dist/utils/resource-loader.js",
+    "https://cdn.jsdelivr.net/npm/@medusajs/admin-vite-plugin@2.23.0/dist/index.js"
+   ]
+  },
+  {
+   "name": "metro",
+   "title": "Metro",
+   "origin": "skylos",
+   "enablers": [
+    "metro",
+    "metro-config"
+   ],
+   "config": [
+    "metro.config.{js,cjs,mjs,json,ts,cts,mts}",
+    ".config/metro.{js,cjs,mjs,json,ts,cts,mts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/metro-config@0.88.0/src/loadConfig.js"
+   ]
+  },
+  {
+   "name": "microbundle",
+   "title": "Microbundle",
+   "origin": "skylos",
+   "enablers": [
+    "microbundle"
+   ],
+   "config": [],
+   "entry": [
+    "src/index.{ts,tsx,js}",
+    "index.{ts,tsx,js}"
+   ],
+   "production": [
+    "src/index.{ts,tsx,js}",
+    "index.{ts,tsx,js}"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/microbundle@0.15.1/dist/cli.js"
+   ]
+  },
+  {
+   "name": "mikro-orm",
+   "title": "MikroORM",
+   "origin": "skylos",
+   "enablers": [
+    "@mikro-orm/core",
+    "@mikro-orm/cli"
+   ],
+   "config": [
+    "src/mikro-orm.config.{ts,js}",
+    "mikro-orm.config.{ts,js}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@mikro-orm/cli@7.2.11/CLIHelper.js"
+   ]
+  },
+  {
+   "name": "mintlify",
+   "title": "Mintlify",
+   "origin": "skylos",
+   "enablers": [
+    "mintlify",
+    "@mintlify/cli"
+   ],
+   "config": [
+    "docs.json",
+    "mint.json",
+    ".mintignore"
+   ],
+   "entry": [
+    "**/*.{mdx,md}",
+    "snippets/**/*.{mdx,jsx,tsx,md}",
+    "_snippets/**/*.{mdx,jsx,tsx,md}"
+   ],
+   "production": [
+    "**/*.{mdx,md}",
+    "snippets/**/*.{mdx,jsx,tsx,md}",
+    "_snippets/**/*.{mdx,jsx,tsx,md}"
+   ],
+   "project": [],
+   "source": [
+    "https://www.mintlify.com/docs/organize/settings",
+    "https://cdn.jsdelivr.net/npm/@mintlify/common@1.0.1403/dist/getFileCategory.js",
+    "https://cdn.jsdelivr.net/npm/@mintlify/common@1.0.1403/dist/mdx/snippets/constants.js"
+   ]
+  },
+  {
+   "name": "mocha",
+   "title": "Mocha",
+   "origin": "skylos",
+   "enablers": [
+    "mocha"
+   ],
+   "config": [
+    ".mocharc.{cjs,js,mjs,yaml,yml,jsonc,json}"
+   ],
+   "entry": [
+    "test/*.{js,cjs,mjs}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://mochajs.org/running/configuring/",
+    "https://mochajs.org/running/test-globs/",
+    "https://cdn.jsdelivr.net/npm/mocha@12.0.3/lib/cli/config.cjs",
+    "https://cdn.jsdelivr.net/npm/mocha@12.0.3/lib/cli/cli.js"
+   ],
+   "skylos": {
+    "entry_keys": [
+     {
+      "key": "spec",
+      "kind": "glob",
+      "base": "config"
+     },
+     {
+      "key": "require",
+      "kind": "file",
+      "base": "config"
+     },
+     {
+      "key": "file",
+      "kind": "file",
+      "base": "config"
+     }
+    ],
+    "package_json_key": "mocha",
+    "abstain": [
+     "test/**",
+     "tests/**",
+     "spec/**"
+    ],
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "moon",
+   "title": "moon",
+   "origin": "skylos",
+   "enablers": [
+    "@moonrepo/cli"
+   ],
+   "config": [
+    ".moon/workspace.{json,jsonc,hcl,pkl,toml,yml,yaml}",
+    ".moon/extensions.{json,jsonc,hcl,pkl,toml,yml,yaml}",
+    ".moon/toolchains.{json,jsonc,hcl,pkl,toml,yml,yaml}",
+    ".moon/tasks/**/*.{json,jsonc,hcl,pkl,toml,yml,yaml}",
+    "moon.{json,jsonc,hcl,pkl,toml,yml,yaml}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://moonrepo.dev/docs/config/overview",
+    "https://moonrepo.dev/docs/config/workspace",
+    "https://moonrepo.dev/docs/config/project"
+   ]
+  },
+  {
+   "name": "msw",
+   "title": "Mock Service Worker",
+   "origin": "skylos",
+   "enablers": [
+    "msw"
+   ],
+   "config": [],
+   "entry": [
+    "**/mockServiceWorker.js"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://mswjs.io/docs/integrations/browser"
+   ]
+  },
+  {
+   "name": "nano-staged",
+   "title": "Nano Staged",
+   "origin": "skylos",
+   "enablers": [
+    "nano-staged"
+   ],
+   "config": [
+    "{.nano-staged,nano-staged}.{js,cjs,mjs,json}",
+    ".nanostagedrc"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/nano-staged@1.0.2/lib/config.js",
+    "https://github.com/usmanyunusov/nano-staged/blob/master/README.md"
+   ]
+  },
+  {
+   "name": "nativescript",
+   "title": "NativeScript",
+   "origin": "skylos",
+   "enablers": [
+    "nativescript",
+    "@nativescript/core"
+   ],
+   "config": [
+    "nativescript.config.{js,ts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/nativescript@9.1.2/lib/constants.js",
+    "https://docs.nativescript.org/configuration/nativescript"
+   ]
+  },
+  {
+   "name": "ncc",
+   "title": "ncc (@vercel/ncc)",
+   "origin": "skylos",
+   "enablers": [
+    "@vercel/ncc"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@vercel/ncc@0.45.0/readme.md"
+   ]
+  },
+  {
+   "name": "nest",
+   "title": "NestJS",
+   "origin": "skylos",
+   "enablers": [
+    "@nestjs/cli",
+    "@nestjs/core"
+   ],
+   "config": [
+    "nest-cli.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "skylos": {
+    "entry_keys": [
+     {
+      "key": "entryFile",
+      "kind": "module",
+      "base": "key:sourceRoot",
+      "default_base": "src",
+      "production": true
+     }
+    ]
+   },
+   "source": [
+    "https://docs.nestjs.com/cli/monorepo"
+   ]
+  },
+  {
+   "name": "netlify",
+   "title": "Netlify",
+   "origin": "skylos",
+   "enablers": [
+    "netlify-cli",
+    "@netlify/functions"
+   ],
+   "config": [
+    "netlify.toml"
+   ],
+   "entry": [
+    "netlify/functions/*.{js,mjs,ts,mts}",
+    "netlify/functions/*/index.{js,mjs,ts,mts}",
+    "netlify/edge-functions/*.{js,ts,jsx,tsx}"
+   ],
+   "production": [
+    "netlify/functions/*.{js,mjs,ts,mts}",
+    "netlify/functions/*/index.{js,mjs,ts,mts}",
+    "netlify/edge-functions/*.{js,ts,jsx,tsx}"
+   ],
+   "project": [],
+   "source": [
+    "https://docs.netlify.com/build/configure-builds/file-based-configuration/",
+    "https://docs.netlify.com/build/functions/get-started/",
+    "https://docs.netlify.com/build/edge-functions/get-started/"
+   ]
+  },
+  {
+   "name": "next",
+   "title": "Next.js",
+   "origin": "skylos",
+   "enablers": [
+    "next"
+   ],
+   "config": [
+    "next.config.{js,mjs,ts,mts}"
+   ],
+   "entry": [
+    "{src/,}pages/**/*.{js,jsx,ts,tsx}",
+    "{src/,}app/**/{page,layout,loading,not-found,error,global-error,template,default,forbidden,unauthorized}.{js,jsx,ts,tsx}",
+    "{src/,}app/**/route.{js,ts}",
+    "{src/,}app/**/{icon,apple-icon,opengraph-image,twitter-image}.{js,ts,tsx}",
+    "{src/,}app/**/{sitemap,robots,manifest}.{js,ts}",
+    "{src/,}{proxy,middleware}.{js,ts}",
+    "{src/,}instrumentation.{js,ts}",
+    "{src/,}instrumentation-client.{js,ts}",
+    "{src/,}mdx-components.{js,jsx,ts,tsx}"
+   ],
+   "production": [
+    "{src/,}pages/**/*.{js,jsx,ts,tsx}",
+    "{src/,}app/**/{page,layout,loading,not-found,error,global-error,template,default,forbidden,unauthorized}.{js,jsx,ts,tsx}",
+    "{src/,}app/**/route.{js,ts}",
+    "{src/,}app/**/{icon,apple-icon,opengraph-image,twitter-image}.{js,ts,tsx}",
+    "{src/,}app/**/{sitemap,robots,manifest}.{js,ts}",
+    "{src/,}{proxy,middleware}.{js,ts}",
+    "{src/,}instrumentation.{js,ts}",
+    "{src/,}instrumentation-client.{js,ts}",
+    "{src/,}mdx-components.{js,jsx,ts,tsx}"
+   ],
+   "project": [],
+   "source": [
+    "https://nextjs.org/docs/app/getting-started/project-structure",
+    "https://nextjs.org/docs/app/api-reference/file-conventions/src-folder",
+    "https://nextjs.org/docs/app/api-reference/file-conventions/proxy",
+    "https://nextjs.org/docs/app/api-reference/file-conventions/instrumentation",
+    "https://nextjs.org/docs/app/api-reference/file-conventions/instrumentation-client",
+    "https://nextjs.org/docs/app/api-reference/file-conventions/mdx-components",
+    "https://cdn.jsdelivr.net/npm/next@16.4.6/dist/shared/lib/constants.js",
+    "https://cdn.jsdelivr.net/npm/next@16.4.6/dist/lib/constants.js",
+    "https://cdn.jsdelivr.net/npm/next@16.4.6/dist/server/config-shared.js"
+   ],
+   "skylos": {
+    "defer_to": "nextjs.py"
+   }
+  },
+  {
+   "name": "next-sitemap",
+   "title": "next-sitemap",
+   "origin": "skylos",
+   "enablers": [
+    "next-sitemap"
+   ],
+   "config": [
+    "next-sitemap.config.js"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/iamvishnusankar/next-sitemap/blob/master/README.md"
+   ]
+  },
+  {
+   "name": "nextra",
+   "title": "Nextra",
+   "origin": "skylos",
+   "enablers": [
+    "nextra",
+    "nextra-theme-docs",
+    "nextra-theme-blog"
+   ],
+   "config": [],
+   "entry": [
+    "{src/,}content/**/_meta.{js,jsx,ts,tsx}",
+    "{src/,}content/**/*.{md,mdx}",
+    "{src/,}app/**/_meta.{js,jsx,ts,tsx}",
+    "{src/,}app/_meta.global.{js,jsx,ts,tsx}",
+    "{src/,}app/**/page.{md,mdx}",
+    "{src/,}mdx-components.{js,jsx,ts,tsx}",
+    "{src/,}pages/**/_meta.{js,jsx,ts,tsx}",
+    "{src/,}pages/**/*.{md,mdx}"
+   ],
+   "production": [
+    "{src/,}content/**/_meta.{js,jsx,ts,tsx}",
+    "{src/,}content/**/*.{md,mdx}",
+    "{src/,}app/**/_meta.{js,jsx,ts,tsx}",
+    "{src/,}app/_meta.global.{js,jsx,ts,tsx}",
+    "{src/,}app/**/page.{md,mdx}",
+    "{src/,}mdx-components.{js,jsx,ts,tsx}",
+    "{src/,}pages/**/_meta.{js,jsx,ts,tsx}",
+    "{src/,}pages/**/*.{md,mdx}"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/nextra@4.6.1/dist/server/index.js",
+    "https://cdn.jsdelivr.net/npm/nextra@4.6.1/dist/server/page-map/find-meta-and-page-file-paths.js",
+    "https://cdn.jsdelivr.net/npm/nextra@3.3.1/dist/server/constants.js",
+    "https://cdn.jsdelivr.net/npm/nextra@3.3.1/dist/server/page-map.js"
+   ]
+  },
+  {
+   "name": "nightwatch",
+   "title": "Nightwatch",
+   "origin": "skylos",
+   "enablers": [
+    "nightwatch"
+   ],
+   "config": [
+    "nightwatch.conf.{js,cjs,ts}",
+    "nightwatch.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://nightwatchjs.org/guide/configuration/overview.html",
+    "https://cdn.jsdelivr.net/npm/nightwatch@3.16.0/lib/runner/cli/cli.js"
+   ]
+  },
+  {
+   "name": "nitro",
+   "title": "Nitro",
+   "origin": "skylos",
+   "enablers": [
+    "nitropack",
+    "nitro"
+   ],
+   "config": [
+    "nitro.config.{js,ts,mjs,cjs,mts,cts,json,jsonc,json5,yaml,yml,toml}",
+    ".nitrorc"
+   ],
+   "entry": [
+    "{routes,api,middleware,plugins,tasks}/**/*.{js,mjs,cjs,ts,mts,cts,tsx,jsx}",
+    "utils/**/*",
+    "server.{ts,js,mts,mjs,tsx,jsx}",
+    "app.config.{ts,js,mjs,cjs,mts,cts}"
+   ],
+   "production": [
+    "{routes,api,middleware,plugins,tasks}/**/*.{js,mjs,cjs,ts,mts,cts,tsx,jsx}",
+    "utils/**/*",
+    "server.{ts,js,mts,mjs,tsx,jsx}",
+    "app.config.{ts,js,mjs,cjs,mts,cts}"
+   ],
+   "project": [],
+   "source": [
+    "https://nitro.build/docs/routing",
+    "https://nitro.build/docs/configuration",
+    "https://nitro.build/docs/server-entry",
+    "https://cdn.jsdelivr.net/npm/nitropack@2.13.6/dist/core/index.mjs",
+    "https://cdn.jsdelivr.net/npm/nitro@3.0.261103-rc/dist/_chunks/nitro.mjs",
+    "https://cdn.jsdelivr.net/npm/c12@3.3.4/dist/index.mjs"
+   ]
+  },
+  {
+   "name": "node-test-runner",
+   "title": "Node.js test runner (node:test)",
+   "origin": "skylos",
+   "enablers": [],
+   "config": [],
+   "entry": [
+    "**/*.test.{cjs,mjs,js}",
+    "**/*-test.{cjs,mjs,js}",
+    "**/*_test.{cjs,mjs,js}",
+    "**/test-*.{cjs,mjs,js}",
+    "**/test.{cjs,mjs,js}",
+    "**/test/**/*.{cjs,mjs,js}",
+    "**/*.test.{cts,mts,ts}",
+    "**/*-test.{cts,mts,ts}",
+    "**/*_test.{cts,mts,ts}",
+    "**/test-*.{cts,mts,ts}",
+    "**/test.{cts,mts,ts}",
+    "**/test/**/*.{cts,mts,ts}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://nodejs.org/api/test.html#running-tests-from-the-command-line"
+   ]
+  },
+  {
+   "name": "nodemon",
+   "title": "nodemon",
+   "origin": "skylos",
+   "enablers": [
+    "nodemon"
+   ],
+   "config": [
+    "nodemon.json"
+   ],
+   "entry": [
+    "index.js"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/remy/nodemon#config-files",
+    "https://cdn.jsdelivr.net/npm/nodemon@3.1.14/lib/config/load.js"
+   ]
+  },
+  {
+   "name": "np",
+   "title": "np",
+   "origin": "skylos",
+   "enablers": [
+    "np"
+   ],
+   "config": [
+    ".np-config.{json,js,cjs,mjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/sindresorhus/np/blob/main/readme.md"
+   ]
+  },
+  {
+   "name": "npm-check-updates",
+   "title": "npm-check-updates",
+   "origin": "skylos",
+   "enablers": [
+    "npm-check-updates"
+   ],
+   "config": [
+    ".ncurc",
+    ".ncurc.{json,yaml,yml,js,mjs,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/raineorshine/npm-check-updates/blob/main/README.md",
+    "https://cdn.jsdelivr.net/npm/npm-check-updates@23.1.1/README.md"
+   ]
+  },
+  {
+   "name": "nuxt",
+   "title": "Nuxt",
+   "origin": "skylos",
+   "enablers": [
+    "nuxt"
+   ],
+   "config": [
+    "nuxt.config.{js,ts,mjs,cjs,mts,cts,json,jsonc,json5,yaml,yml,toml}",
+    ".nuxtrc",
+    "layers/*/nuxt.config.{js,ts,mjs,cjs,mts,cts,json,jsonc,json5,yaml,yml,toml}"
+   ],
+   "entry": [
+    "{app/,}app.vue",
+    "{app/,}error.vue",
+    "{app/,}app.config.{js,mjs,cjs,ts,mts,cts}",
+    "{app/,}router.options.ts",
+    "{app/,}pages/**/*.{vue,js,jsx,mjs,ts,tsx}",
+    "{app/,}layouts/**/*.{vue,js,jsx,mjs,ts,tsx}",
+    "{app/,}components/**/*.{vue,js,jsx,mjs,ts,tsx}",
+    "{app/,}middleware/*.{js,mjs,cjs,ts,mts,cts}",
+    "{app/,}middleware/*/index.{js,mjs,cjs,ts,mts,cts}",
+    "{app/,}plugins/*.{js,mjs,cjs,ts,mts,cts}",
+    "{app/,}plugins/*/index.{js,mjs,cjs,ts,mts,cts}",
+    "{app/,}composables/*.{js,mjs,cjs,ts,mts,cts}",
+    "{app/,}utils/*.{js,mjs,cjs,ts,mts,cts}",
+    "shared/{utils,types}/*.{js,mjs,cjs,ts,mts,cts}",
+    "server/{api,routes,middleware,plugins,tasks}/**/*.{js,mjs,cjs,ts,mts,cts,tsx,jsx}",
+    "server/utils/**/*",
+    "modules/*/index.ts",
+    "modules/*.ts"
+   ],
+   "production": [
+    "{app/,}app.vue",
+    "{app/,}error.vue",
+    "{app/,}app.config.{js,mjs,cjs,ts,mts,cts}",
+    "{app/,}router.options.ts",
+    "{app/,}pages/**/*.{vue,js,jsx,mjs,ts,tsx}",
+    "{app/,}layouts/**/*.{vue,js,jsx,mjs,ts,tsx}",
+    "{app/,}components/**/*.{vue,js,jsx,mjs,ts,tsx}",
+    "{app/,}middleware/*.{js,mjs,cjs,ts,mts,cts}",
+    "{app/,}middleware/*/index.{js,mjs,cjs,ts,mts,cts}",
+    "{app/,}plugins/*.{js,mjs,cjs,ts,mts,cts}",
+    "{app/,}plugins/*/index.{js,mjs,cjs,ts,mts,cts}",
+    "{app/,}composables/*.{js,mjs,cjs,ts,mts,cts}",
+    "{app/,}utils/*.{js,mjs,cjs,ts,mts,cts}",
+    "shared/{utils,types}/*.{js,mjs,cjs,ts,mts,cts}",
+    "server/{api,routes,middleware,plugins,tasks}/**/*.{js,mjs,cjs,ts,mts,cts,tsx,jsx}",
+    "server/utils/**/*"
+   ],
+   "project": [],
+   "source": [
+    "https://nuxt.com/docs/guide/directory-structure",
+    "https://github.com/nuxt/nuxt/blob/main/docs/2.directory-structure/1.app/1.pages.md",
+    "https://github.com/nuxt/nuxt/blob/main/docs/2.directory-structure/1.app/1.plugins.md",
+    "https://github.com/nuxt/nuxt/blob/main/docs/2.directory-structure/1.app/1.middleware.md",
+    "https://github.com/nuxt/nuxt/blob/main/docs/2.directory-structure/1.server.md",
+    "https://github.com/nuxt/nuxt/blob/main/docs/2.directory-structure/1.shared.md",
+    "https://github.com/nuxt/nuxt/blob/main/docs/2.directory-structure/1.modules.md",
+    "https://github.com/nuxt/nuxt/blob/main/docs/2.directory-structure/2.nuxtrc.md",
+    "https://cdn.jsdelivr.net/npm/@nuxt/schema@4.6.4/dist/index.mjs",
+    "https://cdn.jsdelivr.net/npm/@nuxt/kit@4.6.4/dist/index.mjs"
+   ],
+   "skylos": {
+    "extra_production": [
+     "server/{api,routes,middleware,plugins}/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+     "server/utils/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+     "shared/{utils,types}/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+     "{,app/}{plugins,middleware,pages,layouts,components,modules}/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+     "{,app/}{composables,utils}/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+     "{,app/}{composables,utils}/*/index.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+     "{,app/}{app.config,router.options}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+    ],
+    "export_rules": [
+     {
+      "globs": [
+       "server/{api,routes,middleware,plugins}/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+      ],
+      "exports": [
+       "default"
+      ]
+     },
+     {
+      "globs": [
+       "server/utils/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+       "shared/{utils,types}/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+      ],
+      "exports": "*"
+     },
+     {
+      "globs": [
+       "{,app/}{plugins,middleware,pages,layouts,components,modules}/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+      ],
+      "exports": [
+       "default"
+      ]
+     },
+     {
+      "globs": [
+       "{,app/}{composables,utils}/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+       "{,app/}{composables,utils}/*/index.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+      ],
+      "exports": "*"
+     },
+     {
+      "globs": [
+       "{,app/}{app.config,router.options}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+       "app.config.ts",
+       "router.options.ts"
+      ],
+      "exports": [
+       "default"
+      ]
+     }
+    ],
+    "dir_keys": {
+     "srcDir": {
+      "default": ".",
+      "applies_to": [
+       "production",
+       "entry"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "nx",
+   "title": "Nx",
+   "origin": "skylos",
+   "enablers": [
+    "nx"
+   ],
+   "config": [
+    "nx.json",
+    "project.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://nx.dev/docs/reference/nx-json",
+    "https://nx.dev/docs/reference/project-configuration"
+   ]
+  },
+  {
+   "name": "nyc",
+   "title": "nyc (Istanbul CLI)",
+   "origin": "skylos",
+   "enablers": [
+    "nyc"
+   ],
+   "config": [
+    ".nycrc",
+    ".nycrc.{json,yaml,yml}",
+    "nyc.config.{js,cjs,mjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/istanbuljs/nyc/blob/main/README.md"
+   ],
+   "skylos": {
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "openapi-generator-cli",
+   "title": "OpenAPI Generator CLI (npm wrapper)",
+   "origin": "skylos",
+   "enablers": [
+    "@openapitools/openapi-generator-cli"
+   ],
+   "config": [
+    "openapitools.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@openapitools/openapi-generator-cli@2.42.2/README.md",
+    "https://github.com/OpenAPITools/openapi-generator-cli"
+   ]
+  },
+  {
+   "name": "openapi-typescript",
+   "title": "openapi-typescript",
+   "origin": "skylos",
+   "enablers": [
+    "openapi-typescript"
+   ],
+   "config": [
+    "redocly.yaml"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://openapi-ts.dev/cli",
+    "https://cdn.jsdelivr.net/npm/openapi-typescript@7.13.0/bin/cli.js"
+   ]
+  },
+  {
+   "name": "orval",
+   "title": "Orval",
+   "origin": "skylos",
+   "enablers": [
+    "orval"
+   ],
+   "config": [
+    "orval.config.{ts,js,mjs,mts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/orval@8.48.0/dist/config-C0TIvfIe.mjs"
+   ]
+  },
+  {
+   "name": "oxfmt",
+   "title": "Oxfmt",
+   "origin": "skylos",
+   "enablers": [
+    "oxfmt"
+   ],
+   "config": [
+    ".oxfmtrc.json",
+    ".oxfmtrc.jsonc",
+    "oxfmt.config.{ts,mts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://oxc.rs/docs/guide/usage/formatter/config.html"
+   ]
+  },
+  {
+   "name": "oxlint",
+   "title": "Oxlint",
+   "origin": "skylos",
+   "enablers": [
+    "oxlint"
+   ],
+   "config": [
+    ".oxlintrc.json",
+    ".oxlintrc.jsonc",
+    "oxlint.config.{ts,mts}",
+    ".eslintignore"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://oxc.rs/docs/guide/usage/linter/config.html",
+    "https://oxc.rs/docs/guide/usage/linter/ignore-files.html"
+   ]
+  },
+  {
+   "name": "pa11y-ci",
+   "title": "Pa11y CI",
+   "origin": "skylos",
+   "enablers": [
+    "pa11y-ci"
+   ],
+   "config": [
+    ".pa11yci",
+    ".pa11yci.{cjs,js,json}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/pa11y/pa11y-ci/blob/main/README.md"
+   ]
+  },
+  {
+   "name": "panda",
+   "title": "Panda CSS",
+   "origin": "skylos",
+   "enablers": [
+    "@pandacss/dev",
+    "@pandacss/postcss"
+   ],
+   "config": [
+    "panda.config.{ts,js,mts,mjs,cts,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://panda-css.com/docs/installation/cli",
+    "https://cdn.jsdelivr.net/npm/@pandacss/config@2.6.0/dist/index.js"
+   ]
+  },
+  {
+   "name": "paraglide",
+   "title": "Paraglide JS (inlang)",
+   "origin": "skylos",
+   "enablers": [
+    "@inlang/paraglide-js"
+   ],
+   "config": [
+    "project.inlang/settings.json",
+    "project.inlang/paraglide.config.{js,mjs,ts,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@inlang/paraglide-js@3.2.2/dist/services/config/defaults.js",
+    "https://cdn.jsdelivr.net/npm/@inlang/paraglide-js@3.2.2/dist/services/config/discover-config-file.js",
+    "https://cdn.jsdelivr.net/npm/@inlang/paraglide-js@3.2.2/dist/cli/steps/initialize-inlang-project.js",
+    "https://cdn.jsdelivr.net/npm/@inlang/paraglide-js@3.2.2/dist/cli/commands/compile/command.js"
+   ]
+  },
+  {
+   "name": "parcel",
+   "title": "Parcel",
+   "origin": "skylos",
+   "enablers": [
+    "parcel"
+   ],
+   "config": [
+    ".parcelrc"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://parceljs.org/features/plugins/#.parcelrc",
+    "https://cdn.jsdelivr.net/npm/@parcel/core@2.16.4/lib/requests/ParcelConfigRequest.js"
+   ]
+  },
+  {
+   "name": "payload",
+   "title": "Payload CMS",
+   "origin": "skylos",
+   "enablers": [
+    "payload"
+   ],
+   "config": [
+    "payload.config.{js,ts}",
+    "src/payload.config.{js,ts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://payloadcms.com/docs/configuration/overview",
+    "https://cdn.jsdelivr.net/npm/payload@3.94.1/dist/config/find.js"
+   ]
+  },
+  {
+   "name": "percy",
+   "title": "Percy CLI",
+   "origin": "skylos",
+   "enablers": [
+    "@percy/cli"
+   ],
+   "config": [
+    ".percyrc",
+    ".percy.{json,yaml,yml,js}",
+    "percy.config.{js,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://www.browserstack.com/docs/percy/references/config-options"
+   ]
+  },
+  {
+   "name": "pkgroll",
+   "title": "pkgroll",
+   "origin": "skylos",
+   "enablers": [
+    "pkgroll"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/pkgroll@2.29.1/README.md"
+   ]
+  },
+  {
+   "name": "plasmo",
+   "title": "Plasmo",
+   "origin": "skylos",
+   "enablers": [
+    "plasmo"
+   ],
+   "config": [],
+   "entry": [
+    "{src/,}{popup,options,devtools,newtab,sidepanel}.{ts,tsx,jsx,svelte,vue,js,html}",
+    "{src/,}{popup,options,devtools,newtab,sidepanel}/index.{ts,tsx,jsx,svelte,vue,js,html}",
+    "{src/,}background.{ts,js}",
+    "{src/,}background/index.{ts,js}",
+    "{src/,}{content,sandbox}.{ts,tsx,jsx,svelte,vue,js}",
+    "{src/,}{contents,tabs,sandboxes}/*.{ts,tsx,jsx,svelte,vue,js}"
+   ],
+   "production": [
+    "{src/,}{popup,options,devtools,newtab,sidepanel}.{ts,tsx,jsx,svelte,vue,js,html}",
+    "{src/,}{popup,options,devtools,newtab,sidepanel}/index.{ts,tsx,jsx,svelte,vue,js,html}",
+    "{src/,}background.{ts,js}",
+    "{src/,}background/index.{ts,js}",
+    "{src/,}{content,sandbox}.{ts,tsx,jsx,svelte,vue,js}",
+    "{src/,}{contents,tabs,sandboxes}/*.{ts,tsx,jsx,svelte,vue,js}"
+   ],
+   "project": [],
+   "source": [
+    "https://docs.plasmo.com/framework/ext-pages",
+    "https://docs.plasmo.com/framework/content-scripts",
+    "https://docs.plasmo.com/framework/content-scripts-ui",
+    "https://docs.plasmo.com/framework/background-service-worker",
+    "https://docs.plasmo.com/framework/tab-pages",
+    "https://docs.plasmo.com/framework/sandbox-pages",
+    "https://docs.plasmo.com/framework/customization/src",
+    "https://cdn.jsdelivr.net/npm/plasmo@0.90.5/dist/index.js"
+   ]
+  },
+  {
+   "name": "playwright",
+   "title": "Playwright Test",
+   "origin": "skylos",
+   "enablers": [
+    "@playwright/test"
+   ],
+   "config": [
+    "playwright.config.{ts,js,mts,mjs,cts,cjs}"
+   ],
+   "entry": [
+    "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://playwright.dev/docs/test-configuration",
+    "https://cdn.jsdelivr.net/npm/playwright@1.65.1/lib/common/index.js"
+   ],
+   "skylos": {
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "playwright-ct",
+   "title": "Playwright Component Testing (experimental)",
+   "origin": "skylos",
+   "enablers": [
+    "@playwright/experimental-ct-react",
+    "@playwright/experimental-ct-react17",
+    "@playwright/experimental-ct-vue",
+    "@playwright/experimental-ct-svelte",
+    "@playwright/experimental-ct-solid"
+   ],
+   "config": [
+    "playwright-ct.config.{ts,js}"
+   ],
+   "entry": [
+    "playwright/index.html",
+    "playwright/index.{js,ts,jsx,tsx}",
+    "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/microsoft/playwright/blob/v1.50.0/docs/src/test-components-js.md",
+    "https://cdn.jsdelivr.net/npm/@playwright/experimental-ct-core@1.62.1/lib/viteUtils.js",
+    "https://playwright.dev/docs/test-components"
+   ],
+   "skylos": {
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "plop",
+   "title": "Plop",
+   "origin": "skylos",
+   "enablers": [
+    "plop"
+   ],
+   "config": [
+    "plopfile.{js,cjs,mjs,jsx,ts,tsx}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://plopjs.com/documentation/",
+    "https://cdn.jsdelivr.net/npm/plop@4.0.5/src/plop.js",
+    "https://cdn.jsdelivr.net/npm/liftoff@5.0.1/lib/parse_options.js",
+    "https://cdn.jsdelivr.net/npm/interpret@3.1.1/index.js"
+   ]
+  },
+  {
+   "name": "pm2",
+   "title": "PM2",
+   "origin": "skylos",
+   "enablers": [
+    "pm2"
+   ],
+   "config": [
+    "ecosystem.config.{js,cjs,mjs}",
+    "ecosystem.{json,json5,yml,yaml}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/pm2@7.1.2/lib/API/Deploy.js",
+    "https://cdn.jsdelivr.net/npm/pm2@7.1.2/lib/Common.js"
+   ]
+  },
+  {
+   "name": "pnpm",
+   "title": "pnpm workspaces",
+   "origin": "skylos",
+   "enablers": [
+    "pnpm"
+   ],
+   "config": [
+    "pnpm-workspace.yaml",
+    ".pnpmfile.{mjs,cjs}"
+   ],
+   "entry": [
+    ".pnpmfile.{cjs,mjs}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://pnpm.io/pnpm-workspace_yaml",
+    "https://pnpm.io/pnpmfile",
+    "https://pnpm.io/pnpmfile",
+    "https://pnpm.io/pnpm-workspace_yaml"
+   ],
+   "skylos": {
+    "enable_files": [
+     "pnpm-workspace.yaml"
+    ]
+   }
+  },
+  {
+   "name": "postcss",
+   "title": "PostCSS",
+   "origin": "skylos",
+   "enablers": [
+    "postcss",
+    "postcss-cli",
+    "postcss-load-config"
+   ],
+   "config": [
+    ".postcssrc",
+    ".postcssrc.{json,yaml,yml,ts,cts,mts,js,cjs,mjs}",
+    "postcss.config.{ts,cts,mts,js,cjs,mjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/postcss-load-config@6.0.1/src/index.js",
+    "https://cdn.jsdelivr.net/npm/postcss-cli@12.0.0/package.json"
+   ]
+  },
+  {
+   "name": "pre-commit",
+   "title": "pre-commit (npm git hook installer)",
+   "origin": "skylos",
+   "enablers": [
+    "pre-commit"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/observing/pre-commit/blob/master/README.md"
+   ]
+  },
+  {
+   "name": "preconstruct",
+   "title": "Preconstruct",
+   "origin": "skylos",
+   "enablers": [
+    "@preconstruct/cli"
+   ],
+   "config": [],
+   "entry": [
+    "src/index.{js,jsx,ts,tsx}"
+   ],
+   "production": [
+    "src/index.{js,jsx,ts,tsx}"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@preconstruct/cli@2.9.0/cli/dist/preconstruct-cli-cli.cjs.js"
+   ]
+  },
+  {
+   "name": "prettier",
+   "title": "Prettier",
+   "origin": "skylos",
+   "enablers": [
+    "prettier"
+   ],
+   "config": [
+    ".prettierrc",
+    ".prettierrc.{json,yml,yaml,json5,js,ts,mjs,mts,cjs,cts,toml}",
+    "prettier.config.{js,ts,mjs,mts,cjs,cts}",
+    ".prettierignore"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://prettier.io/docs/configuration",
+    "https://prettier.io/docs/ignore",
+    "https://cdn.jsdelivr.net/npm/prettier@3.10.1/index.mjs"
+   ]
+  },
+  {
+   "name": "prisma",
+   "title": "Prisma ORM",
+   "origin": "skylos",
+   "enablers": [
+    "prisma",
+    "@prisma/client"
+   ],
+   "config": [
+    "prisma.config.{js,ts,mjs,cjs,mts,cts}",
+    ".config/prisma.{js,ts,mjs,cjs,mts,cts}",
+    "prisma/schema.prisma",
+    "schema.prisma"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://www.prisma.io/docs/orm/reference/prisma-config-reference",
+    "https://www.prisma.io/docs/orm/v7/prisma-schema/overview/location",
+    "https://www.prisma.io/docs/prisma-orm/from-scratch"
+   ]
+  },
+  {
+   "name": "pulumi",
+   "title": "Pulumi",
+   "origin": "skylos",
+   "enablers": [
+    "@pulumi/pulumi"
+   ],
+   "config": [
+    "Pulumi.{yaml,yml}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://www.pulumi.com/docs/iac/concepts/projects/project-file/"
+   ]
+  },
+  {
+   "name": "puppeteer",
+   "title": "Puppeteer",
+   "origin": "skylos",
+   "enablers": [
+    "puppeteer"
+   ],
+   "config": [
+    ".config/puppeteer.config.{cjs,js}",
+    ".config/puppeteerrc.{cjs,js,json}",
+    ".config/puppeteerrc",
+    ".puppeteerrc.{cjs,js,json}",
+    ".puppeteerrc",
+    "puppeteer.config.{cjs,js}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://pptr.dev/guides/configuration"
+   ]
+  },
+  {
+   "name": "quasar",
+   "title": "Quasar CLI",
+   "origin": "skylos",
+   "enablers": [
+    "@quasar/app-vite",
+    "@quasar/app-webpack"
+   ],
+   "config": [
+    "quasar.config.{js,mjs,ts,cjs}"
+   ],
+   "entry": [
+    "src/App.vue",
+    "src/router/index.{js,ts,jsx,tsx}",
+    "src-pwa/register-sw.{js,ts,jsx,tsx}",
+    "src-pwa/sw/custom-sw.{js,ts,jsx,tsx}",
+    "src-electron/electron-main.{js,ts,jsx,tsx}"
+   ],
+   "production": [
+    "src/App.vue",
+    "src/router/index.{js,ts,jsx,tsx}",
+    "src-pwa/register-sw.{js,ts,jsx,tsx}",
+    "src-pwa/sw/custom-sw.{js,ts,jsx,tsx}",
+    "src-electron/electron-main.{js,ts,jsx,tsx}"
+   ],
+   "project": [],
+   "source": [
+    "https://quasar.dev/quasar-cli-vite/quasar-config-file",
+    "https://cdn.jsdelivr.net/npm/@quasar/app-vite@3.10.4/lib/utils/get-app-paths.js",
+    "https://cdn.jsdelivr.net/npm/@quasar/app-vite@3.10.4/lib/quasar-config-file.js",
+    "https://cdn.jsdelivr.net/npm/@quasar/app-vite@3.10.4/lib/utils/resolve-extension.js",
+    "https://cdn.jsdelivr.net/npm/@quasar/app-webpack@4.4.5/lib/utils/get-app-paths.js"
+   ]
+  },
+  {
+   "name": "qunit",
+   "title": "QUnit",
+   "origin": "skylos",
+   "enablers": [
+    "qunit"
+   ],
+   "config": [],
+   "entry": [
+    "test/**/*.js"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://qunitjs.com/cli/"
+   ]
+  },
+  {
+   "name": "qwik",
+   "title": "Qwik City / Qwik Router",
+   "origin": "skylos",
+   "enablers": [
+    "@builder.io/qwik-city",
+    "@qwik.dev/router"
+   ],
+   "config": [],
+   "entry": [
+    "src/root.tsx",
+    "src/entry.ssr.tsx",
+    "src/routes/**/index{,!,@*}.{tsx,jsx,ts,js,md,mdx}",
+    "src/routes/**/layout{,!,-*}.{tsx,jsx,ts,js}",
+    "src/routes/**/plugin{,@*}.{ts,js,tsx,jsx}",
+    "src/routes/**/service-worker.{ts,js}",
+    "src/routes/**/menu.md"
+   ],
+   "production": [
+    "src/root.tsx",
+    "src/entry.ssr.tsx",
+    "src/routes/**/index{,!,@*}.{tsx,jsx,ts,js,md,mdx}",
+    "src/routes/**/layout{,!,-*}.{tsx,jsx,ts,js}",
+    "src/routes/**/plugin{,@*}.{ts,js,tsx,jsx}",
+    "src/routes/**/service-worker.{ts,js}",
+    "src/routes/**/menu.md"
+   ],
+   "project": [],
+   "source": [
+    "https://qwik.dev/docs/project-structure/",
+    "https://qwik.dev/docs/routing/",
+    "https://qwik.dev/docs/advanced/plugins/",
+    "https://github.com/QwikDev/qwik/blob/main/packages/docs/src/routes/docs/(qwikrouter)/project-structure/index.mdx",
+    "https://cdn.jsdelivr.net/npm/@builder.io/qwik-city@1.20.4/lib/vite/index.mjs"
+   ],
+   "skylos": {
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "react-cosmos",
+   "title": "React Cosmos",
+   "origin": "skylos",
+   "enablers": [
+    "react-cosmos"
+   ],
+   "config": [
+    "cosmos.config.json"
+   ],
+   "entry": [
+    "**/__fixtures__/**/*.{js,jsx,ts,tsx,md,mdx}",
+    "**/{*.,}fixture.{js,jsx,ts,tsx,md,mdx}",
+    "**/cosmos.decorator.{js,jsx,ts,tsx}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/react-cosmos@7.5.0/dist/userModules/shared.js",
+    "https://cdn.jsdelivr.net/npm/react-cosmos@7.5.0/dist/cosmosConfig/createCosmosConfig.js",
+    "https://cdn.jsdelivr.net/npm/react-cosmos@7.5.0/dist/cosmosConfig/detectCosmosConfig.js"
+   ]
+  },
+  {
+   "name": "react-email",
+   "title": "React Email",
+   "origin": "skylos",
+   "enablers": [
+    "react-email"
+   ],
+   "config": [],
+   "entry": [
+    "emails/**/*.{js,jsx,tsx}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://react.email/docs/cli",
+    "https://cdn.jsdelivr.net/npm/react-email@6.11.16/dist/cli/index.mjs"
+   ],
+   "skylos": {
+    "defer_to": "conventions.py (react_email_directories)"
+   }
+  },
+  {
+   "name": "react-native",
+   "title": "React Native",
+   "origin": "skylos",
+   "enablers": [
+    "react-native",
+    "@react-native-community/cli"
+   ],
+   "config": [
+    "react-native.config.{js,cjs,ts,mjs}"
+   ],
+   "entry": [
+    "index.js",
+    "index.ios.js",
+    "index.android.js"
+   ],
+   "production": [
+    "index.js",
+    "index.ios.js",
+    "index.android.js"
+   ],
+   "project": [],
+   "source": [
+    "https://github.com/react-native-community/cli/blob/main/docs/configuration.md",
+    "https://cdn.jsdelivr.net/npm/@react-native-community/cli-config@21.0.0/build/readConfigFromDisk.js",
+    "https://cdn.jsdelivr.net/npm/react-native@0.88.1/scripts/react-native-xcode.sh",
+    "https://cdn.jsdelivr.net/npm/@react-native/gradle-plugin@0.88.1/react-native-gradle-plugin/src/main/kotlin/com/facebook/react/utils/PathUtils.kt"
+   ]
+  },
+  {
+   "name": "react-router",
+   "title": "React Router (framework mode)",
+   "origin": "skylos",
+   "enablers": [
+    "@react-router/dev"
+   ],
+   "config": [
+    "react-router.config.{js,jsx,ts,tsx,mjs,mts}"
+   ],
+   "entry": [
+    "app/root.{js,jsx,ts,tsx,mjs,mts}",
+    "app/routes.{js,jsx,ts,tsx,mjs,mts}",
+    "app/entry.{client,server}.{js,jsx,ts,tsx,mjs,mts}"
+   ],
+   "production": [
+    "app/root.{js,jsx,ts,tsx,mjs,mts}",
+    "app/routes.{js,jsx,ts,tsx,mjs,mts}",
+    "app/entry.{client,server}.{js,jsx,ts,tsx,mjs,mts}"
+   ],
+   "project": [],
+   "source": [
+    "https://reactrouter.com/api/framework-conventions/react-router.config.ts",
+    "https://reactrouter.com/api/framework-conventions/routes.ts",
+    "https://reactrouter.com/api/framework-conventions/root.tsx",
+    "https://reactrouter.com/api/framework-conventions/entry.client.tsx",
+    "https://reactrouter.com/api/framework-conventions/entry.server.tsx",
+    "https://cdn.jsdelivr.net/npm/@react-router/dev@8.5.2/dist/typegen-fQ2S8g6w.js"
+   ],
+   "skylos": {
+    "dir_keys": {
+     "appDirectory": {
+      "default": "app",
+      "applies_to": [
+       "production",
+       "entry"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "relay",
+   "title": "Relay Compiler",
+   "origin": "skylos",
+   "enablers": [
+    "relay-compiler",
+    "react-relay"
+   ],
+   "config": [
+    "relay.config.{json,js,cjs,mjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/facebook/relay/blob/v21.0.1/compiler/crates/relay-compiler/src/config.rs",
+    "https://github.com/facebook/relay/blob/main/compiler/crates/relay-compiler/src/config.rs",
+    "https://relay.dev/docs/getting-started/compiler-config/"
+   ]
+  },
+  {
+   "name": "release-it",
+   "title": "release-it",
+   "origin": "skylos",
+   "enablers": [
+    "release-it"
+   ],
+   "config": [
+    ".release-it.{json,ts,js,cjs,yaml,yml,toml}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/release-it/release-it/blob/main/docs/configuration.md"
+   ]
+  },
+  {
+   "name": "release-please",
+   "title": "Release Please",
+   "origin": "skylos",
+   "enablers": [
+    "release-please"
+   ],
+   "config": [
+    "release-please-config.json",
+    ".release-please-manifest.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/googleapis/release-please/blob/main/docs/manifest-releaser.md"
+   ]
+  },
+  {
+   "name": "remark-cli",
+   "title": "remark-cli",
+   "origin": "skylos",
+   "enablers": [
+    "remark-cli"
+   ],
+   "config": [
+    ".remarkrc",
+    ".remarkrc.{cjs,js,json,mjs,yaml,yml}",
+    ".remarkignore"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/remarkjs/remark/blob/main/packages/remark-cli/readme.md",
+    "https://cdn.jsdelivr.net/npm/remark-cli@12.0.1/cli.js"
+   ]
+  },
+  {
+   "name": "remix",
+   "title": "Remix",
+   "origin": "skylos",
+   "enablers": [
+    "@remix-run/dev"
+   ],
+   "config": [
+    "remix.config.{js,cjs,mjs}"
+   ],
+   "entry": [
+    "app/root.{js,jsx,ts,tsx}",
+    "app/entry.{client,server}.{js,jsx,ts,tsx}",
+    "app/routes/*.{js,jsx,ts,tsx,md,mdx}",
+    "app/routes/*/{route,index}.{js,jsx,ts,tsx,md,mdx}"
+   ],
+   "production": [
+    "app/root.{js,jsx,ts,tsx}",
+    "app/entry.{client,server}.{js,jsx,ts,tsx}",
+    "app/routes/*.{js,jsx,ts,tsx,md,mdx}",
+    "app/routes/*/{route,index}.{js,jsx,ts,tsx,md,mdx}"
+   ],
+   "project": [],
+   "source": [
+    "https://v2.remix.run/docs/file-conventions/remix-config",
+    "https://v2.remix.run/docs/file-conventions/routes",
+    "https://cdn.jsdelivr.net/npm/@remix-run/dev@2.17.5/dist/config.js",
+    "https://cdn.jsdelivr.net/npm/@remix-run/dev@2.17.5/dist/config/flat-routes.js"
+   ],
+   "skylos": {
+    "dir_keys": {
+     "appDirectory": {
+      "default": "app",
+      "applies_to": [
+       "production"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "remotion",
+   "title": "Remotion",
+   "origin": "skylos",
+   "enablers": [
+    "remotion",
+    "@remotion/cli"
+   ],
+   "config": [
+    "remotion.config.{ts,js}"
+   ],
+   "entry": [
+    "src/index.{ts,tsx,js,mjs}",
+    "remotion/index.{tsx,ts,js,mjs}",
+    "src/remotion/index.{tsx,ts,js,mjs}"
+   ],
+   "production": [
+    "src/index.{ts,tsx,js,mjs}",
+    "remotion/index.{tsx,ts,js,mjs}",
+    "src/remotion/index.{tsx,ts,js,mjs}"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@remotion/cli@4.0.545/dist/entry-point.js",
+    "https://cdn.jsdelivr.net/npm/@remotion/cli@4.0.545/dist/get-config-file-name.js",
+    "https://www.remotion.dev/docs/config"
+   ]
+  },
+  {
+   "name": "renovate",
+   "title": "Renovate",
+   "origin": "skylos",
+   "enablers": [
+    "renovate"
+   ],
+   "config": [
+    "renovate.{json,jsonc,json5}",
+    ".github/renovate.{json,jsonc,json5}",
+    ".gitlab/renovate.{json,jsonc,json5}",
+    ".renovaterc",
+    ".renovaterc.{json,jsonc,json5}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://docs.renovatebot.com/configuration-options/",
+    "https://docs.renovatebot.com/getting-started/running/"
+   ]
+  },
+  {
+   "name": "rolldown",
+   "title": "Rolldown",
+   "origin": "skylos",
+   "enablers": [
+    "rolldown"
+   ],
+   "config": [
+    "rolldown.config.{js,mjs,cjs,ts,mts,cts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/rolldown@1.3.3/dist/shared/load-config-ZYHIHAhQ.mjs"
+   ],
+   "skylos": {
+    "entry_keys": [
+     {
+      "key": "input",
+      "kind": "glob",
+      "base": "config",
+      "production": true
+     }
+    ]
+   }
+  },
+  {
+   "name": "rollup",
+   "title": "Rollup",
+   "origin": "skylos",
+   "enablers": [
+    "rollup"
+   ],
+   "config": [
+    "rollup.config.{mjs,cjs,ts,js}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/rollup@4.68.7/dist/bin/rollup"
+   ],
+   "skylos": {
+    "entry_keys": [
+     {
+      "key": "input",
+      "kind": "glob",
+      "base": "config",
+      "production": true
+     }
+    ]
+   }
+  },
+  {
+   "name": "rsbuild",
+   "title": "Rsbuild",
+   "origin": "skylos",
+   "enablers": [
+    "@rsbuild/core"
+   ],
+   "config": [
+    "rsbuild.config.{ts,js,mts,mjs,cts,cjs}"
+   ],
+   "entry": [
+    "src/index.{ts,js,tsx,jsx,mts,cts,mjs,cjs}"
+   ],
+   "production": [
+    "src/index.{ts,js,tsx,jsx,mts,cts,mjs,cjs}"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@rsbuild/core@2.3.3/dist/m.js"
+   ]
+  },
+  {
+   "name": "rslib",
+   "title": "Rslib",
+   "origin": "skylos",
+   "enablers": [
+    "@rslib/core"
+   ],
+   "config": [
+    "rslib.config.{mjs,ts,js,cjs,mts,cts}"
+   ],
+   "entry": [
+    "src/index.{js,ts,tsx,jsx,mjs,cjs}"
+   ],
+   "production": [
+    "src/index.{js,ts,tsx,jsx,mjs,cjs}"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@rslib/core@1.0.7/dist/index.js",
+    "https://rslib.rs/config/rsbuild/source#sourceentry"
+   ]
+  },
+  {
+   "name": "rspack",
+   "title": "Rspack",
+   "origin": "skylos",
+   "enablers": [
+    "@rspack/cli",
+    "@rspack/core"
+   ],
+   "config": [
+    "rspack.config.{ts,js,mts,mjs,cts,cjs}"
+   ],
+   "entry": [
+    "src/index.js"
+   ],
+   "production": [
+    "src/index.js"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@rspack/cli@2.3.3/dist/index.js",
+    "https://rspack.rs/config/entry"
+   ]
+  },
+  {
+   "name": "rspress",
+   "title": "Rspress",
+   "origin": "skylos",
+   "enablers": [
+    "@rspress/core",
+    "rspress"
+   ],
+   "config": [
+    "rspress.config.{js,ts,mjs,mts,cjs,cts}"
+   ],
+   "entry": [
+    "docs/**/*.{js,jsx,ts,tsx,md,mdx}",
+    "docs/**/_meta.json",
+    "docs/_nav.json",
+    "theme/index.{ts,tsx}"
+   ],
+   "production": [
+    "docs/**/*.{js,jsx,ts,tsx,md,mdx}",
+    "docs/**/_meta.json",
+    "docs/_nav.json",
+    "theme/index.{ts,tsx}"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@rspress/shared@2.1.4/dist/constants.js",
+    "https://cdn.jsdelivr.net/npm/@rspress/core@2.1.4/dist/config/loadConfigFile.js",
+    "https://cdn.jsdelivr.net/npm/@rspress/core@2.1.4/dist/node/PluginDriver.js",
+    "https://cdn.jsdelivr.net/npm/@rspress/core@2.1.4/dist/node/route/RouteService.js",
+    "https://rspress.rs/guide/basic/conventional-route",
+    "https://rspress.rs/guide/basic/custom-theme",
+    "https://rspress.rs/guide/basic/auto-nav-sidebar"
+   ]
+  },
+  {
+   "name": "rush",
+   "title": "Rush",
+   "origin": "skylos",
+   "enablers": [
+    "@microsoft/rush"
+   ],
+   "config": [
+    "rush.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://rushjs.io/pages/configs/rush_json/"
+   ]
+  },
+  {
+   "name": "sanity",
+   "title": "Sanity Studio",
+   "origin": "skylos",
+   "enablers": [
+    "sanity",
+    "@sanity/cli"
+   ],
+   "config": [
+    "sanity.config.{ts,tsx,js,jsx}",
+    "sanity.cli.{ts,js}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@sanity/cli-core@3.16.0/dist/config/util/findStudioConfigPath.js",
+    "https://cdn.jsdelivr.net/npm/@sanity/cli-core@3.16.0/dist/config/util/findAppConfigPath.js",
+    "https://cdn.jsdelivr.net/npm/@sanity/cli-core@3.16.0/dist/config/cli/getCliConfig.js"
+   ]
+  },
+  {
+   "name": "secretlint",
+   "title": "Secretlint",
+   "origin": "skylos",
+   "enablers": [
+    "secretlint"
+   ],
+   "config": [
+    ".secretlintrc",
+    ".secretlintrc.{json,yml,js}",
+    ".secretlintignore"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/secretlint/secretlint/blob/master/README.md",
+    "https://cdn.jsdelivr.net/npm/@secretlint/config-loader@14.0.1/module/index.js"
+   ]
+  },
+  {
+   "name": "semantic-release",
+   "title": "semantic-release",
+   "origin": "skylos",
+   "enablers": [
+    "semantic-release"
+   ],
+   "config": [
+    ".releaserc",
+    ".releaserc.{yaml,yml,json,js,ts,cjs,mjs}",
+    "release.config.{js,ts,cjs,mjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://semantic-release.org/usage/configuration/"
+   ]
+  },
+  {
+   "name": "sentry-cli",
+   "title": "Sentry CLI",
+   "origin": "skylos",
+   "enablers": [
+    "@sentry/cli"
+   ],
+   "config": [
+    ".sentryclirc"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://docs.sentry.io/cli/configuration/"
+   ]
+  },
+  {
+   "name": "sentry-nextjs",
+   "title": "Sentry for Next.js",
+   "origin": "skylos",
+   "enablers": [
+    "@sentry/nextjs"
+   ],
+   "config": [],
+   "entry": [
+    "{src/,}instrumentation-client.ts",
+    "{src/,}sentry.server.config.ts",
+    "{src/,}sentry.edge.config.ts"
+   ],
+   "production": [
+    "{src/,}instrumentation-client.ts",
+    "{src/,}sentry.server.config.ts",
+    "{src/,}sentry.edge.config.ts"
+   ],
+   "project": [],
+   "source": [
+    "https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/"
+   ]
+  },
+  {
+   "name": "sequelize-cli",
+   "title": "Sequelize CLI",
+   "origin": "skylos",
+   "enablers": [
+    "sequelize-cli"
+   ],
+   "config": [
+    ".sequelizerc",
+    "config/config.{json,js}"
+   ],
+   "entry": [
+    "migrations/*.{cjs,js,cts,ts}",
+    "seeders/*.{cjs,js,cts,ts}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/sequelize-cli@6.6.5/lib/core/yargs.js",
+    "https://cdn.jsdelivr.net/npm/sequelize-cli@6.6.5/lib/helpers/config-helper.js",
+    "https://cdn.jsdelivr.net/npm/sequelize-cli@6.6.5/lib/core/migrator.js"
+   ]
+  },
+  {
+   "name": "serverless",
+   "title": "Serverless Framework",
+   "origin": "skylos",
+   "enablers": [
+    "serverless"
+   ],
+   "config": [
+    "serverless.{yml,yaml,json,toml,js,mjs,cjs,ts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://www.serverless.com/framework/docs/providers/aws/guide/serverless.yml",
+    "https://www.serverless.com/framework/docs/providers/aws/guide/intro"
+   ]
+  },
+  {
+   "name": "sherif",
+   "title": "Sherif",
+   "origin": "skylos",
+   "enablers": [
+    "sherif"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/QuiiBz/sherif/blob/main/README.md"
+   ]
+  },
+  {
+   "name": "simple-git-hooks",
+   "title": "simple-git-hooks",
+   "origin": "skylos",
+   "enablers": [
+    "simple-git-hooks"
+   ],
+   "config": [
+    "{.simple-git-hooks,simple-git-hooks}.{cjs,js,mjs,json}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/toplenboren/simple-git-hooks/blob/master/README.md",
+    "https://cdn.jsdelivr.net/npm/simple-git-hooks@2.14.0/simple-git-hooks.js"
+   ]
+  },
+  {
+   "name": "size-limit",
+   "title": "Size Limit",
+   "origin": "skylos",
+   "enablers": [
+    "size-limit"
+   ],
+   "config": [
+    ".size-limit",
+    ".size-limit.{json,jsonc,js,mjs,cjs,ts,mts,cts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/size-limit@14.3.0/get-config.js"
+   ]
+  },
+  {
+   "name": "slidev",
+   "title": "Slidev",
+   "origin": "skylos",
+   "enablers": [
+    "@slidev/cli"
+   ],
+   "config": [],
+   "entry": [
+    "slides.md",
+    "components/*.{vue,js,ts,jsx,tsx,md}",
+    "layouts/*.{vue,js,ts,jsx,tsx}",
+    "style.css",
+    "styles/index.{css,js,ts}",
+    "index.html",
+    "{global,global-top,GlobalTop,global-bottom,GlobalBottom,slide-top,SlideTop,slide-bottom,SlideBottom}.{ts,js,vue}",
+    "{custom-nav-controls,CustomNavControls}.vue",
+    "setup/*.{ts,js,mts,mjs}"
+   ],
+   "production": [
+    "slides.md",
+    "components/*.{vue,js,ts,jsx,tsx,md}",
+    "layouts/*.{vue,js,ts,jsx,tsx}",
+    "style.css",
+    "styles/index.{css,js,ts}",
+    "index.html",
+    "{global,global-top,GlobalTop,global-bottom,GlobalBottom,slide-top,SlideTop,slide-bottom,SlideBottom}.{ts,js,vue}",
+    "{custom-nav-controls,CustomNavControls}.vue"
+   ],
+   "project": [],
+   "source": [
+    "https://sli.dev/custom/directory-structure",
+    "https://sli.dev/features/global-layers",
+    "https://cdn.jsdelivr.net/npm/@slidev/cli@53.1.0/dist/cli.mjs",
+    "https://cdn.jsdelivr.net/npm/@slidev/cli@53.1.0/dist/serve-CjzN30uY.mjs"
+   ]
+  },
+  {
+   "name": "snowpack",
+   "title": "Snowpack",
+   "origin": "skylos",
+   "enablers": [
+    "snowpack"
+   ],
+   "config": [
+    "snowpack.config.{mjs,cjs,js,json}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/snowpack@3.8.8/lib/cjs/config.js"
+   ]
+  },
+  {
+   "name": "solid-start",
+   "title": "SolidStart",
+   "origin": "skylos",
+   "enablers": [
+    "@solidjs/start"
+   ],
+   "config": [
+    "app.config.{ts,js,mjs,mts,cjs,cts}"
+   ],
+   "entry": [],
+   "production": [
+    "src/{app,entry-server,entry-client}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+    "src/routes/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+   ],
+   "skylos": {
+    "export_rules": [
+     {
+      "globs": [
+       "src/{app,entry-server,entry-client}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+      ],
+      "exports": [
+       "default"
+      ]
+     },
+     {
+      "globs": [
+       "src/routes/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+      ],
+      "exports": [
+       "default",
+       "route",
+       "GET",
+       "POST",
+       "PUT",
+       "PATCH",
+       "DELETE",
+       "HEAD",
+       "OPTIONS"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "sst",
+   "title": "SST",
+   "origin": "skylos",
+   "enablers": [
+    "sst"
+   ],
+   "config": [
+    "sst.config.ts"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://sst.dev/docs/reference/config/"
+   ]
+  },
+  {
+   "name": "standard",
+   "title": "JavaScript Standard Style",
+   "origin": "skylos",
+   "enablers": [
+    "standard"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/standard/standard/blob/master/README.md#how-do-i-ignore-files"
+   ]
+  },
+  {
+   "name": "standard-version",
+   "title": "standard-version",
+   "origin": "skylos",
+   "enablers": [
+    "standard-version"
+   ],
+   "config": [
+    ".versionrc",
+    ".versionrc.{json,js}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/conventional-changelog/standard-version/blob/master/README.md"
+   ]
+  },
+  {
+   "name": "starlight",
+   "title": "Starlight (Astro docs theme)",
+   "origin": "skylos",
+   "enablers": [
+    "@astrojs/starlight"
+   ],
+   "config": [],
+   "entry": [
+    "src/content/docs/**/[^_]*.{markdown,mdown,mkdn,mkd,mdwn,md,mdx,mdoc}",
+    "src/content/i18n/**/[^_]*.{json,yml,yaml}"
+   ],
+   "production": [
+    "src/content/docs/**/[^_]*.{markdown,mdown,mkdn,mkd,mdwn,md,mdx,mdoc}",
+    "src/content/i18n/**/[^_]*.{json,yml,yaml}"
+   ],
+   "project": [],
+   "source": [
+    "https://starlight.astro.build/guides/pages/",
+    "https://cdn.jsdelivr.net/npm/@astrojs/starlight@0.43.1/dist/loaders.js"
+   ]
+  },
+  {
+   "name": "storybook",
+   "title": "Storybook",
+   "origin": "skylos",
+   "enablers": [
+    "storybook",
+    "@storybook/cli",
+    "@storybook/core",
+    "@storybook/react",
+    "@storybook/vue3",
+    "@storybook/angular",
+    "@storybook/svelte",
+    "@storybook/web-components",
+    "@storybook/html",
+    "@storybook/preact"
+   ],
+   "config": [
+    ".storybook/main.{ts,js,tsx,jsx,mjs,cjs}",
+    ".storybook/preview.{ts,js,tsx,jsx,mjs,cjs}",
+    ".storybook/manager.{ts,js,tsx,jsx,mjs,cjs}"
+   ],
+   "entry": [
+    "**/*.stories.*"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://storybook.js.org/docs/configure",
+    "https://cdn.jsdelivr.net/npm/storybook@10.6.8/dist/_node-chunks/chunk-OL73LDG4.js"
+   ],
+   "skylos": {
+    "entry_keys": [
+     {
+      "key": "stories",
+      "kind": "glob",
+      "base": "config"
+     }
+    ],
+    "abstain": [
+     "**/*.@(mdx|stories.*|story.*)"
+    ]
+   }
+  },
+  {
+   "name": "storybook-test-runner",
+   "title": "Storybook Test Runner",
+   "origin": "skylos",
+   "enablers": [
+    "@storybook/test-runner"
+   ],
+   "config": [
+    "test-runner-jest*",
+    ".storybook/test-runner-jest*",
+    ".storybook/test-runner.{js,ts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/storybookjs/test-runner/blob/main/README.md",
+    "https://cdn.jsdelivr.net/npm/@storybook/test-runner@0.26.1/dist/test-storybook.js"
+   ]
+  },
+  {
+   "name": "strapi",
+   "title": "Strapi",
+   "origin": "skylos",
+   "enablers": [
+    "@strapi/strapi"
+   ],
+   "config": [
+    "config/*.{js,ts,json}",
+    "config/env/*/*.{js,ts,json}",
+    "src/admin/vite.config.{js,mjs,ts,mts}",
+    "src/admin/webpack.config.{js,mjs,ts}"
+   ],
+   "entry": [
+    "src/index.{js,ts}",
+    "src/api/**/*.{js,ts,json}",
+    "src/components/**/*.json",
+    "src/extensions/**/*.{js,ts,json}",
+    "src/middlewares/**/*.{js,ts}",
+    "src/policies/**/*.{js,ts}",
+    "src/admin/app.{js,mjs,ts,jsx,tsx}"
+   ],
+   "production": [
+    "src/index.{js,ts}",
+    "src/api/**/*.{js,ts,json}",
+    "src/components/**/*.json",
+    "src/extensions/**/*.{js,ts,json}",
+    "src/middlewares/**/*.{js,ts}",
+    "src/policies/**/*.{js,ts}",
+    "src/admin/app.{js,mjs,ts,jsx,tsx}"
+   ],
+   "project": [],
+   "source": [
+    "https://docs.strapi.io/cms/project-structure",
+    "https://docs.strapi.io/cms/configurations/environment",
+    "https://cdn.jsdelivr.net/npm/@strapi/core@5.63.0/dist/configuration/get-dirs.js",
+    "https://cdn.jsdelivr.net/npm/@strapi/core@5.63.0/dist/configuration/config-loader.js",
+    "https://cdn.jsdelivr.net/npm/@strapi/core@5.63.0/dist/configuration/index.js",
+    "https://cdn.jsdelivr.net/npm/@strapi/core@5.63.0/dist/loaders/apis.js",
+    "https://cdn.jsdelivr.net/npm/@strapi/core@5.63.0/dist/loaders/src-index.js",
+    "https://cdn.jsdelivr.net/npm/@strapi/strapi@5.63.0/dist/src/node/core/admin-customisations.js",
+    "https://cdn.jsdelivr.net/npm/@strapi/strapi@5.63.0/dist/src/node/vite/config.js",
+    "https://cdn.jsdelivr.net/npm/@strapi/strapi@5.63.0/dist/src/node/webpack/config.js"
+   ]
+  },
+  {
+   "name": "stryker",
+   "title": "StrykerJS",
+   "origin": "skylos",
+   "enablers": [
+    "@stryker-mutator/core"
+   ],
+   "config": [
+    "stryker.conf.{json,js,mjs,cjs}",
+    ".stryker.conf.{json,js,mjs,cjs}",
+    "stryker.config.{json,js,mjs,cjs}",
+    ".stryker.config.{json,js,mjs,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://stryker-mutator.io/docs/stryker-js/config-file/"
+   ]
+  },
+  {
+   "name": "styleguidist",
+   "title": "React Styleguidist",
+   "origin": "skylos",
+   "enablers": [
+    "react-styleguidist"
+   ],
+   "config": [
+    "styleguide.config.js"
+   ],
+   "entry": [
+    "src/@(components|Components)/**/*.{js,jsx,ts,tsx}",
+    "src/@(components|Components)/**/*.md"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/react-styleguidist@13.1.4/lib/scripts/config.js",
+    "https://cdn.jsdelivr.net/npm/react-styleguidist@13.1.4/lib/scripts/schemas/config.js"
+   ]
+  },
+  {
+   "name": "stylelint",
+   "title": "Stylelint",
+   "origin": "skylos",
+   "enablers": [
+    "stylelint"
+   ],
+   "config": [
+    ".stylelintrc",
+    ".stylelintrc.{cjs,mjs,js,ts,json,yaml,yml}",
+    "stylelint.config.{cjs,mjs,js,ts}",
+    ".stylelintignore"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://stylelint.io/user-guide/configure",
+    "https://stylelint.io/user-guide/ignore-code",
+    "https://cdn.jsdelivr.net/npm/stylelint@18.1.0/lib/cli.mjs",
+    "https://cdn.jsdelivr.net/npm/stylelint@18.1.0/lib/constants.mjs"
+   ]
+  },
+  {
+   "name": "supabase",
+   "title": "Supabase CLI",
+   "origin": "skylos",
+   "enablers": [
+    "supabase"
+   ],
+   "config": [
+    "supabase/config.{toml,jsonc}"
+   ],
+   "entry": [
+    "supabase/functions/*/index.ts"
+   ],
+   "production": [
+    "supabase/functions/*/index.ts"
+   ],
+   "project": [],
+   "source": [
+    "https://supabase.com/docs/guides/local-development/cli/config"
+   ]
+  },
+  {
+   "name": "sveltekit",
+   "title": "SvelteKit",
+   "origin": "skylos",
+   "enablers": [
+    "@sveltejs/kit"
+   ],
+   "config": [
+    "svelte.config.{js,ts}"
+   ],
+   "entry": [
+    "src/routes/**/+{page,layout}{,@*}.svelte",
+    "src/routes/**/+error.svelte",
+    "src/routes/**/+{page,layout}{,.server}.{js,ts}",
+    "src/routes/**/+server.{js,ts}",
+    "src/hooks.{js,ts}",
+    "src/hooks.{client,server}.{js,ts}",
+    "src/params/*.{js,ts}",
+    "src/params.{js,ts}",
+    "src/service-worker.{js,ts}",
+    "src/service-worker/index.{js,ts}",
+    "src/instrumentation.server.{js,ts}",
+    "src/app.html",
+    "src/error.html"
+   ],
+   "production": [
+    "src/routes/**/+{page,layout}{,@*}.svelte",
+    "src/routes/**/+error.svelte",
+    "src/routes/**/+{page,layout}{,.server}.{js,ts}",
+    "src/routes/**/+server.{js,ts}",
+    "src/hooks.{js,ts}",
+    "src/hooks.{client,server}.{js,ts}",
+    "src/params/*.{js,ts}",
+    "src/params.{js,ts}",
+    "src/service-worker.{js,ts}",
+    "src/service-worker/index.{js,ts}",
+    "src/instrumentation.server.{js,ts}",
+    "src/app.html",
+    "src/error.html"
+   ],
+   "project": [],
+   "source": [
+    "https://svelte.dev/docs/kit/project-structure",
+    "https://svelte.dev/docs/kit/routing",
+    "https://svelte.dev/docs/kit/hooks",
+    "https://github.com/sveltejs/kit/blob/main/documentation/docs/10-getting-started/30-project-structure.md",
+    "https://cdn.jsdelivr.net/npm/@sveltejs/kit@2.70.4/src/core/config/index.js",
+    "https://cdn.jsdelivr.net/npm/@sveltejs/kit@2.70.4/src/core/sync/create_manifest_data/index.js",
+    "https://cdn.jsdelivr.net/npm/@sveltejs/kit@3.4.0/src/core/config/index.js",
+    "https://cdn.jsdelivr.net/npm/@sveltejs/kit@3.4.0/src/core/sync/create_manifest_data/index.js",
+    "https://cdn.jsdelivr.net/npm/@sveltejs/kit@3.4.0/src/core/config/options.js"
+   ],
+   "skylos": {
+    "enable_files": [
+     "svelte.config.{ts,js,mjs,mts,cjs,cts}"
+    ],
+    "extra_production": [
+     "src/routes/**/+*.{js,ts}",
+     "src/hooks.{js,ts}",
+     "src/hooks.{client,server}.{js,ts}",
+     "src/params/*.{js,ts}",
+     "src/service-worker.{js,ts}",
+     "src/service-worker/index.{js,ts}",
+     "src/instrumentation.server.{js,ts}"
+    ],
+    "aliases": {
+     "$lib": "src/lib"
+    }
+   }
+  },
+  {
+   "name": "svgr",
+   "title": "SVGR",
+   "origin": "skylos",
+   "enablers": [
+    "@svgr/cli",
+    "@svgr/core"
+   ],
+   "config": [
+    ".svgrrc",
+    ".svgrrc.{json,yaml,yml,js,cjs}",
+    ".config/svgrrc",
+    ".config/svgrrc.{json,yaml,yml,js,cjs}",
+    "svgr.config.{js,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://react-svgr.com/docs/configuration-files/",
+    "https://cdn.jsdelivr.net/npm/@svgr/core@8.1.0/dist/index.js",
+    "https://cdn.jsdelivr.net/npm/cosmiconfig@8.1.3/dist/index.js"
+   ]
+  },
+  {
+   "name": "swc",
+   "title": "SWC",
+   "origin": "skylos",
+   "enablers": [
+    "@swc/core",
+    "@swc/cli"
+   ],
+   "config": [
+    ".swcrc"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://swc.rs/docs/configuration/swcrc",
+    "https://swc.rs/docs/getting-started"
+   ]
+  },
+  {
+   "name": "syncpack",
+   "title": "Syncpack",
+   "origin": "skylos",
+   "enablers": [
+    "syncpack"
+   ],
+   "config": [
+    ".syncpackrc",
+    ".syncpackrc.{json,yaml,yml,js,ts,mjs,cjs}",
+    "syncpack.config.{js,ts,mjs,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://syncpack.dev/config/syncpackrc/"
+   ]
+  },
+  {
+   "name": "tailwind",
+   "title": "Tailwind CSS",
+   "origin": "skylos",
+   "enablers": [
+    "tailwindcss",
+    "@tailwindcss/vite",
+    "@tailwindcss/postcss",
+    "@tailwindcss/cli"
+   ],
+   "config": [
+    "tailwind.config.{js,cjs,mjs,ts,cts,mts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/tailwindcss@3.4.19/lib/util/resolveConfigPath.js",
+    "https://tailwindcss.com/docs/upgrade-guide",
+    "https://tailwindcss.com/docs/installation/using-vite",
+    "https://tailwindcss.com/docs/installation/using-postcss",
+    "https://tailwindcss.com/docs/installation/tailwind-cli"
+   ]
+  },
+  {
+   "name": "tanstack-router",
+   "title": "TanStack Router (file-based routing)",
+   "origin": "skylos",
+   "enablers": [
+    "@tanstack/router-plugin",
+    "@tanstack/router-cli",
+    "@tanstack/router-vite-plugin"
+   ],
+   "config": [
+    "tsr.config.json"
+   ],
+   "entry": [
+    "src/routes/**/*.{tsx,ts,jsx,js,vue}"
+   ],
+   "production": [
+    "src/routes/**/*.{tsx,ts,jsx,js,vue}"
+   ],
+   "project": [],
+   "source": [
+    "https://tanstack.com/router/latest/docs/api/file-based-routing",
+    "https://cdn.jsdelivr.net/npm/@tanstack/router-generator@1.168.0/dist/esm/config.js",
+    "https://cdn.jsdelivr.net/npm/@tanstack/router-generator@1.168.0/dist/esm/filesystem/physical/getRouteNodes.js"
+   ],
+   "skylos": {
+    "entry_keys": [
+     {
+      "key": "generatedRouteTree",
+      "kind": "file",
+      "base": "config",
+      "production": true
+     }
+    ],
+    "dir_keys": {
+     "routesDirectory": {
+      "default": "src/routes",
+      "applies_to": [
+       "production"
+      ],
+      "glob": "**/*.{ts,tsx,js,jsx}"
+     }
+    }
+   }
+  },
+  {
+   "name": "tanstack-start",
+   "title": "TanStack Start",
+   "origin": "skylos",
+   "enablers": [
+    "@tanstack/react-start",
+    "@tanstack/solid-start",
+    "@tanstack/vue-start"
+   ],
+   "config": [
+    "tsr.config.json"
+   ],
+   "entry": [
+    "src/{start,router,client,server}.{ts,js,mts,mjs,tsx,jsx}",
+    "src/routes/**/*.{tsx,ts,jsx,js,vue}"
+   ],
+   "production": [
+    "src/{start,router,client,server}.{ts,js,mts,mjs,tsx,jsx}",
+    "src/routes/**/*.{tsx,ts,jsx,js,vue}"
+   ],
+   "project": [],
+   "source": [
+    "https://tanstack.com/start/latest/docs/framework/react/guide/routing",
+    "https://tanstack.com/router/latest/docs/api/file-based-routing",
+    "https://cdn.jsdelivr.net/npm/@tanstack/start-plugin-core@1.172.0/dist/esm/schema.js",
+    "https://cdn.jsdelivr.net/npm/@tanstack/start-plugin-core@1.172.0/dist/esm/planning.js",
+    "https://cdn.jsdelivr.net/npm/@tanstack/start-plugin-core@1.172.0/dist/esm/resolve-entries.js",
+    "https://cdn.jsdelivr.net/npm/@tanstack/router-generator@1.168.0/dist/esm/config.js"
+   ]
+  },
+  {
+   "name": "tap",
+   "title": "node-tap",
+   "origin": "skylos",
+   "enablers": [
+    "tap"
+   ],
+   "config": [
+    ".taprc",
+    "config/taprc"
+   ],
+   "entry": [
+    "**/@(test?(s)|__test?(s)__)/**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx}",
+    "**/*.@(test?(s)|spec).{js,cjs,mjs,jsx,ts,cts,mts,tsx}",
+    "**/test?(s).{js,cjs,mjs,jsx,ts,cts,mts,tsx}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://node-tap.org/cli/",
+    "https://cdn.jsdelivr.net/npm/@tapjs/config@5.6.7/dist/esm/jack.js"
+   ]
+  },
+  {
+   "name": "taro",
+   "title": "Taro",
+   "origin": "skylos",
+   "enablers": [
+    "@tarojs/cli",
+    "@tarojs/taro"
+   ],
+   "config": [
+    "config/index.{js,jsx,ts,tsx}"
+   ],
+   "entry": [
+    "src/app.{js,jsx,ts,tsx}",
+    "src/app.config.{js,ts}"
+   ],
+   "production": [
+    "src/app.{js,jsx,ts,tsx}",
+    "src/app.config.{js,ts}"
+   ],
+   "project": [],
+   "source": [
+    "https://github.com/NervJS/taro-docs/blob/master/docs/config.md",
+    "https://github.com/NervJS/taro-docs/blob/master/docs/app-config.md",
+    "https://cdn.jsdelivr.net/npm/@tarojs/service@4.3.3/dist/utils/constants.js",
+    "https://cdn.jsdelivr.net/npm/@tarojs/service@4.3.3/dist/Config.js",
+    "https://cdn.jsdelivr.net/npm/@tarojs/helper@4.3.3/dist/constants.js",
+    "https://cdn.jsdelivr.net/npm/@tarojs/helper@4.3.3/dist/utils.js"
+   ]
+  },
+  {
+   "name": "tauri",
+   "title": "Tauri",
+   "origin": "skylos",
+   "enablers": [
+    "@tauri-apps/cli",
+    "@tauri-apps/api"
+   ],
+   "config": [
+    "src-tauri/tauri.conf.{json,json5}",
+    "src-tauri/Tauri.toml",
+    "src-tauri/tauri.{linux,windows,macos,android,ios}.conf.json",
+    "src-tauri/Tauri.{linux,windows,macos,android,ios}.toml"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://v2.tauri.app/develop/configuration-files/",
+    "https://github.com/tauri-apps/tauri-docs/blob/v2/src/content/docs/develop/configuration-files.mdx",
+    "https://github.com/tauri-apps/tauri-docs/blob/v2/src/content/docs/start/project-structure.mdx"
+   ]
+  },
+  {
+   "name": "testcafe",
+   "title": "TestCafe",
+   "origin": "skylos",
+   "enablers": [
+    "testcafe"
+   ],
+   "config": [
+    ".testcaferc.{js,cjs,json}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://testcafe.io/documentation/402638/reference/configuration-file"
+   ]
+  },
+  {
+   "name": "textlint",
+   "title": "textlint",
+   "origin": "skylos",
+   "enablers": [
+    "textlint"
+   ],
+   "config": [
+    ".textlintrc",
+    ".textlintrc.{js,json,yml,yaml}",
+    ".textlintignore"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://textlint.org/docs/configuring/",
+    "https://textlint.org/docs/ignore/"
+   ]
+  },
+  {
+   "name": "trigger-dev",
+   "title": "Trigger.dev",
+   "origin": "skylos",
+   "enablers": [
+    "trigger.dev",
+    "@trigger.dev/sdk"
+   ],
+   "config": [
+    "trigger.config.ts"
+   ],
+   "entry": [
+    "**/trigger/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
+   ],
+   "production": [
+    "**/trigger/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
+   ],
+   "project": [],
+   "source": [
+    "https://trigger.dev/docs/config/config-file",
+    "https://cdn.jsdelivr.net/npm/trigger.dev@4.8.8/dist/esm/config.js",
+    "https://cdn.jsdelivr.net/npm/trigger.dev@4.8.8/dist/esm/build/entryPoints.js"
+   ]
+  },
+  {
+   "name": "ts-node",
+   "title": "ts-node",
+   "origin": "skylos",
+   "enablers": [
+    "ts-node"
+   ],
+   "config": [
+    "tsconfig.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://typestrong.org/ts-node/docs/configuration"
+   ]
+  },
+  {
+   "name": "tsc-watch",
+   "title": "tsc-watch",
+   "origin": "skylos",
+   "enablers": [
+    "tsc-watch"
+   ],
+   "config": [
+    "tsconfig.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/tsc-watch@7.2.1/README.md"
+   ]
+  },
+  {
+   "name": "tsdown",
+   "title": "tsdown",
+   "origin": "skylos",
+   "enablers": [
+    "tsdown"
+   ],
+   "config": [
+    "tsdown.config.{ts,mts,cts,js,mjs,cjs,json}"
+   ],
+   "entry": [
+    "src/index.ts"
+   ],
+   "production": [
+    "src/index.ts"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/tsdown@0.23.7/dist/options-C2rtkmcY.mjs",
+    "https://cdn.jsdelivr.net/npm/tsdown@0.23.7/dist/types-kxOVN9XR.d.mts"
+   ],
+   "skylos": {
+    "entry_keys": [
+     {
+      "key": "entry",
+      "kind": "glob",
+      "base": "config",
+      "production": true
+     }
+    ]
+   }
+  },
+  {
+   "name": "tslint",
+   "title": "TSLint (deprecated)",
+   "origin": "skylos",
+   "enablers": [
+    "tslint"
+   ],
+   "config": [
+    "tslint.{json,yaml,yml}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://palantir.github.io/tslint/usage/configuration/",
+    "https://cdn.jsdelivr.net/npm/tslint@6.1.3/lib/configuration.js"
+   ]
+  },
+  {
+   "name": "tsup",
+   "title": "tsup",
+   "origin": "skylos",
+   "enablers": [
+    "tsup"
+   ],
+   "config": [
+    "tsup.config.{ts,cts,mts,js,cjs,mjs,json}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/tsup@9.0.0/dist/chunk-6IOGQ2V3.js"
+   ]
+  },
+  {
+   "name": "tsx",
+   "title": "tsx",
+   "origin": "skylos",
+   "enablers": [
+    "tsx"
+   ],
+   "config": [
+    "tsconfig.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/privatenumber/tsx/blob/master/docs/typescript.md#custom-tsconfigjson-path"
+   ]
+  },
+  {
+   "name": "turbo",
+   "title": "Turborepo",
+   "origin": "skylos",
+   "enablers": [
+    "turbo"
+   ],
+   "config": [
+    "turbo.{json,jsonc}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://turborepo.com/docs/reference/configuration"
+   ]
+  },
+  {
+   "name": "typedoc",
+   "title": "TypeDoc",
+   "origin": "skylos",
+   "enablers": [
+    "typedoc"
+   ],
+   "config": [
+    "typedoc.{json,jsonc,js,cjs,mjs}",
+    "typedoc.config.{js,cjs,mjs}",
+    ".config/typedoc.{json,jsonc,js,cjs,mjs}",
+    ".config/typedoc.config.{js,cjs,mjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://typedoc.org/documents/Options.Configuration.html",
+    "https://cdn.jsdelivr.net/npm/typedoc@0.28.20/dist/node-utils.js"
+   ],
+   "skylos": {
+    "entry_keys": [
+     {
+      "key": "entryPoints",
+      "kind": "glob",
+      "base": "config"
+     }
+    ]
+   }
+  },
+  {
+   "name": "typeorm",
+   "title": "TypeORM",
+   "origin": "skylos",
+   "enablers": [
+    "typeorm"
+   ],
+   "config": [
+    "ormconfig.{env,js,mjs,cjs,ts,mts,cts,json}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/typeorm@0.3.28/connection/ConnectionOptionsReader.js",
+    "https://cdn.jsdelivr.net/npm/typeorm@0.3.28/globals.js",
+    "https://cdn.jsdelivr.net/npm/typeorm@1.1.3/connection/ConnectionOptionsReader.js"
+   ]
+  },
+  {
+   "name": "typesafe-i18n",
+   "title": "typesafe-i18n",
+   "origin": "skylos",
+   "enablers": [
+    "typesafe-i18n"
+   ],
+   "config": [
+    ".typesafe-i18n.json"
+   ],
+   "entry": [
+    "src/i18n/*/index.ts"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/typesafe-i18n@5.27.1/config/index.mjs",
+    "https://cdn.jsdelivr.net/npm/typesafe-i18n@5.27.1/README.md"
+   ]
+  },
+  {
+   "name": "typescript",
+   "title": "TypeScript",
+   "origin": "skylos",
+   "enablers": [
+    "typescript"
+   ],
+   "config": [
+    "tsconfig.json",
+    "jsconfig.json"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://www.typescriptlang.org/docs/handbook/tsconfig-json.html"
+   ]
+  },
+  {
+   "name": "unbuild",
+   "title": "unbuild",
+   "origin": "skylos",
+   "enablers": [
+    "unbuild"
+   ],
+   "config": [
+    "build.config.{js,cjs,mjs,ts,mts,cts,json}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/unjs/unbuild#configuration",
+    "https://cdn.jsdelivr.net/npm/unbuild@3.6.1/dist/shared/unbuild.CyYtfvFx.mjs"
+   ]
+  },
+  {
+   "name": "unocss",
+   "title": "UnoCSS",
+   "origin": "skylos",
+   "enablers": [
+    "unocss",
+    "@unocss/cli",
+    "@unocss/vite",
+    "@unocss/webpack",
+    "@unocss/postcss",
+    "@unocss/nuxt",
+    "@unocss/astro"
+   ],
+   "config": [
+    "uno.config.{mts,cts,ts,mjs,cjs,js,json}",
+    "unocss.config.{mts,cts,ts,mjs,cjs,js,json}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://unocss.dev/guide/config-file",
+    "https://github.com/unocss/unocss/blob/main/docs/guide/config-file.md",
+    "https://cdn.jsdelivr.net/npm/@unocss/config@66.13.0/dist/index.mjs",
+    "https://cdn.jsdelivr.net/npm/unconfig@7.5.0/dist/index.mjs"
+   ]
+  },
+  {
+   "name": "uvu",
+   "title": "uvu",
+   "origin": "skylos",
+   "enablers": [
+    "uvu"
+   ],
+   "config": [],
+   "entry": [
+    "**/{test,tests,__test__,__tests__}/**/*.{mjs,cjs,js,jsx,ts,tsx}",
+    "**/*.{test,tests,spec}.{mjs,cjs,js,jsx,ts,tsx}",
+    "{test,tests}.{mjs,cjs,js,jsx,ts,tsx}"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/lukeed/uvu/blob/master/docs/cli.md"
+   ]
+  },
+  {
+   "name": "velite",
+   "title": "Velite",
+   "origin": "skylos",
+   "enablers": [
+    "velite"
+   ],
+   "config": [
+    "velite.config.{js,ts,mjs,mts,cjs,cts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/velite@0.4.0/dist/chunk-ODT43ZBV.js",
+    "https://cdn.jsdelivr.net/npm/velite@0.4.0/dist/index.d.ts"
+   ]
+  },
+  {
+   "name": "vercel",
+   "title": "Vercel",
+   "origin": "skylos",
+   "enablers": [
+    "vercel"
+   ],
+   "config": [
+    "vercel.{json,toml,ts}"
+   ],
+   "entry": [
+    "api/*.{js,mjs,ts}"
+   ],
+   "production": [
+    "api/*.{js,mjs,ts}"
+   ],
+   "project": [],
+   "source": [
+    "https://vercel.com/docs/project-configuration",
+    "https://vercel.com/docs/functions/runtimes/node-js"
+   ]
+  },
+  {
+   "name": "vike",
+   "title": "Vike",
+   "origin": "skylos",
+   "enablers": [
+    "vike"
+   ],
+   "config": [
+    "**/+config.{js,cjs,mjs,ts,cts,mts}"
+   ],
+   "entry": [
+    "**/+*.{js,cjs,mjs,ts,cts,mts,jsx,cjsx,mjsx,tsx,ctsx,mtsx,vue,svelte,marko,md,mdx}"
+   ],
+   "production": [
+    "**/+*.{js,cjs,mjs,ts,cts,mts,jsx,cjsx,mjsx,tsx,ctsx,mtsx,vue,svelte,marko,md,mdx}"
+   ],
+   "project": [],
+   "source": [
+    "https://vike.dev/config",
+    "https://vike.dev/filesystem-routing",
+    "https://cdn.jsdelivr.net/npm/vike@0.4.270/dist/node/vite/shared/resolveVikeConfigInternal/crawlPlusFiles.js",
+    "https://cdn.jsdelivr.net/npm/vike@0.4.270/dist/utils/isScriptFile.js"
+   ]
+  },
+  {
+   "name": "vinxi",
+   "title": "Vinxi",
+   "origin": "skylos",
+   "enablers": [
+    "vinxi"
+   ],
+   "config": [
+    "app.config.{js,mjs,ts,tsx,jsx,mts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/vinxi@0.5.11/lib/load-app.js"
+   ]
+  },
+  {
+   "name": "vite",
+   "title": "Vite",
+   "origin": "skylos",
+   "enablers": [
+    "vite"
+   ],
+   "config": [
+    "vite.config.{js,mjs,ts,cjs,mts,cts}"
+   ],
+   "entry": [
+    "index.html"
+   ],
+   "production": [
+    "index.html"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/vite@8.3.8/dist/node/chunks/node.js",
+    "https://github.com/vitejs/vite/blob/main/docs/guide/index.md#index-html-and-project-root"
+   ]
+  },
+  {
+   "name": "vite-node",
+   "title": "vite-node",
+   "origin": "skylos",
+   "enablers": [
+    "vite-node"
+   ],
+   "config": [
+    "vite.config.{js,mjs,ts,cjs,mts,cts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/vite-node@6.0.0/dist/cli.mjs",
+    "https://cdn.jsdelivr.net/npm/vite-node@6.0.0/README.md",
+    "https://cdn.jsdelivr.net/npm/vite@8.3.8/dist/node/chunks/node.js"
+   ]
+  },
+  {
+   "name": "vitepress",
+   "title": "VitePress",
+   "origin": "skylos",
+   "enablers": [
+    "vitepress"
+   ],
+   "config": [
+    "**/.vitepress/config.{js,ts,mjs,mts}",
+    "**/.vitepress/config/index.{js,ts,mjs,mts}"
+   ],
+   "entry": [
+    "**/*.md",
+    "**/.vitepress/theme/index.{js,ts,mjs,mts,cjs,cts}",
+    "**/*.paths.{js,ts,mjs,mts}"
+   ],
+   "production": [
+    "**/*.md",
+    "**/.vitepress/theme/index.{js,ts,mjs,mts,cjs,cts}"
+   ],
+   "project": [],
+   "source": [
+    "https://vitepress.dev/reference/site-config",
+    "https://vitepress.dev/guide/custom-theme",
+    "https://vitepress.dev/guide/routing",
+    "https://cdn.jsdelivr.net/npm/vitepress@1.6.4/dist/node/chunk-D3CUZ4fa.js"
+   ]
+  },
+  {
+   "name": "vitest",
+   "title": "Vitest",
+   "origin": "skylos",
+   "enablers": [
+    "vitest"
+   ],
+   "config": [
+    "vitest.config.{ts,mts,cts,js,mjs,cjs}",
+    "vite.config.{ts,mts,cts,js,mjs,cjs}",
+    "vitest.workspace.{ts,mts,cts,js,mjs,cjs,json}",
+    "vitest.projects.{ts,mts,cts,js,mjs,cjs,json}"
+   ],
+   "entry": [
+    "**/*.{test,spec}.?(c|m)[jt]s?(x)",
+    "**/*.{test,spec}-d.?(c|m)[jt]s?(x)"
+   ],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://vitest.dev/config/",
+    "https://vitest.dev/config/include",
+    "https://cdn.jsdelivr.net/npm/vitest@5.1.1/dist/chunks/constants.DLYM6cZY.js",
+    "https://cdn.jsdelivr.net/npm/vitest@5.1.1/dist/chunks/defaults.B1FCaFfh.js",
+    "https://cdn.jsdelivr.net/npm/vitest@3.2.4/dist/chunks/constants.DnKduX2e.js",
+    "https://vitest.dev/config/#typecheck-include"
+   ],
+   "skylos": {
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "vocs",
+   "title": "Vocs",
+   "origin": "skylos",
+   "enablers": [
+    "vocs"
+   ],
+   "config": [
+    "vocs.config.{js,jsx,ts,tsx,mjs,mts,toml,json}",
+    ".vocs/config.{js,jsx,ts,tsx,mjs,mts,toml,json}",
+    "Vocs.{js,jsx,ts,tsx,mjs,mts,toml,json}"
+   ],
+   "entry": [
+    "src/pages/**/*.{js,ts,tsx,jsx,mjs,cjs,md,mdx}",
+    "src/middleware/*.{js,ts,tsx,jsx,mjs,cjs,md,mdx}",
+    "src/pages/_root.css",
+    "docs/pages/**/*.{md,mdx,ts,tsx,js,jsx}",
+    "docs/layout.tsx",
+    "docs/footer.tsx",
+    "docs/styles.css"
+   ],
+   "production": [
+    "src/pages/**/*.{js,ts,tsx,jsx,mjs,cjs,md,mdx}",
+    "src/middleware/*.{js,ts,tsx,jsx,mjs,cjs,md,mdx}",
+    "src/pages/_root.css",
+    "docs/pages/**/*.{md,mdx,ts,tsx,js,jsx}",
+    "docs/layout.tsx",
+    "docs/footer.tsx",
+    "docs/styles.css"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/vocs@2.14.1/src/internal/config.ts",
+    "https://cdn.jsdelivr.net/npm/vocs@2.14.1/src/internal/vite-plugins.ts",
+    "https://cdn.jsdelivr.net/npm/vocs@2.14.1/src/waku/internal/vite-plugins.ts",
+    "https://cdn.jsdelivr.net/npm/vocs@2.14.1/src/waku/internal/patches/constants.ts",
+    "https://cdn.jsdelivr.net/npm/vocs@1.4.1/_lib/vite/utils/resolveVocsConfig.js",
+    "https://cdn.jsdelivr.net/npm/vocs@1.4.1/_lib/config.js",
+    "https://cdn.jsdelivr.net/npm/vocs@1.4.1/_lib/vite/plugins/virtual-routes.js",
+    "https://cdn.jsdelivr.net/npm/vocs@1.4.1/_lib/vite/plugins/virtual-consumer-components.js",
+    "https://cdn.jsdelivr.net/npm/vocs@1.4.1/_lib/vite/plugins/virtual-styles.js"
+   ]
+  },
+  {
+   "name": "vue-cli",
+   "title": "Vue CLI",
+   "origin": "skylos",
+   "enablers": [
+    "@vue/cli-service"
+   ],
+   "config": [
+    "vue.config.{js,cjs,mjs}"
+   ],
+   "entry": [
+    "src/main.{js,ts}",
+    "public/index.html",
+    "**/tests/unit/**/*.spec.[jt]s?(x)",
+    "**/__tests__/*.[jt]s?(x)"
+   ],
+   "production": [
+    "src/main.{js,ts}",
+    "public/index.html"
+   ],
+   "project": [],
+   "source": [
+    "https://cli.vuejs.org/config/",
+    "https://cli.vuejs.org/guide/html-and-static-assets.html",
+    "https://cdn.jsdelivr.net/npm/@vue/cli-service@5.0.9/lib/util/loadFileConfig.js",
+    "https://cdn.jsdelivr.net/npm/@vue/cli-service@5.0.9/lib/config/base.js",
+    "https://cdn.jsdelivr.net/npm/@vue/cli-service@5.0.9/lib/config/app.js",
+    "https://cdn.jsdelivr.net/npm/@vue/cli-plugin-typescript@5.0.9/index.js",
+    "https://cdn.jsdelivr.net/npm/@vue/cli-plugin-unit-jest@5.0.9/presets/default/jest-preset.js"
+   ]
+  },
+  {
+   "name": "vuepress",
+   "title": "VuePress",
+   "origin": "skylos",
+   "enablers": [
+    "vuepress",
+    "@vuepress/cli",
+    "@vuepress/core"
+   ],
+   "config": [
+    "vuepress.config.{ts,js,mjs}",
+    "**/.vuepress/config.{ts,js,mjs,yml,toml}"
+   ],
+   "entry": [
+    "**/*.md",
+    "**/*.vue",
+    "vuepress.client.{ts,js,mjs}",
+    "**/.vuepress/client.{ts,js,mjs}",
+    "**/.vuepress/enhanceApp.js",
+    "**/.vuepress/components/**/*.vue"
+   ],
+   "production": [
+    "**/*.md",
+    "**/*.vue",
+    "vuepress.client.{ts,js,mjs}",
+    "**/.vuepress/client.{ts,js,mjs}",
+    "**/.vuepress/enhanceApp.js",
+    "**/.vuepress/components/**/*.vue"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@vuepress/cli@2.0.0-rc.32/dist/index.js",
+    "https://cdn.jsdelivr.net/npm/@vuepress/core@2.0.0-rc.32/dist/index.js",
+    "https://cdn.jsdelivr.net/npm/@vuepress/core@1.9.10/lib/node/loadConfig.js",
+    "https://cdn.jsdelivr.net/npm/@vuepress/core@1.9.10/lib/node/App.js",
+    "https://cdn.jsdelivr.net/npm/@vuepress/core@1.9.10/lib/node/internal-plugins/enhanceApp.js"
+   ]
+  },
+  {
+   "name": "wagmi-cli",
+   "title": "Wagmi CLI",
+   "origin": "skylos",
+   "enablers": [
+    "@wagmi/cli"
+   ],
+   "config": [
+    "wagmi.config.{ts,js,mjs,mts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@wagmi/cli@2.10.1/dist/esm/utils/findConfig.js"
+   ]
+  },
+  {
+   "name": "waku",
+   "title": "Waku",
+   "origin": "skylos",
+   "enablers": [
+    "waku"
+   ],
+   "config": [
+    "waku.config.{ts,js}"
+   ],
+   "entry": [
+    "src/pages/**/*.{js,ts,tsx,jsx,mjs,cjs}",
+    "src/middleware/*.{js,ts,tsx,jsx,mjs,cjs}",
+    "src/waku.{client,server}.{js,ts,tsx,jsx,mjs,cjs}"
+   ],
+   "production": [
+    "src/pages/**/*.{js,ts,tsx,jsx,mjs,cjs}",
+    "src/middleware/*.{js,ts,tsx,jsx,mjs,cjs}",
+    "src/waku.{client,server}.{js,ts,tsx,jsx,mjs,cjs}"
+   ],
+   "project": [],
+   "source": [
+    "https://waku.gg/",
+    "https://cdn.jsdelivr.net/npm/waku@1.0.0-rc.5/dist/lib/constants.js",
+    "https://cdn.jsdelivr.net/npm/waku@1.0.0-rc.5/dist/lib/utils-build/managed.js",
+    "https://cdn.jsdelivr.net/npm/waku@1.0.0-rc.5/dist/lib/vite-rsc/loader.js",
+    "https://cdn.jsdelivr.net/npm/waku@1.0.0-rc.5/dist/lib/utils-build/config.js"
+   ]
+  },
+  {
+   "name": "web-test-runner",
+   "title": "Web Test Runner",
+   "origin": "skylos",
+   "enablers": [
+    "@web/test-runner"
+   ],
+   "config": [
+    "web-test-runner.config.{mjs,cjs,js}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://modern-web.dev/docs/test-runner/cli-and-configuration/",
+    "https://cdn.jsdelivr.net/npm/@web/test-runner@1.0.1/dist/config/readFileConfig.js",
+    "https://cdn.jsdelivr.net/npm/@web/config-loader@1.0.1/src/index.js"
+   ]
+  },
+  {
+   "name": "webdriverio",
+   "title": "WebdriverIO",
+   "origin": "skylos",
+   "enablers": [
+    "@wdio/cli"
+   ],
+   "config": [
+    "wdio.conf.{js,ts,mjs,mts,cjs,cts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://webdriver.io/docs/configurationfile",
+    "https://cdn.jsdelivr.net/npm/@wdio/cli@10.2.0/build/index.js",
+    "https://cdn.jsdelivr.net/npm/create-wdio@10.2.0/build/config/cli.js"
+   ],
+   "skylos": {
+    "entry_exports": "none"
+   }
+  },
+  {
+   "name": "webpack",
+   "title": "webpack",
+   "origin": "skylos",
+   "enablers": [
+    "webpack",
+    "webpack-cli"
+   ],
+   "config": [
+    "webpack.config.{js,mjs,cjs,ts,cts,mts}",
+    ".webpack/webpack.config.{js,mjs,cjs,ts,cts,mts}",
+    ".webpack/webpackfile.{js,mjs,cjs,ts,cts,mts}"
+   ],
+   "entry": [
+    "src/index.js"
+   ],
+   "production": [
+    "src/index.js"
+   ],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/webpack-cli@7.3.1/lib/webpack-cli.js",
+    "https://cdn.jsdelivr.net/npm/webpack@5.113.0/lib/config/defaults.js",
+    "https://webpack.js.org/concepts/#entry"
+   ],
+   "skylos": {
+    "entry_keys": [
+     {
+      "key": "entry",
+      "kind": "glob",
+      "base": "config",
+      "production": true
+     }
+    ]
+   }
+  },
+  {
+   "name": "windicss",
+   "title": "Windi CSS",
+   "origin": "skylos",
+   "enablers": [
+    "windicss",
+    "vite-plugin-windicss",
+    "windicss-webpack-plugin"
+   ],
+   "config": [
+    "windi.config.{ts,mts,js,mjs,cjs}",
+    "windicss.config.{ts,mts,js,mjs,cjs}",
+    "tailwind.config.{ts,mts,js,mjs,cjs}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/windicss/docs/blob/main/guide/configuration.md",
+    "https://cdn.jsdelivr.net/npm/@windicss/config@1.9.4/dist/index.mjs"
+   ]
+  },
+  {
+   "name": "workbox",
+   "title": "Workbox CLI",
+   "origin": "skylos",
+   "enablers": [
+    "workbox-cli"
+   ],
+   "config": [
+    "workbox-config.js"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/workbox-cli@7.4.1/build/lib/constants.js",
+    "https://cdn.jsdelivr.net/npm/workbox-cli@7.4.1/build/lib/help-text.js"
+   ]
+  },
+  {
+   "name": "wrangler",
+   "title": "Cloudflare Wrangler",
+   "origin": "skylos",
+   "enablers": [
+    "wrangler"
+   ],
+   "config": [
+    "wrangler.{toml,json,jsonc}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://developers.cloudflare.com/workers/wrangler/configuration/"
+   ]
+  },
+  {
+   "name": "wxt",
+   "title": "WXT",
+   "origin": "skylos",
+   "enablers": [
+    "wxt"
+   ],
+   "config": [
+    "wxt.config.ts",
+    "web-ext.config.ts",
+    ".webextrc"
+   ],
+   "entry": [
+    "entrypoints/*.html",
+    "entrypoints/*/index.html",
+    "entrypoints/*.[jt]s?(x)",
+    "entrypoints/*/index.[jt]s?(x)",
+    "app.config.ts",
+    "modules/*.[tj]s",
+    "modules/*/index.[tj]s"
+   ],
+   "production": [
+    "entrypoints/*.html",
+    "entrypoints/*/index.html",
+    "entrypoints/*.[jt]s?(x)",
+    "entrypoints/*/index.[jt]s?(x)",
+    "app.config.ts"
+   ],
+   "project": [],
+   "source": [
+    "https://wxt.dev/guide/essentials/project-structure.html",
+    "https://github.com/wxt-dev/wxt/blob/main/docs/guide/essentials/project-structure.md",
+    "https://github.com/wxt-dev/wxt/blob/main/docs/guide/essentials/config/runtime.md",
+    "https://cdn.jsdelivr.net/npm/wxt@0.21.5/dist/internal/entrypoint-finders/flat.mjs",
+    "https://cdn.jsdelivr.net/npm/wxt@0.21.5/dist/internal/resolve-config.mjs",
+    "https://cdn.jsdelivr.net/npm/wxt@0.21.5/dist/internal/builders/vite/plugins/resolve-app-config.mjs"
+   ],
+   "skylos": {
+    "dir_keys": {
+     "entrypointsDir": {
+      "default": "entrypoints",
+      "applies_to": [
+       "production"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "xo",
+   "title": "XO",
+   "origin": "skylos",
+   "enablers": [
+    "xo"
+   ],
+   "config": [
+    "xo.config.{js,mjs,ts,mts}"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/xojs/xo/blob/main/readme.md#config",
+    "https://cdn.jsdelivr.net/npm/xo@5.0.1/dist/lib/resolve-config.js"
+   ]
+  },
+  {
+   "name": "yorkie",
+   "title": "yorkie",
+   "origin": "skylos",
+   "enablers": [
+    "yorkie"
+   ],
+   "config": [],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://github.com/yyx990803/yorkie/blob/master/README.md"
+   ]
+  },
+  {
+   "name": "zenstack",
+   "title": "ZenStack",
+   "origin": "skylos",
+   "enablers": [
+    "@zenstackhq/cli",
+    "zenstack"
+   ],
+   "config": [
+    "schema.zmodel",
+    "zenstack/schema.zmodel"
+   ],
+   "entry": [],
+   "production": [],
+   "project": [],
+   "source": [
+    "https://cdn.jsdelivr.net/npm/@zenstackhq/cli@3.10.3/dist/index.mjs",
+    "https://cdn.jsdelivr.net/npm/zenstack@2.22.3/cli/cli-util.js"
+   ]
+  }
+ ]
+}

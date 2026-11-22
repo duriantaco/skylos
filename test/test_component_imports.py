@@ -166,10 +166,13 @@ def test_unsupported_and_invalid_scripts_cannot_claim_complete_coverage(tmp_path
 
 
 def test_symlink_component_is_not_followed(tmp_path):
+    # Imports resolve to the file a link names; one outside the project is
+    # never read.
     outside = _write(tmp_path, "outside.vue", '<script>import { format } from "./helpers";</script>')
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src/Panel.vue").symlink_to(outside)
-    extras, receipt = _expand(tmp_path)
+    project = tmp_path / "project"
+    (project / "src").mkdir(parents=True)
+    (project / "src/Panel.vue").symlink_to(outside)
+    extras, receipt = _expand(project)
     assert not extras
     assert receipt["complete"] is False
 
@@ -277,9 +280,42 @@ def test_component_bridges_keep_used_helpers_and_report_unused_siblings(tmp_path
         trace_file=False,
     ))
     functions = {(Path(row["file"]), row["simple_name"]) for row in report.get("unused_functions", [])}
+    # An unused file reports its functions once, as folded findings.
+    functions |= {
+        (Path(row["file"]), folded["name"])
+        for row in report.get("unused_files", [])
+        for folded in row.get("folded_findings", ())
+    }
     assert (helper, "format") not in functions
     assert (helper, "expanded") in functions
     assert (table, "summarize") in functions
     files = {Path(row["file"]) for row in report.get("unused_files", [])}
     assert helper not in files
     assert table in files
+
+
+def test_svelte_rune_module_specifier_is_a_module_not_a_component(tmp_path):
+    # ``./state.svelte`` loads ``state.svelte.ts`` (Svelte 5 runes): an
+    # ordinary module edge, not a component script to expand.
+    _write(tmp_path, "src/state.svelte.ts", "export const count = 1;\n")
+    extras, receipt = _expand(tmp_path, "./state.svelte")
+    assert extras == {}
+    assert receipt["complete"] is True
+    assert receipt["component_count"] == 0
+
+
+def test_component_importing_a_rune_module_keeps_its_named_edge(tmp_path):
+    _write(tmp_path, "src/state.svelte.ts", "export const count = 1;\nexport const spare = 2;\n")
+    _write(tmp_path, "src/Panel.svelte", '<script lang="ts">import { count } from "./state.svelte";</script><p>{count}</p>')
+    extras, receipt = _expand(tmp_path, "./Panel.svelte")
+    row, = extras[tmp_path / "src/main.ts"]
+    assert row["source"] == "./state.svelte.ts"
+    assert row["names"] == ["count"]
+    assert receipt["complete"] is True
+
+
+def test_missing_svelte_component_is_still_unresolved(tmp_path):
+    extras, receipt = _expand(tmp_path, "./Missing.svelte")
+    assert extras == {}
+    assert receipt["complete"] is False
+    assert receipt["issues"][0]["reason"] == "unresolved_component"

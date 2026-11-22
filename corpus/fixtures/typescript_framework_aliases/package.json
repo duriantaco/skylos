@@ -1,0 +1,1 @@
+{"name": "alias-root", "private": true, "workspaces": ["docs", "app", "solid", "nuxt"]}

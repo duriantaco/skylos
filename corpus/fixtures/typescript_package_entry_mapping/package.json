@@ -1,0 +1,16 @@
+{
+  "name": "gap-lib",
+  "type": "module",
+  "exports": {
+    ".": {
+      "@gap/source": "./src/index.ts",
+      "import": "./build/modern/index.js"
+    },
+    "./production": {
+      "import": "./build/modern/production.js"
+    },
+    "./*": {
+      "types": "./build/types/*.d.ts"
+    }
+  }
+}

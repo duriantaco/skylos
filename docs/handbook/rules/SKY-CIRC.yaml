@@ -5,7 +5,7 @@ severity: LOW
 severity_note: >-
   The catalog gives no severity. Every cycle is reported LOW, whatever its
   length.
-languages: [Python]
+languages: [Python, TypeScript, JavaScript]
 run_with: every scan, including a plain `skylos .`; `check_circular = false` turns it off
 gate:
   full: listed
@@ -16,7 +16,8 @@ gate:
 what_it_is: >-
   A circular dependency is a loop of imports: module A imports B and B
   imports A, directly or through other modules. SKY-CIRC reports each loop
-  of module-level imports between the Python modules of the project once.
+  of module-level imports between the Python modules of the project once,
+  and each group of JS/TS files whose load-time imports form loops once.
 
 why_it_matters: >-
   Python runs a module while importing it, so in a loop one module is
@@ -100,10 +101,11 @@ not_flagged_example:
 how_skylos_decides:
   - >-
     Runs on every scan, with or without `--quality`, unless `check_circular
-    = false` is set under `[tool.skylos]`. Only `.py` files take part.
+    = false` is set under `[tool.skylos]`. Python and JS/TS files form
+    separate graphs.
   - >-
-    Collects the `import` and `from … import` statements written directly
-    at the top level of each module, resolving relative imports. Imports
+    For Python, collects the `import` and `from … import` statements written
+    directly at the top level of each module, resolving relative imports. Imports
     inside functions, classes, `if TYPE_CHECKING:` blocks or `try` blocks
     are not read.
   - >-
@@ -119,6 +121,14 @@ how_skylos_decides:
   - >-
     Reports at the import that closes the loop with the lowest file path
     and line number among the loop's imports.
+  - >-
+    For JS/TS, an edge is a literal `import`, `export … from` or top-level
+    `require()` that resolves to another scanned JS/TS file or a Vue,
+    Svelte or Astro component script. `import type`, `export type`,
+    all-`type` clauses, `import()` and a `require()` inside a function do
+    not run when the file loads and are not edges. Each strongly connected
+    group of files is reported once, with the shortest loop through its
+    first file in path order; `component_files` lists a larger group.
 
 source_refs:
   - path: skylos/analysis/circular_deps.py
@@ -134,6 +144,8 @@ source_refs:
     note: only direct children of the module are read.
   - path: skylos/reporting/architecture_result.py
     symbol: "def attach_circular_and_architecture("
+  - path: skylos/analysis/typescript_cycles.py
+    symbol: "def find_typescript_cycles("
   - path: skylos/core/gatekeeper.py
     symbol: "def _check_strict_gate("
     note: the only gate path that counts the findings.
@@ -170,9 +182,10 @@ false_alarms_and_suppression:
       A loop that works because the imports run in a safe order, or because
       one side only imports names it uses later, is still reported.
     - >-
-      It misses loops created by imports inside functions, `try` blocks or
-      conditional blocks, and loops that pass through TypeScript or other
-      languages.
+      It misses Python loops created by imports inside functions, `try`
+      blocks or conditional blocks, and loops that cross from one language
+      to another. A JS/TS import whose bindings are used only as types,
+      without the `type` keyword, still counts as an edge.
   suppress:
     - check:
         kind: example

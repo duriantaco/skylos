@@ -483,6 +483,10 @@ def _collect_dead_code_findings(
     project_root: Path,
     symbol_identity: str = "simple",
 ) -> set[DeadCodeKey]:
+    from skylos.reporting.result_builder import with_folded_findings
+
+    # Symbols folded into an unused file's finding are still reported.
+    result = with_folded_findings(result)
     findings: set[DeadCodeKey] = set()
     for category, kind in CATEGORY_TO_KIND.items():
         for item in result.get(category, []) or []:

@@ -61,6 +61,28 @@ def member_chain(source: bytes, node: Any) -> list[str]:
     return parts
 
 
+def call_arguments(arguments: Any | None) -> list[Any]:
+    """Return a call's argument nodes without comments.
+
+    Comments are named nodes in tree-sitter, so ``arguments.named_children[0]``
+    of ``import(/* webpackChunkName: "x" */ "./x")`` is the magic comment,
+    not the specifier.
+    """
+    if arguments is None:
+        return []
+    return [child for child in arguments.named_children if child.type != "comment"]
+
+
+def first_call_argument(arguments: Any | None) -> Any | None:
+    """Return a call's first argument node, skipping comments."""
+    if arguments is None:
+        return None
+    for child in arguments.named_children:
+        if child.type != "comment":
+            return child
+    return None
+
+
 def is_type_only(node: Any) -> bool:
     """Report whether an import statement or specifier is type-only."""
     return any(child.type == "type" for child in node.children)

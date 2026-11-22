@@ -17,6 +17,7 @@ from skylos.graph.extract import extract_file, extract_many
 from skylos.graph.files import list_repo_files
 from skylos.graph.other_languages import link_by_name, other_language, other_module_name
 from skylos.graph.store import AREAS_FILE, CACHE_FILE, GRAPH_FILE, ensure_dir, read_json, write_json
+from skylos.scale.safe_spawn import no_cwd_imports_in_children
 
 SCHEMA_VERSION = 1
 ENGINE_VERSION = 7
@@ -81,7 +82,7 @@ def _extract(root: Path, todo: list[tuple[str, str]], progress) -> list[dict]:
     chunks = [todo[i:i + CHUNK] for i in range(0, len(todo), CHUNK)]
     found = []
     try:
-        with ProcessPoolExecutor(max_workers=_workers()) as pool:
+        with no_cwd_imports_in_children(), ProcessPoolExecutor(max_workers=_workers()) as pool:
             for batch in pool.map(extract_many, [str(root)] * len(chunks), chunks):
                 found.extend(batch)
                 if progress:

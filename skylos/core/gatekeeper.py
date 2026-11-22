@@ -1008,13 +1008,13 @@ def _cloud_gate_summary(results, config, policy):
 
 
 def _gate_findings(results, config=None):
-    from skylos.reporting.listing import explicit_rule_ids, is_nonblocking_review
+    from skylos.reporting.listing import explicit_rule_ids, is_gate_exempt_review
 
     return {
         "danger": [
             finding
             for finding in results.get("danger", []) or []
-            if not is_nonblocking_review(finding)
+            if not is_gate_exempt_review(finding)
         ],
         "reliability": results.get("reliability", []) or [],
         "ai_defects": results.get("ai_defects", []) or [],

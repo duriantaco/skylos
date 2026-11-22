@@ -1,0 +1,117 @@
+id: SKY-U008
+title: Unused TypeScript namespace member
+family: dead-code
+severity: LOW
+languages: [TypeScript]
+run_with: "`skylos .` (every scan)"
+gate:
+  full: counted
+  note: >-
+    Reported in unused_variables with its own SKY-U008 ID; counts toward
+    max_dead_code, which is unlimited by default.
+
+what_it_is: >-
+  A variable, type or interface exported from an `export namespace` block
+  that no file reads. Other members of the same namespace are used, so the
+  namespace itself is live.
+
+why_it_matters: >-
+  Namespaces often collect constants and types for one feature. An unread
+  member looks like supported behaviour and keeps its initializer and
+  dependencies alive.
+
+flagged_example:
+  language: typescript
+  expect_file: src/shapes.ts
+  expect_line: 3
+  files:
+    - filename: src/shapes.ts
+      code: |
+        export namespace Shapes {
+          export const Circle = "circle";
+          export const Square = "square";
+        }
+    - filename: src/main.ts
+      code: |
+        import { Shapes } from "./shapes";
+
+        console.log(Shapes.Circle);
+    - filename: package.json
+      language: json
+      code: |
+        {"name": "shapes-app", "private": true, "main": "src/main.ts"}
+
+not_flagged_example:
+  language: typescript
+  files:
+    - filename: src/shapes.ts
+      code: |
+        export namespace Shapes {
+          export const Circle = "circle";
+          export const Square = "square";
+        }
+    - filename: src/main.ts
+      code: |
+        import { Shapes } from "./shapes";
+
+        console.log(Object.values(Shapes));
+    - filename: package.json
+      language: json
+      code: |
+        {"name": "shapes-app", "private": true, "main": "src/main.ts"}
+  why: >-
+    `Object.values(Shapes)` reads every member, so none can be shown to be
+    unused.
+
+how_skylos_decides:
+  - >-
+    Checks `export namespace` blocks in internal modules (the SKY-E004
+    notion of a module that is not public).
+  - >-
+    Combines member reads from every file (`Shapes.Circle`, type positions
+    such as `Shapes.Kind`, destructuring) with references in the namespace
+    body. Nested namespaces are followed (`Shapes.Inner.x`).
+  - >-
+    Abstains for the whole namespace when it escapes as a value, is merged
+    with another declaration, is ambient, is tagged `@public`, `@alpha` or
+    `@beta`, no other file imports it, or a types-only wildcard export
+    publishes its module's declarations. Tagged members stay live. Imports
+    in Vue, Svelte and Astro scripts, HTML module scripts and MDX count as
+    reads like any other file's.
+  - >-
+    Functions, classes and enums in a namespace keep their SKY-U001/SKY-U004
+    findings. `analysis_summary.namespace_member_analysis` records checked
+    namespaces and abstentions.
+
+source_refs:
+  - path: skylos/visitors/languages/typescript/export_hygiene.py
+    symbol: "def namespace_member_findings("
+  - path: test/test_typescript_export_hygiene.py
+    symbol: "def test_unread_namespace_members_are_reported"
+  - path: test/test_typescript_export_hygiene.py
+    symbol: "def test_escaping_namespace_retains_every_member"
+
+fix:
+  explanation: Remove the unread member.
+  language: typescript
+  filename: src/shapes.ts
+  code: |
+    export namespace Shapes {
+      export const Circle = "circle";
+    }
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Code outside the scanned project can read a member of a namespace that
+      an internal module exports.
+  suppress:
+    - check: inline
+      text: >-
+        Add `// skylos: ignore[SKY-U008]` on the member's line.
+    - check: config
+      text: Set `[tool.skylos] ignore = ["SKY-U008"]` to disable this rule project-wide.
+
+related:
+  - SKY-U007
+  - SKY-E004

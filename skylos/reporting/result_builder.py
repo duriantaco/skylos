@@ -169,7 +169,11 @@ def build_analysis_result(
     _enrich_danger(result, enable_danger)
     _bucket_unused_definitions(result, unused)
     result["unused_variables"].extend(getattr(analyzer, "_enum_member_findings", ()))
+    result["unused_variables"].extend(
+        getattr(analyzer, "_namespace_member_findings", ())
+    )
     _attach_unused_ts_exports(result, unused_ts_exports, project_cfg)
+    fold_findings_into_unused_files(result)
     hidden_parameters = _hidden_parameter_count(analyzer, thr, evidence, project_cfg)
     if hidden_parameters:
         # Unused parameters are below the default threshold (callback and
@@ -205,6 +209,8 @@ def build_analysis_result(
         ts_importers_of=ts_importers_of,
         project_root=getattr(analyzer, "_project_root", None),
         workspace_inventory=workspace_inventory,
+        ts_module_requests=getattr(analyzer, "_ts_module_requests", None),
+        ts_module_resolver=getattr(analyzer, "_ts_module_resolver", None),
     )
     graded_files = files
     apply_report_scope(result, analyzer, modmap=modmap, raw_imports=all_raw_imports)
@@ -243,10 +249,6 @@ def build_analysis_result(
     if result.get("assessment"):
         result["analysis_summary"]["assessment_scope"] = "all_analyzed_findings"
     return result
-
-
-
-
 
 
 def _hidden_parameter_count(analyzer, thr, evidence, project_cfg) -> int:
@@ -594,6 +596,136 @@ def _attach_unused_ts_exports(result, unused_ts_exports, project_cfg):
         return
     result.setdefault("unused_exports", []).extend(unused_ts_exports)
     result["analysis_summary"]["unused_exports_count"] = len(unused_ts_exports)
+
+
+# Findings about the contents of a file: once the whole file is reported
+# unused, deleting it resolves them too.
+_FILE_CONTENT_SECTIONS = (
+    "unused_functions",
+    "unused_imports",
+    "unused_classes",
+    "unused_variables",
+    "unused_parameters",
+    "unused_exports",
+)
+_FILE_CONTENT_QUALITY_RULES = frozenset({"SKY-Q408", "SKY-Q414"})
+
+
+def fold_findings_into_unused_files(result) -> int:
+    """Report an unused JS/TS file once, not once per symbol inside it.
+
+    A file no entry reaches is one "unused file" finding; judging every
+    symbol inside it as well would make a missed entry cost a file finding
+    plus one finding per symbol. Symbol, export, import, unlisted-dependency
+    (SKY-Q408) and unresolved-import (SKY-Q414) findings inside a file that
+    SKY-E003 reports are folded into that finding: the file finding lists
+    them under ``folded_findings`` (rule, name, line) and
+    ``analysis_summary.dead_code_folded_into_unused_files`` counts them.
+    """
+    unused = {}
+    for item in result.get("unused_files") or ():
+        if item.get("rule_id") == "SKY-E003" and item.get("file"):
+            unused[os.path.realpath(str(item["file"]))] = item
+    if not unused:
+        return 0
+    folded_by_rule = {}
+
+    def keep(item, section) -> bool:
+        path = item.get("file")
+        if not path or os.path.realpath(str(path)) not in unused:
+            return True
+        rule = item.get("rule_id") or section
+        folded_by_rule[rule] = folded_by_rule.get(rule, 0) + 1
+        unused[os.path.realpath(str(path))].setdefault("folded_findings", []).append(
+            {
+                "rule_id": rule,
+                "name": item.get("name") or item.get("simple_name") or "",
+                "full_name": item.get("full_name"),
+                "type": item.get("type"),
+                "line": item.get("line"),
+                "confidence": item.get("confidence"),
+            }
+        )
+        # The row stays in its section (Done, cleanup, PR impact and editor
+        # integrations read it there); reports group it under the file.
+        item["folded_into"] = unused[os.path.realpath(str(path))]["file"]
+        return True
+
+    for section in _FILE_CONTENT_SECTIONS:
+        items = result.get(section)
+        if items:
+            result[section] = [item for item in items if keep(item, section)]
+    quality = result.get("quality")
+    if quality:
+        result["quality"] = [
+            item
+            for item in quality
+            if item.get("rule_id") not in _FILE_CONTENT_QUALITY_RULES
+            or keep(item, "quality")
+        ]
+        result["analysis_summary"]["quality_count"] = len(result["quality"])
+    if "unused_exports" in result:
+        result["analysis_summary"]["unused_exports_count"] = len(
+            result["unused_exports"]
+        )
+    folded = sum(folded_by_rule.values())
+    if folded:
+        result["analysis_summary"]["dead_code_folded_into_unused_files"] = {
+            "count": folded,
+            "by_rule": dict(sorted(folded_by_rule.items())),
+        }
+    return folded
+
+
+def with_folded_findings(result):
+    """A copy of ``result`` with folded findings back in their sections.
+
+    For harnesses that score symbol-level findings: a symbol folded into an
+    unused file's SKY-E003 finding is still reported.
+    """
+    if not isinstance(result, dict):
+        return result
+    expanded = dict(result)
+    present = {
+        (
+            section,
+            str(item.get("file")),
+            item.get("line"),
+            item.get("name") or item.get("simple_name"),
+        )
+        for section in _FILE_CONTENT_SECTIONS
+        for item in result.get(section) or ()
+        if isinstance(item, dict)
+    }
+    for row in result.get("unused_files") or ():
+        if not isinstance(row, dict):
+            continue
+        for folded in row.get("folded_findings") or ():
+            section = folded.get("rule_id")
+            if section not in _FILE_CONTENT_SECTIONS:
+                continue
+            if (
+                section,
+                str(row.get("file")),
+                folded.get("line"),
+                folded.get("name"),
+            ) in present:
+                continue
+            if expanded.get(section) is result.get(section):
+                expanded[section] = list(result.get(section) or ())
+            expanded[section].append(
+                {
+                    "name": folded.get("name"),
+                    "simple_name": folded.get("name"),
+                    "full_name": folded.get("full_name") or folded.get("name"),
+                    "type": folded.get("type"),
+                    "file": row.get("file"),
+                    "line": folded.get("line"),
+                    "confidence": folded.get("confidence"),
+                    "folded_into": "SKY-E003",
+                }
+            )
+    return expanded
 
 
 def _attach_grade(

@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 import signal
 
+from skylos.scale.safe_spawn import no_cwd_imports_in_children
+
 
 logger = logging.getLogger("Skylos")
 
@@ -31,6 +33,15 @@ def _run_pool(files, modmap, changed_files, jobs, worker_fn, proc_kwargs, progre
     in the parent); broken lists files whose futures failed because the pool
     died, in submission order. Those must not be re-run in the parent.
     """
+    with no_cwd_imports_in_children():
+        return _run_pool_in_safe_env(
+            files, modmap, changed_files, jobs, worker_fn, proc_kwargs, progress
+        )
+
+
+def _run_pool_in_safe_env(
+    files, modmap, changed_files, jobs, worker_fn, proc_kwargs, progress
+):
     results = {}
     broken = []
     ex = ProcessPoolExecutor(max_workers=jobs, initializer=_ignore_sigint)

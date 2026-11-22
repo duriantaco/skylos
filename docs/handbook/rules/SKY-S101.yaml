@@ -76,7 +76,10 @@ how_skylos_decides:
     `*.test.ts`, `*.spec.js`, `testdata/`, `*_test.go` and similar) it looks
     only for provider keys, private keys and structured credentials; the
     generic, URL-password and config-credential checks are off there. `skylos done` and the agent
-    hooks use the same rule.
+    hooks use the same rule. In Rust the same holds for test-only code inside
+    other files: `#[cfg(test)]` (or `#[cfg(all(test, ...))]`) items, a
+    `#![cfg(test)]` file and functions whose attribute ends in `test` or
+    `bench` (`#[test]`, `#[tokio::test]`), when the file parses cleanly.
   - >-
     Looks for provider key shapes first: GitHub `ghp_…` and `github_pat_…`,
     GitLab `glpat-…` and its other token prefixes, Slack `xox…-` tokens and
@@ -106,7 +109,12 @@ how_skylos_decides:
     value is skipped when it looks like an identifier (starts with a letter
     or `_`, then only letters, digits and `_`), a URL without credentials, a
     file path, prose or a `${VAR}` reference, and is not reported at all in
-    HTML, CSS, source maps and minified bundles.
+    HTML, CSS, source maps and minified bundles. A whole string literal that
+    is a shuffled standard encoding alphabet (every base64, base64url,
+    base62, base58, base36 or base32 character exactly once) is skipped when
+    it is passed to an alphabet constructor or bound to an alphabet or
+    charset name (`Alphabet::new("AphruV…")`); elsewhere it stays a finding
+    that is not listed by default.
   - >-
     Also reports a password written inside a URL, such as a database
     connection string, and literal values for password and secret keys in
@@ -126,6 +134,11 @@ source_refs:
   - path: skylos/rules/secrets.py
     symbol: "def scan_ctx("
     note: the per-file decision order.
+  - path: skylos/visitors/languages/rust/test_regions.py
+    symbol: "def test_line_numbers("
+    note: Rust test-only lines.
+  - path: skylos/rules/secret_shapes.py
+    symbol: "def is_declared_alphabet("
   - path: skylos/rules/secrets.py
     symbol: "PROVIDER_PATTERNS = ["
   - path: skylos/rules/secrets.py
