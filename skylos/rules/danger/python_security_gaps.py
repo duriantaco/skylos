@@ -13,12 +13,13 @@ import string
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from .import_proof import provider_is_unshadowed
+from .module_namespace import attribute_write_names, module_name_for, module_rebinding
 from .untrusted_sources import (
     UntrustedSourceIndex,
     _scope_bindings,
     _unsafe_import_roots,
 )
-from .module_namespace import attribute_write_names, module_name_for, module_rebinding
 
 _HTTP_CALLS = {
     f"{module}.{method}"
@@ -78,11 +79,30 @@ class _Alternatives:
     values: tuple
 
 
+@dataclass(frozen=True)
+class _EntityResolvingParser:
+    line: int
+
+
+@dataclass(frozen=True)
+class _SaxParser:
+    factory: ast.Call
+    external_entities_line: int | None = None
+
+
+@dataclass(frozen=True)
+class _HmacDigest:
+    line: int
+
+
 class _Checker(ast.NodeVisitor):
     def __init__(self, tree, file_path, findings, project_root=None):
         self.file_path = str(file_path)
         self.findings = findings
-        self.bindings: dict[str, str | ast.AST | None] = {}
+        self.bindings: dict[
+            str, str | ast.AST | _EntityResolvingParser | _SaxParser | _HmacDigest | None
+        ] = {}
+        self.has_sax_parser = False
         self.container_values: dict[str, ast.AST] = {}
         self.path_arguments: dict[str, ast.AST] = {}
         self.attribute_values: dict[str, ast.AST] = {}
@@ -547,12 +567,130 @@ class _Checker(ast.NodeVisitor):
                     f"{node.module}.{alias.name}"
                 )
 
+    def _entity_resolving_parser(self, node):
+        if isinstance(node, ast.Name):
+            value = self.bindings.get(node.id)
+            return value if isinstance(value, _EntityResolvingParser) else None
+        if isinstance(node, ast.Call) and self._name(node.func) == "lxml.etree.XMLParser":
+            options, _ = self._keywords(node)
+            if self._literal(options.get("resolve_entities")) is True:
+                return _EntityResolvingParser(node.lineno)
+        return None
+
+    def _sax_parser(self, node):
+        if isinstance(node, ast.Name):
+            value = self.bindings.get(node.id)
+            return value if isinstance(value, _SaxParser) else None
+        if (
+            isinstance(node, ast.Call)
+            and not node.args
+            and not node.keywords
+            and self._name(node.func) == "xml.sax.make_parser"
+            and provider_is_unshadowed("xml", self.file_path, self.project_root)
+        ):
+            self.has_sax_parser = True
+            return _SaxParser(node)
+        return None
+
+    def _update_sax_parser(self, parser, replacement):
+        for name, bound in self.bindings.items():
+            if isinstance(bound, _SaxParser) and bound.factory is parser.factory:
+                self.bindings[name] = replacement
+
+    def _check_sax_call(self, node, name, kwargs):
+        receiver = (
+            self._sax_parser(node.func.value)
+            if isinstance(node.func, ast.Attribute)
+            else None
+        )
+        method = node.func.attr if receiver is not None else None
+        if method == "setFeature":
+            replacement = None
+            if len(node.args) == 2 and not node.keywords and not (
+                self.computed_attributes or method in self.written_attributes
+            ):
+                feature = node.args[0]
+                if (
+                    self._name(feature) == "xml.sax.handler.feature_external_ges"
+                    or self._literal(feature) == "http://xml.org/sax/features/external-general-entities"
+                ):
+                    enabled = self._literal(node.args[1]) is True
+                    replacement = _SaxParser(
+                        receiver.factory, node.lineno if enabled else None
+                    )
+            self._update_sax_parser(receiver, replacement)
+            return
+
+        parser = None
+        if method == "parse":
+            if not self.computed_attributes and method not in self.written_attributes:
+                parser = receiver
+        elif name in {"xml.dom.pulldom.parse", "xml.dom.pulldom.parseString"}:
+            parser_argument = kwargs.get("parser", node.args[1] if len(node.args) > 1 else None)
+            parser = self._sax_parser(parser_argument)
+        if parser is not None:
+            if parser.external_entities_line is not None:
+                self._emit(
+                    node,
+                    "SKY-D236",
+                    "HIGH",
+                    f"XML parsed with external entity resolution enabled on line {parser.external_entities_line}. "
+                    "Disable entity resolution when parsing untrusted XML.",
+                )
+            return
+        if receiver is not None:
+            self._update_sax_parser(receiver, None)
+        for argument in (*node.args, *(keyword.value for keyword in node.keywords)):
+            if isinstance(argument, ast.Name):
+                existing = self._sax_parser(argument)
+                if existing is not None:
+                    self._update_sax_parser(existing, None)
+
+    def _hmac_digest(self, node):
+        if isinstance(node, ast.Name):
+            bound = self.bindings.get(node.id)
+            return bound if isinstance(bound, _HmacDigest) else None
+        if not isinstance(node, ast.Call):
+            return None
+        if self._name(node.func) == "hmac.digest":
+            return _HmacDigest(node.lineno)
+        if isinstance(node.func, ast.Attribute) and node.func.attr in {"digest", "hexdigest"}:
+            constructor = node.func.value
+            if isinstance(constructor, ast.Call) and self._name(constructor.func) in {"hmac.new", "hmac.HMAC"}:
+                return _HmacDigest(node.lineno)
+        return None
+
+    def visit_Compare(self, node):
+        operands = [node.left, *node.comparators]
+        for left, operator, right in zip(operands, node.ops, node.comparators):
+            if not isinstance(operator, (ast.Eq, ast.NotEq)):
+                continue
+            left_digest, right_digest = self._hmac_digest(left), self._hmac_digest(right)
+            if bool(left_digest) == bool(right_digest):
+                continue
+            other = right if left_digest else left
+            if self._literal(other) is not _UNKNOWN:
+                continue
+            if provider_is_unshadowed("hmac", self.file_path, self.project_root):
+                self._emit(
+                    node, "SKY-D253", "MEDIUM",
+                    "A keyed HMAC digest is compared with ordinary equality. "
+                    "Use hmac.compare_digest for signature verification.",
+                )
+                break
+        self.generic_visit(node)
+
     def _bind(self, target, value):
         if isinstance(target, ast.Name):
             # Capture aliases at assignment time; later rebinding the original
             # name must not change the callable that was already captured.
             self.bindings[target.id] = (
-                self._mapping(value) or self._name(value) or value
+                self._mapping(value)
+                or self._name(value)
+                or self._entity_resolving_parser(value)
+                or self._sax_parser(value)
+                or self._hmac_digest(value)
+                or value
             )
             self.path_arguments.pop(target.id, None)
             self.augmented_names.discard(target.id)
@@ -931,6 +1069,17 @@ class _Checker(ast.NodeVisitor):
     def visit_Call(self, node):
         name = self._name(node.func)
         kwargs, unpacked = self._keywords(node)
+        if name in {"lxml.etree.parse", "lxml.etree.fromstring", "lxml.etree.XML"}:
+            parser = kwargs.get("parser", node.args[1] if len(node.args) > 1 else None)
+            config = self._entity_resolving_parser(parser)
+            if config and provider_is_unshadowed("lxml", self.file_path, self.project_root):
+                self._emit(
+                    node,
+                    "SKY-D236",
+                    "HIGH",
+                    f"XML parsed with external entity resolution enabled on line {config.line}. "
+                    "Disable entity resolution when parsing untrusted XML.",
+                )
         if (
             name
             in {
@@ -1145,6 +1294,8 @@ class _Checker(ast.NodeVisitor):
                 "Predictable shared temporary directory accepts an existing path; use tempfile.mkdtemp or TemporaryDirectory to create a private directory.",
             )
         self.generic_visit(node)
+        if self.has_sax_parser:
+            self._check_sax_call(node, name, kwargs)
         if (
             isinstance(node.func, ast.Attribute)
             and node.func.attr == "append"
