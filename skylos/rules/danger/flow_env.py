@@ -16,7 +16,11 @@ not tracked.
 
 The client turns expressions into labels (``evaluate``) and says what a name
 bound outside the scope may hold (``outer``) and what an unknown value is
-(``top``). Work is bounded: a run that exceeds its budget returns None.
+(``top``). Work is bounded: a run that exceeds its budget returns None. A step
+is one node visited, plus one per label of a set larger than ``FREE_LABELS``.
+Sets do get that large: ``obj.check(obj.attr)`` may store ``obj.attr`` in
+``obj``, so a client that derives attribute labels can double ``obj`` with
+every such call, and a long test method once ran for hours.
 """
 
 from __future__ import annotations
@@ -25,6 +29,9 @@ import ast
 
 MAX_STEPS = 60000
 MAX_LOOP_PASSES = 5
+# A label set up to this size costs no extra steps; a larger one costs a step
+# per label each time it is built or read.
+FREE_LABELS = 64
 
 _READ_ONLY_METHODS = frozenset(
     {
@@ -322,6 +329,12 @@ class ValueFlow:
         if self._steps > self._max_steps:
             raise FlowBudgetExceeded
 
+    def _charge(self, labels: frozenset) -> frozenset:
+        """Count the work of building or reading a large label set."""
+        if len(labels) > FREE_LABELS:
+            self._tick(len(labels))
+        return labels
+
     def _absent(self, name: str) -> frozenset:
         if self._function and name in self._locals:
             return frozenset()
@@ -345,7 +358,7 @@ class ValueFlow:
                     labels |= state.names[name]
                 else:
                     labels |= self._absent(name)
-            names[name] = labels
+            names[name] = self._charge(labels)
         displays = states[0].displays
         for state in states[1:]:
             displays &= state.displays
@@ -402,16 +415,16 @@ class ValueFlow:
         if node is None:
             return frozenset()
         if isinstance(node, ast.Name):
-            return self._name(node.id)
+            return self._charge(self._name(node.id))
         if isinstance(node, ast.NamedExpr):
             return self.value(node.value)
         if isinstance(node, ast.IfExp):
-            return self.value(node.body) | self.value(node.orelse)
+            return self._charge(self.value(node.body) | self.value(node.orelse))
         if isinstance(node, ast.BoolOp):
             labels = frozenset()
             for item in node.values:
                 labels |= self.value(item)
-            return labels
+            return self._charge(labels)
         if (
             isinstance(node, ast.Subscript)
             and isinstance(node.value, ast.Name)
@@ -419,14 +432,14 @@ class ValueFlow:
         ):
             fact = self._item(node.value.id, node.slice)
             if fact is not None:
-                return fact
+                return self._charge(fact)
         if isinstance(
             node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)
         ):
-            return self._comprehension_value(node)
+            return self._charge(self._comprehension_value(node))
         if isinstance(node, ast.Lambda):
             return self.top
-        return frozenset(self._evaluate(node, self.value))
+        return self._charge(frozenset(self._evaluate(node, self.value)))
 
     def _comprehension_value(self, node) -> frozenset:
         overlay = {}
@@ -481,7 +494,7 @@ class ValueFlow:
     def _weak(self, name: str, labels: frozenset) -> None:
         if name in self._declared:
             return
-        self.state.names[name] = self._current(name) | labels
+        self.state.names[name] = self._charge(self._current(name) | labels)
         self.state.forget(name)
 
     def _bind_walrus(self, name: str, labels: frozenset, conditional: bool) -> None:
@@ -634,7 +647,7 @@ class ValueFlow:
         if name in self._declared:
             return
         tracked = name in self.state.displays
-        self.state.names[name] = self._current(name) | labels
+        self.state.names[name] = self._charge(self._current(name) | labels)
         known, key = _literal_key(target.slice)
         if tracked and known:
             self.state.items[(name, key)] = labels

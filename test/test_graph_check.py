@@ -27,6 +27,16 @@ def _fake_done(monkeypatch, code, seconds=0.0):
     monkeypatch.setattr(check, "done_command", lambda base: [sys.executable, "-c", script])
 
 
+def test_done_command_keeps_the_repository_off_the_import_path(tmp_path):
+    command = check.done_command("origin/main")
+    interpreter = command[: command.index(check.ENTRY)]
+    probe = "import os, sys; print(any(os.path.abspath(p or '.') == os.getcwd() for p in sys.path))"
+    shown = subprocess.run(
+        [*interpreter, probe], cwd=tmp_path, capture_output=True, text=True, check=True
+    )
+    assert shown.stdout.strip() == "False"
+
+
 @pytest.mark.parametrize(
     ("code", "state", "message"),
     [(0, "passed", "Passed"), (1, "blocked", "Blocked"), (2, "error", "exit 2")],
