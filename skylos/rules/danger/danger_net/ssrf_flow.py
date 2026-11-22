@@ -3,7 +3,8 @@ import ast
 import re
 import sys
 from collections import Counter
-from functools import cached_property
+from functools import cached_property, lru_cache
+from pathlib import Path
 from typing import NamedTuple
 from skylos.core.test_paths import is_test_source_file
 from skylos.rules.danger.module_namespace import module_name_for, module_rebinding
@@ -872,6 +873,111 @@ def _ssrf_security_evidence(
     return evidence
 
 
+# A ``Client.get(user_id)`` on the scanned project's own class (a cache or
+# database lookup) or module is not an outbound request, however HTTP-like the
+# receiver's name. Only imports that resolve to a project source file count.
+_MAX_PROJECT_MODULE_BYTES = 2_000_000
+
+
+def _project_module_file(directory: Path, name: str) -> Path | None:
+    module = directory / f"{name}.py"
+    if module.is_file():
+        return module
+    package = directory / name / "__init__.py"
+    return package if package.is_file() else None
+
+
+@lru_cache(maxsize=512)
+def _parsed_module_bindings(path: str, stamp) -> tuple[frozenset, frozenset] | None:
+    try:
+        if Path(path).stat().st_size > _MAX_PROJECT_MODULE_BYTES:
+            return None
+        tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError, RecursionError):
+        return None
+    counts = Counter()
+    classes = set()
+    for node in _walk_function_body(tree):
+        for name in _bound_names(node):
+            counts[name] += 1
+        if isinstance(node, ast.ClassDef):
+            classes.add(node.name)
+    declared_global = {
+        name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Global)
+        for name in node.names
+    }
+    stable = frozenset(
+        name for name in classes if counts[name] == 1 and name not in declared_global
+    )
+    return stable, frozenset(counts) | declared_global
+
+
+def _project_module_bindings(path: Path) -> tuple[frozenset, frozenset] | None:
+    """Classes a project module binds exactly once at top level, and every
+    name it binds there; ``None`` when the module cannot be read."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return _parsed_module_bindings(str(path), (stat.st_mtime_ns, stat.st_size))
+
+
+def _names_project_definition(
+    directory: Path | None, module: Path | None, dotted: list[str]
+) -> bool:
+    """``dotted``, read from ``module`` (or the package ``directory``), names a
+    class the project defines. A project module is not enough: it may wrap an
+    HTTP client behind a function named ``get``. A name the module binds any
+    other way (an instance, an import) is not proven."""
+    for index, part in enumerate(dotted):
+        if module is not None:
+            bindings = _project_module_bindings(module)
+            if bindings is None:
+                return False
+            classes, bound = bindings
+            if part in classes:
+                return index == len(dotted) - 1
+            if part in bound:
+                return False
+        found = _project_module_file(directory, part) if directory else None
+        if found is None:
+            return False
+        module = found
+        directory = found.parent if found.name == "__init__.py" else None
+    return False
+
+
+def _import_names_project_definition(
+    file_path, statement: ast.AST, alias: ast.alias, attrs: list[str]
+) -> bool:
+    if isinstance(statement, ast.ImportFrom):
+        if alias.name == "*":
+            return False
+        module = statement.module.split(".") if statement.module else []
+        dotted = [*module, alias.name, *attrs]
+    elif alias.asname:
+        dotted = [*alias.name.split("."), *attrs]
+    else:
+        dotted = [alias.name.split(".", 1)[0], *attrs]
+    try:
+        directory = Path(file_path).resolve().parent
+        if isinstance(statement, ast.ImportFrom) and statement.level:
+            for _ in range(statement.level - 1):
+                directory = directory.parent
+            init = directory / "__init__.py"
+            module = init if init.is_file() else None
+            return _names_project_definition(directory, module, dotted)
+        # Absolute imports resolve against the directory holding the file's
+        # top-level package (the file's own directory for a script).
+        while (directory / "__init__.py").is_file() and directory.parent != directory:
+            directory = directory.parent
+        return _names_project_definition(directory, None, dotted)
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return False
+
+
 class _SSRFFlowChecker(TaintVisitor):
     HTTP_METHODS = {"get", "post", "put", "delete", "head", "options", "request"}
 
@@ -1128,7 +1234,8 @@ class _SSRFFlowChecker(TaintVisitor):
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
-        if node.module:
+        # A relative import names a project module, never the HTTP library.
+        if node.module and not node.level:
             top_level = node.module.split(".")[0]
             if top_level in HTTP_MODULES:
                 for alias in node.names:
@@ -1567,6 +1674,9 @@ class _SSRFFlowChecker(TaintVisitor):
         if self._is_known_http_receiver_name(name):
             return True
 
+        if self._receiver_is_project_definition(node):
+            return False
+
         if self._receiver_is_orm_session(node):
             return False
 
@@ -1584,6 +1694,42 @@ class _SSRFFlowChecker(TaintVisitor):
             return True
 
         return False
+
+    @cached_property
+    def _module_import_bindings(self) -> dict[str, tuple[ast.AST, ast.alias]]:
+        bindings = {}
+        for node in _walk_function_body(self.tree) if self.tree is not None else ():
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    bindings[alias.asname or alias.name.split(".", 1)[0]] = (
+                        node,
+                        alias,
+                    )
+        return bindings
+
+    def _receiver_is_project_definition(self, node: ast.Call) -> bool:
+        """The receiver is a class or module of the scanned project: one this
+        file defines, or an import that resolves to a project source file."""
+        receiver = node.func.value
+        attrs = []
+        while isinstance(receiver, ast.Attribute):
+            attrs.append(receiver.attr)
+            receiver = receiver.value
+        if not isinstance(receiver, ast.Name):
+            return False
+        attrs.reverse()
+        name = receiver.id
+        if self._name_is_local(name, node) or not self._module_global_is_stable(name):
+            return False
+        if self._module_class(name) is not None:
+            return not attrs
+        binding = self._module_import_bindings.get(name)
+        if binding is None:
+            return False
+        statement, alias = binding
+        return _import_names_project_definition(
+            self.file_path, statement, alias, attrs
+        )
 
     def _is_mapping_value(self, value: ast.AST | None) -> bool:
         if isinstance(value, (ast.Dict, ast.DictComp)):
