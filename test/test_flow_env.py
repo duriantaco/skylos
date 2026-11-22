@@ -24,7 +24,14 @@ def _evaluate(node, value):
     return labels
 
 
-def _sink_labels(code, *, max_steps=flow_env.MAX_STEPS):
+def _attribute_paths(node, value):
+    """Like callable identities: ``a.b`` has a label per label of ``a``."""
+    if isinstance(node, ast.Attribute):
+        return frozenset(label + "." + node.attr for label in value(node.value))
+    return _evaluate(node, value)
+
+
+def _sink_labels(code, *, max_steps=flow_env.MAX_STEPS, evaluate=_evaluate):
     tree = ast.parse(textwrap.dedent(code))
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
     sinks = [
@@ -36,7 +43,7 @@ def _sink_labels(code, *, max_steps=flow_env.MAX_STEPS):
     ]
     flow = flow_env.ValueFlow(
         function,
-        _evaluate,
+        evaluate,
         outer=lambda name: frozenset(),
         top=UNKNOWN,
         max_steps=max_steps,
@@ -304,3 +311,19 @@ def test_parameters_are_unknown_and_unreachable_or_nested_sinks_are_absent():
 def test_budget_exceeded_returns_none():
     body = "\n".join(f"    x{index} = source()" for index in range(200))
     assert _sink_labels(f"def f():\n{body}\n    sink(x1)\n", max_steps=50) is None
+
+
+def test_label_sets_that_double_per_statement_exhaust_the_budget():
+    # ``obj.check(obj.attrN)`` may store ``obj.attrN`` in ``obj``, so every call
+    # doubles obj's labels for a few steps of node work. Uncounted, 20 calls
+    # build a million labels, and a long test method never finishes.
+    calls = "\n".join(f"    obj.check(obj.attr{index})" for index in range(20))
+    code = f"def f():\n    obj = source()\n{calls}\n    sink(obj)\n"
+    assert _sink_labels(code, evaluate=_attribute_paths) is None
+
+
+def test_label_sets_within_the_free_allowance_cost_no_extra_steps():
+    calls = "\n".join(f"    obj.check(obj.attr{index})" for index in range(5))
+    code = f"def f():\n    obj = source()\n{calls}\n    sink(obj)\n"
+    (labels,) = _sink_labels(code, evaluate=_attribute_paths, max_steps=200)
+    assert len(labels) == 2**5 <= flow_env.FREE_LABELS
