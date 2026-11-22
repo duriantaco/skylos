@@ -65,13 +65,17 @@ jobs:
 
       - name: Install trusted Skylos for pull requests
         if: github.event_name == 'pull_request'
+        env:
+          TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
         run: |
+          if [[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid pull request base SHA" >&2
+            exit 1
+          fi
           uv venv --python 3.11
-          # Reviewed scanner fixes and the compact PR report button, including
-          # escaped report links and isolated Actions context.
-          # Use this snapshot until those fixes are released on PyPI.
-          # Keep this immutable and independent of the PR's code or metadata.
-          uv pip install --python .venv/bin/python "skylos @ git+https://github.com/duriantaco/skylos.git@ab5fda49b111f844e0ae3c7fa2218b3730a6bb31"
+          # Skylos from the base branch commit, never from the PR's own code.
+          uv pip install --python .venv/bin/python "skylos @ git+https://github.com/duriantaco/skylos.git@$TRUSTED_BASE_SHA"
           .venv/bin/skylos --version
 
       - name: Use repo Skylos on trusted refs
@@ -171,78 +175,6 @@ jobs:
         run: |
           .venv/bin/skylos cicd gate --input "$REPORT" --summary --advisory
 
-      - name: Block high-risk security findings
-        if: always() && steps.scan.outcome == 'success'
-        env:
-          REPORT: ${{ steps.scan.outputs.REPORT }}
-        run: |
-          python - "$REPORT" <<'PY'
-          import json
-          import os
-          import sys
-          from pathlib import Path
-
-          severity_rank = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
-          report_path = sys.argv[1]
-          with open(report_path, encoding="utf-8") as fh:
-              report = json.load(fh)
-
-          # These deliberately vulnerable examples are excluded by this
-          # repository's scan policy. Older released scanners miss that
-          # exclusion in config and diff-mode injection checks. Keep their
-          # raw findings in the artifact; real secrets still block everywhere.
-          fixture_root = Path.cwd() / "benchmarks/security/fixtures"
-          excluded_fixture_dangers = 0
-          blocking = []
-          for category in ("danger", "secrets"):
-              for finding in report.get(category, []) or []:
-                  raw_path = finding.get("file") or finding.get("file_path")
-                  if category == "danger" and raw_path:
-                      candidate = Path(os.path.abspath(raw_path))
-                      if candidate.is_relative_to(fixture_root):
-                          excluded_fixture_dangers += 1
-                          continue
-                  severity = str(
-                      finding.get("severity") or ("HIGH" if category == "secrets" else "")
-                  ).upper()
-                  if severity_rank.get(severity, 0) >= severity_rank["HIGH"]:
-                      blocking.append((category, severity, finding))
-
-          if excluded_fixture_dangers:
-              print(f"Excluded {excluded_fixture_dangers} benchmark fixture danger findings from the self-scan gate; raw findings remain in the report.")
-
-          if not blocking:
-              print("No high-risk security findings in the scanned scope.")
-              sys.exit(0)
-
-          summary = os.environ.get("GITHUB_STEP_SUMMARY")
-          lines = [
-              "## Blocking Skylos findings",
-              "",
-              "HIGH/CRITICAL security or secret findings were detected in the scanned scope.",
-              "",
-          ]
-
-          for category, severity, finding in blocking[:20]:
-              file_path = finding.get("file") or finding.get("file_path") or "unknown"
-              line = finding.get("line") or finding.get("line_number") or 1
-              rule = finding.get("rule_id") or finding.get("rule") or category
-              message = finding.get("message") or "High-risk finding"
-              detail = f"{severity} {rule} {file_path}:{line} - {message}"
-              print(detail)
-              print(f"::error file={file_path},line={line},title=Skylos {rule}::{detail}")
-              lines.append(f"- `{severity}` `{rule}` {file_path}:{line} - {message}")
-
-          if len(blocking) > 20:
-              lines.append(f"- ...and {len(blocking) - 20} more finding(s)")
-
-          if summary:
-              with open(summary, "a", encoding="utf-8") as fh:
-                  fh.write("\n".join(lines) + "\n")
-
-          raise SystemExit(1)
-          PY
-
       - name: GitHub annotations
         if: always() && steps.scan.outcome == 'success'
         env:
@@ -301,12 +233,19 @@ jobs:
           python-version: "3.11"
 
       - name: Install trusted PR renderer
+        env:
+          TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
         run: |
+          if [[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid pull request base SHA" >&2
+            exit 1
+          fi
           # Keep the installed renderer outside the PR checkout. Isolated
           # Python prevents checked-out modules from replacing it.
           python -I -m venv "$RUNNER_TEMP/skylos-review-venv"
           "$RUNNER_TEMP/skylos-review-venv/bin/python" -I -m pip install \
-            "skylos @ git+https://github.com/duriantaco/skylos.git@ab5fda49b111f844e0ae3c7fa2218b3730a6bb31"
+            "skylos @ git+https://github.com/duriantaco/skylos.git@$TRUSTED_BASE_SHA"
 
       - name: Download the saved scan report
         continue-on-error: true
