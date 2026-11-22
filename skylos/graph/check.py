@@ -29,7 +29,10 @@ CHECK_CLIENT = "check-button"
 
 
 def done_command(base: str) -> list[str]:
-    return [sys.executable, "-c", ENTRY, "done", "--base", base, "--agent", CHECK_CLIENT]
+    # The run starts in the user's repository. ``-c`` would put that folder
+    # first on sys.path, so a repo holding ``json.py`` would run inside Skylos;
+    # ``-P`` imports the way the ``skylos`` console script does.
+    return [sys.executable, "-P", "-c", ENTRY, "done", "--base", base, "--agent", CHECK_CLIENT]
 
 
 class CheckRunner:
