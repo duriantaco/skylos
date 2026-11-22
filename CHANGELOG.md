@@ -4,7 +4,6 @@
 
 ### Bug Fixes
 
-* **danger:** keep a symlink review item blocking while any caller's path source is unresolved, so a sink with one validated caller no longer stops failing the security gate.
 * **danger:** keep prefix aliases in their declaration scope, reject ambiguous separator imports and captured reassignments, and bound tuple and string proof expansion without suppressing unresolved path findings.
 * **danger:** resolve compiled filename pattern providers where the pattern was declared, so helper-local imports cannot change whether a pattern is trusted.
 * **danger:** stop reporting archive writes that are already safe: yauzl entry names (yauzl rejects `..` and absolute names unless `decodeStrings: false`), `basename()` of the name, `path.resolve`/`path.join` results checked with `startsWith(root + sep)` or `x !== root && !x.startsWith(root + sep)`, checks that reject `..` parts (`split(...).includes('..')`, `parts.some(p => p === '..')`, `path.relative(...)`), and paths returned or asserted by a checking helper defined in the same file.

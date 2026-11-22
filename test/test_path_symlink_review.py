@@ -276,23 +276,32 @@ def unresolved(payload: Flight):
 """
 
 
-def test_unresolved_caller_keeps_the_symlink_finding_blocking(tmp_path, monkeypatch):
-    """A caller whose path source is not followed must not be covered by the
-    validated caller's proof: the finding stays blocking until every caller is
-    accounted for."""
+def test_unresolved_caller_is_named_in_the_review_item(tmp_path, monkeypatch):
     monkeypatch.setenv("SKYLOS_JOBS", "1")
-    result = _analyze(
-        tmp_path,
-        {
-            "app.py": APP.format(start="clean(payload.name)", read="clean(payload.name)")
-            + UNRESOLVED_CALLER,
-            "storage.py": STORAGE,
-        },
-    )
+    app = APP.format(start="clean(payload.name)", read="clean(payload.name)") + UNRESOLVED_CALLER
+    line = app.splitlines().index("    save(os.path.join(ROOT, plugin.pick(payload.name)))") + 1
+    result = _analyze(tmp_path, {"app.py": app, "storage.py": STORAGE})
     rows = {row["rule_id"]: row for row in _symlink_rows(result)}
+
     assert set(rows) == {"SKY-D324", "SKY-D325"}
-    # The read route only ever passes the validated component; the write route
-    # has one validated caller and one unresolved one, so it stays blocking.
-    assert is_nonblocking_review(rows["SKY-D325"])
-    assert not is_nonblocking_review(rows["SKY-D324"])
-    assert check_gate(result, {"gate": {"max_security": 0}})[0] is False
+    write, read = rows["SKY-D324"], rows["SKY-D325"]
+    assert is_nonblocking_review(write) and is_nonblocking_review(read)
+    source = f"app.py:{line} return value of `plugin.pick(...)` is not followed"
+    assert write["metadata"]["path_provenance"]["component_review"]["unresolved_sources"] == [source]
+    assert "does not cover them: " + source in write["message"]
+    assert "unresolved_sources" not in read["metadata"]["path_provenance"]["component_review"]
+    assert "could not follow" not in read["message"]
+    assert write["review_item"]["group"] != read["review_item"]["group"]
+    assert [row["rule_id"] for row in rows.values() if is_listed(row, "danger")] == [
+        "SKY-D324",
+        "SKY-D325",
+    ]
+    assert check_gate(result, {"gate": {"max_security": 0}})[0] is True
+
+
+def test_unresolved_sources_alone_are_not_reported(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+    app = APP.format(start="plugin.pick(payload.name)", read="plugin.pick(payload.name)")
+    result = _analyze(tmp_path, {"app.py": app, "storage.py": STORAGE})
+
+    assert _symlink_rows(result) == []
