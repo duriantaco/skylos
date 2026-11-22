@@ -506,6 +506,20 @@ class _HtmlScanner:
             self.tail = ""
 
 
+def hole_states(parts):
+    """The tokenizer state at each value part, in order (``double_quoted``
+    or ``single_quoted`` inside a quoted attribute value)."""
+    scanner = _HtmlScanner()
+    states = []
+    for part in parts:
+        if part[0] == "text":
+            scanner.feed(part[1])
+        else:
+            states.append(scanner.state)
+            scanner.skip_hole()
+    return states
+
+
 def hole_requirements(parts):
     """``(level needed, description)`` for each value part, in order."""
     scanner = _HtmlScanner()
