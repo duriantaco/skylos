@@ -7423,6 +7423,13 @@ class Skylos:
                 project_root=project_root,
                 suppressed=all_suppressed,
             )
+            from skylos.rules.danger.constant_refutation import (
+                refute_constant_argument_findings,
+            )
+
+            all_dangers = refute_constant_argument_findings(
+                all_dangers, project_root=project_root, suppressed=all_suppressed
+            )
             from skylos.visitors.languages.typescript.weak_hash_callers import (
                 list_weak_hashes_of_credentials,
             )

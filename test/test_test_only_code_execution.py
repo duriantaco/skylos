@@ -7,6 +7,13 @@ import pytest
 
 from skylos.analyzer import analyze
 
+
+@pytest.fixture(autouse=True)
+def _keep_constant_code_findings(monkeypatch):
+    # The harness evaluates fixed code (eval("namespace['x']")), which the
+    # constant-argument refutation drops; these tests are about severity.
+    monkeypatch.setenv("SKYLOS_CONSTANT_REFUTATION", "0")
+
 HARNESS = """
     import unittest
 
