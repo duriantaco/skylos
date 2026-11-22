@@ -3,9 +3,10 @@ title: XML external entity (XXE)
 family: security
 severity: HIGH
 severity_note: >-
-  CRITICAL when request data is parsed, HIGH for any other input. dom4j
+  On the JVM, CRITICAL when request data is parsed, HIGH for other input. Python
+  findings for explicitly enabled external entity processing are HIGH. dom4j
   `DocumentHelper.parseText()` is MEDIUM, or HIGH with request data.
-languages: [Java, Kotlin]
+languages: [Java, Kotlin, Python]
 gate:
   full: critical_blocks
   note: >-
@@ -16,7 +17,9 @@ what_it_is: >-
   An XML document can declare a DTD with "external entities": names that
   the parser replaces with the contents of a file or a URL. SKY-D236 reports
   Java and Kotlin XML parsers that are created and used without turning DTDs
-  or external entities off, which the JDK parsers allow by default.
+  or external entities off, which the JDK parsers allow by default. In Python,
+  it checks for a parse call using a parser explicitly configured to resolve
+  external entities.
 
 why_it_matters: >-
   A visitor who uploads XML with `<!ENTITY x SYSTEM "file:///etc/passwd">`

@@ -2,7 +2,7 @@ id: SKY-D253
 title: Secret compared with == or ===
 family: security
 severity: MEDIUM
-languages: [TypeScript/JavaScript]
+languages: [TypeScript/JavaScript, Python]
 gate:
   full: counted
 cwe: [CWE-208]
@@ -11,7 +11,9 @@ what_it_is: >-
   `===` and `==` stop at the first character that differs, so comparing a
   secret this way takes slightly longer the more leading characters match.
   SKY-D253 reports an equality check in TypeScript or JavaScript where one
-  side is named like a password, token, signature, hash or key.
+  side is named like a password, token, signature, hash or key. In Python it
+  recognizes a keyed digest produced by the standard hmac module compared
+  with a runtime value using ordinary equality or inequality.
 
 why_it_matters: >-
   That time difference is a "timing side channel". An attacker who can send
