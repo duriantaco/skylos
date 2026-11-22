@@ -187,3 +187,71 @@ def test_inline_ignore_on_one_site_does_not_hide_the_others(tmp_path):
     )
     cv2 = [row for row in rows if row["symbol"] == "cv2"]
     assert [Path(row["file"]).name for row in cv2] == ["b.py"]
+
+
+RUN_AS_MODULE = "python -m fly.plan.flight_test_10\n"
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        ".github/workflows/ci.yml",
+        ".circleci/config.yml",
+        "makefile",
+        "justfile",
+        "Jenkinsfile",
+        "deploy/pipeline.yaml",
+    ],
+)
+def test_module_run_by_a_launcher_disables_the_sibling_exemption(
+    monkeypatch, tmp_path, launcher
+):
+    _stub(monkeypatch)
+    repo, source = _plan(tmp_path, extra={launcher: RUN_AS_MODULE})
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [source])
+
+    assert [symbol for _rule, symbol in _symbols(findings)] == ["flight_common"]
+
+
+def test_module_run_in_a_cache_folder_is_not_a_launcher(monkeypatch, tmp_path):
+    _stub(monkeypatch)
+    repo, source = _plan(tmp_path, extra={".cache/old/ci.yml": RUN_AS_MODULE})
+
+    assert _symbols(dep.scan_python_dependency_hallucinations(repo, [source])) == []
+
+
+@pytest.mark.parametrize("folder", [".nox/tests/lib", ".cache/tool", ".terraform/modules"])
+def test_large_hidden_folders_do_not_spend_the_launcher_budget(
+    monkeypatch, tmp_path, folder
+):
+    _stub(monkeypatch)
+    monkeypatch.setattr(dep, "_LAUNCHER_FILE_BUDGET", 3)
+    extra = {f"{folder}/f{i}.json": "{}\n" for i in range(10)}
+    repo, source = _plan(tmp_path, extra=extra)
+
+    assert _symbols(dep.scan_python_dependency_hallucinations(repo, [source])) == []
+
+
+@pytest.mark.parametrize(
+    ("extra", "expected"),
+    [
+        ({}, []),
+        ({".github/workflows/ci.yml": RUN_AS_MODULE}, ["utils"]),
+        ({"makefile": "test:\n\t" + RUN_AS_MODULE}, ["utils"]),
+        ({f".nox/t/lib/f{i}.json": "{}\n" for i in range(10)}, []),
+    ],
+)
+def test_full_scan_reports_a_pypi_named_sibling_only_when_run_as_module(
+    monkeypatch, tmp_path, extra, expected
+):
+    _stub(monkeypatch, {"utils": "exists"})
+    monkeypatch.setattr(dep, "_LAUNCHER_FILE_BUDGET", 3)
+    script = "#!/usr/bin/env python3\nfrom utils import run\n\nrun()\n"
+    repo, _source = _plan(tmp_path, script=script, extra=extra)
+    write_fixture(repo, "fly/plan/utils.py", "def run():\n    pass\n")
+    files = sorted(repo.rglob("*.py"))
+
+    findings = dep.scan_python_dependency_hallucinations(repo, files)
+
+    assert [symbol for _rule, symbol in _symbols(findings)] == expected
