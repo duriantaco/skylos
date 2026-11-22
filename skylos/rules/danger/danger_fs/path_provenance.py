@@ -6793,8 +6793,9 @@ class _Tracer:
                 for value in values
             )
             and not any(
-                self._model_callable_argument(unit, argument) for argument in arguments
+                self._model_callable_argument(unit, argument) for argument in node.args
             )
+            and all(self._plain_model_keyword(unit, keyword) for keyword in node.keywords)
         ):
             return True
         if isinstance(node.func, ast.Name):
@@ -6847,6 +6848,28 @@ class _Tracer:
         return any(
             value.kind in {"fn", "cls"}
             for value in self.project.values(unit, scope, target) or ()
+        )
+
+    def _plain_model_keyword(self, unit, keyword):
+        """Whether a keyword of a pure call is plain data or a pure builtin.
+
+        Pure functions take their callbacks by keyword and call them with the
+        other arguments: ``json.dumps(item, default=hook)`` and ``cls=``,
+        ``max(items, key=hook)``. A hook from a plugin or a parameter is opaque
+        code that would receive the model, so only plain data (a literal or a
+        module-level scalar such as ``INDENT = 2``) or a pure builtin
+        (``key=len``, ``default=str``) leaves the call pure."""
+        if keyword.arg is None:
+            return False
+        value = keyword.value
+        scope = unit.scope_of(value)
+        if _constant_literal(value) or self._inert_field_default(unit, scope, value):
+            return True
+        if not isinstance(value, (ast.Name, ast.Attribute)):
+            return False
+        values = self.project.values(unit, scope, value) or ()
+        return bool(values) and all(
+            item.kind == "ext" and _model_pure_callable(item.name) for item in values
         )
 
     @staticmethod

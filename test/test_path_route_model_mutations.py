@@ -467,6 +467,8 @@ def test_model_effects_follow_runtime_import_domain(tmp_path, monkeypatch, impor
         "return item.dict()",
         "return item.model_dump()",
         "return helpers.answer()",
+        "return json.dumps(item.model_dump(), indent=INDENT, default=str)",
+        "return max(item.name, 'a', key=len)",
     ],
     ids=[
         "pure-builtin",
@@ -474,6 +476,8 @@ def test_model_effects_follow_runtime_import_domain(tmp_path, monkeypatch, impor
         "read-method",
         "read-method-json",
         "project-module",
+        "pure-call-plain-keywords",
+        "pure-call-builtin-key",
     ],
 )
 def test_an_inert_helper_may_still_read_the_model(tmp_path, monkeypatch, call):
@@ -481,8 +485,10 @@ def test_an_inert_helper_may_still_read_the_model(tmp_path, monkeypatch, call):
     goes through a pure builtin, a string method, one of the model's own read
     methods or a function of a project module; the route must stay proven."""
     prelude = (
-        "\nimport external_plugin\n"
+        "\nimport json\n"
+        "import external_plugin\n"
         "import helpers\n"
+        "INDENT = 2\n"
         "def helper(item):\n"
         f"    {call}\n"
         "external_plugin.register(helper)\n"
@@ -507,6 +513,9 @@ def test_an_inert_helper_may_still_read_the_model(tmp_path, monkeypatch, call):
         "external_plugin.mutate(item if item else None)",
         "external_plugin.mutate(json.dumps(item, default=lambda value: value))",
         "item.rewrite()",
+        "json.dumps(item, default=external_plugin.hook)",
+        "json.dumps(item, cls=external_plugin.Encoder)",
+        "max([item], key=external_plugin.key)",
     ],
     ids=[
         "star-list",
@@ -516,6 +525,9 @@ def test_an_inert_helper_may_still_read_the_model(tmp_path, monkeypatch, call):
         "conditional",
         "callback-keyword",
         "receiver-method",
+        "plugin-default-hook",
+        "plugin-encoder-class",
+        "plugin-key-function",
     ],
 )
 def test_escaped_helper_hands_the_model_over_whatever_the_wrapper(
@@ -529,6 +541,30 @@ def test_escaped_helper_hands_the_model_over_whatever_the_wrapper(
         "import external_plugin\n"
         "def handoff(item):\n"
         f"    {handoff}\n"
+        "external_plugin.register(handoff)\n"
+    )
+    result, rows = _scan(tmp_path, monkeypatch, mutation="pass", prelude=prelude)
+    _assert_unsafe(result, rows)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "return json.dumps(item, default=hook)",
+        "return min([item], key=hook)",
+    ],
+    ids=["default-hook", "key-function"],
+)
+def test_escaped_helper_hands_the_model_to_a_callback_it_was_given(
+    tmp_path, monkeypatch, body
+):
+    """A pure function still calls the hook it is handed by keyword with the
+    model; a hook that arrives as a parameter is whatever opaque code passed."""
+    prelude = (
+        "\nimport json\n"
+        "import external_plugin\n"
+        "def handoff(item, hook):\n"
+        f"    {body}\n"
         "external_plugin.register(handoff)\n"
     )
     result, rows = _scan(tmp_path, monkeypatch, mutation="pass", prelude=prelude)
