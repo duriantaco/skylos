@@ -8,7 +8,7 @@ severity_note: >-
   parameters is HIGH ("Likely unparameterized SQL execution"). In Go, Java,
   Kotlin and C#, a query string-built from values with no proven outside
   source is HIGH.
-languages: [Python, TypeScript/JavaScript, Java, Kotlin, Go, C#, PHP]
+languages: [Python, TypeScript/JavaScript, Java, Kotlin, Go, C#, PHP, Ruby]
 gate:
   full: critical_blocks
 cwe: [CWE-89]
@@ -19,6 +19,7 @@ what_it_is: >-
   SKY-D211 when a query that is pasted together with an f-string, `+`, `%`
   or `.format()`, or that carries outside input, reaches a database call
   such as `cursor.execute()`.
+  In Rails controllers, it checks whether request data reaches raw SQL.
 
 why_it_matters: >-
   A visitor who types `' OR '1'='1` into a search box can read every row,

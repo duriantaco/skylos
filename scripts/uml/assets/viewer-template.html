@@ -1,0 +1,623 @@
+<div id="skylos-personal-uml">
+  <h2>Skylos code review</h2>
+  <div class="uml-tabs" role="tablist" aria-label="Report views">
+    <button id="uml-tab-changes" type="button" role="tab" aria-selected="true" aria-controls="uml-overview">What changed</button>
+    <button id="uml-tab-map" type="button" role="tab" aria-selected="false" aria-controls="uml-map" tabindex="-1">UML map</button>
+  </div>
+  <section id="uml-overview" class="uml-panel" role="tabpanel" aria-labelledby="uml-tab-changes" tabindex="0">
+    <p id="uml-overview-status" class="text-muted" aria-live="polite">Reading the changes…</p>
+    <div id="uml-overview-content" class="uml-panel"></div>
+  </section>
+  <section id="uml-map" class="uml-panel" role="tabpanel" aria-labelledby="uml-tab-map" tabindex="0" hidden>
+  <div id="uml-meta" class="text-small text-muted" aria-live="polite">Reading the source map…</div>
+  <div id="uml-map-controls" class="uml-panel">
+  <details id="uml-update">
+    <summary>Update details</summary>
+    <div id="uml-update-content" class="uml-reading-section"></div>
+  </details>
+  <div class="viz-row">
+    <button id="uml-cli" class="btn" type="button">CLI entry</button>
+    <button id="uml-scan" class="btn" type="button">Static scan</button>
+    <button id="uml-scripts" class="btn" type="button">Scripts</button>
+    <button id="uml-changes" class="btn" type="button">Review local changes</button>
+    <button id="uml-how" class="btn btn-ghost" type="button">How to review</button>
+    <button id="uml-back" class="btn btn-ghost" type="button" disabled>Back</button>
+  </div>
+  <div class="viz-controls">
+    <label class="form-label" for="uml-query">Find a function or script
+      <input id="uml-query" class="form-control" type="search" placeholder="analyze, process_file, scripts/corpus_ci.py" autocomplete="off">
+    </label>
+    <label class="form-label" for="uml-view">Diagram
+      <select id="uml-view" class="form-select">
+        <option value="calls">Function calls</option>
+        <option value="classes">Classes and methods</option>
+        <option value="files">Scripts and files</option>
+      </select>
+    </label>
+  </div>
+  <label class="form-label" for="uml-match">Follow a function or file
+    <select id="uml-match" class="form-select" aria-label="Follow a function or file"></select>
+  </label>
+  <div class="viz-row">
+    <label class="form-check"><input id="uml-types" class="form-check-input" type="checkbox"><span class="form-check-label">Type and value references</span></label>
+    <label class="form-check"><input id="uml-possible" class="form-check-input" type="checkbox"><span class="form-check-label">Possible name matches</span></label>
+  </div>
+  <section id="uml-change-list" hidden>
+    <h3>Local changes to read</h3>
+    <p id="uml-change-scope" class="text-small text-muted"></p>
+    <div id="uml-change-items" class="uml-links"></div>
+  </section>
+  <section id="uml-guide" hidden>
+    <h3>A practical review flow</h3>
+    <ol>
+      <li><strong>State the intended behavior.</strong> Write a concrete input and its expected result. Identify what must stay unchanged.</li>
+      <li><strong>Follow the change through the system.</strong> Read the complete function, its callers, the helpers it uses, and the before/after code.</li>
+      <li><strong>Challenge the implementation.</strong> Check boundary inputs, failure handling, shared state, compatibility, and complexity.</li>
+      <li><strong>Inspect the tests.</strong> Check that their assertions are meaningful and would fail for a broken implementation. Run the relevant checks; a static test link is not coverage.</li>
+      <li><strong>Use AI to explain and propose concerns.</strong> Verify its claims against source and tests. AI can miss defects and report issues that are not real.</li>
+      <li><strong>Leave actionable findings.</strong> Name the location, triggering input, actual consequence, and the change or test needed. State what was checked and what remains unverified.</li>
+    </ol>
+    <p class="text-small">Sources: <a href="https://google.github.io/eng-practices/review/reviewer/looking-for.html" target="_blank" rel="noopener noreferrer">Google review guidance</a> · <a href="https://docs.github.com/en/copilot/responsible-use/agents" target="_blank" rel="noopener noreferrer">GitHub's guidance on AI limitations</a></p>
+  </section>
+  <div id="uml-workspace">
+    <section id="uml-graph-zone" aria-label="Code relationships">
+      <div id="uml-selected" class="text-small" aria-live="polite"></div>
+      <div id="uml-drawing"></div>
+      <div id="uml-more" class="viz-row"></div>
+      <div class="text-small text-muted">Arrow: caller → callee · Dashed: callback, dispatch, or reference · Triangle: inherits</div>
+      <details>
+        <summary>All callers and callees, explained</summary>
+        <div id="uml-accessible"></div>
+      </details>
+    </section>
+    <aside id="uml-reader" class="card" aria-label="Function explanation">
+      <div id="uml-reader-content"></div>
+    </aside>
+  </div>
+  <div class="text-small text-muted">Source snapshot; dynamic and external calls may be missing. Tests and fixture repositories are excluded.</div>
+  </div>
+  </section>
+</div>
+<style>
+#skylos-personal-uml { display:grid; gap:calc(var(--font-size-base, 14px) * .8); color:var(--foreground); }
+#skylos-personal-uml .uml-panel { display:grid; gap:12px; min-width:0; }
+#skylos-personal-uml .uml-panel[hidden] { display:none; }
+#skylos-personal-uml .uml-tabs { display:flex; gap:20px; border-bottom:1px solid var(--border); }
+#skylos-personal-uml .uml-tabs button { padding:8px 2px; border:0; border-bottom:2px solid transparent; background:transparent; color:var(--muted-foreground); }
+#skylos-personal-uml .uml-tabs [aria-selected=true] { border-bottom-color:var(--viz-series-1); color:var(--foreground); font-weight:600; }
+#skylos-personal-uml #uml-overview { width:min(100%, 860px); overflow-wrap:anywhere; }
+#skylos-personal-uml .uml-change-card { display:grid; gap:6px; padding:12px 0; border-bottom:1px solid var(--border); }
+#skylos-personal-uml .uml-change-card .btn { justify-self:start; margin-top:4px; }
+#skylos-personal-uml #uml-drawing { min-width:0; }
+#skylos-personal-uml .uml-svg { display:block; overflow:visible; }
+#skylos-personal-uml .uml-svg text { fill:var(--foreground); font-weight:400; }
+#skylos-personal-uml .uml-svg .uml-label { fill:var(--muted-foreground); }
+#skylos-personal-uml .uml-svg .uml-name { font-weight:500; }
+#skylos-personal-uml .uml-svg .uml-box { fill:var(--card); stroke:var(--border); stroke-width:1; }
+#skylos-personal-uml .uml-svg .uml-selected-box { fill:color-mix(in srgb, var(--viz-series-1, var(--primary)) 9%, var(--card)); stroke:var(--foreground); }
+#skylos-personal-uml .uml-svg .uml-divider { stroke:var(--border); stroke-width:1; }
+#skylos-personal-uml .uml-svg .uml-wire { fill:none; stroke:var(--muted-foreground); stroke-width:1.2; }
+#skylos-personal-uml .uml-links { display:grid; gap:calc(var(--font-size-base, 14px) * .4); margin-top:calc(var(--font-size-base, 14px) * .5); }
+#skylos-personal-uml .uml-links-group { display:grid; gap:calc(var(--font-size-base, 14px) * .4); }
+#skylos-personal-uml #uml-workspace { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(330px,.8fr); gap:24px; align-items:start; }
+#skylos-personal-uml #uml-graph-zone { display:grid; gap:12px; min-width:0; }
+#skylos-personal-uml #uml-reader-content { display:grid; gap:14px; min-width:0; overflow-wrap:anywhere; }
+#skylos-personal-uml .uml-reading-section { display:grid; gap:6px; min-width:0; }
+#skylos-personal-uml .uml-reading-link { display:grid; gap:5px; padding-block:8px; }
+#skylos-personal-uml .uml-reading-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; }
+#skylos-personal-uml .uml-source { white-space:pre-wrap; overflow-wrap:anywhere; font-family:monospace; margin-block:8px; }
+#skylos-personal-uml .uml-reading-list { margin:0; padding-left:20px; }
+#skylos-personal-uml .uml-reading-link button, #skylos-personal-uml .uml-links button { white-space:normal; overflow-wrap:anywhere; text-align:left; max-width:100%; }
+#skylos-personal-uml .uml-svg g[data-node-index] { cursor:pointer; }
+@media(max-width:1100px) {
+  #skylos-personal-uml #uml-workspace { grid-template-columns:minmax(0,1fr); }
+  #skylos-personal-uml #uml-reader { grid-row:1; }
+  #skylos-personal-uml #uml-graph-zone { grid-row:2; }
+}
+@media(max-width:420px) { #skylos-personal-uml .uml-reading-columns { grid-template-columns:minmax(0,1fr); } }
+</style>
+<script>
+(async () => {
+  const root = document.getElementById('skylos-personal-uml');
+  const find = id => root.querySelector('#uml-' + id);
+  const namespace = 'http://www.w3.org/2000/svg';
+  const create = (tag, props = {}, content) => {
+    const el = document.createElementNS(namespace, tag);
+    for (const [key, value] of Object.entries(props)) el.setAttribute(key, value);
+    if (content != null) el.textContent = content;
+    return el;
+  };
+  const bytes = Uint8Array.from(atob('__UML_PAYLOAD__'), c => c.charCodeAt(0));
+  const data = JSON.parse(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
+  const nodes = data.nodes.map((n, index) => {
+    const kind = data.kinds[n[3]], file = data.files[n[1]], module = data.modules[n[1]];
+    const id = kind === 'script' ? 'script:' + file : kind === 'workflow' ? 'workflow:' + file : kind === 'command' ? 'command:' + n[0] : module + '.' + n[0];
+    return {index, name:n[0], fi:n[1], file, line:n[2], kind, id, detail:data.details?.[index]};
+  });
+  const tabs = [find('tab-changes'), find('tab-map')];
+  function selectTab(selected) {
+    for (const tab of tabs) {
+      const active = tab === selected;
+      tab.setAttribute('aria-selected', String(active));
+      tab.tabIndex = active ? 0 : -1;
+      document.getElementById(tab.getAttribute('aria-controls')).hidden = !active;
+    }
+    if (selected === tabs[1] && nodes.length) draw();
+  }
+  for (const tab of tabs) {
+    tab.addEventListener('click', () => selectTab(tab));
+    tab.addEventListener('keydown', event => {
+      const target = {Home: tabs[0], End: tabs[1], ArrowLeft: tabs.find(other => other !== tab), ArrowRight: tabs.find(other => other !== tab)}[event.key];
+      if (!target) return;
+      event.preventDefault();
+      selectTab(target);
+      target.focus();
+    });
+  }
+  renderOverview();
+  if (!nodes.length) {
+    find('map-controls').hidden = true;
+    find('meta').textContent = 'There are no source symbols or workflows to diagram for this comparison.';
+    return;
+  }
+  const byId = new Map(nodes.map(n => [n.id, n.index]));
+  const outgoing = nodes.map(() => []), incoming = nodes.map(() => []), members = new Map(), methodOwner = new Map();
+  const edges = data.edges.map(([a,b,k]) => ({a,b,kind:data.linkKinds[k]}));
+  for (const edge of edges) { outgoing[edge.a].push(edge); incoming[edge.b].push(edge); }
+  for (const n of nodes) if (n.kind === 'method') {
+    const owner = byId.get(n.id.slice(0,n.id.lastIndexOf('.')));
+    if (owner !== undefined) {
+      if (!members.has(owner)) members.set(owner, []);
+      members.get(owner).push(n.index); methodOwner.set(n.index, owner);
+    }
+  }
+  const fileOutgoing = data.files.map(() => new Map()), fileIncoming = data.files.map(() => new Map());
+  const fileMembers=data.files.map(()=>[]);
+  for(const n of nodes)fileMembers[n.fi].push(n.index);
+  function fileEntry(fi) {
+    const entries=fileMembers[fi].map(i=>nodes[i]);
+    return entries.find(n=>n.kind==='function'&&n.name==='main') || entries.find(n=>n.kind==='script') || entries.find(n=>n.kind==='class') || entries[0];
+  }
+  for (const e of edges) {
+    const a = nodes[e.a].fi, b = nodes[e.b].fi;
+    if (a === b) continue;
+    const key = b + ':' + e.kind, reverse = a + ':' + e.kind;
+    const f = fileOutgoing[a].get(key) || {node:b,kind:e.kind,count:0}; f.count++; fileOutgoing[a].set(key,f);
+    const r = fileIncoming[b].get(reverse) || {node:a,kind:e.kind,count:0}; r.count++; fileIncoming[b].set(reverse,r);
+  }
+  const publicCount = (data.meta.counts.function || 0) + (data.meta.counts.method || 0);
+  find('meta').textContent = `${publicCount.toLocaleString()} functions & methods · ${(data.meta.counts.class || 0).toLocaleString()} classes · ${data.meta.files.toLocaleString()} files · ${data.meta.builtAt.slice(0,10)}`;
+  const firstClass = nodes.find(node => node.kind === 'class')?.index;
+  const firstChanged = nodes.find(node => node.detail?.change)?.index;
+  const initial = (data.update?.ci ? firstChanged : byId.get('skylos.entry.main')) ?? data.starts[0] ?? 0;
+  let state = {focus:initial, file:nodes[initial].fi, view:'calls', query:'', types:false, possible:false, limit:6};
+  find('view').querySelector('[value="classes"]').disabled = firstClass === undefined;
+  let history = [], resultKeys = [], lastSets = null;
+  const preferred = ['skylos.cli.main','skylos.entry._run_recording_failures','skylos.cli.run_analyze','skylos.analyzer.analyze','skylos.analyzer.Skylos.analyze','skylos.analysis.file_worker.process_file','skylos.pipeline.run_pipeline','skylos.config.load_config'];
+  const priority = n => {
+    if (n.kind === 'command' || n.kind === 'script') return 200000;
+    const index = preferred.indexOf(n.id);
+    return index >= 0 ? 100000-index : incoming[n.index].length + outgoing[n.index].length*.3;
+  };
+  function restore(saved) {
+    const model = saved?.modelContent || {}, priv = saved?.privateContent || {};
+    if (byId.has(model.function)) state.focus = byId.get(model.function);
+    if (['calls','files'].includes(model.view) || (model.view === 'classes' && firstClass !== undefined)) state.view = model.view;
+    state.file = nodes[state.focus].fi;
+    if (typeof priv.query === 'string') state.query = priv.query;
+    state.types = Boolean(priv.types); state.possible = Boolean(priv.possible);
+  }
+  restore(window.openai?.widgetState);
+  function save() {
+    window.openai?.setWidgetState?.({modelContent:{function:nodes[state.focus].id,view:state.view,file:data.files[state.file]},privateContent:{query:state.query,types:state.types,possible:state.possible}})?.catch(() => {});
+  }
+  function sync() {
+    find('query').value=state.query; find('view').value=state.view;
+    find('types').checked=state.types; find('possible').checked=state.possible;
+    find('back').disabled=!history.length;
+  }
+  function enabled(kind) {
+    if (kind === 'name match') return state.possible;
+    if (kind === 'reference' || kind === 'uses') return state.types || state.view==='classes';
+    return true;
+  }
+  function owner(index) { return state.view==='classes' ? (methodOwner.get(index) ?? index) : index; }
+  function mergeLinks(links) {
+    const grouped=new Map(),rank=['calls','creates','starts','runs script','inherits','callback','routes','uses','reference','name match'];
+    for(const link of links){
+      if(!grouped.has(link.node))grouped.set(link.node,{node:link.node,count:0,kinds:new Set()});
+      const item=grouped.get(link.node);item.count+=link.count;item.kinds.add(link.kind);
+    }
+    return [...grouped.values()].map(item=>{
+      const kinds=[...item.kinds].sort((a,b)=>rank.indexOf(a)-rank.indexOf(b));
+      return {node:item.node,count:item.count,kind:kinds[0],kindLabel:kinds.join(', ')};
+    });
+  }
+  function aggregate(list, reverse, focusSet) {
+    const combined = new Map();
+    for (const e of list) {
+      if (!enabled(e.kind)) continue;
+      const target=owner(reverse?e.a:e.b);
+      if (focusSet.has(target)) continue;
+      const key=target+':'+e.kind;
+      const item=combined.get(key)||{node:target,kind:e.kind,count:0}; item.count++; combined.set(key,item);
+    }
+    return mergeLinks([...combined.values()]).sort((a,b)=>priority(nodes[b.node])-priority(nodes[a.node])||nodes[a.node].name.localeCompare(nodes[b.node].name));
+  }
+  function relations() {
+    if (state.view==='files') return {
+      callers:mergeLinks([...fileIncoming[state.file].values()].filter(e=>enabled(e.kind))).sort((a,b)=>b.count-a.count),
+      callees:mergeLinks([...fileOutgoing[state.file].values()].filter(e=>enabled(e.kind))).sort((a,b)=>b.count-a.count)
+    };
+    if (state.view==='classes' && methodOwner.has(state.focus)) state.focus=methodOwner.get(state.focus);
+    const group=new Set([state.focus,...(state.view==='classes'?(members.get(state.focus)||[]):[])]);
+    const ins=[],outs=[];
+    for (const id of group) { ins.push(...incoming[id]); outs.push(...outgoing[id]); }
+    return {callers:aggregate(ins,true,group),callees:aggregate(outs,false,group)};
+  }
+  function choose(index, fileMode=false) {
+    history.push({...state});
+    if (fileMode) { state.file=index; const n=nodes.find(n=>n.fi===index&&n.kind==='script')||nodes.find(n=>n.fi===index); if(n) state.focus=n.index; }
+    else { state.focus=index; state.file=nodes[index].fi; if(state.view==='classes'&&nodes[index].kind!=='class'&&!methodOwner.has(index)) state.view='calls'; }
+    state.query=''; state.limit=6; sync(); updateMatches(); draw(); save();
+  }
+  function updateMatches() {
+    const query=state.query.trim().toLowerCase();
+    const select=find('match'); select.replaceChildren();
+    if(state.view==='files') {
+      resultKeys=data.files.map((name,index)=>({name,index})).filter(f=>!query||f.name.toLowerCase().includes(query)).sort((a,b)=>Number(b.name.startsWith('scripts/'))-Number(a.name.startsWith('scripts/'))||a.name.localeCompare(b.name)).map(f=>f.index);
+      if(!resultKeys.includes(state.file) && !query) resultKeys.unshift(state.file);
+      for(const fi of resultKeys) select.add(new Option(data.files[fi],String(fi)));
+      select.value=String(state.file);
+    } else {
+      const choices=nodes.filter(n=>(state.view!=='classes'||n.kind==='class')&&(!query||(n.name+' '+n.file).toLowerCase().includes(query))).sort((a,b)=>Number(b.name.toLowerCase()===query)-Number(a.name.toLowerCase()===query)||priority(b)-priority(a)||a.id.localeCompare(b.id));
+      resultKeys=choices.slice(0,250).map(n=>n.index);
+      if(!resultKeys.includes(state.focus) && !query) resultKeys.unshift(state.focus);
+      for(const i of resultKeys) select.add(new Option(`${nodes[i].name}${['function','method'].includes(nodes[i].kind)?'()':''} — ${nodes[i].file}:${nodes[i].line}`,String(i)));
+      select.value=String(state.focus);
+    }
+    if(!resultKeys.length) select.add(new Option('No matching functions or files',''));
+    else if(select.selectedIndex<0) select.selectedIndex=0;
+  }
+  function wrap(text,width,font=13) {
+    const max=Math.max(12,Math.floor(width/(font*.57))), result=[];
+    let remaining=String(text);
+    while(remaining.length>max) {
+      const part=remaining.slice(0,max+1);
+      let cut=Math.max(part.lastIndexOf('/'),part.lastIndexOf('.'),part.lastIndexOf('_'),part.lastIndexOf(' '))+1;
+      if(cut<max*.4)cut=max;
+      result.push(remaining.slice(0,cut)); remaining=remaining.slice(cut);
+    }
+    if(remaining) result.push(remaining);
+    return result;
+  }
+  function boxInfo(index,fileMode=false) {
+    if(fileMode) {
+      const path=data.files[index], name=path.split('/').pop();
+      return {index,kind:path.startsWith('scripts/')?'script':path.startsWith('.github/')?'workflow':'file',name,file:path,location:path,methods:[]};
+    }
+    const methodList=[...(members.get(index)||[])].sort((a,b)=>Number(nodes[a].name.split('.').pop().startsWith('_'))-Number(nodes[b].name.split('.').pop().startsWith('_'))||nodes[a].line-nodes[b].line);
+    const n=nodes[index], rows=state.view==='classes'&&n.kind==='class'?methodList.slice(0,8).map(i=>nodes[i].name.split('.').pop()+'()'):[];
+    return {...n,location:n.file+':'+n.line,methods:rows,totalMethods:(members.get(index)||[]).length};
+  }
+  function dimensions(info,width) {
+    const names=wrap(info.name+(['function','method'].includes(info.kind)?'()':''),width-24);
+    const paths=wrap(info.location,width-24,12);
+    const rows=info.methods.flatMap(m=>wrap(m,width-24,12));
+    return {info,w:width,h:32+names.length*18+paths.length*16+(rows.length?16+rows.length*17:0)+12,names,paths,rows};
+  }
+  function label(svg,x,y,text,klass='',size=14,anchor='start') {
+    svg.append(create('text',{x,y,class:klass,'font-size':size,'text-anchor':anchor},text));
+  }
+  function renderBox(svg,box,isFocus,fileMode) {
+    const {x,y,w,h,info}=box;
+    const group=create('g',{'data-node-index':info.index,'data-file-mode':String(fileMode),'data-tooltip':info.name+' · '+info.location,class:'cursor-interaction'});
+    group.append(create('rect',{x,y,width:w,height:h,class:'uml-box'+(isFocus?' uml-selected-box':'')}));
+    label(group,x+12,y+20,'«'+info.kind+'»','uml-label',12);
+    let baseline=y+41;
+    for(const line of box.names){label(group,x+12,baseline,line,'uml-name',14);baseline+=18;}
+    group.append(create('line',{x1:x,y1:baseline-8,x2:x+w,y2:baseline-8,class:'uml-divider'}));
+    baseline+=9;
+    for(const line of box.paths){label(group,x+12,baseline,line,'uml-label',12);baseline+=16;}
+    if(box.rows.length){
+      group.append(create('line',{x1:x,y1:baseline-7,x2:x+w,y2:baseline-7,class:'uml-divider'}));baseline+=10;
+      for(const line of box.rows){label(group,x+12,baseline,line,'',12);baseline+=17;}
+    }
+    group.addEventListener('click',()=>{
+      choose(info.index,fileMode);
+      if(root.getBoundingClientRect().width<1100)find('reader').scrollIntoView({block:'start',behavior:'smooth'});
+    });
+    svg.append(group);
+  }
+  function wire(svg,from,to,kind,vertical=false,reverse=false,width=0) {
+    const x1=vertical?from.x+from.w/2:from.x+from.w, y1=vertical?from.y+from.h:from.y+from.h/2;
+    const x2=vertical?to.x+to.w/2:to.x, y2=vertical?to.y:to.y+to.h/2;
+    const side=reverse?12:width-12;
+    const sideX1=reverse?from.x:from.x+from.w,sideX2=reverse?to.x:to.x+to.w;
+    const d=vertical?`M ${sideX1} ${from.y+from.h/2} H ${side} V ${to.y+to.h/2} H ${sideX2}`:`M ${x1} ${y1} C ${(x1+x2)/2} ${y1},${(x1+x2)/2} ${y2},${x2} ${y2}`;
+    const dashed=['callback','reference','routes','uses','name match'].includes(kind);
+    svg.append(create('path',{d,class:'uml-wire','marker-end':kind==='inherits'?'url(#uml-inherits)':'url(#uml-arrow)',...(dashed?{'stroke-dasharray':'5 4'}:{})}));
+  }
+  function accessibleList(sets,fileMode) {
+    const host=find('accessible');host.replaceChildren();
+    for(const [key,title] of [['callers','Called by'],['callees','Calls / leads to']]){
+      const section=document.createElement('div');section.className='uml-links-group';
+      const heading=document.createElement('h3');heading.textContent=title;section.append(heading);
+      for(const link of sets[key]){
+        const b=document.createElement('button');b.type='button';b.className='btn';
+        const text=fileMode?data.files[link.node]:nodes[link.node].name;
+        b.textContent=`${text} · ${link.kindLabel||link.kind}${link.count>1?' ×'+link.count:''}`;
+        b.addEventListener('click',()=>choose(link.node,fileMode));
+        const row=document.createElement('div');row.className='uml-reading-link';row.append(b);
+        const note=document.createElement('p');note.textContent=linkExplanation(link,key==='callers',fileMode);row.append(note);section.append(row);
+      }
+      if(!sets[key].length){const empty=document.createElement('span');empty.textContent='No mapped relationships';section.append(empty);}
+      host.append(section);
+    }
+  }
+  function element(tag,text,className='') {
+    const el=document.createElement(tag);if(text!=null)el.textContent=text;if(className)el.className=className;return el;
+  }
+  function readingSection(title,body) {
+    const section=element('section',null,'uml-reading-section');section.append(element('h3',title));
+    if(typeof body==='string')section.append(element('p',body));else if(body)section.append(body);return section;
+  }
+  function bulletList(items,ordered=false) {
+    const list=element(ordered?'ol':'ul',null,'uml-reading-list');for(const item of items)list.append(element('li',item));return list;
+  }
+  function renderOverview() {
+    const overview = data.overview;
+    const status = find('overview-status');
+    const host = find('overview-content');
+    if (!data.reviewMeta?.available) {
+      status.textContent = data.reviewMeta?.scope || 'The comparison is unavailable.';
+      return;
+    }
+    if (!overview.files.length) {
+      status.textContent = 'No files changed in this comparison.';
+      return;
+    }
+    const fileCount = overview.files.length;
+    status.textContent = `${fileCount} changed ${fileCount === 1 ? 'file' : 'files'}. ${data.reviewMeta.scope}`;
+    if (!overview.analyzed) host.append(element('p', 'Skylos could list the changed files. The code explanation is unavailable.'));
+
+    const fileStatuses = {A: 'Added', D: 'Removed', M: 'Updated', R: 'Renamed', C: 'Copied', T: 'Changed file type'};
+    const symbolStatuses = {added: 'Added', modified: 'Updated', deleted: 'Removed'};
+    const nodeByChange = new Map(nodes.map(node => [`${node.file}::${node.name}`, node.index]));
+    const changeCards = list => list.map(change => {
+      const card = element('article', null, 'uml-change-card');
+      card.append(element('h4', `${symbolStatuses[change.status]} ${change.name}`));
+      card.append(element('p', `${change.file}:${change.line}`, 'text-small text-muted'));
+      card.append(bulletList(change.explanation));
+      const index = nodeByChange.get(change.id);
+      if (change.inUml && index !== undefined) {
+        const button = element('button', 'Show in UML', 'btn');
+        button.type = 'button';
+        button.setAttribute('aria-label', `Show ${change.name} in UML`);
+        button.addEventListener('click', () => {
+          state.view = 'calls';
+          selectTab(tabs[1]);
+          choose(index);
+          tabs[1].focus();
+        });
+        card.append(button);
+      }
+      return card;
+    });
+    if (overview.symbols.length) {
+      const section = element('section');
+      section.append(element('h3', 'Changes in code'), ...changeCards(overview.symbols.slice(0, 12)));
+      const remaining = overview.symbols.length - 12;
+      if (remaining > 0) {
+        const more = element('details');
+        more.append(element('summary', `More code changes (${remaining})`));
+        const cards = element('div');
+        more.append(cards);
+        more.addEventListener('toggle', () => {
+          if (more.open && !cards.childElementCount) cards.append(...changeCards(overview.symbols.slice(12)));
+        });
+        section.append(more);
+      }
+      host.append(section);
+    }
+    if (overview.moduleChanges.length) {
+      host.append(readingSection('Values that changed', bulletList(overview.moduleChanges.map(change =>
+        `${change.name} changed in ${change.file}. Read by ${change.used_by.slice(0, 5).join(', ')}.`
+      ))));
+    }
+    if (overview.workflows.length) {
+      const section = element('section');
+      section.append(element('h3', 'Changes to CI'));
+      for (const workflow of overview.workflows) {
+        const card = element('article', null, 'uml-change-card');
+        card.append(element('h4', workflow.file), bulletList(workflow.explanation));
+        section.append(card);
+      }
+      host.append(section);
+    }
+    const files = element('details');
+    files.open = !overview.symbols.length;
+    files.append(element('summary', `Changed files (${fileCount})`));
+    files.append(bulletList(overview.files.map(file => `${fileStatuses[file.status] || 'Changed'} ${file.path}${file.previous ? ` from ${file.previous}` : ''}`)));
+    host.append(files);
+  }
+  function sourceSlice(n,wholeFile=false) {
+    wholeFile=wholeFile||['script','workflow'].includes(n.kind);
+    const lines=(data.source?.[n.fi]||'').split('\n');
+    const start=wholeFile?1:n.line,end=wholeFile?lines.length:(n.detail?.end||n.line);
+    return {start,end,text:lines.slice(start-1,end).join('\n')};
+  }
+  function linkExplanation(link,reverse,fileMode) {
+    const peer=fileMode?fileEntry(link.node):nodes[link.node];
+    if(!peer)return 'No description is available for this link.';
+    if(!fileMode){
+      const from=reverse?peer.id:nodes[state.focus].id,to=reverse?nodes[state.focus].id:peer.id;
+      const specific=data.linkNotes?.[from+'|'+to];if(specific)return specific+' '+(peer.detail?.summary||'');
+    }
+    const roles={calls:reverse?'Uses the selected code.':'Calls this code directly.',creates:reverse?'Creates the selected object.':'Creates an instance of this class.',callback:reverse?'Supplies or invokes the selected callback.':'Passes or invokes a callback; it may run later.',routes:reverse?'Routes a command to the selected code.':'Routes the command to this handler.',starts:reverse?'Starts the selected code.':'Invokes this code at startup.',inherits:reverse?'Inherits from the selected class.':'Inherits behavior from this class.',uses:'Uses this type as part of its interface or implementation.',reference:'Refers to this value; this is not evidence of a direct call.','runs script':reverse?'Launches the selected script.':'Launches this script.','name match':'Possible relationship matched by name; the exact target is uncertain.'};
+    return (fileMode?`${link.count} source relationships connect these files. `:(roles[link.kind]||'Source relationship. '))+' '+(peer.detail?.summary||'Its purpose has not been described.');
+  }
+  function relatedReading(sets,fileMode) {
+    const section=element('section',null,'uml-reading-section');section.append(element('h3','How it connects'));
+    for(const [key,title,reverse] of [['callers','What uses this',true],['callees','What it uses',false]]){
+      section.append(element('h4',title));
+      const links=sets[key].slice(0,4);
+      if(!links.length)section.append(element('p','No relationship was resolved in this source map.','text-small text-muted'));
+      for(const link of links){
+        const peer=fileMode?fileEntry(link.node):nodes[link.node];
+        const row=element('div',null,'uml-reading-link'),b=element('button',fileMode?data.files[link.node]:peer.name,'btn');b.type='button';
+        b.addEventListener('click',()=>choose(link.node,fileMode));row.append(b,element('p',linkExplanation(link,reverse,fileMode)));section.append(row);
+      }
+      if(sets[key].length>links.length)section.append(element('p',`${sets[key].length-links.length} more in the complete callers and callees list.`,'text-small text-muted'));
+    }
+    return section;
+  }
+  function renderReading(sets,fileMode) {
+    const n=fileMode?fileEntry(state.file):nodes[state.focus],d=n.detail||{},host=find('reader-content');host.replaceChildren();
+    host.append(element('h3',n.name+(['function','method'].includes(n.kind)?'()':'')));
+    host.append(element('p',fileMode?data.files[state.file]:`${n.file}:${n.line}`,'text-small text-muted'));
+    host.append(readingSection('What it does',d.summary||'A purpose description is not yet available.'));
+    host.append(element('p',d.origin||'Source relationship facts','text-small text-muted'));
+    if(d.descriptionNeedsRefresh)host.append(element('p','The earlier explanation needs a refresh because this code or a linked function changed. The facts below come from the current snapshot.','text-small'));
+    const io=element('div',null,'uml-reading-columns');
+    io.append(readingSection('Inputs',d.plainInputs||(d.params?.length?d.params.join(', '):(d.syntaxParsed&&(n.kind==='function'||n.kind==='method')?'No named input parameters.':'See the source, entry functions, and methods.'))));
+    io.append(readingSection('Returns',d.plainReturns||(d.returns?.length?d.returns.join('; '):(n.kind==='class'?'An instance when constructed.':n.kind==='script'||fileMode?'The script decides its output and exit code.':'No return value was inferred.'))));host.append(io);
+    if(d.plainInputs&&d.params?.length)host.append(element('p','Parameters: '+d.params.join(', '),'text-small text-muted'));
+    if(d.plainSteps?.length)host.append(readingSection('How it works',bulletList(d.plainSteps,true)));
+    else {
+      const operations=[];
+      for(const [line,condition] of d.conditions||[])operations.push(`Line ${line}: checks whether ${condition}.`);
+      for(const [line,call] of (d.steps||[]).slice(0,5))operations.push(`Line ${line}: invokes ${call}().`);
+      if(operations.length)host.append(readingSection('What the source shows',bulletList(operations)));
+    }
+    if(d.effects?.length)host.append(readingSection('Effects to account for',bulletList(d.effects)));
+    if(d.raises?.length)host.append(readingSection('Errors raised explicitly',d.raises.join(', ')));
+    host.append(readingSection('What to check in a review',bulletList(d.review?.length?d.review:['Does this behavior match the intended contract, including failure cases?'])));
+    if(d.change){
+      const section=readingSection('What changed',d.change.verdict);
+      if(d.change.reasons?.length)section.append(bulletList(d.change.reasons.map(reason=>typeof reason==='string'?reason:JSON.stringify(reason))));
+      const diff=element('details');diff.append(element('summary','Read before and after'));
+      for(const [label,text] of [['Before',d.change.before],['After',d.change.after]])diff.append(element('h4',label),element('pre',text||'(Not present)','uml-source'));
+      section.append(diff);host.append(section);
+    }
+    const tests=element('details');tests.append(element('summary',`Tests linked in source · ${(d.tests||[]).length} shown`));
+    tests.append(element('p','Static links within three calls; the lookup is bounded. These tests have not been run by this viewer. This is not runtime coverage.','text-small text-muted'));
+    if(d.tests?.length)tests.append(bulletList(d.tests.map(([path,line,name,distance])=>`${path}:${line} — ${name} (${distance} call${distance===1?'':'s'} away)`)));
+    else tests.append(element('p','No test surfaced in this bounded static lookup. Check the test suite before concluding that the code is untested.'));host.append(tests);
+    host.append(relatedReading(sets,fileMode));
+    const source=sourceSlice(n,fileMode),sourceView=element('details');sourceView.append(element('summary',`Read the source · lines ${source.start}–${source.end}`));
+    const codeLines=source.text.split('\n'),numbered=codeLines.slice(0,120).map((line,i)=>`${source.start+i}  ${line}`).join('\n');
+    const pre=element('pre',numbered,'uml-source');sourceView.append(pre);
+    if(codeLines.length>120){const more=element('button',`Show all ${codeLines.length} source lines`,'btn');more.type='button';more.addEventListener('click',()=>{pre.textContent=codeLines.map((line,i)=>`${source.start+i}  ${line}`).join('\n');more.remove();});sourceView.append(more);}host.append(sourceView);
+    const request=element('details');request.append(element('summary','Prepare a deeper review request'));
+    const prompt=`Review ${n.id} in ${n.file}:${n.line}.\nExplain its purpose in everyday English, trace its callers and callees, and check the implementation against its intended behavior. Report concrete issues with a location, triggering input, consequence, and useful regression test. Verify claims against source; distinguish facts from assumptions. State which tests you actually ran. Do not edit, commit, or push.\n\nCurrent description: ${d.summary||''}\n\nSource snapshot (up to 180 lines):\n${codeLines.slice(0,180).join('\n')}`;
+    const area=element('textarea');area.className='form-control';area.readOnly=true;area.rows=7;area.value=prompt;area.setAttribute('aria-label','Review request to copy');
+    const copy=element('button','Copy review request','btn');copy.type='button';const status=element('p','','text-small');
+    copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(prompt);status.textContent='Copied. Paste this into your coding-agent conversation.';}catch{area.focus();area.select();status.textContent='Select and copy the request above.';}});
+    request.append(element('p','This prepares text for your coding agent. It does not send the source to a service.'),area,copy,status);host.append(request);
+  }
+  function showChanges() {
+    const list=find('change-list');list.hidden=!list.hidden;
+    const items=find('change-items');items.replaceChildren();
+    const changed=nodes.filter(n=>n.detail?.change).sort((a,b)=>a.file.localeCompare(b.file)||a.line-b.line);
+    find('change-scope').textContent=data.reviewMeta.scope;
+    for(const n of changed){const button=element('button',`${n.name} — ${n.file}:${n.line}`,'btn');button.type='button';button.addEventListener('click',()=>{state.view='calls';choose(n.index);find('reader').scrollIntoView({block:'start',behavior:'smooth'});});items.append(button);}
+    if(!changed.length)items.append(element('p','There are no changed symbols in this map.'));
+  }
+  function draw() {
+    const fileMode=state.view==='files', sets=relations();lastSets=sets;
+    const host=find('drawing'), width=Math.max(180,Math.floor(host.getBoundingClientRect().width||736));
+    const vertical=width<660, boxWidth=vertical?Math.min(width-48,420):Math.floor((width-112)/3);
+    const allCallers=sets.callers,allCallees=sets.callees;
+    const callers=allCallers.slice(0,state.limit),callees=allCallees.slice(0,state.limit);
+    const selected=boxInfo(fileMode?state.file:state.focus,fileMode);
+    renderReading(sets,fileMode);
+    const center=dimensions(selected,boxWidth);
+    const left=callers.map(e=>({...dimensions(boxInfo(e.node,fileMode),boxWidth),link:e}));
+    const right=callees.map(e=>({...dimensions(boxInfo(e.node,fileMode),boxWidth),link:e}));
+    const gap=24,header=34;
+    const stackHeight=list=>list.reduce((total,b)=>total+b.h+gap,0);
+    let height;
+    if(vertical){
+      let y=header;
+      for(const b of left){b.x=(width-b.w)/2;b.y=y;y+=b.h+gap;}
+      y+=28;center.x=(width-boxWidth)/2;center.y=y;y+=center.h+gap+28;
+      for(const b of right){b.x=(width-b.w)/2;b.y=y;y+=b.h+gap;}
+      height=y+18;
+    }else{
+      height=Math.max(stackHeight(left),stackHeight(right),center.h)+header+24;
+      center.x=(width-boxWidth)/2;center.y=(height-center.h)/2;
+      for(const [items,x] of [[left,2],[right,width-boxWidth-2]]){
+        let y=header+(height-header-stackHeight(items))/2;
+        for(const b of items){b.x=x;b.y=y;y+=b.h+gap;}
+      }
+    }
+    const svg=create('svg',{class:'uml-svg',width:'100%',height,viewBox:`0 0 ${width} ${height}`,role:'img','aria-label':`${selected.name}: ${allCallers.length} caller relationships, ${allCallees.length} outgoing relationships. Select a function above or use the callers and callees list to navigate.`});
+    const defs=create('defs');
+    const arrow=create('marker',{id:'uml-arrow',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto'});
+    arrow.append(create('path',{d:'M 1 1 L 9 5 L 1 9',fill:'none',stroke:'var(--muted-foreground)','stroke-width':1.2}));
+    const inherit=create('marker',{id:'uml-inherits',viewBox:'0 0 12 12',refX:11,refY:6,markerWidth:10,markerHeight:10,orient:'auto'});
+    inherit.append(create('path',{d:'M 1 1 L 11 6 L 1 11 Z',fill:'var(--card)',stroke:'var(--muted-foreground)','stroke-width':1}));
+    defs.append(arrow,inherit);svg.append(defs);
+    const labelCount=(shown,total)=>shown===total?String(total):shown+' of '+total;
+    if(vertical){
+      label(svg,24,20,'Called by · '+labelCount(left.length,allCallers.length),'uml-label',12);
+      label(svg,24,center.y-12,'Selected '+selected.kind,'uml-label',12);
+      label(svg,24,right.length?right[0].y-12:center.y+center.h+34,'Calls / leads to · '+labelCount(right.length,allCallees.length),'uml-label',12);
+    }else{
+      label(svg,2,18,'Called by · '+labelCount(left.length,allCallers.length),'uml-label',12);
+      label(svg,center.x,18,'Selected '+selected.kind,'uml-label',12);
+      label(svg,width-boxWidth-2,18,'Calls / leads to · '+labelCount(right.length,allCallees.length),'uml-label',12);
+    }
+    for(const b of left)wire(svg,b,center,b.link.kind,vertical,true,width);
+    for(const b of right)wire(svg,center,b,b.link.kind,vertical,false,width);
+    for(const b of [...left,...right])renderBox(svg,b,false,fileMode);
+    renderBox(svg,center,true,fileMode);
+    host.replaceChildren(svg);
+    find('selected').textContent=selected.name+' · '+selected.location+(selected.kind==='class'?' · '+selected.totalMethods+' methods':'');
+    find('more').replaceChildren();
+    if(allCallers.length>state.limit||allCallees.length>state.limit){
+      const button=document.createElement('button');button.className='btn';button.type='button';button.textContent='Show more connections';button.addEventListener('click',()=>{state.limit+=8;draw();});find('more').append(button);
+    }
+    accessibleList(sets,fileMode);
+  }
+  find('match').addEventListener('change',e=>{if(e.target.value!=='')choose(Number(e.target.value),state.view==='files');});
+  let searchTimer;
+  find('query').addEventListener('input',e=>{state.query=e.target.value;clearTimeout(searchTimer);searchTimer=setTimeout(()=>{updateMatches();save();},100);});
+  find('query').addEventListener('keydown',e=>{if(e.key==='Enter'&&resultKeys.length){e.preventDefault();choose(Number(find('match').value),state.view==='files');}});
+  find('view').addEventListener('change',e=>{history.push({...state});state.view=e.target.value;state.query='';state.limit=6;if(state.view==='classes'&&nodes[state.focus].kind!=='class')state.focus=methodOwner.get(state.focus)??byId.get('skylos.analyzer.Skylos')??firstClass;sync();updateMatches();draw();save();});
+  for(const key of ['types','possible'])find(key).addEventListener('change',e=>{state[key]=e.target.checked;draw();save();});
+  find('back').addEventListener('click',()=>{if(history.length){state=history.pop();sync();updateMatches();draw();save();}});
+  for (const [button, target] of [['cli', 'skylos.entry.main'], ['scan', 'skylos.analyzer.analyze'], ['scripts', 'script:scripts/corpus_ci.py']]) {
+    const index = byId.get(target);
+    const control = find(button);
+    control.hidden = index === undefined;
+    if (index === undefined) continue;
+    control.addEventListener('click', () => {
+      const fileMode = button === 'scripts';
+      state.view = fileMode ? 'files' : 'calls';
+      choose(fileMode ? nodes[index].fi : index, fileMode);
+    });
+  }
+  find('changes').addEventListener('click',showChanges);
+  find('how').addEventListener('click',()=>{find('guide').hidden=!find('guide').hidden;});
+  if(data.update){
+    const u=data.update, host=find('update-content');
+    host.append(element('p',`Report revision: ${(u.head_commit||'working tree').slice(0,12)} · Comparison base: ${(u.base_commit||'initial snapshot').slice(0,12)}`));
+    host.append(element('p',`${u.changed_files?.length||0} analysis inputs updated, ${u.source_files_reused||0} unchanged inputs reused, ${u.removed_files?.length||0} removed.`));
+    host.append(element('p',`${u.function_facts_analyzed||0} function/class facts analyzed; ${u.function_facts_reused||0} reused. ${u.affected_callers||0} callers had context refreshed.`));
+    host.append(element('p','Counts compare this report with its restored cache. A missing cache or changed analysis engine can require a full pass.','text-small text-muted'));
+    if(u.changed_files?.length)host.append(bulletList(u.changed_files.slice(0,15)));
+    if(u.changed_files?.length>15)host.append(element('p',`${u.changed_files.length-15} more inputs are listed in update-stats.json.`,'text-small text-muted'));
+    if(u.run_url){try{const url=new URL(u.run_url);if(url.protocol==='https:'){const link=element('a','Open the CI run');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';host.append(link);}}catch{}}
+    if(u.ci){find('changes').textContent='Review changed code';root.querySelector('#uml-change-list h3').textContent='Changed functions to read';}
+  }
+  const drawWhenVisible = () => { if (!find('map').hidden) draw(); };
+  window.addEventListener('openai:set_globals',event=>{if(event.detail?.globals?.widgetState){restore(event.detail.globals.widgetState);sync();updateMatches();drawWhenVisible();}});
+  const resize=new ResizeObserver(drawWhenVisible);resize.observe(find('drawing'));
+  sync();updateMatches();
+})().catch(error=>{
+  const root=document.getElementById('skylos-personal-uml');
+  const status=root.querySelector('#uml-overview-status');status.setAttribute('role','alert');status.textContent='The report could not be opened: '+error.message;
+});
+</script>

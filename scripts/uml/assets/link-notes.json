@@ -1,0 +1,18 @@
+{
+  "skylos.entry.main|skylos.entry._run_recording_failures": "Runs the full CLI inside the wrapper that records serious failures and adds a crash hint.",
+  "skylos.entry.main|skylos.cli.main": "Passes the command router as a callback; the failure wrapper invokes it.",
+  "skylos.entry._run_recording_failures|skylos.cli.main": "Invokes the CLI callback that entry.main supplied, while preserving its exit behavior.",
+  "skylos.cli._dispatch_early_command|skylos.cli_core.dispatch.dispatch_early_command": "Looks up the named command and hands it the remaining command-line arguments.",
+  "skylos.analyzer.analyze|skylos.analyzer.Skylos.analyze": "Passes the public scan options to a fresh analyzer instance.",
+  "skylos.analyzer.Skylos.analyze|skylos.core.file_discovery.discover_source_files": "Chooses which source files enter the scan.",
+  "skylos.analysis.file_worker.process_file|skylos.analysis.file_worker._process_python_entry": "Sends Python files down the Python-specific reading and analysis path.",
+  "skylos.analysis.file_worker.process_file|skylos.analysis.file_processing.scan_non_python_file": "Sends other supported source files to the appropriate language scanner.",
+  "skylos.analysis.file_worker._process_python_entry|skylos.analysis.file_worker._process_python_file": "After reading the file and loading its settings, asks the Python worker to analyze it.",
+  "skylos.analysis.file_worker._process_python_file|skylos.analysis.file_worker._prepare_python": "Parses the source and collects ignore and import information needed by the later checks.",
+  "skylos.analysis.file_worker._process_python_file|skylos.analysis.file_worker._quality_findings": "Collects maintainability findings when the quality checks are enabled.",
+  "skylos.analysis.file_worker._process_python_file|skylos.analysis.file_worker._danger_findings": "Collects security findings when those checks are enabled.",
+  "skylos.analysis.file_worker._process_python_file|skylos.analysis.file_worker._run_visitors": "Collects definitions and usage evidence, including framework and test information.",
+  "scripts.corpus_ci.main|skylos.benchmarks.corpus_ci.run_manifest": "Runs the selected corpus cases and gets the summary used for output and the exit code.",
+  "scripts.build_repo_map.main|scripts.build_repo_map.collect_repo_map": "Collects the module, symbol, and ownership information used to render the navigator.",
+  "skylos.pipeline.run_pipeline|skylos.pipeline.run_static_on_files": "Runs the static-analysis phase for the chosen file collection."
+}

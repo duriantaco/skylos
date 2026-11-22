@@ -1,0 +1,1186 @@
+# Optional VulnHunter static checks. See docs/vulnhunter-rules.md.
+rules:
+  - id: VHOG100
+    languages: [python]
+    severity: ERROR
+    message: Runtime data is evaluated as Python code.
+    metadata:
+      name: python-dynamic-eval
+      vulnerability_class: code_injection
+      cwe_ids: [CWE-95]
+      confidence: high
+      severity: critical
+      remediation: Parse a data format with ast.literal_eval or an explicit schema instead of eval.
+    patterns:
+      - pattern: eval($EXPR)
+      - pattern-not: eval("...")
+      - pattern-not: eval('...')
+
+  - id: VHOG101
+    languages: [python]
+    severity: ERROR
+    message: Request, environment, or argv data reaches a process argument vector.
+    metadata:
+      name: python-subprocess-argument-taint
+      vulnerability_class: argument_injection
+      cwe_ids: [CWE-88, CWE-78]
+      confidence: medium
+      severity: high
+      remediation: Validate option-like values, use an allowlist, and insert -- before positional data when supported.
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: request.args.get(...)
+          - pattern: request.form.get(...)
+          - pattern: request.headers.get(...)
+          - pattern: request.query_params.get(...)
+          - pattern: sys.argv[$INDEX]
+          - pattern: input(...)
+          - pattern: os.environ.get(...)
+          - pattern: os.getenv(...)
+    pattern-sinks:
+      - pattern-either:
+          - pattern: subprocess.run(...)
+          - pattern: subprocess.call(...)
+          - pattern: subprocess.check_call(...)
+          - pattern: subprocess.check_output(...)
+          - pattern: subprocess.Popen(...)
+          - pattern: asyncio.create_subprocess_exec(...)
+
+  - id: VHOG102
+    languages: [python]
+    severity: ERROR
+    message: An exception path silently continues after a security-sensitive failure.
+    metadata:
+      name: python-security-fail-open
+      vulnerability_class: fail_open
+      cwe_ids: [CWE-754, CWE-703]
+      confidence: low
+      severity: high
+      remediation: Fail closed for authentication, authorization, signature, and validation errors.
+    patterns:
+      - pattern: |
+          try:
+            ...
+          except $EXCEPTION:
+            $HANDLER
+      - metavariable-pattern:
+          metavariable: $HANDLER
+          pattern: pass
+      - pattern-inside: |
+          def $FUNCTION(...):
+            ...
+      - metavariable-regex:
+          metavariable: $FUNCTION
+          regex: (?i).*(auth|authori[sz]|verify|valid|signature|token|permission|secure|check).*
+      - focus-metavariable: $HANDLER
+
+  - id: VHOG103
+    languages: [python]
+    severity: ERROR
+    message: A route explicitly disables or bypasses its authentication dependency.
+    metadata:
+      name: python-route-auth-disabled
+      vulnerability_class: missing_authentication
+      cwe_ids: [CWE-306]
+      confidence: high
+      severity: high
+      evidence_kind: invariant_violation
+      remediation: Require the normal authentication dependency on every privileged route.
+    pattern-either:
+      - pattern: $APP.$METHOD(..., dependencies=[])
+      - pattern: $APP.$METHOD(..., auth=None)
+      - pattern: $APP.$METHOD(..., authentication=None)
+      - pattern: $APP.$METHOD(..., permission_classes=[])
+
+  - id: VHOG110
+    languages: [generic]
+    severity: ERROR
+    message: A template marks a value safe without first applying an HTML sanitizer.
+    metadata:
+      name: template-unsanitized-safe-filter
+      vulnerability_class: cross_site_scripting
+      cwe_ids: [CWE-79]
+      confidence: high
+      severity: high
+      remediation: Sanitize untrusted rich text before applying the template safe marker.
+    paths:
+      include: ["*.html", "*.htm", "*.jinja", "*.jinja2"]
+    patterns:
+      - pattern-regex: '\{\{[^}\n]+\|\s*safe\s*\}\}'
+      - pattern-not-regex: '\|\s*(sanitize|bleach|escape|clean)(_html)?\b[^}\n]*\|\s*safe'
+      - pattern-not-regex: '\{\{\s*xsrf_form_html\s*\(\s*\)\s*\|\s*safe\s*\}\}'
+
+  - id: VHOG111
+    languages: [python]
+    severity: ERROR
+    message: A dynamic value is inserted directly into an HTML fragment.
+    metadata:
+      name: python-html-fragment-interpolation
+      vulnerability_class: cross_site_scripting
+      cwe_ids: [CWE-79]
+      confidence: medium
+      severity: high
+      evidence_kind: invariant_violation
+      remediation: HTML-escape the value or render it through an auto-escaping template.
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern: $HTML += $FORMAT % $VALUE
+              - pattern-not: $HTML += $FORMAT % html.escape(...)
+          - patterns:
+              - pattern: $STREAM.write($FORMAT % $VALUE)
+              - pattern-not: $STREAM.write($FORMAT % html.escape(...))
+      - metavariable-regex:
+          metavariable: $FORMAT
+          regex: (?is).*<[^>]+>.*
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: (?i).*(body|comment|content|description|message|text).*
+
+  - id: VHOG112
+    languages: [python]
+    severity: ERROR
+    message: A WebSocket handshake is accepted without checking the Origin header.
+    metadata:
+      name: python-websocket-origin-unvalidated
+      vulnerability_class: origin_validation
+      cwe_ids: [CWE-346, CWE-1385]
+      confidence: medium
+      severity: medium
+      evidence_kind: invariant_violation
+      remediation: Compare the Origin header with an allowlist before accepting the handshake.
+    patterns:
+      - pattern: await $WEBSOCKET.accept(...)
+      - metavariable-regex:
+          metavariable: $WEBSOCKET
+          regex: (?i).*(websocket|web_socket|ws).*
+      - pattern-not-inside: |
+          async def $HANDLER(...):
+            ...
+            <... "=~/(?i)^origin$/" ...>
+            ...
+      - pattern-not-inside: |
+          @$DECORATOR
+          async def $HANDLER(...):
+            ...
+            <... "=~/(?i)^origin$/" ...>
+            ...
+      - pattern-not-inside: |
+          @$DECORATOR(...)
+          async def $HANDLER(...):
+            ...
+            <... "=~/(?i)^origin$/" ...>
+            ...
+
+  - id: VHOG113
+    languages: [python]
+    severity: ERROR
+    message: Credentials, tokens or session state are written with process-default filesystem permissions.
+    metadata:
+      name: python-sensitive-dump-permissions
+      vulnerability_class: insecure_permissions
+      cwe_ids: [CWE-732]
+      confidence: medium
+      severity: medium
+      remediation: Create the file atomically with mode 0600 (for example os.open with 0o600) and its directory with mode 0700.
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: $PATH.write_text($DATA, ...)
+                  - pattern: $PATH.write_bytes($DATA, ...)
+              - metavariable-regex:
+                  metavariable: $PATH
+                  regex: (?i).*(token|secret|credential|session|password|passwd|cookie|private_?key|api_?key|auth).*
+          - patterns:
+              - pattern-either:
+                  - pattern: $PATH.write_text($DATA, ...)
+                  - pattern: $PATH.write_bytes($DATA, ...)
+              - metavariable-regex:
+                  metavariable: $DATA
+                  regex: (?i).*(token|secret|credential|session|password|passwd|cookie|private_?key|api_?key|auth).*
+          - patterns:
+              - pattern-either:
+                  - pattern: $PATH.write_text($DATA, ...)
+                  - pattern: $PATH.write_bytes($DATA, ...)
+              - pattern-inside: |
+                  def $FUNCTION(...):
+                    ...
+                    <... "=~/(?i).*(token|secret|credential|session|password|passwd|cookie|private_?key|api_?key|auth).*/" ...>
+                    ...
+      - pattern-not-inside: |
+          def $FUNCTION(...):
+            ...
+            <... $X.chmod(...) ...>
+            ...
+      - pattern-not-inside: |
+          def $FUNCTION(...):
+            ...
+            <... os.umask(...) ...>
+            ...
+
+  - id: VHOG114
+    languages: [python]
+    severity: ERROR
+    message: An undersized key, secret or password only triggers a warning instead of being rejected.
+    metadata:
+      name: python-weak-key-warning-only
+      vulnerability_class: signature_verification
+      cwe_ids: [CWE-326, CWE-287]
+      confidence: medium
+      severity: medium
+      evidence_kind: invariant_violation
+      remediation: Reject empty and undersized key material instead of warning and continuing.
+    patterns:
+      - pattern-either:
+          - pattern: warnings.warn(...)
+          - pattern: $LOG.warning(...)
+          - pattern: $LOG.warn(...)
+      - pattern-inside: |
+          if len($KEY) < $MINIMUM:
+            ...
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(key|secret|password|passphrase|token|salt).*
+      - pattern-not-inside: |
+          if len($KEY) < $MINIMUM:
+            ...
+            raise $ERROR(...)
+
+  - id: VHOG115
+    languages: [python]
+    severity: ERROR
+    message: Per-key data is appended to an unbounded in-memory queue.
+    metadata:
+      name: python-unbounded-keyed-accumulation
+      vulnerability_class: denial_of_service
+      cwe_ids: [CWE-400, CWE-770]
+      confidence: medium
+      severity: high
+      evidence_kind: invariant_violation
+      remediation: Bound both the number of keys and the number of queued items per key.
+    patterns:
+      - pattern: $QUEUE.append($ITEM)
+      - pattern-inside: |
+          $QUEUE = $MAP.setdefault($KEY, [])
+          ...
+          $QUEUE.append($ITEM)
+      - pattern-not-inside: |
+          def $FUNCTION(...):
+            ...
+            if len($QUEUE) >= $LIMIT:
+              ...
+            ...
+            $QUEUE.append($ITEM)
+
+  - id: VHOG117
+    languages: [generic]
+    severity: ERROR
+    message: User-authored rich content is marked safe without an HTML sanitizer.
+    metadata:
+      name: template-rich-content-safe-filter
+      vulnerability_class: cross_site_scripting
+      cwe_ids: [CWE-79]
+      confidence: high
+      severity: high
+      evidence_kind: invariant_violation
+      remediation: Sanitize rich content with an HTML allowlist before disabling template auto-escaping.
+    paths:
+      include: ["*.html", "*.htm", "*.jinja", "*.jinja2"]
+    patterns:
+      - pattern-regex: |-
+          \{\{[^}\n]*(?:abstract|body|content|description|html|markdown|text)[^}\n]*\|\s*safe\s*\}\}
+      - pattern-not-regex: '\{\{\s*xsrf_form_html\s*\(\s*\)\s*\|\s*safe\s*\}\}'
+      - pattern-not-regex: |-
+          \|\s*(?:bleach|clean|escape|sanitize)(?:_html)?\b[^}\n]*\|\s*safe
+
+  - id: VHOG122
+    languages: [python]
+    severity: ERROR
+    message: A host-bound development server starts without a per-request Host allowlist.
+    metadata:
+      name: python-server-host-validation-missing
+      vulnerability_class: authentication_bypass
+      cwe_ids: [CWE-346, CWE-287]
+      confidence: high
+      severity: high
+      evidence_kind: invariant_violation
+      remediation: Reject requests whose Host is not an exact allowlisted host-and-port pair before serving the application.
+    patterns:
+      - pattern: |
+          def $FUNCTION(..., $HOST: $TYPE, ...):
+            ...
+            $APP.run(..., host=$HOST, ...)
+      - pattern-not: |
+          def $FUNCTION(..., $HOST: $TYPE, ...):
+            ...
+            @$APP.before_request
+            def $CHECK(...):
+              ...
+            ...
+            $APP.run(..., host=$HOST, ...)
+      - pattern-not: |
+          def $FUNCTION(..., $HOST: $TYPE, ...):
+            ...
+            @$APP.before_request
+            def $CHECK(...) -> $RETURN:
+              ...
+            ...
+            $APP.run(..., host=$HOST, ...)
+      - pattern-not-regex: |-
+          (?s)@[A-Za-z0-9_.$]+\.before_request\b.*?\.run\s*\(
+
+  - id: VHOG124
+    languages: [python]
+    severity: ERROR
+    message: An IP-based destination policy ignores IPv4-mapped and other IPv6 transition forms of internal addresses.
+    metadata:
+      name: python-incomplete-ipv6-transition-normalization
+      vulnerability_class: server_side_request_forgery
+      cwe_ids: [CWE-918, CWE-178]
+      confidence: medium
+      severity: medium
+      evidence_kind: invariant_violation
+      remediation: Unwrap ipv4_mapped, sixtofour and teredo addresses before applying the private/loopback policy.
+    patterns:
+      - pattern-either:
+          - pattern: $ADDRESS.is_private
+          - pattern: $ADDRESS.is_loopback
+          - pattern: $ADDRESS.is_link_local
+          - pattern: $ADDRESS.is_global
+      - pattern-inside: |
+          def $FUNCTION(...):
+            ...
+            $ADDRESS = ipaddress.ip_address(...)
+            ...
+      - pattern-not-inside: |
+          def $FUNCTION(...):
+            ...
+            <... $X.ipv4_mapped ...>
+            ...
+
+  - id: VHOG126
+    languages: [generic]
+    severity: ERROR
+    message: A dynamic value is interpolated inside a quoted JavaScript string literal in generated source.
+    metadata:
+      name: generated-javascript-quoted-interpolation
+      vulnerability_class: cross_site_scripting
+      cwe_ids: [CWE-79, CWE-94]
+      confidence: high
+      severity: high
+      evidence_kind: invariant_violation
+      remediation: Serialize the value as a JSON/JavaScript literal instead of placing it between quotes.
+    paths:
+      include: ["*.py", "*.html", "*.jinja", "*.jinja2"]
+    pattern-regex: |-
+      const\s+[A-Za-z_$][\w$]*\s*=\s*['"]\{[^}\n]+\}['"]\s*;
+
+  - id: VHOG127
+    languages: [javascript, typescript]
+    severity: INFO
+    message: A computed object key is written; review the key's provenance and later reads.
+    metadata:
+      name: javascript-computed-object-key-write
+      vulnerability_class: prototype_pollution
+      cwe_ids: [CWE-1321]
+      confidence: low
+      severity: low
+      evidence_kind: context
+      remediation: Use a null-prototype dictionary or Map for attacker-selected keys, and avoid inherited lookups.
+    patterns:
+      - pattern: $OBJECT[$KEY] = $VALUE
+      - pattern-not: $OBJECT["..."] = $VALUE
+      - pattern-not: $OBJECT['...'] = $VALUE
+
+  - id: VHOG128
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: A dynamic path is passed to a deep object setter and may mutate its prototype chain.
+    metadata:
+      name: javascript-dynamic-deep-object-write
+      vulnerability_class: prototype_pollution
+      cwe_ids: [CWE-1321]
+      confidence: medium
+      severity: high
+      evidence_kind: invariant_violation
+      remediation: Validate every path segment before constructing or invoking a deep object setter.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              const $PATH = new $CLASS($KEY);
+              ...
+              $PATH.set($OBJECT, $VALUE);
+          - pattern: |
+              let $PATH = new $CLASS($KEY);
+              ...
+              $PATH.set($OBJECT, $VALUE);
+          - pattern: |
+              var $PATH = new $CLASS($KEY);
+              ...
+              $PATH.set($OBJECT, $VALUE);
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(?:key|path|prop|field|name|segment).*
+      - metavariable-regex:
+          metavariable: $CLASS
+          regex: (?i).*(?:deep|json|object|path|property).*
+
+  - id: VHOG129
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: HTTP request data flows into a process execution command.
+    metadata:
+      name: javascript-request-command-injection
+      vulnerability_class: command_injection
+      cwe_ids: [CWE-78]
+      confidence: high
+      severity: critical
+      evidence_kind: source_to_sink
+      remediation: Map untrusted input to fixed executable and argument choices without invoking a shell.
+    mode: taint
+    pattern-sources: &javascript_request_sources
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $HANDLER(..., $REQ, $RES, ...) { ... }
+              - pattern-inside: function (..., $REQ, $RES, ...) { ... }
+              - pattern-inside: (..., $REQ, $RES, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+              - pattern: $REQ.headers
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: (?i)^(?:req|request|ctx|context)$
+          - metavariable-regex:
+              metavariable: $RES
+              regex: (?i)^(?:res|response)$
+      - patterns:
+          - pattern-inside: export function $HANDLER(..., $INPUT, ...) { ... }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: module.exports.$HANDLER = function (..., $INPUT, ...) { ... }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec($COMMAND, ...)
+              - pattern: execSync($COMMAND, ...)
+              - pattern: $PROCESS.exec($COMMAND, ...)
+              - pattern: $PROCESS.execSync($COMMAND, ...)
+              - pattern: "$PROCESS.spawn($COMMAND, { ..., shell: true, ... })"
+              - pattern: "$PROCESS.spawnSync($COMMAND, { ..., shell: true, ... })"
+          - focus-metavariable: $COMMAND
+
+  - id: VHOG130
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: HTTP request data flows into dynamic JavaScript evaluation.
+    metadata:
+      name: javascript-request-code-injection
+      vulnerability_class: code_injection
+      cwe_ids: [CWE-94, CWE-95]
+      confidence: high
+      severity: critical
+      evidence_kind: source_to_sink
+      remediation: Replace dynamic source evaluation with a fixed operation allowlist and data parser.
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $HANDLER(..., $REQ, $RES, ...) { ... }
+              - pattern-inside: function (..., $REQ, $RES, ...) { ... }
+              - pattern-inside: (..., $REQ, $RES, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+              - pattern: $REQ.headers
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: (?i)^(?:req|request|ctx|context)$
+          - metavariable-regex:
+              metavariable: $RES
+              regex: (?i)^(?:res|response)$
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: eval($SOURCE)
+              - pattern: new Function($SOURCE)
+              - pattern: new Function(..., $SOURCE)
+              - pattern: $VM.runInNewContext($SOURCE, ...)
+              - pattern: $VM.runInContext($SOURCE, ...)
+          - focus-metavariable: $SOURCE
+
+  - id: VHOG131
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: HTTP request data flows into the SQL statement argument.
+    metadata:
+      name: javascript-request-sql-injection
+      vulnerability_class: sql_injection
+      cwe_ids: [CWE-89]
+      confidence: high
+      severity: high
+      evidence_kind: source_to_sink
+      remediation: Keep the statement constant and pass untrusted values through parameter placeholders.
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $HANDLER(..., $REQ, $RES, ...) { ... }
+              - pattern-inside: function (..., $REQ, $RES, ...) { ... }
+              - pattern-inside: (..., $REQ, $RES, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+              - pattern: $REQ.headers
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: (?i)^(?:req|request|ctx|context)$
+          - metavariable-regex:
+              metavariable: $RES
+              regex: (?i)^(?:res|response)$
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.query($QUERY, ...)
+              - pattern: $DB.execute($QUERY, ...)
+              - pattern: $DB.raw($QUERY, ...)
+          - focus-metavariable: $QUERY
+
+  - id: VHOG132
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: HTTP request data flows into an outbound request destination.
+    metadata:
+      name: javascript-request-ssrf
+      vulnerability_class: server_side_request_forgery
+      cwe_ids: [CWE-918]
+      confidence: high
+      severity: high
+      evidence_kind: source_to_sink
+      remediation: Parse, resolve, and allowlist every destination and redirect hop immediately before connecting.
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $HANDLER(..., $REQ, $RES, ...) { ... }
+              - pattern-inside: function (..., $REQ, $RES, ...) { ... }
+              - pattern-inside: (..., $REQ, $RES, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+              - pattern: $REQ.headers
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: (?i)^(?:req|request|ctx|context)$
+          - metavariable-regex:
+              metavariable: $RES
+              regex: (?i)^(?:res|response)$
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: fetch($URL, ...)
+              - pattern: $CLIENT.get($URL, ...)
+              - pattern: $CLIENT.post($URL, ...)
+              - pattern: $CLIENT.request($URL, ...)
+          - focus-metavariable: $URL
+
+  - id: VHOG133
+    languages: [go]
+    severity: ERROR
+    message: HTTP request data flows into process execution.
+    metadata:
+      name: go-request-command-injection
+      vulnerability_class: command_injection
+      cwe_ids: [CWE-78]
+      confidence: high
+      severity: critical
+      evidence_kind: source_to_sink
+      remediation: Select a fixed executable and fixed option structure, then validate each data argument.
+    mode: taint
+    pattern-sources: &go_request_sources
+      - pattern-either:
+          - pattern: $REQ.URL.Query().Get(...)
+          - pattern: $REQ.FormValue(...)
+          - pattern: $REQ.PostFormValue(...)
+          - pattern: $REQ.PathValue(...)
+          - pattern: $CTX.Query(...)
+          - pattern: $CTX.Param(...)
+          - pattern: $CTX.FormValue(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command($COMMAND, ...)
+              - pattern: exec.CommandContext(..., $COMMAND, ...)
+              - pattern: exec.Command("sh", "-c", $COMMAND)
+              - pattern: exec.Command("bash", "-c", $COMMAND)
+          - focus-metavariable: $COMMAND
+
+  - id: VHOG134
+    languages: [go]
+    severity: ERROR
+    message: HTTP request data flows into the SQL statement argument.
+    metadata:
+      name: go-request-sql-injection
+      vulnerability_class: sql_injection
+      cwe_ids: [CWE-89]
+      confidence: high
+      severity: high
+      evidence_kind: source_to_sink
+      remediation: Keep the statement constant and bind request values as query parameters.
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.URL.Query().Get(...)
+          - pattern: $REQ.FormValue(...)
+          - pattern: $REQ.PostFormValue(...)
+          - pattern: $REQ.PathValue(...)
+          - pattern: $CTX.Query(...)
+          - pattern: $CTX.Param(...)
+          - pattern: $CTX.FormValue(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.Query($QUERY, ...)
+              - pattern: $DB.QueryContext(..., $QUERY, ...)
+              - pattern: $DB.QueryRow($QUERY, ...)
+              - pattern: $DB.Exec($QUERY, ...)
+              - pattern: $DB.ExecContext(..., $QUERY, ...)
+              - pattern: $DB.Raw($QUERY, ...)
+          - pattern-not: $DB.Query("...", ...)
+          - pattern-not: $DB.QueryContext(..., "...", ...)
+          - pattern-not: $DB.QueryRow("...", ...)
+          - pattern-not: $DB.Exec("...", ...)
+          - pattern-not: $DB.ExecContext(..., "...", ...)
+          - pattern-not: $DB.Raw("...", ...)
+          - focus-metavariable: $QUERY
+
+  - id: VHOG135
+    languages: [go]
+    severity: ERROR
+    message: HTTP request data flows into an outbound request destination.
+    metadata:
+      name: go-request-ssrf
+      vulnerability_class: server_side_request_forgery
+      cwe_ids: [CWE-918]
+      confidence: high
+      severity: high
+      evidence_kind: source_to_sink
+      remediation: Resolve and allowlist the destination IP for every redirect immediately before connecting.
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.URL.Query().Get(...)
+          - pattern: $REQ.FormValue(...)
+          - pattern: $REQ.PostFormValue(...)
+          - pattern: $REQ.PathValue(...)
+          - pattern: $CTX.Query(...)
+          - pattern: $CTX.Param(...)
+          - pattern: $CTX.FormValue(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: http.Get($URL)
+              - pattern: http.Post($URL, ...)
+              - pattern: http.NewRequest(..., $URL, ...)
+              - pattern: http.NewRequestWithContext(..., ..., $URL, ...)
+          - focus-metavariable: $URL
+
+  - id: VHOG137
+    languages: [java]
+    severity: ERROR
+    message: HTTP request data flows into Java process execution.
+    metadata:
+      name: java-request-command-injection
+      vulnerability_class: command_injection
+      cwe_ids: [CWE-78]
+      confidence: high
+      severity: critical
+      evidence_kind: source_to_sink
+      remediation: Select a fixed executable and argument structure; never pass request data to a shell.
+    mode: taint
+    pattern-sources: &java_request_sources
+      - pattern-either:
+          - pattern: $REQUEST.getParameter(...)
+          - pattern: $REQUEST.getHeader(...)
+          - pattern: $REQUEST.getCookies()
+          - pattern: $REQUEST.queryParams(...)
+      - patterns:
+          - pattern-inside: public $RETURN $METHOD(..., $TYPE $INPUT, ...) { ... }
+          - focus-metavariable: $INPUT
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: Integer.parseInt(...)
+          - pattern: Long.parseLong(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: Runtime.getRuntime().exec($COMMAND)
+              - pattern: Runtime.getRuntime().exec($COMMAND, ...)
+              - pattern: new ProcessBuilder($COMMAND)
+              - pattern: new ProcessBuilder($COMMAND, ...)
+          - focus-metavariable: $COMMAND
+
+  - id: VHOG138
+    languages: [java]
+    severity: ERROR
+    message: HTTP request data flows into a Java SQL statement.
+    metadata:
+      name: java-request-sql-injection
+      vulnerability_class: sql_injection
+      cwe_ids: [CWE-89]
+      confidence: high
+      severity: high
+      evidence_kind: source_to_sink
+      remediation: Use a constant PreparedStatement and bind every request value as a parameter.
+    mode: taint
+    pattern-sources: *java_request_sources
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: Integer.parseInt(...)
+          - pattern: Long.parseLong(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $STATEMENT.execute($QUERY)
+              - pattern: $STATEMENT.executeQuery($QUERY)
+              - pattern: $STATEMENT.executeUpdate($QUERY)
+              - pattern: $CONNECTION.prepareStatement($QUERY)
+          - focus-metavariable: $QUERY
+
+  - id: VHOG139
+    languages: [java]
+    severity: ERROR
+    message: HTTP request data flows into a Java outbound request destination.
+    metadata:
+      name: java-request-ssrf
+      vulnerability_class: server_side_request_forgery
+      cwe_ids: [CWE-918]
+      confidence: high
+      severity: high
+      evidence_kind: source_to_sink
+      remediation: Parse, resolve, and allowlist every destination and redirect hop immediately before connecting.
+    mode: taint
+    pattern-sources: *java_request_sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: new URL($URL).openConnection(...)
+              - pattern: new URL($URL).openStream(...)
+              - pattern: HttpRequest.newBuilder(URI.create($URL))
+              - pattern: $CLIENT.send(HttpRequest.newBuilder(URI.create($URL)).build(), ...)
+          - focus-metavariable: $URL
+
+  - id: VHOG141
+    languages: [ruby]
+    severity: ERROR
+    message: Rails request parameters flow into process execution.
+    metadata:
+      name: ruby-request-command-injection
+      vulnerability_class: command_injection
+      cwe_ids: [CWE-78]
+      confidence: high
+      severity: critical
+      evidence_kind: source_to_sink
+      remediation: Use a fixed executable with an argument array and reject option-bearing input.
+    mode: taint
+    pattern-sources: &ruby_request_sources
+      - pattern-either:
+          - pattern: params[...]
+          - pattern: request.parameters[...]
+          - pattern: request.query_parameters[...]
+          - pattern: request.request_parameters[...]
+      - patterns:
+          - pattern-inside: |
+              def $METHOD(..., $INPUT, ...)
+                ...
+              end
+          - focus-metavariable: $INPUT
+    pattern-sanitizers:
+      - pattern: Shellwords.escape(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: system($COMMAND)
+              - pattern: exec($COMMAND)
+              - pattern: Kernel.system($COMMAND)
+              - pattern: Kernel.exec($COMMAND)
+              - pattern: IO.popen($COMMAND, ...)
+              - pattern: Open3.capture3($COMMAND, ...)
+          - focus-metavariable: $COMMAND
+
+  - id: VHOG142
+    languages: [ruby]
+    severity: ERROR
+    message: Rails request parameters flow into a raw SQL operation.
+    metadata:
+      name: ruby-request-sql-injection
+      vulnerability_class: sql_injection
+      cwe_ids: [CWE-89]
+      confidence: high
+      severity: high
+      evidence_kind: source_to_sink
+      remediation: Use ORM parameter binding and map attacker-selectable identifiers through a closed allowlist.
+    mode: taint
+    pattern-sources: *ruby_request_sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $MODEL.find_by_sql($QUERY)
+              - pattern: $CONNECTION.execute($QUERY)
+              - pattern: $CONNECTION.select_all($QUERY)
+              - pattern: $MODEL.where($QUERY)
+          - focus-metavariable: $QUERY
+
+  - id: VHOG143
+    languages: [ruby]
+    severity: ERROR
+    message: Rails request parameters flow into an outbound request destination.
+    metadata:
+      name: ruby-request-ssrf
+      vulnerability_class: server_side_request_forgery
+      cwe_ids: [CWE-918]
+      confidence: high
+      severity: high
+      evidence_kind: source_to_sink
+      remediation: Resolve and allowlist every destination IP and redirect immediately before connecting.
+    mode: taint
+    pattern-sources: *ruby_request_sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: URI.open($URL, ...)
+              - pattern: Net::HTTP.get(URI($URL))
+              - pattern: Net::HTTP.get_response(URI($URL))
+              - pattern: $CLIENT.get($URL, ...)
+          - focus-metavariable: $URL
+
+  - id: VHOG145
+    languages: [php]
+    severity: ERROR
+    message: PHP request data flows into process execution.
+    metadata:
+      name: php-request-command-injection
+      vulnerability_class: command_injection
+      cwe_ids: [CWE-78]
+      confidence: high
+      severity: critical
+      evidence_kind: source_to_sink
+      remediation: Map request data to fixed operations and avoid shell command construction.
+    mode: taint
+    pattern-sources: &php_request_sources
+      - pattern-either:
+          - pattern: $_GET[...]
+          - pattern: $_POST[...]
+          - pattern: $_REQUEST[...]
+          - pattern: $_COOKIE[...]
+      - patterns:
+          - pattern-inside: public function $METHOD(..., $INPUT, ...) { ... }
+          - focus-metavariable: $INPUT
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: escapeshellarg(...)
+          - pattern: escapeshellcmd(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: system($COMMAND)
+              - pattern: exec($COMMAND, ...)
+              - pattern: shell_exec($COMMAND)
+              - pattern: passthru($COMMAND, ...)
+              - pattern: popen($COMMAND, ...)
+              - pattern: proc_open($COMMAND, ...)
+          - focus-metavariable: $COMMAND
+
+  - id: VHOG146
+    languages: [php]
+    severity: ERROR
+    message: PHP request data flows into a raw SQL statement.
+    metadata:
+      name: php-request-sql-injection
+      vulnerability_class: sql_injection
+      cwe_ids: [CWE-89]
+      confidence: high
+      severity: high
+      evidence_kind: source_to_sink
+      remediation: Prepare a constant statement and bind every request value with the database API.
+    mode: taint
+    pattern-sources: *php_request_sources
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: intval(...)
+          - pattern: filter_var(..., FILTER_VALIDATE_INT, ...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB->query($QUERY, ...)
+              - pattern: $DB->exec($QUERY)
+              - pattern: mysqli_query($DB, $QUERY, ...)
+              - pattern: mysql_query($QUERY, ...)
+          - focus-metavariable: $QUERY
+
+  - id: VHOG147
+    languages: [php]
+    severity: ERROR
+    message: PHP request data flows into an outbound request destination.
+    metadata:
+      name: php-request-ssrf
+      vulnerability_class: server_side_request_forgery
+      cwe_ids: [CWE-918]
+      confidence: high
+      severity: high
+      evidence_kind: source_to_sink
+      remediation: Resolve and allowlist every destination and redirect before the connection is made.
+    mode: taint
+    pattern-sources: *php_request_sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: curl_setopt($HANDLE, CURLOPT_URL, $URL)
+              - pattern: curl_init($URL)
+              - pattern: $CLIENT->request(..., $URL, ...)
+          - focus-metavariable: $URL
+
+  - id: VHOG149
+    languages: [csharp]
+    severity: ERROR
+    message: ASP.NET request data flows into process execution.
+    metadata:
+      name: csharp-request-command-injection
+      vulnerability_class: command_injection
+      cwe_ids: [CWE-78]
+      confidence: high
+      severity: critical
+      evidence_kind: source_to_sink
+      remediation: Select a fixed executable and keep request data in validated argument fields.
+    mode: taint
+    pattern-sources: &csharp_request_sources
+      - pattern-either:
+          - pattern: Request.Query[...]
+          - pattern: Request.Form[...]
+          - pattern: Request.Headers[...]
+          - pattern: $REQUEST.Query[...]
+          - pattern: $REQUEST.Form[...]
+      - patterns:
+          - pattern-inside: public $RETURN $METHOD(..., $TYPE $INPUT, ...) { ... }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: Process.Start($COMMAND)
+              - pattern: Process.Start($COMMAND, ...)
+              - pattern: new ProcessStartInfo($COMMAND)
+          - focus-metavariable: $COMMAND
+
+  - id: VHOG150
+    languages: [csharp]
+    severity: ERROR
+    message: ASP.NET request data flows into a SQL statement.
+    metadata:
+      name: csharp-request-sql-injection
+      vulnerability_class: sql_injection
+      cwe_ids: [CWE-89]
+      confidence: high
+      severity: high
+      evidence_kind: source_to_sink
+      remediation: Construct a constant parameterized command and bind request values through typed parameters.
+    mode: taint
+    pattern-sources: *csharp_request_sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: new SqlCommand($QUERY, ...)
+              - pattern: new NpgsqlCommand($QUERY, ...)
+              - pattern: new MySqlCommand($QUERY, ...)
+              - pattern: $DATABASE.Execute($QUERY, ...)
+              - pattern: $DATABASE.Query($QUERY, ...)
+          - focus-metavariable: $QUERY
+
+  - id: VHOG151
+    languages: [csharp]
+    severity: ERROR
+    message: ASP.NET request data flows into an outbound request destination.
+    metadata:
+      name: csharp-request-ssrf
+      vulnerability_class: server_side_request_forgery
+      cwe_ids: [CWE-918]
+      confidence: high
+      severity: high
+      evidence_kind: source_to_sink
+      remediation: Resolve and allowlist the destination and every redirect immediately before connecting.
+    mode: taint
+    pattern-sources: *csharp_request_sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $CLIENT.GetAsync($URL, ...)
+              - pattern: $CLIENT.GetStringAsync($URL, ...)
+              - pattern: $CLIENT.PostAsync($URL, ...)
+              - pattern: new HttpRequestMessage(..., $URL)
+          - focus-metavariable: $URL
+
+  - id: VHOG153
+    languages: [c, cpp]
+    severity: ERROR
+    message: Process or environment input flows into a shell command.
+    metadata:
+      name: c-family-input-command-injection
+      vulnerability_class: command_injection
+      cwe_ids: [CWE-78]
+      confidence: high
+      severity: critical
+      evidence_kind: source_to_sink
+      remediation: Avoid a shell; map input to a fixed executable and validate each argument independently.
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: getenv(...)
+          - pattern: std::getenv(...)
+      - patterns:
+          - pattern-inside: |
+              int main(int $ARGC, char **$ARGV, ...) { ... }
+          - pattern: $ARGV[...]
+      - patterns:
+          - pattern-inside: |
+              int main(int $ARGC, char *$ARGV[], ...) { ... }
+          - pattern: $ARGV[...]
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: system($COMMAND)
+              - pattern: std::system($COMMAND)
+              - pattern: popen($COMMAND, ...)
+              - pattern: _popen($COMMAND, ...)
+          - focus-metavariable: $COMMAND
+
+  - id: VHOG155
+    languages: [rust]
+    severity: ERROR
+    message: Process or environment input selects a Rust executable.
+    metadata:
+      name: rust-input-command-injection
+      vulnerability_class: command_injection
+      cwe_ids: [CWE-78]
+      confidence: high
+      severity: critical
+      evidence_kind: source_to_sink
+      remediation: Map input to a fixed executable and validate every argument and option boundary.
+    mode: taint
+    pattern-sources: &rust_process_input_sources
+      - pattern-either:
+          - pattern: std::env::args().nth(...)
+          - pattern: env::args().nth(...)
+          - pattern: std::env::var(...)
+          - pattern: env::var(...)
+          - pattern: std::env::var_os(...)
+          - pattern: env::var_os(...)
+      - patterns:
+          - pattern-inside: "pub fn $FUNCTION(..., $INPUT: $TYPE, ...) { ... }"
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: std::process::Command::new($COMMAND)
+              - pattern: process::Command::new($COMMAND)
+              - pattern: Command::new($COMMAND)
+          - focus-metavariable: $COMMAND
+
+  - id: VHOG157
+    languages: [python]
+    severity: ERROR
+    message: A secret, key or password read from the environment falls back to a hardcoded placeholder.
+    metadata:
+      name: python-secret-insecure-default
+      vulnerability_class: fail_open
+      cwe_ids: [CWE-1188, CWE-798]
+      confidence: medium
+      severity: medium
+      evidence_kind: invariant_violation
+      remediation: Require the secret at startup and refuse to run when it is missing, empty or a known placeholder.
+    patterns:
+      - pattern-either:
+          - pattern: os.getenv($NAME, $DEFAULT)
+          - pattern: os.getenv($NAME, default=$DEFAULT)
+          - pattern: os.environ.get($NAME, $DEFAULT)
+          - pattern: os.environ.get($NAME, default=$DEFAULT)
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: ^["'](?![A-Z0-9_]*_(HEADER|NAME|FILE|PATH|URL|PREFIX|LENGTH|TTL|SECONDS|MINUTES|HOURS|DAYS|ENABLED|ALGORITHM)["'])[A-Z0-9_]*(SECRET|PASSWORD|PASSWD|PASSPHRASE|TOKEN|API_?KEY|PRIVATE_?KEY|SIGNING_?KEY|PEPPER|SALT)[A-Z0-9_]*["']$
+      - metavariable-regex:
+          metavariable: $DEFAULT
+          regex: ^b?(["']).+\1$
+
+  # Narrow review checks adapted from the VulnHunter Python AST rules.
+  - id: VH127
+    languages: [python]
+    severity: WARNING
+    message: Request data supplies a MongoDB query filter. Validate the filter schema.
+    metadata:
+      vulnerability_class: nosql_injection
+      cwe_ids: [CWE-943]
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: flask.request.get_json(...)
+          - pattern: flask.request.json
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: pymongo.MongoClient(...)[...][...].find($FILTER, ...)
+              - pattern: pymongo.MongoClient(...)[...][...].find_one($FILTER, ...)
+              - pattern: flask_pymongo.PyMongo(...).db.$COLLECTION.find($FILTER, ...)
+              - pattern: flask_pymongo.PyMongo(...).db.$COLLECTION.find_one($FILTER, ...)
+          - pattern-not: $DB.$METHOD({...}, ...)
+          - focus-metavariable: $FILTER
+      - patterns:
+          - pattern-inside: |
+              $CLIENT = pymongo.MongoClient(...)
+              ...
+          - pattern-either:
+              - pattern: $CLIENT[...][...].find($FILTER, ...)
+              - pattern: $CLIENT[...][...].find_one($FILTER, ...)
+          - pattern-not: $DB.$METHOD({...}, ...)
+          - focus-metavariable: $FILTER
+
+  - id: VH131
+    languages: [python]
+    severity: INFO
+    message: This function returns the oracle answer without the accompanying update timestamp. Review where the caller checks freshness.
+    metadata:
+      vulnerability_class: oracle_validation
+      confidence: low
+    pattern: return $CONTRACT.functions.latestRoundData().call()[1]
+
+  - id: VH137
+    languages: [python]
+    severity: INFO
+    message: This GraphQL service explicitly enables introspection. Verify that this is intended for the deployment.
+    metadata:
+      vulnerability_class: graphql_introspection
+      cwe_ids: [CWE-200]
+    pattern-either:
+      - pattern: ariadne.asgi.GraphQL(..., introspection=True, ...)
+      - pattern: ariadne.wsgi.GraphQL(..., introspection=True, ...)
+
+  - id: VH138
+    languages: [python]
+    severity: INFO
+    message: This GraphQL service has no local query validation rules configured. Check for depth or cost limits in the surrounding service.
+    metadata:
+      vulnerability_class: graphql_query_limits
+      cwe_ids: [CWE-400]
+    patterns:
+      - pattern-either:
+          - pattern: ariadne.asgi.GraphQL(...)
+          - pattern: ariadne.wsgi.GraphQL(...)
+      - pattern-not: $FACTORY(..., validation_rules=$RULES, ...)

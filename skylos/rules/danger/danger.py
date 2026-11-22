@@ -675,6 +675,10 @@ def scan_file_with_tree(
             source.lower(),
             (
                 "jinja",
+                "lxml",
+                "xml.sax",
+                "setfeature",
+                "hmac",
                 "requests",
                 "httpx",
                 "urllib",

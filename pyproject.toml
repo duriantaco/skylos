@@ -140,6 +140,7 @@ namespaces = false
 "skylos.api" = ["upload_contract/*.json"]
 # Import-name -> distribution map for the dependency hallucination checks.
 "skylos.rules.ai_defect" = ["pipreqs_import_mapping.txt"]
+"skylos.rules" = ["packs/*.yml"]
 # Built-in standards for `skylos agent remediate --standards`.
 "skylos.llm" = ["cleanup_standards.md"]
 # GitHub Actions context capabilities (generated from Octokit's webhook

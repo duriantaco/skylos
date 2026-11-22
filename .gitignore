@@ -48,3 +48,6 @@ coverage.xml
 
 # Local comprehensive rule audit: generated fixtures, runners, and reports.
 /benchmarks/independent_python/
+
+# Personal UML and function-call diagrams.
+/UML/

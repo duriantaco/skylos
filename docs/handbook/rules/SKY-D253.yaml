@@ -2,7 +2,7 @@ id: SKY-D253
 title: Secret compared with == or ===
 family: security
 severity: MEDIUM
-languages: [TypeScript/JavaScript]
+languages: [TypeScript/JavaScript, Python]
 gate:
   full: counted
 cwe: [CWE-208]
@@ -13,7 +13,9 @@ what_it_is: >-
   SKY-D253 reports an equality check in TypeScript or JavaScript that puts
   a secret the server holds (an environment or config credential, an HMAC
   it computes, a stored token or password) against a value the attacker
-  sends.
+  sends. In Python it recognizes a keyed digest produced by the standard
+  hmac module compared with a runtime value using ordinary equality or
+  inequality.
 
 why_it_matters: >-
   That time difference is a "timing side channel". An attacker who can send
@@ -136,8 +138,8 @@ false_alarms_and_suppression:
     - >-
       Missed: secrets in variables with neutral names (`if (a === b)`),
       secrets passed through helpers of other files, secrets added by a
-      schema `.transform()`, `Buffer.equals()` and comparisons in Python,
-      Go or Java.
+      schema `.transform()`, `Buffer.equals()`, Python comparisons other
+      than an hmac digest, and comparisons in Go or Java.
   suppress:
     - check: inline
       text: >-

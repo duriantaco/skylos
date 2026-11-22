@@ -207,6 +207,55 @@ jobs:
         run: |
           echo "Skylos report: ${{ steps.scan.outputs.REPORT }}" >> $GITHUB_STEP_SUMMARY
 
+      - name: Build UML diff report
+        id: uml
+        if: >-
+          !cancelled() && steps.scan.outcome == 'success' &&
+          (steps.diff.outputs.base != '' || github.event_name == 'workflow_dispatch')
+        timeout-minutes: 5
+        continue-on-error: true
+        env:
+          DIFF_BASE: ${{ steps.diff.outputs.base }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          TOOL="$GITHUB_WORKSPACE/scripts/build_uml.py"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # Render PR source as data using the builder and HTML from the base commit.
+            if ! git cat-file -e "$DIFF_BASE:scripts/uml/review.py" 2>/dev/null; then
+              printf '\n### UML change report\n\nAvailable after the report builder lands on the base branch.\n' >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            TOOL_ROOT=$(mktemp -d "$RUNNER_TEMP/skylos-uml-tool.XXXXXX")
+            git archive "$DIFF_BASE" -- scripts/build_uml.py scripts/uml | tar -x -C "$TOOL_ROOT"
+            TOOL="$TOOL_ROOT/scripts/build_uml.py"
+          fi
+          .venv/bin/python -I "$TOOL" --root "$GITHUB_WORKSPACE" --ci --base "$DIFF_BASE" \
+            --output "$RUNNER_TEMP/skylos-uml" --run-url "$RUN_URL"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload UML report
+        id: uml_artifact
+        if: ${{ !cancelled() && steps.uml.outputs.ready == 'true' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: skylos-uml-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/skylos-uml/index.html
+            ${{ runner.temp }}/skylos-uml/update-stats.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Link the UML report in the run summary
+        if: ${{ !cancelled() && steps.uml_artifact.outputs.artifact-url != '' }}
+        env:
+          ARTIFACT_URL: ${{ steps.uml_artifact.outputs.artifact-url }}
+        run: |
+          printf '\n### UML change report\n\n[Download the UML report](%s). Unzip it and open `index.html`.\n' \
+            "$ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"
+
   summary:
     name: Skylos PR summary
     needs: scan
