@@ -264,7 +264,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
 
                 finding = {
                     "rule_id": rule_id,
-                    "severity": _call_severity(node, severity, opts),
+                    "severity": _call_severity(node, severity, opts, self.file_path),
                     "message": message,
                     "file": str(self.file_path),
                     "line": node.lineno,

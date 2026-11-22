@@ -22,7 +22,9 @@ LOW_RISK_REASONS = {
     "SKY-D309": frozenset({"non-credential-secret"}),
     "SKY-D201": frozenset({CONSTANT_ARGUMENT_REASON}),
     "SKY-D202": frozenset({CONSTANT_ARGUMENT_REASON}),
-    "SKY-D203": frozenset({"constant-shell-command", CONSTANT_ARGUMENT_REASON}),
+    "SKY-D203": frozenset(
+        {"constant-shell-command", "temp-file-command", CONSTANT_ARGUMENT_REASON}
+    ),
     "SKY-D205": frozenset({CONSTANT_ARGUMENT_REASON}),
     "SKY-D206": frozenset({CONSTANT_ARGUMENT_REASON}),
     "SKY-D209": frozenset({"constant-shell-command", CONSTANT_ARGUMENT_REASON}),
