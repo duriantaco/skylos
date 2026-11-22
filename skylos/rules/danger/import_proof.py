@@ -95,7 +95,7 @@ class _Effects:
         self.alias_work = 0
         self.ref_work = 0
         self.stable_results = {}
-        self.yaml_builtin_getattrs = None
+        self.yaml_builtin_attribute_reads = None
         self.value_bindings = {}
         self.iteration_bindings = {}
         self.parameter_bindings = set()
@@ -564,14 +564,15 @@ class _Effects:
             return assigned
         return key in self.origin_bindings
 
-    def safe_yaml_loader_getattr(self, node, depth=0):
+    def safe_yaml_loader_attribute_read(self, node, depth=0):
         """A builtin read of a native data-only loader does not expose YAML."""
         if (
             depth > 32
             or not isinstance(node, ast.Call)
             or not isinstance(node.func, ast.Name)
-            or node.func.id != "getattr"
+            or node.func.id not in {"getattr", "hasattr"}
             or len(node.args) not in {2, 3}
+            or (node.func.id == "hasattr" and len(node.args) != 2)
             or node.keywords
             or self.refs(node.args[0]) != {"yaml"}
             or not self.canonical_reference(node.args[0])
@@ -581,15 +582,21 @@ class _Effects:
             or "yaml." + node.args[1].value not in _YAML_DATA_ONLY_LOADERS
         ):
             return False
-        if self.yaml_builtin_getattrs is None:
-            self.yaml_builtin_getattrs = builtin_references(self.nodes[0], {"getattr"})
-        if id(node.func) not in self.yaml_builtin_getattrs:
+        if self.yaml_builtin_attribute_reads is None:
+            self.yaml_builtin_attribute_reads = builtin_references(
+                self.nodes[0], {"getattr", "hasattr"}
+            )
+        if id(node.func) not in self.yaml_builtin_attribute_reads:
             return False
         if len(node.args) == 2:
             return True
         default = node.args[2]
         if isinstance(default, ast.Call):
-            return self.safe_yaml_loader_getattr(default, depth + 1)
+            return (
+                isinstance(default.func, ast.Name)
+                and default.func.id == "getattr"
+                and self.safe_yaml_loader_attribute_read(default, depth + 1)
+            )
         names = self.refs(default)
         return (
             bool(names)
@@ -598,7 +605,7 @@ class _Effects:
         )
 
     def safe_reader_call(self, node):
-        if self.safe_yaml_loader_getattr(node):
+        if self.safe_yaml_loader_attribute_read(node):
             return True
         if not self.safe_reader(node.func):
             return False
