@@ -267,3 +267,41 @@ def test_review_tracing_leaves_ordinary_fact_limits_alone(tmp_path, monkeypatch)
     )
     assert observed and all(origins == ["a", "b", "c", "d", "e"] for origins in observed)
     assert retained_origins() == ordinary
+
+
+UNRESOLVED_CALLER = """
+@app.post('/flights/unresolved')
+def unresolved(payload: Flight):
+    save(os.path.join(ROOT, plugin.pick(payload.name)))
+"""
+
+
+def test_unresolved_caller_is_named_in_the_review_item(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+    app = APP.format(start="clean(payload.name)", read="clean(payload.name)") + UNRESOLVED_CALLER
+    line = app.splitlines().index("    save(os.path.join(ROOT, plugin.pick(payload.name)))") + 1
+    result = _analyze(tmp_path, {"app.py": app, "storage.py": STORAGE})
+    rows = {row["rule_id"]: row for row in _symlink_rows(result)}
+
+    assert set(rows) == {"SKY-D324", "SKY-D325"}
+    write, read = rows["SKY-D324"], rows["SKY-D325"]
+    assert is_nonblocking_review(write) and is_nonblocking_review(read)
+    source = f"app.py:{line} return value of `plugin.pick(...)` is not followed"
+    assert write["metadata"]["path_provenance"]["component_review"]["unresolved_sources"] == [source]
+    assert "does not cover them: " + source in write["message"]
+    assert "unresolved_sources" not in read["metadata"]["path_provenance"]["component_review"]
+    assert "could not follow" not in read["message"]
+    assert write["review_item"]["group"] != read["review_item"]["group"]
+    assert [row["rule_id"] for row in rows.values() if is_listed(row, "danger")] == [
+        "SKY-D324",
+        "SKY-D325",
+    ]
+    assert check_gate(result, {"gate": {"max_security": 0}})[0] is True
+
+
+def test_unresolved_sources_alone_are_not_reported(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+    app = APP.format(start="plugin.pick(payload.name)", read="plugin.pick(payload.name)")
+    result = _analyze(tmp_path, {"app.py": app, "storage.py": STORAGE})
+
+    assert _symlink_rows(result) == []

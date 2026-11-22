@@ -1133,9 +1133,12 @@ function returned from a dynamically populated namespace can also leave the
 finding visible because Skylos cannot establish the effects of that call.
 
 For SKY-D324 and SKY-D325, `review_item.blocking: false` marks a validated
-filename with an unresolved directory-permissions question. When the
-validator and directory match, the listed finding references the other
-sites in `listing.combines`. Sites whose directory is unknown stay separate.
+filename with an unresolved directory-permissions question. Path sources the
+trace could not follow are listed in
+`metadata.path_provenance.component_review.unresolved_sources` and named in the
+message. When the validator, directory and unresolved sources match, the
+listed finding references the other sites in `listing.combines`. Sites whose
+directory is unknown stay separate.
 
 ### Architecture advisories in full scans
 

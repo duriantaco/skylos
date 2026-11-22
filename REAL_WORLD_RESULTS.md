@@ -1,9 +1,9 @@
 # Real-World Skylos Results
 
-**10 dead-code cleanup PRs merged into the default branch in 9 open-source projects.**
+**21 dead-code cleanup PRs merged into the default branch in 19 open-source projects.**
 
-This page records 26 Skylos-assisted cleanup and quality-fix pull requests
-we opened in 22 open-source projects between March and June 2026, including
+This page records 43 Skylos-assisted cleanup and quality-fix pull requests
+we opened in 38 open-source projects between March and November 2026, including
 the PRs that were closed, reverted, never reached the default branch or are
 still waiting. It covers these cleanup contributions, not our unrelated
 feature work or submissions to tool directories.
@@ -13,28 +13,31 @@ establish that any listed project endorsed or adopted Skylos; a merged PR
 does not mean a project uses it.
 
 PR states, merge targets, closure actors and linked maintainer reviews were
-checked on GitHub on 9 October 2026. The default-branch total excludes the
-known Glances revert below. This records merge outcomes, not a fresh audit
+checked on GitHub on 16 November 2026. The default-branch total excludes the
+known Glances revert and the Flagsmith/yfinance merges outside their default
+branches below. This records merge outcomes, not a fresh audit
 of whether every removed symbol remains absent from the current code.
 
 | Outcome | PRs |
 |:---|---:|
-| Default-branch dead-code merges (excluding the known revert) | 10 (9 projects) |
-| Merged into a maintainer's staging branch only; the change did not reach `main` | 1 |
+| Default-branch dead-code merges (excluding the known revert) | 21 (19 projects) |
+| Merged outside the default branch; the change has not reached `main` | 2 |
 | Merged: other fix (mutable default arguments) | 1 |
 | Merged, then reverted by the maintainer | 1 |
 | Closed by a maintainer | 4 |
-| Closed by us | 7 |
-| Still open | 2 |
-| **Total** | **26 (22 projects)** |
+| Closed by us | 8 |
+| Still open | 6 |
+| **Total** | **43 (38 projects)** |
 
 ## How the candidates were found
 
 - Every PR started from a Skylos static scan of the project.
-- For at least 9 of the 26 PRs, including both Black PRs, pdm and isort, we
-  also triaged the findings with `skylos agent verify`, which uses an LLM
+- For at least 9 of the original 26 PRs, including both Black PRs, pdm and
+  isort, we also triaged the findings with `skylos agent verify`, which uses an LLM
   (we used Anthropic's) to review each static finding against the code. Our
   notes do not record the method for every PR.
+- The descriptions of the 17 newly recorded PRs opened in November credit
+  deterministic Skylos scans and report no AI use by the submitter.
 - We checked each candidate by hand before opening a PR. That did not catch
   everything: one merged PR broke the project and was reverted, and a
   maintainer's review of another found a `NameError` on startup (both below).
@@ -56,14 +59,32 @@ of whether every removed symbol remains absent from the current code.
 | pdm | [pdm-project/pdm#3774](https://github.com/pdm-project/pdm/pull/3774) | 2026-04-30 | 8 files, +2, −47 | unused classes, constants and a method; the maintainer asked us to keep `Version.MIN`/`Version.MAX`, which we restored before merge |
 | isort | [PyCQA/isort#2525](https://github.com/PyCQA/isort/pull/2525) | 2026-04-30 | 1 file, +0, −3 | an unused `_ENCODING_PATTERN` regex and its `re` import |
 | react-error-boundary | [bvaughn/react-error-boundary#243](https://github.com/bvaughn/react-error-boundary/pull/243) | 2026-06-20 | 7 files, +0, −102 | unused docs and Vite integration helpers (TypeScript) |
+| rembg | [danielgatis/rembg#863](https://github.com/danielgatis/rembg/pull/863) | 2026-11-02 | 2 files, +0, −7 | an unused `IO` import and embedding dictionary |
+| Buzz | [chidiwilliams/buzz#1691](https://github.com/chidiwilliams/buzz/pull/1691) | 2026-11-02 | 21 files, +2, −46 | unused imports, constants, class attributes and local variables |
+| packaging | [pypa/packaging#1488](https://github.com/pypa/packaging/pull/1488) | 2026-11-04 | 1 file, +0, −7 | unused `_DICT_FIELDS` and `_NOT_FOUND` constants |
+| Supervision | [roboflow/supervision#2865](https://github.com/roboflow/supervision/pull/2865) | 2026-11-04 | 3 files, +0, −34 | two private metric helpers and an unloaded docs script; merged into `develop`, its default branch |
+| Altair | [vega/altair#4204](https://github.com/vega/altair/pull/4204) | 2026-11-05 | 4 files, +0, −37 | unused import-availability, Sphinx and tooling helpers/constants |
+| pipenv | [pypa/pipenv#6776](https://github.com/pypa/pipenv/pull/6776) | 2026-11-05 | 12 files, +9, −146 | unused functions and unpacked variable bindings |
+| Locust | [locustio/locust#3586](https://github.com/locustio/locust/pull/3586) | 2026-11-05 | 6 files, +2, −97 | unused exception/event classes, a docs helper and two web UI components |
+| Maigret | [soxoj/maigret#3315](https://github.com/soxoj/maigret/pull/3315) | 2026-11-06 | 10 files, +6, −50 | unused imports, functions and variables; also fixed the stale `QueryStatus` import that broke `site_check.py` |
+| tomlkit | [python-poetry/tomlkit#703](https://github.com/python-poetry/tomlkit/pull/703) | 2026-11-06 | 1 file, +0, −50 | unused `_NOT_SET` and `Container._insert_after` |
+| Tortoise ORM | [tortoise/tortoise-orm#2399](https://github.com/tortoise/tortoise-orm/pull/2399) | 2026-11-07 | 3 files, +29, −31 | unused unpacked bindings and dictionary keys; maintainer refactors included and `_RED` restored; merged into default branch `develop` |
+| Tortoise ORM | [tortoise/tortoise-orm#2397](https://github.com/tortoise/tortoise-orm/pull/2397) | 2026-11-09 | 5 files, +133, −122 | `_convert_second_fraction` and empty `BasePostgresPool`; docs formatting and Ruff configuration changes included; merged into default branch `develop` |
 
-Total final GitHub diff across these 10 PRs:
+Total final GitHub diff across these 21 PRs:
 
 | PRs | Files changed | Additions | Deletions | Net change |
 |---:|---:|---:|---:|---:|
-| 10 | 45 | 7 | 366 | −359 |
+| 21 | 113 | 188 | 993 | −805 |
 
-## Merged into a staging branch, not into main
+These are full PR diffs, including tests, changelogs, formatting and other
+edits, not a count of dead lines removed. Maigret combines cleanup with a
+functional fix. The Tortoise PRs were split at the maintainer's request;
+[#2399's final changes](https://github.com/tortoise/tortoise-orm/pull/2399#issuecomment-6701895597)
+include maintainer refactors and
+[restoration of the `_RED` constant](https://github.com/tortoise/tortoise-orm/pull/2399#issuecomment-6700243147).
+
+## Merged outside the default branch
 
 - [Flagsmith/flagsmith#6953](https://github.com/Flagsmith/flagsmith/pull/6953)
   (10 files, +0, −56: unused exceptions, serializers, response classes and
@@ -75,6 +96,13 @@ Total final GitHub diff across these 10 PRs:
   approved by another maintainer and then closed unmerged on 2026-03-23, with
   no reason posted. The change did not reach `main`, so it is not in the
   count above.
+- [ranaroussi/yfinance#3032](https://github.com/ranaroussi/yfinance/pull/3032)
+  (3 files, +0, −45: unused cache dummy classes and holder URL constants)
+  was merged on 2026-11-15 into `dev`. Its default branch is `main`, where
+  the removed cache dummy classes were still present when checked on
+  2026-11-16. The merge commit has
+  [not reached `main`](https://github.com/ranaroussi/yfinance/compare/8dde0cec8a8cbeabedf1126a8ebd4ae07047c15b...main),
+  so this accepted cleanup is recorded separately from the default-branch total.
 
 ## Other merged fix
 
@@ -130,20 +158,39 @@ Total final GitHub diff across these 10 PRs:
 - [celery/celery#10200](https://github.com/celery/celery/pull/10200):
   replaced by #10201 a few minutes later (its title was a pasted `git commit`
   command).
+- [celery/celery#10201](https://github.com/celery/celery/pull/10201)
+  (8 files, +21, −42): we closed it unmerged on 2026-11-02, with no closure
+  reason posted. During the PR we put back the `asynpool.py` removals:
+  those methods override `multiprocessing.pool.Pool` internals that run
+  during worker shutdown, and Skylos could not trace calls into the
+  standard library's parent classes.
 - [nicolargo/glances#3515](https://github.com/nicolargo/glances/pull/3515) and
   [#3517](https://github.com/nicolargo/glances/pull/3517): see "Merged, then
   reverted".
 
 ## Still open
 
-- [celery/celery#10201](https://github.com/celery/celery/pull/10201)
-  (8 files, +21, −42), open since 15 March 2026. During the PR we put back
-  the `asynpool.py` removals: those methods override `multiprocessing.pool.Pool`
-  internals that run during worker shutdown, and Skylos could not trace calls
-  into the standard library's parent classes.
-- [pypa/twine#1316](https://github.com/pypa/twine/pull/1316) (2 files, −8):
-  approved by one maintainer on 9 May 2026, who noted that both removed names
-  are technically public API; it is waiting for a second maintainer.
+- [pypa/twine#1316](https://github.com/pypa/twine/pull/1316)
+  (3 files, +1, −9), open since 2026-04-30: approved by woodruffw on
+  9 May 2026, who noted that both removed names are technically public API,
+  and [approved by sigmavirus24 on 4 November](https://github.com/pypa/twine/pull/1316#pullrequestreview-5767929233).
+  It remains unmerged despite both approvals.
+- [docling-project/docling#5137](https://github.com/docling-project/docling/pull/5137)
+  (7 files, +0, −73), open since 2026-11-02: private helper cleanup.
+  Changes were requested on 13 November; the reviewer
+  [asked whether `_select_best_cluster()` is needed downstream by `docling-inner`](https://github.com/docling-project/docling/pull/5137#discussion_r4560023765).
+  That question remains unresolved in the published discussion.
+- [piccolo-orm/piccolo#1452](https://github.com/piccolo-orm/piccolo/pull/1452)
+  (3 files, +0, −14), open since 2026-11-02: unused trigger/migration helpers
+  and a dataclass.
+- [fishaudio/fish-speech#1370](https://github.com/fishaudio/fish-speech/pull/1370)
+  (10 files, +2, −65), open since 2026-11-01: unused imports, schema classes,
+  a conversation helper and constants.
+- [NanmiCoder/MediaCrawler#997](https://github.com/NanmiCoder/MediaCrawler/pull/997)
+  (41 files, +20, −446), open since 2026-11-01: unused imports and obsolete
+  scraping/signing helpers.
+- [robotframework/robotframework#5851](https://github.com/robotframework/robotframework/pull/5851)
+  (2 files, +0, −9), open since 2026-11-06: three unused private methods.
 
 ## What the misses taught us
 
@@ -152,6 +199,8 @@ Total final GitHub diff across these 10 PRs:
 - A public repository may not show every caller: a maintainer warned that
   private packages installed at build time might use code we removed
   (Flagsmith).
+- Private names can also raise downstream compatibility concerns: Docling's
+  reviewer asked whether a private helper was needed by `docling-inner`.
 - A stale branch can make dead code live again. Re-check the findings on
   current main on the day you submit (turboAPI).
 - Run the project's formatter, linters and tests before submitting (glances,

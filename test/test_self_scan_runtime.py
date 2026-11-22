@@ -244,24 +244,6 @@ def test_scan_and_final_status_survive_reports_and_watchdog_failures(
         check=False,
     )
     assert final.returncode == status
-    if status == 0 and not report:
-        # Success without JSON is still rejected by the actual report gate.
-        script = (
-            _step("Block high-risk security findings")["run"]
-            .split("<<'PY'\n", 1)[1]
-            .rsplit("\nPY", 1)[0]
-        )
-        gate = subprocess.run(
-            [sys.executable, "-", env["REPORT"]],
-            input=script,
-            cwd=tmp_path,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=5,
-            check=False,
-        )
-        assert gate.returncode != 0
 
 
 @pytest.mark.parametrize("diff", ["", "a" * 40])

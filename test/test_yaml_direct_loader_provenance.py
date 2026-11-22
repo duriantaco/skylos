@@ -31,6 +31,8 @@ def _both(tmp_path, source):
         "import yaml\nfrom yaml import SafeLoader\nSafeLoader = yaml.UnsafeLoader\nyaml.load(data, Loader=SafeLoader)\n",
         "import yaml\nclass SafeLoader(yaml.UnsafeLoader):\n    pass\nyaml.load(data, Loader=SafeLoader)\n",
         "import yaml\nyaml.CSafeLoader = yaml.UnsafeLoader\nyaml.load_all(data, yaml.CSafeLoader)\n",
+        "import yaml\ndef hasattr(provider, name):\n    return bool(name)\n"
+        "if hasattr(yaml, 'CSafeLoader'):\n    yaml.load(data, Loader=yaml.CSafeLoader)\n",
     ],
 )
 def test_unsafe_or_unproved_loader_binding_keeps_finding(tmp_path, source):
@@ -46,6 +48,9 @@ def test_unsafe_or_unproved_loader_binding_keeps_finding(tmp_path, source):
         "import yaml as y\ny.load_all(data, y.CSafeLoader)\n",
         "from yaml import load as parse, SafeLoader as Loader\nparse(data, Loader=Loader)\n",
         "from yaml.loader import SafeLoader\nimport yaml\nyaml.load(data, Loader=SafeLoader)\n",
+        "import yaml\ndef read(data):\n    if hasattr(yaml, 'CSafeLoader'):\n"
+        "        return yaml.load(data, Loader=yaml.CSafeLoader)\n"
+        "    return yaml.safe_load(data)\n",
     ],
 )
 def test_native_safe_loader_imports_and_aliases_stay_quiet(tmp_path, source):

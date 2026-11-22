@@ -275,7 +275,7 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . -a
 
 ## 成果
 
-10 个借助 Skylos 完成的死代码清理 PR 已合并到 9 个开源项目，包括 [Black](https://github.com/psf/black/pull/5041)、[NetworkX](https://github.com/networkx/networkx/pull/8572)、[Optuna](https://github.com/optuna/optuna/pull/6547)、[mitmproxy](https://github.com/mitmproxy/mitmproxy/pull/8136) 和 [pypdf](https://github.com/py-pdf/pypdf/pull/3685)。[Real-World Results](../../REAL_WORLD_RESULTS.md) 列出了我们记录的全部 26 个 PR，包括被关闭或回滚的。这些是被接受的清理 PR，不代表背书。
+21 个借助 Skylos 完成的死代码清理 PR 已合并到 19 个开源项目的默认分支，包括 [Black](https://github.com/psf/black/pull/5041)、[NetworkX](https://github.com/networkx/networkx/pull/8572)、[Optuna](https://github.com/optuna/optuna/pull/6547)、[mitmproxy](https://github.com/mitmproxy/mitmproxy/pull/8136) 和 [pypdf](https://github.com/py-pdf/pypdf/pull/3685)。[Real-World Results](../../REAL_WORLD_RESULTS.md) 列出了我们记录的全部 43 个 PR，包括被关闭或回滚的。这些是被接受的清理 PR，不代表背书。
 
 方法、带日期的结果和与其他工具的对比：[BENCHMARK.md](../../BENCHMARK.md)。
 

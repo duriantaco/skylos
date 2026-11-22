@@ -57,12 +57,10 @@ def test_summary_uses_the_same_pinned_renderer_and_exact_scan_artifact():
         if step.get("name") == "Install trusted Skylos for pull requests"
     )
     install = _step("Install trusted PR renderer")
-    # Both install the Skylos on the PR's base commit, from the same files.
-    archive = re.compile(r"git archive \"\$TRUSTED_BASE_SHA\" -- [^\n]+")
-    assert archive.search(install["run"]).group(0) == archive.search(scan_install["run"]).group(0)
-    assert install["env"] == scan_install["env"] == {
-        "TRUSTED_BASE_SHA": "${{ github.event.pull_request.base.sha }}"
-    }
+    for step in (install, scan_install):
+        assert step["env"] == {"TRUSTED_BASE_SHA": "${{ github.event.pull_request.base.sha }}"}
+        assert '[[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]' in step["run"]
+        assert "skylos.git@$TRUSTED_BASE_SHA" in step["run"]
     assert 'python -I -m venv "$RUNNER_TEMP/skylos-review-venv"' in install["run"]
     assert '"$RUNNER_TEMP/skylos-review-venv/bin/python" -I -m pip install' in install["run"]
     assert "-e ." not in install["run"] and "${{" not in install["run"]

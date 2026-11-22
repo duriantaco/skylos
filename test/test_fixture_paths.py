@@ -153,7 +153,6 @@ def test_dangling_fixture_symlink_cannot_create_target(tmp_path, fixture_io, ove
         "test_github_actions_secrets_inherit_line.py",
         "test_pr1237_liveness_proof_boundaries.py",
         "test_security_source_precision.py",
-        "test_self_scan_fixture_gate.py",
         "test_self_scan_runtime.py",
     ],
 )

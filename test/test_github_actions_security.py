@@ -681,10 +681,16 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
         s for s in steps if s.get("name") == "Install trusted Skylos for pull requests"
     )
     assert pr_install_step["if"] == "github.event_name == 'pull_request'"
-    _assert_installs_trusted_base(pr_install_step)
-    assert 'uv pip install --python .venv/bin/python "$TRUSTED_SKYLOS"' in (
-        pr_install_step["run"]
+    assert pr_install_step["env"] == {
+        "TRUSTED_BASE_SHA": "${{ github.event.pull_request.base.sha }}"
+    }
+    assert '[[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]' in pr_install_step["run"]
+    assert (
+        '"skylos @ git+https://github.com/duriantaco/skylos.git@$TRUSTED_BASE_SHA"'
+        in pr_install_step["run"]
     )
+    assert "${{" not in pr_install_step["run"]
+    assert "-e ." not in pr_install_step["run"]
 
     local_install_step = next(
         s for s in steps if s.get("name") == "Use repo Skylos on trusted refs"
@@ -703,33 +709,9 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
         s for s in steps if s.get("name") == "Report findings (advisory)"
     )
     assert "--advisory" in advisory_step["run"]
-
-    blocker_step = next(
-        s for s in steps if s.get("name") == "Block high-risk security findings"
-    )
-    assert blocker_step["if"] == "always() && steps.scan.outcome == 'success'"
-    assert "HIGH" in blocker_step["run"]
-    assert "CRITICAL" in blocker_step["run"]
-    assert 'for category in ("danger", "secrets")' in blocker_step["run"]
-    assert "raise SystemExit(1)" in blocker_step["run"]
-
-
-    # Unlisted review items never block, matching Skylos's own gate.
-    assert 'listing.get("listed") is False' in blocker_step["run"]
-def _assert_installs_trusted_base(step):
-    """A PR is scanned by the Skylos on its base commit, never its own code."""
-    assert step["env"]["TRUSTED_BASE_SHA"] == (
-        "${{ github.event.pull_request.base.sha }}"
-    )
-    script = step["run"]
-    assert '[[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]' in script
-    assert 'git cat-file -e "$TRUSTED_BASE_SHA^{commit}"' in script
-    assert 'git archive "$TRUSTED_BASE_SHA" -- pyproject.toml' in script
-    assert 'tar -x -C "$TRUSTED_SKYLOS"' in script
-    assert 'TRUSTED_SKYLOS="$RUNNER_TEMP/' in script
-    assert "${{" not in script
-    assert "-e ." not in script
-    assert "github.head_ref" not in script and "github.sha" not in script
+    assert not any(
+        "raise SystemExit(1)" in str(s.get("run", "")) for s in steps
+    ), "the advisory scan must not fail a PR on findings"
 
 
 def test_skylos_pr_workflow_builds_go_engine_from_immutable_base():
@@ -786,7 +768,6 @@ def test_skylos_workflow_reports_incomplete_scan_before_preserving_exit_code():
     preserve_index = steps.index(preserve_step)
     report_steps = {
         "Report findings (advisory)",
-        "Block high-risk security findings",
         "GitHub annotations",
         "Upload report artifact",
     }
