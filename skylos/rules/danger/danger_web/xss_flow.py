@@ -9,6 +9,7 @@ from skylos.rules.danger.danger_web.html_context import (
     TEXT_SAFE,
     URL_SAFE,
     hole_requirements,
+    hole_states,
     safe_url_prefix,
     split_parts,
 )
@@ -28,6 +29,30 @@ from .namespace_provenance import sanitizer_namespace_effects
 _TEMPLATE_SOURCE_SINKS = frozenset(
     {"render_template_string", "flask.render_template_string", "from_string"}
 )
+
+# Calls whose output is HTML no argument can inject markup into: Flask/Quart
+# render a literal ``.html`` template with Jinja autoescaping, ``url_for``
+# percent-encodes ``<``, ``>`` and ``"`` (but not ``'``) in a path URL, and
+# pygments' HtmlFormatter escapes every token of the highlighted code.
+_SAFE_HTML_CALLS = {
+    "flask.render_template": "template",
+    "flask.templating.render_template": "template",
+    "quart.render_template": "template",
+    "quart.templating.render_template": "template",
+    "flask.url_for": "url_for",
+    "flask.helpers.url_for": "url_for",
+    "quart.url_for": "url_for",
+    "quart.helpers.url_for": "url_for",
+    "pygments.highlight": "highlight",
+}
+_SAFE_HTML_CALL_TAILS = frozenset(name.rsplit(".", 1)[1] for name in _SAFE_HTML_CALLS)
+# Flask's default ``select_jinja_autoescape`` suffixes.
+_AUTOESCAPE_SUFFIXES = (".html", ".htm", ".xml", ".xhtml", ".svg")
+_HTML_FORMATTERS = frozenset(
+    {"pygments.formatters.HtmlFormatter", "pygments.formatters.html.HtmlFormatter"}
+)
+# ``url_for`` options that put a request-derived scheme or host in the URL.
+_URL_FOR_EXTERNAL_OPTIONS = frozenset({"_external", "_scheme"})
 
 _QUOTE_ESCAPING_SANITIZERS = frozenset(
     {"html.escape", "markupsafe.escape", "markupsafe.Markup.escape", "Markup.escape"}
@@ -605,13 +630,27 @@ class _XSSFlowChecker(TaintVisitor):
 
     def _hole_levels(self, parts, scope: _Scope) -> list[int]:
         levels = []
+        states = None
         for part in parts:
             if part[0] != "value":
                 continue
             if part[2]:
                 levels.append(CLEAN)
-            else:
-                levels.append(min((self._level(n, scope) for n in part[1]), default=CLEAN))
+                continue
+            level = min((self._level(n, scope) for n in part[1]), default=CLEAN)
+            if (
+                level == TEXT_SAFE
+                and part[1]
+                and all(self._safe_html_kind(n, scope) == "url_for" for n in part[1])
+            ):
+                # A path from ``url_for`` cannot leave a double-quoted
+                # attribute or carry a script scheme; a ``'`` it keeps can
+                # leave a single-quoted one.
+                if states is None:
+                    states = hole_states(parts)
+                if states[len(levels)] == "double_quoted":
+                    level = URL_SAFE
+            levels.append(level)
         return levels
 
     def _parts_level(self, parts, scope: _Scope) -> int:
@@ -647,6 +686,107 @@ class _XSSFlowChecker(TaintVisitor):
         return None
 
     def _call_level(self, node: ast.Call, scope: _Scope) -> int:
+        level = self._plain_call_level(node, scope)
+        if level < TEXT_SAFE and self._safe_html_kind(node, scope) is not None:
+            return TEXT_SAFE
+        return level
+
+    def _safe_html_kind(self, node: ast.AST, scope: _Scope):
+        """``template``, ``url_for`` or ``highlight`` when ``node`` calls a
+        producer of HTML that its arguments cannot inject markup into."""
+        if not isinstance(node, ast.Call):
+            return None
+        call_name = _qualified_name_from_call(node)
+        if (
+            not call_name
+            or call_name.rsplit(".", 1)[-1] not in _SAFE_HTML_CALL_TAILS
+            or self._has_api_patching
+            or any(isinstance(arg, ast.Starred) for arg in node.args)
+            or not self._import_names_are_stable(call_name)
+        ):
+            return None
+        resolved = self.untrusted_sources.resolved_import(scope.func, call_name)
+        kind = _SAFE_HTML_CALLS.get(resolved)
+        if kind is None or not self._sanitizer_is_unpatched(resolved):
+            return None
+        if kind == "template":
+            safe = self._renders_autoescaped_template(node)
+        elif kind == "url_for":
+            safe = not any(
+                kw.arg is None or kw.arg in _URL_FOR_EXTERNAL_OPTIONS
+                for kw in node.keywords
+            )
+        else:
+            formatter = node.args[2] if len(node.args) > 2 else None
+            for kw in node.keywords:
+                if kw.arg == "formatter":
+                    formatter = kw.value
+            safe = self._is_html_formatter(formatter, scope)
+        return kind if safe else None
+
+    def _renders_autoescaped_template(self, node: ast.Call) -> bool:
+        """A literal template name (or list of them) that Flask autoescapes,
+        in a module that does not configure autoescaping itself."""
+        name = node.args[0] if node.args else None
+        for kw in node.keywords:
+            if kw.arg is None:
+                return False
+            if kw.arg == "template_name_or_list":
+                name = kw.value
+        names = name.elts if isinstance(name, (ast.List, ast.Tuple)) else [name]
+        if not names or not all(
+            (_const_str_value(item) or "").endswith(_AUTOESCAPE_SUFFIXES)
+            for item in names
+        ):
+            return False
+        return not self._configures_autoescape()
+
+    def _configures_autoescape(self) -> bool:
+        cached = getattr(self, "_configures_autoescape_cache", None)
+        if cached is None or cached[0] is not self._tree:
+            names = {"autoescape", "select_jinja_autoescape"}
+            found = any(
+                (isinstance(item, ast.Attribute) and item.attr in names)
+                or (isinstance(item, ast.keyword) and item.arg in names)
+                or (isinstance(item, ast.Name) and item.id in names)
+                or (
+                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and item.name in names
+                )
+                for item in ast.walk(self._tree)
+            )
+            cached = (self._tree, found)
+            self._configures_autoescape_cache = cached
+        return cached[1]
+
+    def _is_html_formatter(self, node: ast.AST | None, scope: _Scope) -> bool:
+        """``HtmlFormatter(...)`` with options no request value reaches (its
+        ``title``, ``cssclass`` and similar options are written unescaped),
+        directly or through one local or module assignment."""
+        if isinstance(node, ast.Name):
+            binding = self._single_local_binding(node.id, scope.func)
+            if binding is None and self._module_binding_counts().get(node.id) == 1:
+                binding = next(
+                    (
+                        item
+                        for item in getattr(self._tree, "body", [])
+                        if _assigns_only(item, node.id)
+                    ),
+                    None,
+                )
+            node = getattr(binding, "value", None)
+        if not isinstance(node, ast.Call):
+            return False
+        call_name = _qualified_name_from_call(node)
+        if not call_name or not self._import_names_are_stable(call_name):
+            return False
+        resolved = self.untrusted_sources.resolved_import(scope.func, call_name)
+        if resolved not in _HTML_FORMATTERS:
+            return False
+        values = [*node.args, *(kw.value for kw in node.keywords)]
+        return all(self._level(value, scope) == CLEAN for value in values)
+
+    def _plain_call_level(self, node: ast.Call, scope: _Scope) -> int:
         known = self._known_call_level(node, scope)
         if known is not None:
             return known
