@@ -11,12 +11,12 @@ read by ``js_test_config.py``.
 from __future__ import annotations
 
 import ast
-import sys
 import configparser
 import fnmatch
 import hashlib
 import re
 import shlex
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -42,21 +42,58 @@ RULE_ID = "SKY-A112"
 
 LocalModule = Callable[[str], bool]
 
-# pytest hooks that can stop tests from running or change what they report.
+# pytest hooks that decide what is collected and run, how a test is called,
+# what its report says, or the session's exit status.
 OUTCOME_HOOKS = frozenset(
     {
+        "pytest_collection",
         "pytest_collection_modifyitems",
+        "pytest_collection_finish",
         "pytest_ignore_collect",
+        "pytest_collect_directory",
         "pytest_collect_file",
+        "pytest_collectstart",
+        "pytest_itemcollected",
+        "pytest_collectreport",
+        "pytest_make_collect_report",
+        "pytest_pycollect_makemodule",
         "pytest_pycollect_makeitem",
         "pytest_generate_tests",
+        "pytest_make_parametrize_id",
+        "pytest_markeval_namespace",
+        "pytest_runtestloop",
         "pytest_runtest_protocol",
         "pytest_runtest_setup",
         "pytest_runtest_call",
+        "pytest_runtest_teardown",
+        "pytest_pyfunc_call",
+        "pytest_fixture_setup",
         "pytest_runtest_makereport",
         "pytest_runtest_logreport",
         "pytest_report_teststatus",
+        "pytest_report_to_serializable",
+        "pytest_report_from_serializable",
+        "pytest_terminal_summary",
         "pytest_sessionfinish",
+    }
+)
+# Hooks that run while pytest starts or stops. They can register plugins
+# (which then implement any hook), change options or end the process, so
+# adding or changing one is reported unless it only declares markers or
+# command-line options. pytest's remaining hooks only report or debug
+# (report_header, assertrepr_compare, warning_recorded, runtest_logstart,
+# deselected, exception_interact, ...).
+SETUP_HOOKS = frozenset(
+    {
+        "pytest_addhooks",
+        "pytest_plugin_registered",
+        "pytest_addoption",
+        "pytest_configure",
+        "pytest_cmdline_parse",
+        "pytest_cmdline_main",
+        "pytest_load_initial_conftests",
+        "pytest_sessionstart",
+        "pytest_unconfigure",
     }
 )
 
@@ -66,6 +103,49 @@ _INI_FILES = {
     "tox.ini": ("pytest",),
     "setup.cfg": ("tool:pytest",),
 }
+# pytest 9 reads a [pytest] table with native TOML values from these.
+_PYTEST_TOML_FILES = frozenset({"pytest.toml", ".pytest.toml"})
+# Where pytest looks for its settings in a directory, first match wins.
+_PYTEST_CONFIG_ORDER = (
+    "pytest.toml",
+    ".pytest.toml",
+    "pytest.ini",
+    ".pytest.ini",
+    "pyproject.toml",
+    "tox.ini",
+    "setup.cfg",
+)
+# Settings whose removal lets more tests pass; -W/filterwarnings are
+# compared separately.
+_STRICT_FLAGS = {
+    "--strict-markers": "unknown markers no longer fail",
+    "--strict-config": "unknown settings no longer fail",
+    "--strict": "pytest's strict mode is off",
+    "--runxfail": "tests marked xfail no longer run as ordinary tests",
+    "--doctest-modules": "doctests in modules no longer run",
+    "--doctest-glob": "doctest files no longer run",
+}
+_STRICT_SETTINGS = (
+    "strict",
+    "strict_markers",
+    "strict_config",
+    "strict_xfail",
+    "strict_parametrization_ids",
+)
+# Modules that would stand in for the test runner, Skylos's probe or
+# Python's startup files if a file in an import root shadowed them.
+_SHADOWED_MODULES = frozenset(
+    {
+        "pytest",
+        "_pytest",
+        "pluggy",
+        "sitecustomize",
+        "usercustomize",
+        "skylos_done_pytest_plugin",
+    }
+)
+_IMPORTABLE_SUFFIXES = frozenset({".py", ".pyc", ".pyw", ".so", ".pyd"})
+_SKIP_NAMES = frozenset({"skip", "xfail", "importorskip", "SkipTest"})
 _COVERAGE_INI_SECTIONS = {
     ".coveragerc": ("run", "report"),
     "setup.cfg": ("coverage:run", "coverage:report"),
@@ -84,7 +164,16 @@ _SELECTION_FLAGS = {
     "--co": "collects tests without running them (--co)",
     "--collect-only": "collects tests without running them (--collect-only)",
 }
-_FLAGS_WITH_VALUES = {"-k", "-m", "--deselect", "--ignore", "--ignore-glob", "-p"}
+_FLAGS_WITH_VALUES = {
+    "-k",
+    "-m",
+    "--deselect",
+    "--ignore",
+    "--ignore-glob",
+    "-p",
+    "-W",
+    "--pythonwarnings",
+}
 # Turning these plugins off changes speed or ordering, never which results count.
 _HARMLESS_DISABLED_PLUGINS = frozenset(
     {
@@ -112,7 +201,7 @@ _TEST_STEP_RE = re.compile(
     r"|mvn\b[^\n]*\btest|gradlew?\b[^\n]*\btest)\b"
 )
 _SWALLOW_RE = re.compile(
-    r"\|\|\s*(?:true|:|exit\s+0)\b|;\s*exit\s+0\s*$|\bset\s+\+e\b", re.M
+    r"\|\|\s*(?:true|:|exit\s+0)\b|;\s*exit\s+0\s*$|\bset\s+\+e\b", re.MULTILINE
 )
 
 
@@ -136,13 +225,40 @@ def detect_loosened_test_config(comparison: Comparison) -> list[ConfigFinding]:
         )
 
     existing = _ExistingTests(comparison)
+    # pytest reads one settings file at the root. When the change makes a
+    # different file the one pytest reads (a new pytest.toml in front of
+    # pyproject.toml, a deleted pytest.ini), the base's settings stop applying
+    # as a whole: compare them with the file that now wins.
+    base_winner, base_root = _root_pytest_config(comparison.base_text)
+    head_winner, head_root = _root_pytest_config(comparison.head_text)
+    switched = head_winner != base_winner
+    changed_heads = {c.head_path for c in comparison.changed if c.head_path}
+    if switched and head_winner not in changed_heads:
+        findings += _compare_pytest_options(
+            head_winner or base_winner,
+            comparison.head_text(head_winner) if head_winner else None,
+            base_root,
+            head_root,
+            local,
+        )
     for changed in comparison.changed:
         head_path = changed.head_path
         if head_path is None:
             continue
+        shadowed = _shadowed_module(head_path)
+        if shadowed:
+            findings.append(
+                ConfigFinding(
+                    head_path,
+                    None,
+                    f"Python would load this file as {shadowed} when the tests "
+                    "run, which can replace the test runner or its results",
+                )
+            )
         name = PurePosixPath(head_path).name
         is_config = (
             name in _INI_FILES
+            or name in _PYTEST_TOML_FILES
             or name in _COVERAGE_INI_SECTIONS
             or name in {"pyproject.toml", "conftest.py"}
             or _is_workflow(head_path)
@@ -160,14 +276,21 @@ def detect_loosened_test_config(comparison: Comparison) -> list[ConfigFinding]:
             if base is None
             else None
         )
+        base_options = base_root if switched and head_path == head_winner else None
         if name == "pyproject.toml":
-            findings += _pyproject(head_path, base, head, local, tests)
-        if name in _INI_FILES:
-            base_options = (
-                _base_pytest_options(comparison)
-                if base is None and head_path in {"pytest.ini", ".pytest.ini"}
-                else None
+            findings += _pyproject(head_path, base, head, local, tests, base_options)
+        if name in _PYTEST_TOML_FILES:
+            findings += _compare_pytest_options(
+                head_path,
+                head,
+                _pytest_table_options(_toml(base) or {})
+                if base_options is None
+                else base_options,
+                _pytest_table_options(_toml(head) or {}),
+                local,
+                tests,
             )
+        if name in _INI_FILES:
             findings += _pytest_ini(
                 head_path, base, head, _INI_FILES[name], local, base_options, tests
             )
@@ -270,7 +393,12 @@ def _dropped_by_testpaths(tests: list[str], head_paths, removed_paths) -> list[s
 
 
 def _pyproject(
-    path: str, base: str | None, head: str, local: LocalModule, tests=None
+    path: str,
+    base: str | None,
+    head: str,
+    local: LocalModule,
+    tests=None,
+    base_options: dict | None = None,
 ) -> list[ConfigFinding]:
     head_data = _toml(head)
     if head_data is None:
@@ -279,7 +407,7 @@ def _pyproject(
     findings = _compare_pytest_options(
         path,
         head,
-        _toml_pytest_options(base_data),
+        _toml_pytest_options(base_data) if base_options is None else base_options,
         _toml_pytest_options(head_data),
         local,
         tests,
@@ -340,10 +468,44 @@ def _toml_pytest_options(data: dict) -> dict:
     ini = pytest_cfg.get("ini_options")
     if isinstance(ini, dict):
         merged.update(ini)
+    return _typed_options(merged)
+
+
+def _pytest_table_options(data: dict) -> dict:
+    """The [pytest] table of pytest.toml / .pytest.toml (pytest 9)."""
+    table = data.get("pytest")
+    return _typed_options(table) if isinstance(table, dict) else {}
+
+
+def _typed_options(options: dict) -> dict:
     return {
-        key: _as_list(value) if key != "xfail_strict" else value
-        for key, value in merged.items()
+        key: value
+        if key == "xfail_strict" or isinstance(value, bool)
+        else _as_list(value)
+        for key, value in options.items()
     }
+
+
+def _root_pytest_config(read: Callable[[str], str | None]) -> tuple[str | None, dict]:
+    """The root file pytest takes its settings from, and those settings."""
+    for name in _PYTEST_CONFIG_ORDER:
+        text = read(name)
+        if text is None:
+            continue
+        if name in _PYTEST_TOML_FILES:
+            return name, _pytest_table_options(_toml(text) or {})
+        if name in {"pytest.ini", ".pytest.ini"}:
+            return name, _ini_options(text, ("pytest",))
+        if name == "pyproject.toml":
+            data = _toml(text) or {}
+            tool = data.get("tool")
+            if isinstance(tool, dict) and isinstance(tool.get("pytest"), dict):
+                return name, _toml_pytest_options(data)
+            continue
+        parser = _ini(text)
+        if parser is not None and parser.has_section(_INI_FILES[name][0]):
+            return name, _ini_options(text, _INI_FILES[name])
+    return None, {}
 
 
 def _ini_options(text: str | None, sections: tuple[str, ...]) -> dict:
@@ -394,7 +556,7 @@ def _option_pairs(tokens: list[str]) -> set[tuple[str, str]]:
             value = tokens[index] if index < len(tokens) else ""
             index += 1
             pairs.add((token, value))
-        elif token[:2] in {"-k", "-m", "-p"} and len(token) > 2:
+        elif token[:2] in {"-k", "-m", "-p", "-W"} and len(token) > 2:
             pairs.add((token[:2], token[2:]))
         else:
             pairs.add((token, ""))
@@ -505,7 +667,53 @@ def _compare_pytest_options(
                 "xfail_strict turned off: unexpected passes no longer fail",
             )
         )
+    for key in _STRICT_SETTINGS:
+        if _truthy(base.get(key)) and not _truthy(head.get(key)):
+            findings.append(
+                ConfigFinding(
+                    path, _line_of(head_text, key), f"pytest {key} turned off"
+                )
+            )
+    head_pairs = _option_pairs(head.get("addopts", []))
+    for flag, value in sorted(base_pairs - head_pairs):
+        if flag in _STRICT_FLAGS:
+            shown = f"{flag} {value}".rstrip()
+            findings.append(
+                ConfigFinding(
+                    path,
+                    line,
+                    f"pytest addopts no longer include {shown}: {_STRICT_FLAGS[flag]}",
+                )
+            )
+    base_filters, head_filters = _warning_filters(base), _warning_filters(head)
+    for value in sorted(base_filters - head_filters):
+        if value.startswith("error"):
+            findings.append(
+                ConfigFinding(
+                    path,
+                    _line_of(head_text, "filterwarnings") or line,
+                    f"pytest no longer turns warnings into errors ({value})",
+                )
+            )
+    if any(value.startswith("error") for value in base_filters):
+        for value in sorted(head_filters - base_filters):
+            if value.startswith("ignore"):
+                findings.append(
+                    ConfigFinding(
+                        path,
+                        _line_of(head_text, value) or line,
+                        f"pytest now ignores warnings the base turned into errors ({value})",
+                    )
+                )
     return findings
+
+
+def _warning_filters(options: dict) -> set[str]:
+    """Warning filters from -W in addopts and from filterwarnings."""
+    pairs = _option_pairs(options.get("addopts", []))
+    return {value for flag, value in pairs if flag in {"-W", "--pythonwarnings"}} | set(
+        options.get("filterwarnings", [])
+    )
 
 
 def base_excluded_tests(
@@ -676,7 +884,7 @@ def _selector_excludes(comparison, path, tree, test, selection, hook_cache) -> b
             )
             selected = _selection_expression(
                 value,
-                lambda name: (
+                lambda name, keywords=keywords: (
                     True
                     if any(name.lower() in keyword.lower() for keyword in keywords)
                     else None
@@ -819,19 +1027,7 @@ def _static_marker_names(
 
 
 def _base_pytest_options(comparison: Comparison) -> dict:
-    for name in ("pytest.ini", ".pytest.ini"):
-        text = comparison.base_text(name)
-        if text is not None:
-            return _ini_options(text, ("pytest",))
-    data = _toml(comparison.base_text("pyproject.toml")) or {}
-    tool = data.get("tool")
-    if isinstance(tool, dict) and isinstance(tool.get("pytest"), dict):
-        return _toml_pytest_options(data)
-    for name, sections in (("tox.ini", ("pytest",)), ("setup.cfg", ("tool:pytest",))):
-        options = _ini_options(comparison.base_text(name), sections)
-        if options:
-            return options
-    return {}
+    return _root_pytest_config(comparison.base_text)[1]
 
 
 def _under_path(path: str, selected: str) -> bool:
@@ -1056,25 +1252,25 @@ def _conftest(
     if head_tree is None:
         return []
     base_tree = _parse(base)
-    base_hooks = _hooks(base_tree) if base_tree else {}
-    findings = []
-    for name, (line, digest) in sorted(_hooks(head_tree).items()):
-        if name not in base_hooks:
-            findings.append(
-                ConfigFinding(
-                    path,
-                    line,
-                    f"adds the pytest hook {name}, which can drop tests or change their results",
-                )
+    findings = _hook_changes(path, base_tree, head_tree)
+    base_fixtures = _fixtures(base_tree) if base_tree else {}
+    for name, (node, autouse) in sorted(_fixtures(head_tree).items()):
+        before = base_fixtures.get(name)
+        skips = _skip_statements(node)
+        # A brand-new fixture only affects tests written to use it, unless
+        # it applies itself to every test (autouse).
+        if not skips or (before is None and not autouse):
+            continue
+        if before is not None and skips == _skip_statements(before[0]):
+            continue
+        scope = "every test in its scope" if autouse else "the tests that use it"
+        findings.append(
+            ConfigFinding(
+                path,
+                node.lineno,
+                f"fixture {name} can now skip or xfail {scope}, so their failures stop counting",
             )
-        elif base_hooks[name][1] != digest:
-            findings.append(
-                ConfigFinding(
-                    path,
-                    line,
-                    f"changes the pytest hook {name}, which can drop tests or change their results",
-                )
-            )
+        )
     for key in ("collect_ignore", "collect_ignore_glob", "pytest_plugins"):
         before = _assigned_strings(base_tree, key) if base_tree else set()
         for value in sorted(_assigned_strings(head_tree, key) - before):
@@ -1098,16 +1294,151 @@ def _parse(text: str | None) -> ast.Module | None:
         return None
 
 
-def _hooks(tree: ast.Module) -> dict[str, tuple[int, str]]:
+def _hooks(
+    tree: ast.Module, names: frozenset[str] = OUTCOME_HOOKS
+) -> dict[str, tuple[int, str, ast.stmt]]:
+    """Module-level hook implementations: defined, assigned or imported."""
     hooks = {}
     for node in tree.body:
-        if (
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name in OUTCOME_HOOKS
-        ):
-            digest = hashlib.sha256(ast.dump(node).encode()).hexdigest()
-            hooks[node.name] = (node.lineno, digest)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            bound = [node.name]
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            bound = [alias.asname or alias.name.split(".")[0] for alias in node.names]
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            bound = [
+                child.id
+                for target in targets
+                for child in ast.walk(target)
+                if isinstance(child, ast.Name)
+            ]
+        else:
+            continue
+        for name in bound:
+            if name in names:
+                digest = hashlib.sha256(ast.dump(node).encode()).hexdigest()
+                hooks[name] = (node.lineno, digest, node)
     return hooks
+
+
+def _hook_changes(
+    path: str,
+    base_tree: ast.Module | None,
+    head_tree: ast.Module,
+    skip: frozenset[str] = frozenset(),
+) -> list[ConfigFinding]:
+    """Hooks a conftest.py or local plugin module adds or changes."""
+    names = (OUTCOME_HOOKS | SETUP_HOOKS) - skip
+    base_hooks = _hooks(base_tree, names) if base_tree else {}
+    findings = []
+    for name, (line, digest, node) in sorted(_hooks(head_tree, names).items()):
+        if name in base_hooks and base_hooks[name][1] == digest:
+            continue
+        if name in SETUP_HOOKS and _only_declares(node):
+            continue
+        verb = "changes" if name in base_hooks else "adds"
+        findings.append(
+            ConfigFinding(
+                path,
+                line,
+                f"{verb} the pytest hook {name}, which can drop tests or change their results",
+            )
+        )
+    return findings
+
+
+def _only_declares(node: ast.stmt) -> bool:
+    """A setup hook that only declares markers or command-line options."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    for statement in node.body:
+        if isinstance(statement, ast.Pass) or (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        ):
+            continue
+        call = (
+            statement.value if isinstance(statement, (ast.Expr, ast.Assign)) else None
+        )
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)):
+            return False
+        method = call.func.attr
+        if isinstance(statement, ast.Assign):
+            if method != "getgroup":
+                return False
+        elif method == "addinivalue_line":
+            if not (
+                call.args
+                and isinstance(call.args[0], ast.Constant)
+                and call.args[0].value == "markers"
+            ):
+                return False
+        elif method not in {"addoption", "addini"}:
+            return False
+    return True
+
+
+def _fixtures(tree: ast.Module) -> dict[str, tuple[ast.stmt, bool]]:
+    """Module-level fixtures and whether each applies itself (autouse)."""
+    fixtures = {}
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            call = decorator if isinstance(decorator, ast.Call) else None
+            parts = _dotted(call.func if call else decorator)
+            if parts and parts[-1] == "fixture":
+                autouse = any(
+                    keyword.arg == "autouse"
+                    and not (
+                        isinstance(keyword.value, ast.Constant)
+                        and not keyword.value.value
+                    )
+                    for keyword in (call.keywords if call else ())
+                )
+                fixtures[node.name] = (node, autouse)
+    return fixtures
+
+
+def _skip_statements(node: ast.stmt) -> list[str]:
+    """The fixture's statements that can skip or xfail a test."""
+    return [
+        ast.dump(statement)
+        for statement in node.body
+        if any(
+            (isinstance(child, ast.Attribute) and child.attr in _SKIP_NAMES)
+            or (isinstance(child, ast.Name) and child.id in _SKIP_NAMES)
+            for child in ast.walk(statement)
+        )
+    ]
+
+
+def _shadowed_module(path: str) -> str | None:
+    """The runner or startup module a repository file would stand in for.
+
+    The tests run from the repository root, src/ is a common import path,
+    and a committed virtualenv's site-packages is searched too. Python runs
+    every .pth file in a site directory when it starts.
+    """
+    pure = PurePosixPath(path)
+    if pure.suffix == ".pth":
+        return "a .pth startup file"
+    parts = pure.parts
+    roots = [0]
+    if parts[0] == "src":
+        roots.append(1)
+    roots += [index + 1 for index, part in enumerate(parts) if part == "site-packages"]
+    for start in roots:
+        if start >= len(parts) or pure.suffix not in _IMPORTABLE_SUFFIXES:
+            continue
+        top = parts[start]
+        module = top.split(".", 1)[0] if start == len(parts) - 1 else top
+        if module in _SHADOWED_MODULES or module.startswith(
+            "skylos_done_pytest_plugin"
+        ):
+            return module
+    return None
 
 
 def _hook_dependency_changes(comparison: Comparison) -> list[ConfigFinding]:
@@ -1148,8 +1479,9 @@ def _hook_dependency_changes(comparison: Comparison) -> list[ConfigFinding]:
         roots.add(path)
 
     findings = []
+    changed = {item.path for item in comparison.changed}
     for root in sorted(roots):
-        _, bindings = declarations.module(root, True)
+        base_tree, bindings = declarations.module(root, True)
         for hook in sorted(OUTCOME_HOOKS & bindings.keys()):
             change = declarations.first_change([(root, hook, ())])
             if change:
@@ -1161,6 +1493,17 @@ def _hook_dependency_changes(comparison: Comparison) -> list[ConfigFinding]:
                         f"changes {symbol}, a dependency of the pytest hook {hook}; its test selection or reported outcomes are no longer verified against the base",
                     )
                 )
+        # A local plugin module gains hooks the way a conftest.py does
+        # (conftest.py files are compared by _conftest).
+        if (
+            PurePosixPath(root).name != "conftest.py"
+            and root in changed
+            and root in declarations.head_paths
+        ):
+            head_tree, _ = declarations.module(root, False)
+            findings += _hook_changes(
+                root, base_tree, head_tree, skip=OUTCOME_HOOKS & bindings.keys()
+            )
     return findings
 
 
@@ -1977,7 +2320,7 @@ def _module_bindings(tree):
         if reflective:
             mutated.update(bindings)
         if reflective or mutated & builtin_aliases:
-            for builtin in {"range", "list", "tuple"}:
+            for builtin in ("range", "list", "tuple"):
                 bindings.setdefault(builtin, []).append(node)
         for name in sorted(mutated & bindings.keys()):
             if not any(existing is node for existing in bindings[name]):
@@ -2097,14 +2440,14 @@ def _assigned_strings(tree: ast.Module, name: str) -> set[str]:
     values: set[str] = set()
     for node in ast.walk(tree):
         target_value = None
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == name for t in node.targets
-        ):
-            target_value = node.value
-        elif (
-            isinstance(node, (ast.AugAssign, ast.AnnAssign))
-            and isinstance(node.target, ast.Name)
-            and node.target.id == name
+        if (
+            isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == name for t in node.targets)
+            or (
+                isinstance(node, (ast.AugAssign, ast.AnnAssign))
+                and isinstance(node.target, ast.Name)
+                and node.target.id == name
+            )
         ):
             target_value = node.value
         elif (

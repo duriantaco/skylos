@@ -34,7 +34,7 @@ checks without running the tests, and review-bot approvals do not count.
 | Check | Rules | Blocks by default | What it checks |
 |:--|:--|:--|:--|
 | Tests pass when Skylos runs them | SKY-A113 | yes | Skylos runs `test_command` and reads the JUnit XML. A test that fails twice fails the check; one that fails once and then passes is reported as flaky. Running out of `test_budget_seconds` is "unfinished", never "pass". An expected Python test producing no results is "unfinished" unless the trusted base's collection settings explain its exclusion. Failing tests are rerun on the base and labeled "already failing" or "introduced" (see [below](#already-failing-on-the-base)); they still block. |
-| No tests deleted, skipped or weakened | SKY-A110, SKY-A111, SKY-A112, SKY-A101 (advice) | yes | Python and JavaScript/TypeScript tests. A test that existed at the base is gone (a moved, renamed or rewritten test is not; a pasted copy of a test that is still there is), lost parametrize or `.each` cases, is left with no countable assertion, or gained skip/xfail (`.skip`, `.todo`, `.fixme`, `skipIf` and the like for JS/TS); a JS/TS test file gained a focus (`.only`, `fit`, `fdescribe`). Test settings loosened: pytest `-k`/`-m`/`--deselect`/`--ignore`/`--lf`/`-p no:`, `norecursedirs`, `testpaths`, `conftest.py` hooks that can drop tests or rewrite results, `collect_ignore`, lower coverage floors, Jest/Vitest settings that stop running existing test files, `passWithNoTests`, lower Jest/Vitest coverage thresholds, package.json test scripts that filter tests, may now fail or no longer run a runner, and CI test steps that may now fail (an unrelated command's `|| true` in the same step does not count). A test overwritten in place by a test of something else, while the code the old test exercised is still there, blocks. Not reported: a deleted test whose feature the change removed (see below), and settings that leave out no test that existed (a brand-new pytest config, a project's first `test` script, an ignore pattern that matches no existing test or whose tests run in their own CI step, a new advisory CI step). Advice: weakened assertions (SKY-A101), tests renamed, merged or rewritten with a different body, fewer countable assertions, a new `return` before assertions, deletions that are feature removals. |
+| No tests deleted, skipped or weakened | SKY-A110, SKY-A111, SKY-A112, SKY-A101 (advice) | yes | Python and JavaScript/TypeScript tests. A test that existed at the base is gone (a moved, renamed or rewritten test is not; a pasted copy of a test that is still there is), lost parametrize or `.each` cases, is left with no countable assertion, or gained skip/xfail (`.skip`, `.todo`, `.fixme`, `skipIf` and the like for JS/TS); a JS/TS test file gained a focus (`.only`, `fit`, `fdescribe`). Test settings loosened: pytest `-k`/`-m`/`--deselect`/`--ignore`/`--lf`/`-p no:`, `norecursedirs`, `testpaths`, removed `-W error`/strict options, `conftest.py` hooks that can drop tests or rewrite results, `conftest.py` fixtures that newly skip or xfail tests, `collect_ignore`, files that would load in place of pytest, pluggy, Skylos's probe or Python's startup files (`pytest.py`, `src/sitecustomize.py`, any `.pth`), lower coverage floors, Jest/Vitest settings that stop running existing test files, `passWithNoTests`, lower Jest/Vitest coverage thresholds, package.json test scripts that filter tests, may now fail or no longer run a runner, and CI test steps that may now fail (an unrelated command's `|| true` in the same step does not count). A test overwritten in place by a test of something else, while the code the old test exercised is still there, blocks. Not reported: a deleted test whose feature the change removed (see below), and settings that leave out no test that existed (a brand-new pytest config, a project's first `test` script, an ignore pattern that matches no existing test or whose tests run in their own CI step, a new advisory CI step). Advice: weakened assertions (SKY-A101), tests renamed, merged or rewritten with a different body, fewer countable assertions, a new `return` before assertions, deletions that are feature removals. |
 | Skylos settings and hooks left alone | SKY-A114 | yes | Edits to `protected_paths`, to `[tool.skylos]` in pyproject.toml, or to a CI workflow that runs Skylos. Not reported, as if `.gitignore` listed them: an untracked `.skylos/link.json` (`skylos login` writes it), and an untracked `.skylos/config.yaml` or `.skylos/suppressions.json` while its bytes match what `skylos sync pull` last wrote in this checkout (never in CI). A committed or staged change to any of them, or an edit after the pull, is reported. |
 | No secrets added | SKY-S101 | yes | Secrets on added lines. A suppression comment added in the same change does not count. Values that are public by structure are not secrets: hex digests that name their algorithm, public keys and certificates, contract addresses, document ids in share URLs, references to secrets stored elsewhere (`${{ secrets.X }}`), URL slugs; see [dictionary.md](../dictionary.md) (S101). |
 | Every package and import is real | SKY-D222, SKY-D225, SKY-D223 (advice) | advise | Added imports and dependencies resolve to real, declared packages. Names that only cannot be tied to a declared package are advice. |
@@ -180,10 +180,21 @@ a marker or renaming a test cannot newly excuse its absence. Runtime
 deselection by a hook is insufficient evidence of a trusted exclusion;
 unexplained missing tests produce an unfinished result.
 
-**pytest settings (SKY-A112).** An existing `pyproject.toml`, `pytest.ini`,
-`tox.ini` or `setup.cfg` is compared setting by setting: newly set or
-narrowed `testpaths`, new `norecursedirs` entries, new `--ignore`/`-k`/`-m`
-options and changed `python_files` are reported. A brand-new config file
+**pytest settings (SKY-A112).** An existing `pytest.toml`, `.pytest.toml`,
+`pyproject.toml`, `pytest.ini`, `tox.ini` or `setup.cfg` is compared setting
+by setting: newly set or narrowed `testpaths`, new `norecursedirs` entries,
+new `--ignore`/`-k`/`-m` options, changed `python_files`, and removed
+`-W error`/`filterwarnings = error` entries, `--strict-markers`,
+`--strict-config` and strict settings are reported. pytest reads only one
+file at the root (in the order listed); when the change makes a different
+file the one it reads, such as a new `.pytest.toml` in front of
+`pyproject.toml`, that file is compared with the base's settings. A
+`conftest.py` hook is reported when added or changed if it decides
+collection, how a test is called, its report or the exit status (such as
+`pytest_pyfunc_call`, `pytest_runtestloop` or `pytest_fixture_setup`), or if
+it runs at startup and can register plugins (`pytest_configure`,
+`pytest_addoption` and the like) for more than declaring markers or
+options. A brand-new config file
 (a new project, or a sub-project's own `pytest.ini`) can only leave out
 tests that already existed, so its `testpaths`, `norecursedirs`,
 `--ignore`/`--ignore-glob` and `python_files` are checked against the
@@ -517,9 +528,16 @@ Skipping a check configured to block, including `--no-tests`, produces an
 disable it intentionally. A skipped or unfinished blocking check cannot pass.
 
 For pytest, Skylos adds its own `--junitxml` and removes `PYTEST_ADDOPTS` and
-`PYTEST_PLUGINS` from the test environment. Blocking test checks for other
-commands require `junit_xml`: exit zero alone is insufficient evidence that
-tests ran. Known blocking static findings stop the expensive test run until
+`PYTEST_PLUGINS` from the test environment. A pytest run counts as passing
+only with evidence from Skylos's probe plugin, written after pytest wrote its
+report: the installed pytest ran, and the JUnit file and exit status are the
+ones pytest produced. That catches a replaced pytest or probe, a report
+rewritten afterwards (for example at interpreter exit) and a changed exit
+code. It does not catch code in the test process, such as a `conftest.py`
+or the code under test, that deliberately patches pytest to forge results
+while it runs. Blocking test checks for other commands require `junit_xml`:
+exit zero alone is insufficient evidence that tests ran. Known blocking
+static findings stop the expensive test run until
 the agent fixes them.
 
 ## In the agent loop
@@ -1304,6 +1322,10 @@ boundaries needs the CI runner or an external sandbox.
 
 ## Not yet
 
+- Run-time skips outside `conftest.py`: Done does not run the base when the
+  change's tests pass, so a test that passed at the base and is now skipped
+  by code it calls (for example `raise unittest.SkipTest`) still counts as
+  skipped, not failed.
 - Tests outside test functions: Skylos compares test functions (pytest,
   unittest, JavaScript/TypeScript), so rewriting a custom test-runner script
   or deleting cases from a test data file is not caught.

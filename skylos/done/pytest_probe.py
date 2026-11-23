@@ -18,20 +18,31 @@ names an input or output file.
   collected does not exist there, and asking for it must not abort the run).
 * SKYLOS_DONE_MODULES: record which file each imported module came from, so
   a base-commit run that imported the working tree's code is not trusted.
+* SKYLOS_DONE_EVIDENCE: once every other ``pytest_sessionfinish`` has run
+  (the JUnit report is written by then), record the report's digest, the
+  session's exit status, where pytest and pluggy were imported from, the
+  rootdir and config file, and the plugin files pytest loaded. A report
+  rewritten later, or a run in which this probe never loaded, cannot match.
 """
 
+import hashlib
 import importlib.machinery
 import json
 import os
-from pathlib import Path
 import stat
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 
 _deselected = []
 _CURRENT = [None]  # node id of the running test, or None between tests
+# The runner removes these; set again inside the test process (by a
+# sitecustomize or .pth file), they changed how pytest was configured.
+_INJECTED = sorted(
+    name for name in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS") if os.environ.get(name)
+)
 _PATHS = {}
 _CHANNEL_DIR = Path(__file__).parent.resolve(strict=True)
 _MAX_CHANNEL_BYTES = 64 * 1024 * 1024
@@ -85,10 +96,8 @@ def _real(path):
     return cached
 
 
-def _read_json(variable):
-    path = os.environ.get(variable)
-    if not path:
-        return None
+def _read_channel(path):
+    """A regular file's bytes from the probe directory, or None."""
     candidate = _channel_path(path)
     if candidate is None:
         return None
@@ -111,17 +120,26 @@ def _read_json(variable):
             or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
         ):
             return None
-        with os.fdopen(descriptor, encoding="utf-8") as handle:
+        with os.fdopen(descriptor, "rb") as handle:
             descriptor = None
             raw = handle.read(_MAX_CHANNEL_BYTES + 1)
-        if len(raw.encode("utf-8")) > _MAX_CHANNEL_BYTES:
-            return None
-        return json.loads(raw)
-    except (OSError, UnicodeError, ValueError):
+        return raw if len(raw) <= _MAX_CHANNEL_BYTES else None
+    except (OSError, ValueError):
         return None
     finally:
         if descriptor is not None:
             os.close(descriptor)
+
+
+def _read_json(variable):
+    path = os.environ.get(variable)
+    raw = _read_channel(path) if path else None
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return None
 
 
 def _write_json(path, data):
@@ -365,8 +383,62 @@ def _write_modules():
     _write_json(_per_process(path), files)
 
 
+def _module_file(name):
+    module_file = getattr(sys.modules.get(name), "__file__", None)
+    return _real(module_file) if isinstance(module_file, str) and module_file else None
+
+
+def _write_evidence(session):
+    path = os.environ.get("SKYLOS_DONE_EVIDENCE")
+    config = session.config
+    # pytest-xdist workers run this plugin too; only the controller writes
+    # the JUnit report and the evidence.
+    if not path or hasattr(config, "workerinput"):
+        return
+    report = getattr(config.option, "xmlpath", None)
+    raw = _read_channel(os.path.abspath(report)) if report else None
+    # pytest >= 6.1 names these inipath and rootpath.
+    if hasattr(config, "inipath"):
+        inifile, rootdir = config.inipath, config.rootpath
+    else:
+        inifile, rootdir = getattr(config, "inifile", None), config.rootdir
+    try:
+        exitstatus = int(session.exitstatus)
+    except (TypeError, ValueError):
+        exitstatus = None
+    plugin_files = (
+        getattr(plugin, "__file__", None)
+        for plugin in config.pluginmanager.get_plugins()
+    )
+    plugins = {_real(name) for name in plugin_files if isinstance(name, str)}
+    _write_json(
+        path,
+        {
+            "version": 1,
+            "probe": _real(__file__),
+            "exitstatus": exitstatus,
+            "junit_sha256": hashlib.sha256(raw).hexdigest()
+            if raw is not None
+            else None,
+            "modules": {
+                name: _module_file(name) for name in ("pytest", "_pytest", "pluggy")
+            },
+            "prefix": sorted({_real(sys.prefix), _real(sys.base_prefix)}),
+            "rootdir": _real(str(rootdir)),
+            "inifile": _real(str(inifile)) if inifile else None,
+            "plugins": sorted(plugins)[:_MAX_IDS],
+            "injected": _INJECTED,
+        },
+    )
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
 def pytest_sessionfinish(session, exitstatus):
+    # The outermost wrapper: everything below runs after every other
+    # pytest_sessionfinish, including the one that writes the JUnit report.
+    yield
     _write_modules()
+    _write_evidence(session)
     path = os.environ.get("SKYLOS_DONE_DESELECTED")
     if path:
         _write_json(path, _deselected[:100000])

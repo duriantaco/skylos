@@ -13,15 +13,20 @@ configured test command, reads the JUnit XML it writes, and decides:
 
 For pytest, Skylos adds its own ``--junitxml`` (xunit1, which records each
 test's file) and drops PYTEST_ADDOPTS/PYTEST_PLUGINS from the environment, so
-neither the change nor the CI step can narrow the run.
+neither the change nor the CI step can narrow the run. A pytest run passes
+only with evidence from Skylos's probe plugin (loaded under a new random
+module name each run): the installed pytest ran, the JUnit report is the one
+pytest wrote, and the exit status is the session's own.
 """
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import stat
@@ -29,17 +34,18 @@ import subprocess
 import sys
 import tempfile
 import time
-import xml.etree.ElementTree as ElementTree
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from xml.etree import ElementTree
 
-from skylos.done.base import Comparison
-from skylos.done.config import DoneConfig
-from skylos.done.inventory import TestItem
 from skylos.core.safe_cache_io import (
     _fallback_output_parent_is_safe,
     _open_output_parent,
 )
+from skylos.done.base import Comparison
+from skylos.done.config import DoneConfig
+from skylos.done.inventory import TestItem
 
 RULE_ID = "SKY-A113"
 
@@ -54,7 +60,11 @@ _STRIPPED_ENV = (
     "SKYLOS_DONE_TRACE",
     "SKYLOS_DONE_DESELECTED",
 )
+# Files that hold pytest settings or hooks at the root; the first five alone
+# mark a pytest project.
 _PYTEST_CONFIG_FILES = (
+    "pytest.toml",
+    ".pytest.toml",
     "pytest.ini",
     ".pytest.ini",
     "conftest.py",
@@ -64,12 +74,29 @@ _PYTEST_CONFIG_FILES = (
 
 # A standalone pytest plugin (pytest_probe.py, which imports nothing from
 # Skylos, so it loads in any environment), copied next to each run. It records
-# pytest's own deselections, maps changed lines to the tests that run them,
-# and loads a mutant in memory for the changed-lines check.
+# pytest's own deselections and the run's evidence, maps changed lines to the
+# tests that run them, and loads a mutant in memory for the changed-lines
+# check. Each run gets its own random module name, so no file in the
+# repository can stand in for it.
 _PLUGIN_MODULE = "skylos_done_pytest_plugin"
 _PLUGIN_SOURCE = Path(__file__).with_name("pytest_probe.py").read_text(encoding="utf-8")
 _MAX_DESELECTED_BYTES = 16 * 1024 * 1024
 _MAX_TRACE_BYTES = 64 * 1024 * 1024
+_MAX_EVIDENCE_BYTES = 16 * 1024 * 1024
+_RUNNER_MODULES = ("pytest", "_pytest", "pluggy")
+# Strict runs start Python isolated (-I: no current directory, PYTHONPATH or
+# user site at startup), import the installed pytest and its plugins, and
+# only then put the checkout and PYTHONPATH in front, as ``python -m`` would.
+_ISOLATED_PYTEST = """\
+import os, sys
+import pytest
+from _pytest.config import default_plugins
+for name in default_plugins:
+    __import__("_pytest." + name)
+paths = os.environ.get("PYTHONPATH", "").split(os.pathsep)
+sys.path[:0] = [os.getcwd(), *filter(None, paths)]
+raise SystemExit(pytest.console_main())
+"""
 
 # Where the project's own interpreter lives when no test_command is set: the
 # Python running Skylos (pipx, uv tool, another venv) usually lacks the
@@ -153,6 +180,10 @@ class TestRunResult:
     node_seconds: dict[str, float] = field(default_factory=dict)
     # Every case the first run reported (the base rerun picks controls here).
     cases: list[CaseResult] = field(default_factory=list)
+    exit_code: int | None = None
+    error: str | None = None
+    junit_sha256: str | None = None
+    argv: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -170,6 +201,8 @@ def run_tests(
     base_tests: list[TestItem] | None = None,
     deadline: float | None = None,
     trace_targets: dict[str, list[int]] | None = None,
+    environment: Mapping[str, str] | None = None,
+    strict_evidence: bool = False,
 ) -> TestRunResult:
     root = comparison.root
     invocation = _invocation(root, config)
@@ -204,7 +237,6 @@ def run_tests(
     shown = _shown_command(invocation)
     workdir = Path(tempfile.mkdtemp(prefix="skylos-done-")).resolve()
     try:
-        (workdir / f"{_PLUGIN_MODULE}.py").write_text(_PLUGIN_SOURCE, encoding="utf-8")
         trace_env, trace_out = _trace_environment(
             root, workdir, trace_targets if invocation.pytest else None
         )
@@ -216,8 +248,10 @@ def run_tests(
             workdir / "run.xml",
             budget_end,
             extra_env=trace_env,
+            environment=environment,
+            strict_evidence=strict_evidence,
         )
-        result = _assess(first, invocation, shown)
+        result = _assess(first, invocation, shown, strict_evidence=strict_evidence)
         result.pytest = invocation.pytest
         result.node_seconds = {c.node_id: c.seconds for c in first.cases if c.node_id}
         result.cases = list(first.cases)
@@ -238,8 +272,15 @@ def run_tests(
                 tuple(rerun_ids),
                 workdir / "rerun.xml",
                 budget_end,
+                environment=environment,
+                strict_evidence=strict_evidence,
             )
-            if second.error is None and second.cases:
+            if (
+                second.error is None
+                and second.cases
+                and second.probe_problem is None
+                and (not strict_evidence or second.exit_code in (0, 1))
+            ):
                 passed_now = {c.node_id for c in second.cases if c.outcome == "passed"}
                 result.flaky = [c for c in result.failures if c.node_id in passed_now]
                 result.failures = [
@@ -367,7 +408,6 @@ def run_mutant(
         return MutantRun("not_checked", "needs pytest and a test that runs the line")
     workdir = Path(tempfile.mkdtemp(prefix="skylos-mutant-")).resolve()
     try:
-        (workdir / f"{_PLUGIN_MODULE}.py").write_text(_PLUGIN_SOURCE, encoding="utf-8")
         flag = workdir / "loaded.json"
         request = workdir / "mutant.json"
         with os.fdopen(_create_log(request), "w", encoding="utf-8") as handle:
@@ -450,7 +490,8 @@ def _venv_python(env_dir: Path, *, in_repo: bool) -> str | None:
     python = scripts / ("python.exe" if windows else "python")
     try:
         if in_repo and not all(
-            stat.S_ISDIR(os.lstat(directory).st_mode) for directory in (env_dir, scripts)
+            stat.S_ISDIR(os.lstat(directory).st_mode)
+            for directory in (env_dir, scripts)
         ):
             return None
         if not (python.is_file() and os.access(python, os.X_OK)):
@@ -545,7 +586,7 @@ def _looks_like_pytest_project(root: Path) -> bool:
 def has_pytest_config(root: Path) -> bool:
     """pytest settings or a conftest.py at the root (a test/ directory alone
     is as likely to hold JavaScript tests)."""
-    if any((root / name).is_file() for name in _PYTEST_CONFIG_FILES[:3]):
+    if any((root / name).is_file() for name in _PYTEST_CONFIG_FILES[:5]):
         return True
     pyproject = root / "pyproject.toml"
     try:
@@ -573,6 +614,10 @@ class _RunOutcome:
     error: str | None = None  # "timeout", "not_found" or "junit_unreadable"
     deselected: frozenset[str] = frozenset()
     junit_expected: bool = False
+    junit_sha256: str | None = None
+    argv: tuple[str, ...] = ()
+    # Why a pytest run's results cannot count as a pass (see _probe_problem).
+    probe_problem: str | None = None
 
 
 def _run_once(
@@ -584,9 +629,25 @@ def _run_once(
     budget_end: float,
     *,
     extra_env: dict[str, str] | None = None,
+    environment: Mapping[str, str] | None = None,
+    strict_evidence: bool = False,
 ) -> _RunOutcome:
     argv = list(invocation.argv)
+    probe = None
+    isolated = strict_evidence and invocation.pytest and argv[1:3] == ["-m", "pytest"]
     if invocation.pytest:
+        try:
+            probe = _install_probe(junit_path.parent)
+        except OSError as exc:
+            return _RunOutcome(
+                None, 0.0, [], False, str(exc), "not_found", argv=tuple(argv)
+            )
+        if isolated:
+            # Bytecode only from this run's own cache: a .pyc planted in a
+            # shared __pycache__ (the environment, the standard library) is
+            # never read.
+            pycache = f"pycache_prefix={junit_path.parent / 'pycache'}"
+            argv[1:3] = ["-I", "-B", "-X", pycache, "-c", _ISOLATED_PYTEST]
         argv += [
             f"--junitxml={junit_path}",
             "-o",
@@ -594,35 +655,47 @@ def _run_once(
             "-o",
             "junit_logging=no",
             "-p",
-            _PLUGIN_MODULE,
+            probe.stem,
+            *([f"--confcutdir={root}"] if isolated else []),
             *node_ids,
         ]
         junit = junit_path
     else:
         junit = (root / config.junit_xml) if config.junit_xml else None
 
-    env = {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV}
+    source = os.environ if environment is None else environment
+    env = {k: v for k, v in source.items() if k not in _STRIPPED_ENV}
     # Reading/importing the project's tests must not dirty an otherwise clean
     # checkout with bytecode that invalidates its receipt.
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     deselected_path = junit_path.with_suffix(".deselected.json")
+    evidence_path = junit_path.with_suffix(".evidence.json")
     if invocation.pytest:
         env["PYTHONPATH"] = os.pathsep.join(
             p for p in (str(junit_path.parent), env.get("PYTHONPATH", "")) if p
         )
         env["SKYLOS_DONE_DESELECTED"] = str(deselected_path)
+        env["SKYLOS_DONE_EVIDENCE"] = str(evidence_path)
         env.update(extra_env or {})
+        try:
+            evidence_path.unlink(missing_ok=True)  # only this run's evidence counts
+        except OSError:
+            pass
     log_path = junit_path.with_suffix(".log")
     started_wall = time.time()
     started = time.monotonic()
-    timeout = max(0.0, budget_end - started)
+    timeout = budget_end - started
+    if timeout <= 0:
+        return _RunOutcome(None, 0.0, [], False, "", "timeout", argv=tuple(argv))
     # The test process runs repository code with our workdir paths in its
     # environment. Create the log exclusively and read it back through our own
     # descriptor, so a swapped-in symlink or FIFO cannot redirect or stall us.
     try:
         log_fd = _create_log(log_path)
     except OSError as exc:
-        return _RunOutcome(None, 0.0, [], False, str(exc), "not_found")
+        return _RunOutcome(
+            None, 0.0, [], False, str(exc), "not_found", argv=tuple(argv)
+        )
     try:
         try:
             process = subprocess.Popen(
@@ -635,21 +708,31 @@ def _run_once(
                 start_new_session=(os.name == "posix"),
             )
         except FileNotFoundError:
-            return _RunOutcome(None, 0.0, [], False, "", "not_found")
+            return _RunOutcome(None, 0.0, [], False, "", "not_found", argv=tuple(argv))
         except OSError as exc:
-            return _RunOutcome(None, 0.0, [], False, str(exc), "not_found")
+            return _RunOutcome(
+                None, 0.0, [], False, str(exc), "not_found", argv=tuple(argv)
+            )
         try:
             exit_code = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             _kill(process)
             return _RunOutcome(
-                None, time.monotonic() - started, [], False, _tail(log_fd), "timeout"
+                None,
+                time.monotonic() - started,
+                [],
+                False,
+                _tail(log_fd),
+                "timeout",
+                argv=tuple(argv),
             )
         except BaseException:
             # Ctrl-C reaches only Skylos: the tests run in their own session.
             # Stop them too, or they keep running (and writing) after we exit.
             _kill(process)
             raise
+        if environment is not None and os.name == "posix":
+            _kill(process)
         tail = _tail(log_fd)
     finally:
         os.close(log_fd)
@@ -658,15 +741,29 @@ def _run_once(
     cases: list[CaseResult] = []
     found = False
     error = None
+    junit_sha256 = None
     if junit is not None:
         data = _read_regular(junit, MAX_JUNIT_BYTES, newer_than=started_wall - 1)
         if data is not None:
             found = True
-            parsed = _parse_junit_bytes(data, root)
+            junit_sha256 = hashlib.sha256(data).hexdigest()
+            parsed = _parse_junit_bytes(
+                data, root, require_totals=strict_evidence and exit_code == 0
+            )
             if parsed is None:
                 error = "junit_unreadable"
             else:
                 cases = parsed
+    probe_problem = None
+    if probe is not None:
+        probe_problem = _probe_problem(
+            _read_evidence(evidence_path, newer_than=started_wall - 1),
+            root=root,
+            probe=probe,
+            exit_code=exit_code,
+            junit_sha256=junit_sha256,
+            strict=strict_evidence,
+        )
     return _RunOutcome(
         exit_code,
         seconds,
@@ -676,7 +773,123 @@ def _run_once(
         error,
         _read_deselected(deselected_path),
         junit_expected=junit is not None,
+        junit_sha256=junit_sha256,
+        argv=tuple(argv),
+        probe_problem=probe_problem,
     )
+
+
+def _install_probe(directory: Path) -> Path:
+    """Copy the probe plugin into ``directory`` under a fresh module name."""
+    path = directory / f"{_PLUGIN_MODULE}_{secrets.token_hex(8)}.py"
+    with os.fdopen(_create_log(path), "w", encoding="utf-8") as handle:
+        handle.write(_PLUGIN_SOURCE)
+    return path
+
+
+def _read_evidence(path: Path, *, newer_than: float) -> dict | None:
+    raw = _read_regular(path, _MAX_EVIDENCE_BYTES, newer_than=newer_than)
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+_installed_files_cache: dict[str, str | None] = {}
+
+
+def _installed_file(name: str) -> str | None:
+    """Where the Python running Skylos imports ``name`` from."""
+    if name not in _installed_files_cache:
+        try:
+            spec = importlib.util.find_spec(name)
+        except (ImportError, ValueError):
+            spec = None
+        origin = getattr(spec, "origin", None)
+        _installed_files_cache[name] = os.path.realpath(origin) if origin else None
+    return _installed_files_cache[name]
+
+
+def _probe_problem(
+    data: dict | None,
+    *,
+    root: Path,
+    probe: Path,
+    exit_code: int | None,
+    junit_sha256: str | None,
+    strict: bool,
+) -> str | None:
+    """Why the probe's evidence does not back the run's results, or None.
+
+    The probe writes its evidence after every other pytest_sessionfinish
+    hook. Missing evidence means pytest or the probe was replaced or the run
+    stopped early; a different JUnit digest or exit status means something
+    rewrote the results or the exit code after pytest finished.
+    """
+    if data is None or data.get("version") != 1:
+        return (
+            "pytest finished without evidence from Skylos's probe plugin: "
+            "pytest or the probe was replaced, or the run stopped before the "
+            "session ended"
+        )
+    if data.get("probe") != os.path.realpath(probe):
+        return "another module answered for Skylos's probe plugin"
+    if data.get("injected"):
+        return (
+            "the test process set "
+            + ", ".join(map(str, data["injected"]))
+            + " again after Skylos removed it"
+        )
+    modules = data.get("modules") if isinstance(data.get("modules"), dict) else {}
+    prefixes = [Path(p) for p in data.get("prefix") or () if isinstance(p, str)]
+    for name in _RUNNER_MODULES:
+        path = modules.get(name)
+        # Inside the repository only as part of its own virtualenv (.venv).
+        if (
+            not isinstance(path, str)
+            or (
+                _is_within(Path(path), root)
+                and not any(
+                    _is_within(prefix, root) and _is_within(Path(path), prefix)
+                    for prefix in prefixes
+                )
+            )
+            or (strict and path != _installed_file(name))
+        ):
+            return f"the tests did not run with the installed {name} ({path})"
+    if data.get("junit_sha256") != junit_sha256:
+        return "the JUnit report changed after pytest wrote it"
+    if data.get("exitstatus") != exit_code:
+        return (
+            f"pytest ended with exit status {data.get('exitstatus')}, "
+            f"but the test process exited with {exit_code}"
+        )
+    if strict:
+        inifile = data.get("inifile")
+        if data.get("rootdir") != os.path.realpath(root) or (
+            inifile is not None
+            and not (isinstance(inifile, str) and _is_within(Path(inifile), root))
+        ):
+            return (
+                "pytest read its settings from outside the checkout "
+                f"(rootdir {data.get('rootdir')}, config file {inifile})"
+            )
+        outside = [
+            path
+            for path in data.get("plugins") or ()
+            if not isinstance(path, str)
+            or not (
+                _is_within(Path(path), root)
+                or _is_within(Path(path), probe.parent)
+                or any(_is_within(Path(path), prefix) for prefix in prefixes)
+            )
+        ]
+        if outside:
+            return f"pytest loaded a plugin from outside the checkout: {outside[0]}"
+    return None
 
 
 def _create_log(path: Path) -> int:
@@ -832,7 +1045,13 @@ def _tail(fd: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _assess(outcome: _RunOutcome, invocation: _Invocation, shown: str) -> TestRunResult:
+def _assess(
+    outcome: _RunOutcome,
+    invocation: _Invocation,
+    shown: str,
+    *,
+    strict_evidence: bool = False,
+) -> TestRunResult:
     result = TestRunResult(
         status="incomplete",
         reason="",
@@ -840,6 +1059,10 @@ def _assess(outcome: _RunOutcome, invocation: _Invocation, shown: str) -> TestRu
         seconds=round(outcome.seconds, 1),
         output_tail=outcome.output_tail,
         auto_command=invocation.auto,
+        exit_code=outcome.exit_code,
+        error=outcome.error,
+        junit_sha256=outcome.junit_sha256,
+        argv=outcome.argv,
     )
     if outcome.error == "timeout":
         result.reason = f"the tests ran out of time after {outcome.seconds:.0f} s (test_budget_seconds)"
@@ -860,7 +1083,10 @@ def _assess(outcome: _RunOutcome, invocation: _Invocation, shown: str) -> TestRu
 
     if not outcome.junit_found:
         if invocation.pytest or code is None or outcome.junit_expected:
-            result.reason = "the test command wrote no test results" + _last_line_hint(outcome.output_tail)
+            result.error = "missing_junit"
+            result.reason = "the test command wrote no test results" + _last_line_hint(
+                outcome.output_tail
+            )
             return result
         # A command without JUnit output: only its exit code is evidence.
         result.status = "pass" if code == 0 else "fail"
@@ -871,6 +1097,12 @@ def _assess(outcome: _RunOutcome, invocation: _Invocation, shown: str) -> TestRu
         )
         return result
     if result.failures:
+        if strict_evidence and code not in (1, 2):
+            result.error = "contradictory_junit"
+            result.reason = (
+                f"Test results report failures but pytest exited with code {code}"
+            )
+            return result
         result.status = "fail"
         result.reason = f"{len(result.failures)} of {result.run} tests failed"
         return result
@@ -878,9 +1110,14 @@ def _assess(outcome: _RunOutcome, invocation: _Invocation, shown: str) -> TestRu
         result.reason = "no tests ran" if result.run == 0 else "every test was skipped"
         return result
     if code not in (0, None):
+        result.error = "contradictory_junit"
         result.reason = (
             f"the test command exited with code {code} but reported no failing test"
         )
+        return result
+    if outcome.probe_problem:
+        result.error = "probe_evidence"
+        result.reason = outcome.probe_problem
         return result
     result.status = "pass"
     result.reason = f"{result.passed} of {result.run} tests passed" + (
@@ -995,13 +1232,20 @@ def parse_junit(path: Path, root: Path) -> list[CaseResult] | None:
     return _parse_junit_bytes(data, root)
 
 
-def _parse_junit_bytes(data: bytes, root: Path) -> list[CaseResult] | None:
+def _parse_junit_bytes(
+    data: bytes,
+    root: Path,
+    *,
+    require_totals: bool = False,
+) -> list[CaseResult] | None:
     # Test runners never emit DTDs; refusing them rules out entity expansion.
     if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
         return None
     try:
         tree = ElementTree.fromstring(data)
     except ElementTree.ParseError:
+        return None
+    if require_totals and not _consistent_junit_totals(tree):
         return None
     cases = []
     for case in tree.iter("testcase"):
@@ -1031,6 +1275,28 @@ def _parse_junit_bytes(data: bytes, root: Path) -> list[CaseResult] | None:
             )
         )
     return cases
+
+
+def _consistent_junit_totals(tree: ElementTree.Element) -> bool:
+    if tree.tag == "testsuite":
+        suites = [tree]
+    elif tree.tag == "testsuites":
+        suites = tree.findall("testsuite")
+    else:
+        return False
+    if not suites:
+        return False
+    for suite in suites:
+        cases = suite.findall("testcase")
+        counts = {
+            "tests": len(cases),
+            "errors": sum(case.find("error") is not None for case in cases),
+            "failures": sum(case.find("failure") is not None for case in cases),
+            "skipped": sum(case.find("skipped") is not None for case in cases),
+        }
+        if any(suite.get(key) != str(count) for key, count in counts.items()):
+            return False
+    return True
 
 
 _KIND_RE = re.compile(r"^\s*(?:E\s+)?([A-Za-z_][\w.]*?)(?::|$)")
