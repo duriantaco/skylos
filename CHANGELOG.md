@@ -22,6 +22,41 @@
 * **cicd:** only treat a real YAML comment as an inline ignore for D340 and for shell-command findings on a one-line `run:`, so a marker inside a quoted step value no longer hides a publish or exfiltration finding.
 * **cicd:** locate each shell-command finding inside its own `run:` value, so repeating the command next to an ignore marker elsewhere in the workflow no longer hides it and identical steps are each reported.
 
+## [5.8.0](https://github.com/duriantaco/skylos/compare/v5.7.0...v5.8.0) (2026-11-23)
+
+
+### Features
+
+* **analysis:** more accurate TS/JS/Rust dead code, less sec noise ([#1261](https://github.com/duriantaco/skylos/issues/1261)) ([b794a5e](https://github.com/duriantaco/skylos/commit/b794a5ef642dd3e71c6114b6d01516df0dcccbbe))
+* **ci:** add a UML change report to PR scans ([#1279](https://github.com/duriantaco/skylos/issues/1279)) ([159ffaa](https://github.com/duriantaco/skylos/commit/159ffaab98fd6828ef47fadd2a1df760b6e6ed4d))
+* **python:** flag XML external entities and plain HMAC comparisons ([#1276](https://github.com/duriantaco/skylos/issues/1276)) ([1fe23ae](https://github.com/duriantaco/skylos/commit/1fe23aebbeaf020e1e3acb4f40b81033d27441d5))
+* **ruby:** check Rails controllers for SQL injection and SSRF ([#1277](https://github.com/duriantaco/skylos/issues/1277)) ([a5c511e](https://github.com/duriantaco/skylos/commit/a5c511e557735daf046f1abaadc7617c47584f42))
+* **rules:** add skylos rules vulnhunter with a bundled Semgrep pack ([#1278](https://github.com/duriantaco/skylos/issues/1278)) ([fad0e40](https://github.com/duriantaco/skylos/commit/fad0e409a14a7af17234de7433fb0829e78ef578))
+* **security:** drop findings whose risky value is always a fixed constant ([#1284](https://github.com/duriantaco/skylos/issues/1284)) ([54cb167](https://github.com/duriantaco/skylos/commit/54cb167b71838dfe2b5b196f55928b8d1c1c8380))
+* **stack:** check every layer of a PR stack with Done ([#1289](https://github.com/duriantaco/skylos/issues/1289)) ([d668489](https://github.com/duriantaco/skylos/commit/d6684893245e357ebbc338606bfb0b5fe634c122))
+
+
+### Bug Fixes
+
+* **ai-defects:** read python -m runs in CI folders and lowercase launchers ([#1283](https://github.com/duriantaco/skylos/issues/1283)) ([b3169a9](https://github.com/duriantaco/skylos/commit/b3169a9ef8603b996151f393dba25fee66e69412))
+* **ai-defects:** stop re-reading big scripts for every import ([bd5a678](https://github.com/duriantaco/skylos/commit/bd5a67840aad0fcc55bb5bce4ddcc6b52305fc92))
+* **cicd:** apply YAML merge keys in spec order on PyYAML 6.0.4 ([ecefe8c](https://github.com/duriantaco/skylos/commit/ecefe8c66155e5ed7d30585cbf9f9fc5ff0907e8))
+* **ci:** stop advisory scan failing PRs and scan with current Skylos ([596ae56](https://github.com/duriantaco/skylos/commit/596ae56d333de0411a24d08cf02aa32f0b72d630))
+* **command:** hide commands built only from temp-file paths ([#1288](https://github.com/duriantaco/skylos/issues/1288)) ([02d574f](https://github.com/duriantaco/skylos/commit/02d574fcc454d6b8d12be4c0b67f9bc9e8985cc5))
+* **danger:** treat a model handed to an opaque call by any expression shape as escaped ([#1269](https://github.com/duriantaco/skylos/issues/1269)) ([73cea92](https://github.com/duriantaco/skylos/commit/73cea92eb7ddd38eea177da1ca601f6d1d88bb7c))
+* **done:** stop a fake pytest from passing the gate ([#1290](https://github.com/duriantaco/skylos/issues/1290)) ([f9e2d7b](https://github.com/duriantaco/skylos/commit/f9e2d7b4e495edc8be36733558f83b24237a4a01))
+* **scan:** stop running repo code in workers and hanging on long test files ([#1282](https://github.com/duriantaco/skylos/issues/1282)) ([f9aa033](https://github.com/duriantaco/skylos/commit/f9aa033f5cf9372a22ab2020dea22ff65c530686))
+* **security:** accept a hasattr check before using yaml CSafeLoader ([#1275](https://github.com/duriantaco/skylos/issues/1275)) ([1ddf078](https://github.com/duriantaco/skylos/commit/1ddf078245f7240168029cbef0c1bf61d00f7c1f))
+* **security:** show which callers a symlink review does not cover ([#1274](https://github.com/duriantaco/skylos/issues/1274)) ([6eb77b3](https://github.com/duriantaco/skylos/commit/6eb77b3c1501636aa481dd1d6cb4da95ae43fc9e))
+* **ssrf:** stop treating the project's own classes as HTTP clients ([#1287](https://github.com/duriantaco/skylos/issues/1287)) ([91b19c3](https://github.com/duriantaco/skylos/commit/91b19c370aa3a1cf71f865ebd4e62ed4867c2314))
+* **xss:** stop flagging Markup over output that is already safe HTML ([#1286](https://github.com/duriantaco/skylos/issues/1286)) ([91a1bf8](https://github.com/duriantaco/skylos/commit/91a1bf8f03dfc1dd76d97f3a04403069f721d35f))
+
+
+### Documentation
+
+* **readme:** put quick start first and show the skylos cloud flow step by step ([45e9250](https://github.com/duriantaco/skylos/commit/45e9250db19a8e9bb1bd833642dca6bf7bd8b5aa))
+* **readme:** update real-world results to 21 merged PRs in 19 projects ([b698e3e](https://github.com/duriantaco/skylos/commit/b698e3e0463d5a136d3b2fc6a33492cddf5a7900))
+
 ## [5.7.0](https://github.com/duriantaco/skylos/compare/v5.6.0...v5.7.0) (2026-11-19)
 
 
