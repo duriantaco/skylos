@@ -2557,6 +2557,12 @@ def _run_done_command(argv):
     return run_done_command(argv)
 
 
+def _run_stack_command(argv):
+    from skylos.commands.stack_cmd import run_stack_command
+
+    return run_stack_command(argv)
+
+
 def _run_graph_command(argv):
     from skylos.commands.graph_cmd import run_graph_command
 

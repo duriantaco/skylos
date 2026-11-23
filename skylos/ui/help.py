@@ -216,6 +216,11 @@ COMMANDS = [
         "group": "Coding agents",
     },
     {
+        "name": "skylos stack {plan,verify}",
+        "desc": "Pin an existing Git stack and verify every layer's Done receipt in CI",
+        "group": "Coding agents",
+    },
+    {
         "name": "skylos discover [path]",
         "desc": "Inventory Python and TypeScript/JavaScript LLM integrations",
         "group": "AI app safety",
