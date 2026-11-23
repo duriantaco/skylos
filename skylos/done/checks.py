@@ -11,7 +11,7 @@ import ast
 import fnmatch
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
@@ -89,6 +89,8 @@ class CheckContext:
     _targets: list | None = None
     _paths: tuple[list[str], list[str], set[str]] | None = None
     _js_tests: tuple[JsInventory, JsInventory, list[str]] | None = None
+    test_environment: Mapping[str, str] | None = None
+    strict_test_evidence: bool = False
 
     def change_targets(self) -> list:
         """Changed lines in non-test Python code that the tests should check."""
@@ -763,6 +765,8 @@ def check_tests_pass(ctx: CheckContext) -> CheckResult:
         base_tests=base_tests,
         deadline=ctx.deadline,
         trace_targets=trace_targets,
+        environment=ctx.test_environment,
+        strict_evidence=ctx.strict_test_evidence,
     )
     ctx.test_run = result
     origins = _failure_origins(ctx, result)

@@ -670,12 +670,7 @@ class base_checkout:
 
 
 def _attribute_pytest(ctx, result, attribution, invocation, tree, budget_end):
-    from skylos.done.runner import (
-        _PLUGIN_MODULE,
-        _PLUGIN_SOURCE,
-        _Invocation,
-        _run_once,
-    )
+    from skylos.done.runner import _Invocation, _run_once
 
     comparison = ctx.comparison
     base_paths = set(ctx._repository_paths()[0])
@@ -772,7 +767,6 @@ def _attribute_pytest(ctx, result, attribution, invocation, tree, budget_end):
         return None, by_node, set(_read_channel(workdir, f"{name}-collected", list))
 
     try:
-        (workdir / f"{_PLUGIN_MODULE}.py").write_text(_PLUGIN_SOURCE, encoding="utf-8")
         problem, by_node, collected = base_run(wanted, "first")
         if problem:
             _undetermined(attribution, problem, set(requests))

@@ -1,0 +1,159 @@
+# Optional example: copy to .github/workflows/ after reviewing the CI setup.
+name: Skylos stack verification
+
+"on":
+  workflow_dispatch:
+    inputs:
+      layers:
+        description: "Space-separated layer tip SHAs, lowest to highest"
+        type: string
+        required: true
+      base:
+        description: "Approved base commit SHA (default: dispatched default-branch SHA)"
+        type: string
+      original:
+        description: "Original unsplit commit SHA (optional exact-tree check)"
+        type: string
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  SKYLOS_VERSION: ${{ vars.SKYLOS_STACK_VERIFY_VERSION }}
+
+jobs:
+  plan:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      manifest: ${{ steps.plan.outputs.manifest }}
+      layers: ${{ steps.plan.outputs.layers }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - run: python -I -m pip install "skylos==$SKYLOS_VERSION"
+      - name: Pin stack and approved base
+        id: plan
+        env:
+          BASE: ${{ inputs.base }}
+          LAYERS: ${{ inputs.layers }}
+          ORIGINAL: ${{ inputs.original }}
+        run: |
+          base="${BASE:-$GITHUB_SHA}"
+          if ! [[ "$base" =~ ^[0-9a-f]{40}$ ]] ||
+             ! git merge-base --is-ancestor "$base" "$GITHUB_SHA"; then
+            echo "The base must be a full commit SHA in the approved default-branch history."
+            exit 1
+          fi
+          [[ "$LAYERS" != *$'\n'* ]]
+          read -r -a refs <<< "$LAYERS"
+          args=()
+          for ref in "${refs[@]}"; do
+            [[ "$ref" =~ ^[0-9a-f]{40}$ ]]
+            args+=("--layer=$ref")
+          done
+          if [[ -n "$ORIGINAL" ]]; then
+            [[ "$ORIGINAL" =~ ^[0-9a-f]{40}$ ]]
+            args+=("--original=$ORIGINAL")
+          fi
+          skylos stack plan --base "$base" "${args[@]}" --format json > "$RUNNER_TEMP/stack.json"
+          manifest="$(jq -c . "$RUNNER_TEMP/stack.json")"
+          layers="$(jq -c .layers "$RUNNER_TEMP/stack.json")"
+          {
+            printf 'manifest=%s\n' "$manifest"
+            printf 'layers=%s\n' "$layers"
+          } >> "$GITHUB_OUTPUT"
+
+  layers:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        layer: ${{ fromJSON(needs.plan.outputs.layers) }}
+    steps:
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Install Skylos separately from project dependencies
+        run: |
+          python -I -m venv "$RUNNER_TEMP/stack-verifier"
+          "$RUNNER_TEMP/stack-verifier/bin/python" -I -m pip install "skylos==$SKYLOS_VERSION"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ matrix.layer.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Add the repository's normal toolchain and test dependency setup here.
+      # Do not expose deployment credentials or OIDC to these jobs.
+      - name: Run Done on the exact layer
+        env:
+          BASE_SHA: ${{ fromJSON(needs.plan.outputs.manifest).base.sha }}
+          LAYER_SHA: ${{ matrix.layer.sha }}
+        run: |
+          [[ "$(git rev-parse HEAD)" == "$LAYER_SHA" ]]
+          verifier="$RUNNER_TEMP/stack-verifier/bin"
+          "$verifier/python" -I "$verifier/skylos" done --base "$BASE_SHA" --format json \
+            > "$RUNNER_TEMP/$LAYER_SHA.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: skylos-stack-${{ github.run_attempt }}-${{ matrix.layer.sha }}
+          path: ${{ runner.temp }}/${{ matrix.layer.sha }}.json
+          if-no-files-found: error
+          retention-days: 1
+
+  verify:
+    needs: [plan, layers]
+    if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require successful CI for every layer
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          LAYER_RESULT: ${{ needs.layers.result }}
+        run: |
+          if [ "$PLAN_RESULT" != success ] || [ "$LAYER_RESULT" != success ]; then
+            echo "Stack planning or a layer's CI did not pass."
+            exit 1
+          fi
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - run: python -I -m pip install "skylos==$SKYLOS_VERSION"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: skylos-stack-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/skylos-stack-receipts
+          merge-multiple: true
+      - name: Verify the stack against this run's layer receipts
+        env:
+          STACK_MANIFEST: ${{ needs.plan.outputs.manifest }}
+        run: |
+          printf '%s\n' "$STACK_MANIFEST" > "$RUNNER_TEMP/stack.json"
+          skylos stack verify --manifest "$RUNNER_TEMP/stack.json" \
+            --receipts-dir "$RUNNER_TEMP/skylos-stack-receipts"

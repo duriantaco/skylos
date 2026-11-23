@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from skylos.done.base import Comparison, open_comparison
 from skylos.done.checks import CHECKS, RUN_ORDER, CheckContext, CheckResult, run_check
@@ -15,6 +17,9 @@ from skylos.done.config import (
     base_config_text,
     parse_done_config,
 )
+
+if TYPE_CHECKING:
+    from skylos.done.runner import TestRunResult
 
 # Summary of a check that waits for the earlier required checks to pass.
 WAITING_SUMMARY = "Earlier required checks failed or were incomplete"
@@ -37,6 +42,7 @@ class DoneResult:
     checks: list[CheckOutcome]  # in CHECK_IDS order
     verdict: str  # "pass", "fail" or "incomplete"
     seconds: float
+    test_run: TestRunResult | None = None
 
 
 def run(
@@ -63,7 +69,37 @@ def run(
     # from the base commit (the target branch's tip for a pull request).
     config = parse_done_config(base_config_text(comparison, sha=comparison.config_sha))
     config = _type_check_policy(config, type_check=type_check, checker=checker)
-    ctx = CheckContext(comparison, config, run_tests=run_tests)
+    result = evaluate(comparison, config, run_tests=run_tests)
+    if session_id is not None:
+        from skylos.done.session import assert_session_unchanged
+
+        assert_session_unchanged(comparison)
+    result.seconds = round(time.monotonic() - started, 1)
+    return result
+
+
+def evaluate(
+    comparison: Comparison,
+    config: DoneConfig,
+    *,
+    run_tests: bool = True,
+    deadline: float | None = None,
+    test_environment: Mapping[str, str] | None = None,
+    strict_test_evidence: bool = False,
+) -> DoneResult:
+    """Run Done against an already opened comparison and its approved policy."""
+    started = time.monotonic()
+    test_deadline = None
+    if deadline is not None:
+        test_deadline = min(deadline, started + config.test_budget_seconds)
+    ctx = CheckContext(
+        comparison,
+        config,
+        run_tests=run_tests,
+        deadline=test_deadline,
+        test_environment=test_environment,
+        strict_test_evidence=strict_test_evidence,
+    )
     results: dict[str, CheckOutcome] = {}
     for check_id in RUN_ORDER:
         mode = config.mode(check_id)
@@ -114,16 +150,13 @@ def run(
             outcome.result.status = "incomplete"
         outcome.result.summary = "Session baseline was captured after edits; initial session coverage is unverified"
         outcome.result.evidence["session_base"] = "head_fallback"
-    if session_id is not None:
-        from skylos.done.session import assert_session_unchanged
-
-        assert_session_unchanged(comparison)
     return DoneResult(
         comparison=comparison,
         config=config,
         checks=checks,
         verdict=decide_verdict(checks),
         seconds=round(time.monotonic() - started, 1),
+        test_run=ctx.test_run,
     )
 
 
