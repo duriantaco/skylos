@@ -593,6 +593,17 @@ COMMANDS = [
         "group": "Utility",
     },
     {
+        "name": "skylos secrets-history [PATH]",
+        "desc": "Scan local Git commits for current and previously removed credentials",
+        "details": [
+            "--ref HEAD: select a local starting revision",
+            "--max-commits N: set the traversal limit",
+            "--format json: print findings with commit and coverage evidence",
+            "--strict: fail a complete scan when credentials are found",
+        ],
+        "group": "Core Analysis",
+    },
+    {
         "name": "skylos image scan IMAGE@sha256:<digest> --platform os/arch",
         "desc": "Find vulnerabilities in a pinned container image with installed Trivy",
         "details": [
@@ -725,6 +736,10 @@ MORE_COMMANDS = (
     (
         "skylos preflight [ARTIFACT]",
         "Check a local built GPU artifact against the declared fleet; OCI is UNKNOWN.",
+    ),
+    (
+        "skylos secrets-history [PATH]",
+        "Scan local Git commit history for stored credentials.",
     ),
     (
         "skylos image scan IMAGE…",

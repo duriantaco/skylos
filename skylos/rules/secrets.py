@@ -13,13 +13,14 @@ from functools import lru_cache
 from hashlib import blake2s
 from html import unescape
 from html.parser import HTMLParser
-from itertools import islice
+from itertools import chain, islice
 from math import log2
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote
 
 from skylos.core.message_catalogs import is_message_catalog_path
 from skylos.rules import secret_shapes
+from skylos.rules.secret_database import database_passwords
 from skylos.rules.secret_decoding import decode_provider_views
 from skylos.rules.secret_key_material import MAX_PEM_CHARS, inspect_pem_private_key
 from skylos.rules.secret_providers import (
@@ -190,7 +191,7 @@ SECRET_ONLY_FILE_SUFFIXES = (
 )
 
 SECRET_TEXT_FILE_SUFFIXES = (".md", ".txt")
-PROVIDER_ONLY_FILE_SUFFIXES = (*SECRET_TEXT_FILE_SUFFIXES, ".key", ".pem")
+PROVIDER_ONLY_FILE_SUFFIXES = (*SECRET_TEXT_FILE_SUFFIXES, ".key", ".pem", ".log", ".csv")
 _PRIVATE_KEY_FILE_NAMES = frozenset(
     {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "identity"}
 )
@@ -4611,10 +4612,9 @@ def _url_credential_candidates(line_content: str, *, database_only: bool = False
         yield scheme, start, start + len(password), password
 
 
-def _database_connection_candidates(line_content: str):
+def _database_query_candidates(line_content: str):
     if "://" not in line_content:
         return
-    yield from _url_credential_candidates(line_content, database_only=True)
     for match in _DATABASE_QUERY_URL_RE.finditer(line_content):
         host = match.group("host").lower().rstrip(".")
         if _is_placeholder_url_host(host):
@@ -4632,6 +4632,17 @@ def _database_connection_candidates(line_content: str):
             continue
         start = match.start("query") + password.start("value")
         yield match.group("scheme"), start, start + len(value), value
+
+
+def _database_property_candidates(line_content: str):
+    for match in database_passwords(line_content):
+        host = match.host.lower().removeprefix("tcp:").rstrip(".")
+        hostname = re.split(r"[:,\\]", host, maxsplit=1)[0]
+        if _is_placeholder_url_host(host) or _is_placeholder_url_host(hostname):
+            continue
+        if _is_placeholder_credential(match.password, user=match.user):
+            continue
+        yield match
 
 
 def _config_credential_candidates(line_content: str, *, message_catalog: bool = False):
@@ -5210,7 +5221,8 @@ def scan_ctx(
 
     config_credential_file = _is_config_credential_file(rel_name)
     database_credential_text = (
-        rel_name.lower().endswith(SECRET_TEXT_FILE_SUFFIXES) and not in_tests
+        rel_name.lower().endswith((*SECRET_TEXT_FILE_SUFFIXES, ".log", ".csv"))
+        and not in_tests
     )
     message_catalog = is_message_catalog_path(rel_path)
     has_pem_marker = any("-----BEGIN " in line for line in file_lines)
@@ -5637,30 +5649,47 @@ def scan_ctx(
             if is_bare and not keyed and group_private_key_fragments:
                 bare_findings.append(generic_finding)
 
-        if not line_provider_only:
-            url_credentials = _url_credential_candidates(line_content)
-        elif database_credential_text:
-            url_credentials = _database_connection_candidates(line_content)
-        else:
-            url_credentials = ()
-        for scheme, start, end, password in url_credentials:
-            if _credential_span_overlaps(
-                findings[line_finding_start:], start, end, "url_password"
-            ):
-                continue
-            findings.append(
-                {
-                    "rule_id": "SKY-S101",
-                    "severity": "HIGH",
-                    "provider": "url_credentials",
-                    "message": f"Hard-coded password in {scheme}:// connection URL",
-                    "file": rel_path,
-                    "line": line_number,
-                    "col": start,
-                    "end_col": end,
-                    "preview": _mask_credential(password),
-                }
+        if not line_provider_only or database_credential_text:
+            url_credentials = chain(
+                _url_credential_candidates(line_content, database_only=line_provider_only),
+                _database_query_candidates(line_content),
             )
+            for scheme, start, end, password in url_credentials:
+                if _credential_span_overlaps(
+                    findings[line_finding_start:], start, end, "url_password"
+                ):
+                    continue
+                findings.append(
+                    {
+                        "rule_id": "SKY-S101",
+                        "severity": "HIGH",
+                        "provider": "url_credentials",
+                        "message": f"Hard-coded password in {scheme}:// connection URL",
+                        "file": rel_path,
+                        "line": line_number,
+                        "col": start,
+                        "end_col": end,
+                        "preview": _mask_credential(password),
+                    }
+                )
+            for password in _database_property_candidates(line_content):
+                if _credential_span_overlaps(
+                    findings[line_finding_start:], password.start, password.end, "database_password"
+                ):
+                    continue
+                findings.append(
+                    {
+                        "rule_id": "SKY-S101",
+                        "severity": "HIGH",
+                        "provider": "database_credentials",
+                        "message": f"Hard-coded password in {password.kind} connection string",
+                        "file": rel_path,
+                        "line": line_number,
+                        "col": password.start,
+                        "end_col": password.end,
+                        "preview": _mask_credential(password.password),
+                    }
+                )
         if not line_provider_only and config_credential_file:
             for key, start, end, _value in _config_credential_candidates(
                 line_content, message_catalog=message_catalog

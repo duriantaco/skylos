@@ -2373,6 +2373,12 @@ def _run_image_command(argv):
     return run_image_command(argv)
 
 
+def _run_secrets_history_command(argv):
+    from skylos.commands.secret_history_cmd import run_secret_history_command
+
+    return run_secret_history_command(argv, console_factory=Console)
+
+
 def run_provenance_command(argv):
     from skylos.api import get_git_root
     from skylos.commands.provenance_cmd import (

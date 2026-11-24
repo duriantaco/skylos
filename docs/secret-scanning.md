@@ -7,7 +7,8 @@ accepted the credential. Scanning does not contact credential providers.
 ## Detection pipeline
 
 1. Discover source/configuration files and a separate set of secret-bearing text
-   files, including HTML, Markdown, text, PEM/key files and common SSH key names.
+   files, including HTML, Markdown, text, logs, CSV exports, PEM/key files and
+   common SSH key names.
 2. Match known provider formats, complete structured credentials and private JWK
    material, retaining the existing generic credential checks.
 3. Inspect bounded decoded text for provider signatures, including Base64,
@@ -156,13 +157,16 @@ incomplete execution are reported separately. These cases do not establish
 live-credential validity or production precision and recall.
 
 Normal scans retain provider signatures in test paths. The internal
-`ignore_tests=True` option remains an explicit opt-out. Document and key scopes
-and native HTML scanning retain known provider formats and private-key material.
-Markdown and plain text outside test paths also check literal passwords in
-recognized database URLs, including PostgreSQL and supported JDBC query options.
-Generic entropy checks continue to focus on source and configuration files.
+`ignore_tests=True` option remains an explicit opt-out. Document, log, CSV and
+key files retain known provider formats and structured credential checks.
+Markdown, plain text, native `.log` files and `.csv` exports outside test paths
+also check literal passwords in recognized database connection strings.
+Supported records include SQL Server JDBC and ODBC properties, libpq
+keyword/value connections and supported JDBC URL query options. Generic
+entropy checks continue to focus on source and configuration files.
 [PostgreSQL connection strings](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING) ·
-[PostgreSQL JDBC connection parameters](https://jdbc.postgresql.org/documentation/use/#connection-parameters)
+[PostgreSQL JDBC connection parameters](https://jdbc.postgresql.org/documentation/use/#connection-parameters) ·
+[SQL Server JDBC connection URLs](https://learn.microsoft.com/en-us/sql/connect/jdbc/building-the-connection-url)
 
 For synthetic test credentials, construct the value at runtime or use adjacent
 string literals rather than storing a contiguous provider-shaped key in source.
@@ -177,8 +181,27 @@ be read safely is reported as incomplete and does not increment the count.
 Explicit exclusions, changed-file scope, containment and bounded no-follow reads
 remain enforced.
 
-This implementation does not add Git-history, cloud-storage or
-collaboration-service collection.
+## Local Git history
+
+`skylos secrets-history .` reads stored Git objects to find credentials in local
+commits. It can find a value removed from the working tree. Each finding records
+the historical path and line alongside the commit and blob IDs.
+
+```bash
+skylos secrets-history .
+skylos secrets-history ./services --ref main --format json
+```
+
+The command starts at `HEAD` and visits up to 500 reachable commits by default.
+A path inside the repository limits the scan to that path in history.
+`--max-commits` changes the traversal limit. The command reads supported text
+from the local object database, with separate limits for blob size, total bytes
+and traversal time. It reports each distinct path and blob version once. The
+reported commit is a visited snapshot containing the finding.
+Shallow history, unavailable objects and exhausted scan limits produce
+`analysis_summary.git_history.status: "incomplete"` and exit 2. A complete scan
+exits 0, or exits 1 with `--strict` when the scan found credentials. The local
+listing uses the same credential-material view as `--secrets`.
 
 Provider-side verification remains separate work. A future verifier should
 distinguish success, rejected credentials, unavailable verification and a skipped
