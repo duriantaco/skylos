@@ -1,0 +1,7 @@
+{
+  "label": "Historical maintainer tests",
+  "tests": {
+    "ignore-unused-export": "test/test_typescript_expanded.py::TestMixedRepoIntegration::test_project_ignore_suppresses_e004",
+    "dynamic-dispatch": "test/test_blind_repo_dead_code_precision.py::test_method_names_built_in_a_method_and_dispatched_by_getattr_are_used"
+  }
+}

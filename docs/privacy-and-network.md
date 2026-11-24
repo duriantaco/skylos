@@ -96,6 +96,12 @@ server uses `SKYLOS_CLOUD_URL`).
 | `skylos verify-verdict` without `--keys` | `GET https://skylos.dev/.well-known/skylos-verdict-keys.json` | nothing (public keys, no token). `--keys <file>` works offline |
 | The workflow from `skylos cicd init` | its upload job runs `skylos sync pull` and `skylos cloud` (`skylos . --upload` when only dead code is checked) on pushes to the default branch. On pull requests to the default branch, `skylos cicd pr-policy` reads `GET /api/sync/config` and `/api/sync/rules`, and `skylos cicd pr-publish` makes the report upload above | the scan report. `skylos cicd init --no-upload` leaves these jobs out |
 
+The opt-in [Cloud regression replay preview](./regression-replay-prototype.md#replay-on-a-pull-request-in-skylos-cloud)
+attaches the selected test ID, source paths, commit and workflow identifiers,
+digests, attempt outcomes and assertion line numbers to the PR scan. Cloud
+keeps that bounded summary. Running `skylos done replay` locally prints its
+report to your terminal.
+
 ## Other hosts
 
 Explicit scan uploads can also include up to 20 valid cleanup outcome receipts

@@ -25,6 +25,10 @@ To review the change itself, `skylos done map` lists each changed function
 with its old and new code, its callers and removed security checks; `--map`
 prints it after the verdict without changing it. See [Change map](./change-map.md).
 
+To see whether an individual pytest test catches the behavior it was written
+for, run [`skylos done replay`](./regression-replay-prototype.md) on committed
+source variants. Replay has its own result and exit status.
+
 To make a pull request with any of these findings wait for a human approval
 before it merges, use the [risk review](./risk-review.md). It reuses these
 checks without running the tests, and review-bot approvals do not count.

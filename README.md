@@ -171,6 +171,10 @@ It reads its settings from `main`, so a branch cannot loosen its own check.
 Exit codes: `0` pass, `1` blocked, `2` could not run. See the
 [done gate](./docs/done-gate.md) and what it [misses](./docs/done-gate-benchmark.md).
 
+Use [`skylos done replay`](./docs/regression-replay-prototype.md) to check
+whether one pytest test catches a regression. It reruns the same test with
+selected source files restored from an earlier revision.
+
 <a id="cicd"></a>
 
 ## Gate pull requests

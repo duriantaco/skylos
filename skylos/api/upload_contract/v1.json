@@ -135,6 +135,22 @@
       ],
       "rule": "Cloud applies the workspace's agent-check settings (agent guardrails policy agent_checks) to the result again: a check the workspace blocks on raises the reported mode unless local loosening is allowed, and a required check that is missing or skipped counts as unfinished regardless of its reported mode. A readable receipt must identify the same full head commit as the upload and dirty must be false; an unavailable full upload commit, abbreviated or mismatched receipt head, or dirty head counts as incomplete. A fail or incomplete outcome fails the quality gate until a person overrides it; a pass never lifts a gate that failed for another reason. An absent or malformed result preserves compatibility: a malformed result is stored as unreadable and changes nothing. Signed summaries preserve receipt base/head/config/version and Cloud's binding; the checks are labeled client_claim, and verified CI upload identity does not attest that tests actually ran. Cloud keeps the first 20 findings per check and the first 20 unverified lines."
     },
+    "regression_replay": {
+      "version": 1,
+      "location": "optional top-level field on the repository-root native Skylos pull request upload",
+      "fields": [
+        "schema_version: 1",
+        "head_sha, base_sha, merge_base_sha: full 40 lowercase hex GitHub commit IDs",
+        "pr_number, run_id, run_attempt: positive integers; run identifies the test job's workflow attempt",
+        "skylos_version: stable CLI version",
+        "plan_sha256: 64 lowercase hex; test_sha256: 64 lowercase hex or null",
+        "test: one repository-relative pytest node ID; source_files: 1-5 repository-relative Python source paths",
+        "expected_assertion: positive line number or null",
+        "verdict: DETECTED, BUG_SURVIVED, REFERENCE_FAILED, UNEXPECTED_ASSERTION or INCONCLUSIVE",
+        "fixed and restored: two attempts each with a passed, assertion_failed or inconclusive status and optional assertion line; both arrays may be empty for INCONCLUSIVE"
+      ],
+      "rule": "Advisory evidence associated with the current GitHub PR and its reviewed workflow. Cloud retains a bounded, validated summary and omits unbound or unreadable evidence. The result describes one selected test and never participates in the quality gate. The uploader identity does not independently attest pytest execution."
+    },
     "cleanup_receipts": {
       "schema_version": 1,
       "location": "optional top-level cleanup_receipts array on native Skylos SARIF, at most 20 receipts",

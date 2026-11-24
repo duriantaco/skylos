@@ -150,6 +150,12 @@ skylos done --base origin/main
 skylos cloud --done-receipt <path it prints>
 ```
 
+For a repository with the preview workflow and a reviewed replay plan on the
+default branch, open the PR result in **Agent checks** to find **Regression
+replay**. It shows how a selected pytest case behaved on the PR and with
+specific files restored from the merge base. Follow the run link for details.
+The result is advisory. See [setup and verdicts](../../regression-replay-prototype.md#replay-on-a-pull-request-in-skylos-cloud).
+
 ![Coding agents before the first agent pull request. The page says what to connect.](img/cloud/work-coding-agents.png)
 
 > The screenshot shows the empty state. The local copy of Cloud used for

@@ -161,6 +161,9 @@ You only need `skylos cloud`. The rest are for control:
 | `skylos credits` | check your credit balance |
 | `--upload` on a scan | the manual form of `skylos cloud`: uploads exactly the checks you picked |
 
+For an opt-in advisory check of whether a pytest test catches a bug on a
+pull request, see [Cloud regression replay](./regression-replay-prototype.md#replay-on-a-pull-request-in-skylos-cloud).
+
 Scans never upload findings unless you run `skylos cloud` or add `--upload`.
 Every network request Skylos can make, and how to turn it off, is in
 [Privacy and network](./privacy-and-network.md).

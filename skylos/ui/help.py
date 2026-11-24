@@ -211,6 +211,7 @@ COMMANDS = [
             "Settings come from [tool.skylos.done] at the base, never the change",
             "--type-check: run the installed checker, block new errors and compiler escapes, and retain confirmed old errors",
             "Writes .skylos/receipts/latest.json; receipt [path]: print it again",
+            "replay: run one committed pytest case against a fix and selected source variants",
             "Exit 0 pass, 1 fail or unfinished, 2 could not run",
         ],
         "group": "Coding agents",
