@@ -500,8 +500,10 @@ def test_changed_lines_check_mutates_tested_inline_body(tmp_path: Path):
     check = _changed_lines_check(result).result
     assert check.status == "pass"
     assert check.evidence["changed_lines"] == 1
-    assert check.evidence["mutants"] == 1
-    assert check.evidence["caught"] == 1
+    # Two different mutations of the one line (`-` to `+`, then return None); both caught.
+    assert check.evidence["mutants"] == 2, check.evidence
+    assert check.evidence["caught"] == 2
+    assert check.evidence["lines_caught"] == 1
     assert check.unverified == []
     assert (root / "app.py").read_text() == "def total(a, b): return a - b\n"
 
@@ -524,7 +526,11 @@ def test_changed_lines_check_reports_untested_boundaries_and_functions(
         "No test runs shop/billing.py:26-28 (in `refund`). Add a test that does.",
     ]
     assert check.status == "fail"
-    assert check.evidence["caught"] == 4 and check.evidence["missed"] == 2
+    # Lines get more than one mutation now; the same two lines are reported.
+    assert check.evidence["caught"] == 5 and check.evidence["missed"] == 2, (
+        check.evidence
+    )
+    assert check.evidence["lines_missed"] == 2
     receipt = build_receipt(result)
     assert validate_receipt(receipt) == []
     assert receipt["unverified"] == [
@@ -838,8 +844,109 @@ def test_multiple_changed_arguments_are_checked_independently(tmp_path: Path):
     assert result.verdict == "pass"  # SKY-A120 stays advisory by default.
     assert check.status == "fail"
     assert check.evidence["changed_lines"] == 2
-    assert check.evidence["mutants"] == 2
-    assert check.evidence["caught"] == 1
+    # Line 6 gets a second mutation once its first is caught; line 7 stops at its survivor.
+    assert check.evidence["mutants"] == 3, check.evidence
+    assert check.evidence["caught"] == 2
     assert check.evidence["missed"] == 1
+    assert check.evidence["lines_caught"] == 1 and check.evidence["lines_missed"] == 1
     assert check.unverified == [("app.py", 7)]
     assert build_receipt(result)["unverified"] == [{"file": "app.py", "line": 7}]
+
+
+MONEY = (
+    "from decimal import ROUND_HALF_UP, Decimal\n\n\n"
+    "def minor_units(amount, digits):\n"
+    "    scaled = amount * Decimal(10) ** digits\n"
+    '    return int(scaled.quantize(Decimal("1"), rounding=ROUND_HALF_UP))\n'
+)
+
+
+def test_a_line_gets_several_mutations_including_the_rounding_mode(tmp_path: Path):
+    found = mutation.make_mutants("money.py", MONEY, 6)
+    descriptions = [m.description for m in found]
+    assert "changes the rounding mode `ROUND_HALF_UP` to `ROUND_DOWN`" in descriptions
+    assert len(descriptions) == len(set(descriptions)) <= mutation.MUTANTS_PER_LINE
+    rounding = next(m for m in found if "rounding mode" in m.description)
+    # decimal's modes are strings: the mutant needs no import and cannot raise
+    # NameError (which any test calling the code would "catch").
+    assert 'rounding="ROUND_DOWN"' in rounding.source
+    mutant_file = tmp_path / "money.py"
+    mutant_file.write_text(rounding.source)
+    minor_units = runpy.run_path(str(mutant_file))["minor_units"]
+    assert minor_units(__import__("decimal").Decimal("10.005"), 2) == 1000
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("    return a * b\n", "changes `*` to `/`"),
+        ("    return a ** b\n", "changes `**` to `*`"),
+        ("    return f(a, strict=True)\n", "changes `True` to `False`"),
+    ],
+)
+def test_more_kinds_of_mutation(line: str, expected: str):
+    source = f"def g(a, b, f=None):\n{line}"
+    assert expected in [m.description for m in mutation.make_mutants("m.py", source, 2)]
+
+
+def test_a_comparison_already_flipped_does_not_also_move_its_number():
+    source = "def g(a):\n    if a > 100:\n        return 0\n    return 1\n"
+    descriptions = [m.description for m in mutation.make_mutants("m.py", source, 2)]
+    assert "changes `>` to `>=`" in descriptions
+    assert not any("100" in d for d in descriptions)
+
+
+def _money_repo(root: Path, tests: str) -> Path:
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    _write(
+        root,
+        "money.py",
+        "def minor_units(amount, digits):\n    return int(amount * 100)\n",
+    )
+    _write(root, "tests/test_money.py", "def test_nothing():\n    assert True\n")
+    _write(
+        root,
+        "pyproject.toml",
+        '[tool.pytest.ini_options]\naddopts = "-q"\npythonpath = ["."]\n',
+    )
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "base")
+    _write(root, "money.py", MONEY)
+    # Keep the existing test: removing one is its own (blocking) finding.
+    _write(
+        root,
+        "tests/test_money.py",
+        "def test_nothing():\n    assert True\n\n\n" + tests,
+    )
+    return root
+
+
+def test_a_test_that_ignores_the_rounding_rule_is_reported(tmp_path: Path):
+    # The agent's own test runs every changed line but only checks a whole
+    # number, so it passes whatever the rounding mode is.
+    root = _money_repo(
+        tmp_path / "weak",
+        "from decimal import Decimal\nfrom money import minor_units\n\n"
+        "def test_minor_units():\n    assert minor_units(Decimal('10'), 0) == 10\n",
+    )
+    check = _changed_lines_check(run(root, base_ref="main")).result
+    assert check.status == "fail", check.summary
+    messages = [f.message for f in check.findings]
+    assert any(
+        "changes the rounding mode `ROUND_HALF_UP` to `ROUND_DOWN`" in m
+        for m in messages
+    ), messages
+
+
+def test_a_test_that_checks_the_rounding_rule_passes(tmp_path: Path):
+    root = _money_repo(
+        tmp_path / "strong",
+        "from decimal import Decimal\nfrom money import minor_units\n\n"
+        "def test_minor_units():\n"
+        "    assert minor_units(Decimal('10.005'), 2) == 1001\n"
+        "    assert minor_units(Decimal('1.234'), 3) == 1234\n",
+    )
+    check = _changed_lines_check(run(root, base_ref="main")).result
+    assert check.status == "pass", [f.message for f in check.findings]
+    assert check.evidence["lines_missed"] == 0

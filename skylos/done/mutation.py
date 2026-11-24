@@ -8,7 +8,10 @@ questions, using the test run the tests_pass check already made:
 2. Does any test notice if the line is wrong? Skylos changes the line on
    purpose (one mutation, chosen by what the line does), reruns only the tests
    that run it, and checks that one of them fails. If they all still pass, no
-   test checks that line.
+   test checks that line. A line gets up to MUTANTS_PER_LINE different
+   mutations (every line's first one runs before any line's second), so a test
+   that notices a deleted return but not a changed rounding mode or operator
+   still leaves the line reported.
 
 The mutant is loaded in memory inside the test process (pytest_probe.py);
 the working tree is never modified. Logging, imports, docstrings, type hints
@@ -31,7 +34,8 @@ if TYPE_CHECKING:
     from skylos.done.checks import CheckContext, CheckResult
 
 RULE_ID = "SKY-A120"
-MAX_MUTANTS = 20
+MAX_MUTANTS = 30
+MUTANTS_PER_LINE = 3
 MAX_COVERING_TESTS = 300
 _MIN_MUTANT_SECONDS = 5.0
 _STARTUP_ALLOWANCE_SECONDS = 15.0
@@ -45,9 +49,42 @@ _LOG_METHODS = frozenset(
 )
 
 # Lower is more informative: a flipped comparison says more than a dropped call.
-P_COMPARE, P_BOOL, P_NEGATE, P_RETURN, P_INTEGER, P_ARITH, P_ARG, P_ASSIGN, P_CALL = (
-    range(9)
-)
+(
+    P_COMPARE,
+    P_BOOL,
+    P_CONSTANT,
+    P_NEGATE,
+    P_RETURN,
+    P_INTEGER,
+    P_ARITH,
+    P_ARG,
+    P_ASSIGN,
+    P_CALL,
+) = range(10)
+
+# decimal's rounding modes are plain strings ("ROUND_HALF_UP" == ROUND_HALF_UP),
+# so a mutant can use the other mode's string without importing anything; a
+# name the module never imported would raise NameError and be "caught" by any
+# test that calls the code, however little it checks.
+_ROUNDING_SWAPS = {
+    "ROUND_HALF_UP": "ROUND_DOWN",
+    "ROUND_HALF_EVEN": "ROUND_HALF_UP",
+    "ROUND_HALF_DOWN": "ROUND_HALF_UP",
+    "ROUND_DOWN": "ROUND_UP",
+    "ROUND_UP": "ROUND_DOWN",
+    "ROUND_CEILING": "ROUND_FLOOR",
+    "ROUND_FLOOR": "ROUND_CEILING",
+    "ROUND_05UP": "ROUND_DOWN",
+}
+
+_ARITH_SWAPS = {
+    cst.Add: (cst.Subtract, "+", "-"),
+    cst.Subtract: (cst.Add, "-", "+"),
+    cst.Multiply: (cst.Divide, "*", "/"),
+    cst.Divide: (cst.Multiply, "/", "*"),
+    cst.FloorDivide: (cst.Divide, "//", "/"),
+    cst.Power: (cst.Multiply, "**", "*"),
+}
 
 _FLIPPED_OPERATORS = {
     cst.GreaterThan: (cst.GreaterThanEqual, ">", ">="),
@@ -300,21 +337,34 @@ def _skippable_condition(test: cst.BaseExpression) -> bool:
 def make_mutant(
     path: str, source: str, line: int, changed: tuple[int, ...] | None = None
 ) -> Mutant | None:
-    """One mutation of the statement starting on ``line``, or None.
+    """The most informative mutation of the statement starting on ``line``, or None."""
+    found = make_mutants(path, source, line, changed, limit=1)
+    return found[0] if found else None
 
-    Only code on ``changed`` lines is mutated (default: the statement's first
-    line): a multi-line statement may hold unchanged code, and a finding about
-    it would not be about this change.
+
+def make_mutants(
+    path: str,
+    source: str,
+    line: int,
+    changed: tuple[int, ...] | None = None,
+    limit: int = MUTANTS_PER_LINE,
+) -> list[Mutant]:
+    """Up to ``limit`` different mutations of the statement starting on ``line``.
+
+    Most informative first, each producing different code. Only code on
+    ``changed`` lines is mutated (default: the statement's first line): a
+    multi-line statement may hold unchanged code, and a finding about it would
+    not be about this change.
     """
     try:
         wrapper = MetadataWrapper(cst.parse_module(source))
     except (cst.ParserSyntaxError, RecursionError, ValueError):
-        return None
+        return []
     collector = _UnitCollector()
     wrapper.visit(collector)
     units = [u for u in collector.units if u.start == line]
     if not units:
-        return None
+        return []
     positions = wrapper.resolve(PositionProvider)
     allowed = set(changed or (line,))
     candidates = [
@@ -323,18 +373,24 @@ def make_mutant(
         for c in _candidates(unit)
         if c[1] in positions and positions[c[1]].start.line in allowed
     ]
-    if not candidates:
-        return None
-    priority, old, new, description = min(candidates, key=lambda c: c[0])
-    mutated = wrapper.module.deep_replace(old, new)
-    code = mutated.code if isinstance(mutated, cst.Module) else None
-    if not code or code == source:
-        return None
-    try:
-        compile(code, path, "exec", dont_inherit=True)
-    except (SyntaxError, ValueError):
-        return None
-    return Mutant(path, positions[old].start.line, description, code, priority)
+    made: list[Mutant] = []
+    seen = {source}
+    for priority, old, new, description in sorted(candidates, key=lambda c: c[0]):
+        if len(made) >= limit:
+            break
+        mutated = wrapper.module.deep_replace(old, new)
+        code = mutated.code if isinstance(mutated, cst.Module) else None
+        if not code or code in seen:
+            continue
+        try:
+            compile(code, path, "exec", dont_inherit=True)
+        except (SyntaxError, ValueError):
+            continue
+        seen.add(code)
+        made.append(
+            Mutant(path, positions[old].start.line, description, code, priority)
+        )
+    return made
 
 
 def _candidates(unit: _Unit) -> list[tuple[int, cst.CSTNode, cst.CSTNode, str]]:
@@ -351,6 +407,10 @@ def _candidates(unit: _Unit) -> list[tuple[int, cst.CSTNode, cst.CSTNode, str]]:
             continue
         if isinstance(statement, cst.Return) and statement.value is not None:
             _expression_candidates(statement.value, found)
+            # `return True` flipped is the same mutant as the return default below.
+            found[:] = [
+                c for c in found if not (c[0] == P_CONSTANT and c[1] is statement.value)
+            ]
             replacement = _return_default(statement.value)
             if replacement is not None:
                 new_value, text = replacement
@@ -416,8 +476,11 @@ def _candidates(unit: _Unit) -> list[tuple[int, cst.CSTNode, cst.CSTNode, str]]:
 
 
 def _expression_candidates(node: cst.CSTNode, found: list) -> None:
-    """Comparison, boolean, integer and arithmetic mutations inside ``node``."""
+    """Comparison, boolean, constant, integer and arithmetic mutations inside ``node``."""
     stack = [node]
+    # A comparison whose operator is flipped already probes its boundary;
+    # also moving its integer by one would report the same gap twice.
+    probed: set[int] = set()
     while stack:
         current = stack.pop()
         if isinstance(current, (cst.Lambda, cst.FunctionDef)):
@@ -440,6 +503,11 @@ def _expression_candidates(node: cst.CSTNode, found: list) -> None:
                         f"changes `{before}` to `{after}`",
                     )
                 )
+                inner = [current]
+                while inner:
+                    child = inner.pop()
+                    probed.add(id(child))
+                    inner.extend(child.children)
         elif isinstance(current, cst.BooleanOperation):
             if isinstance(current.operator, cst.And):
                 new_op, text = (
@@ -452,7 +520,7 @@ def _expression_candidates(node: cst.CSTNode, found: list) -> None:
                     "changes `or` to `and`",
                 )
             found.append((P_BOOL, current, current.with_changes(operator=new_op), text))
-        elif isinstance(current, cst.Integer):
+        elif isinstance(current, cst.Integer) and id(current) not in probed:
             try:
                 value = int(current.value.replace("_", ""), 0)
             except ValueError:
@@ -489,12 +557,12 @@ def _expression_candidates(node: cst.CSTNode, found: list) -> None:
                 found.append(
                     (P_ARG, argument.value, cst.Name("None"), f"passes None as {label}")
                 )
+        elif isinstance(current, (cst.Name, cst.Attribute)) and _constant_swap(current):
+            new_node, text = _constant_swap(current)
+            found.append((P_CONSTANT, current, new_node, text))
+            continue  # an Attribute's parts are not constants of their own
         elif isinstance(current, cst.BinaryOperation):
-            swapped = {
-                cst.Add: (cst.Subtract, "+", "-"),
-                cst.Subtract: (cst.Add, "-", "+"),
-            }
-            entry = swapped.get(type(current.operator))
+            entry = _ARITH_SWAPS.get(type(current.operator))
             if entry:
                 new_type, before, after = entry
                 found.append(
@@ -508,6 +576,21 @@ def _expression_candidates(node: cst.CSTNode, found: list) -> None:
                     )
                 )
         stack.extend(reversed(list(current.children)))
+
+
+def _constant_swap(node: cst.BaseExpression) -> tuple[cst.BaseExpression, str] | None:
+    """A flag flipped or a rounding mode changed, or None."""
+    name = _dotted(node)
+    if isinstance(node, cst.Name) and node.value in ("True", "False"):
+        flipped = "False" if node.value == "True" else "True"
+        return cst.Name(flipped), f"changes `{node.value}` to `{flipped}`"
+    if name and name[-1] in _ROUNDING_SWAPS and not isinstance(node, cst.Call):
+        other = _ROUNDING_SWAPS[name[-1]]
+        return (
+            cst.SimpleString(f'"{other}"'),
+            f"changes the rounding mode `{name[-1]}` to `{other}`",
+        )
+    return None
 
 
 def _same_spacing(old: cst.CSTNode, new_type: type) -> cst.CSTNode:
@@ -656,33 +739,38 @@ def check_changed_lines(ctx: CheckContext) -> CheckResult:
 
     deadline = time.monotonic() + ctx.config.changed_lines_budget_seconds
     sources: dict[str, str | None] = {}
-    mutants: list[tuple[Mutant, set[str]]] = []
-    for target, covering in candidates:
+    # (target index, rank within the line, mutant, covering tests)
+    queued: list[tuple[int, int, Mutant, set[str]]] = []
+    for index, (target, covering) in enumerate(candidates):
         if target.path not in sources:
             sources[target.path] = ctx.comparison.head_text(target.path)
         source = sources[target.path]
-        mutant = (
-            make_mutant(target.path, source, target.line, target.changed)
+        made = (
+            make_mutants(target.path, source, target.line, target.changed)
             if source
-            else None
+            else []
         )
-        if mutant is None:
+        if not made:
             tally.covered_only += 1  # runs under test; no mutation applies
             tally.not_checked += 1
             tally.unverified.append((target.path, target.shown_line))
-        else:
-            mutants.append((mutant, covering))
+            continue
+        queued += [(index, rank, mutant, covering) for rank, mutant in enumerate(made)]
 
-    for index, (mutant, covering) in enumerate(_spread(mutants)):
+    # Per line: "caught" once a mutant ran and was caught, "missed" on the
+    # first survivor (its other mutants are then skipped), absent if none ran.
+    outcome_by_line: dict[int, str] = {}
+    ran = 0
+    for index, rank, mutant, covering in _spread(queued):
+        if outcome_by_line.get(index) == "missed":
+            continue
         remaining = deadline - time.monotonic()
-        if index >= MAX_MUTANTS or remaining < _MIN_MUTANT_SECONDS:
-            tally.not_checked += 1
-            tally.unverified.append((mutant.path, mutant.line))
-            continue
-        if len(covering) > MAX_COVERING_TESTS:
-            tally.not_checked += 1
-            tally.unverified.append((mutant.path, mutant.line))
-            continue
+        if (
+            ran >= MAX_MUTANTS
+            or remaining < _MIN_MUTANT_SECONDS
+            or len(covering) > MAX_COVERING_TESTS
+        ):
+            continue  # later ranks of a caught line are extra depth, not required
         from skylos.done.runner import run_mutant
 
         normal = sum(run.node_seconds.get(node, 0.0) for node in covering)
@@ -694,12 +782,14 @@ def check_changed_lines(ctx: CheckContext) -> CheckResult:
             source=mutant.source,
             timeout=min(remaining, 2 * normal + _STARTUP_ALLOWANCE_SECONDS),
         )
+        ran += 1
         tally.mutants += 1
         if outcome.outcome == "killed":
             tally.killed += 1
+            outcome_by_line.setdefault(index, "caught")
         elif outcome.outcome == "survived":
             tally.survived += 1
-            tally.unverified.append((mutant.path, mutant.line))
+            outcome_by_line[index] = "missed"
             findings.append(
                 Finding(
                     RULE_ID,
@@ -709,9 +799,20 @@ def check_changed_lines(ctx: CheckContext) -> CheckResult:
                     "Add an assertion that would.",
                 )
             )
+        # an unfinished mutant run leaves the line as it was
+
+    lines_caught = lines_missed = 0
+    for index in sorted({item[0] for item in queued}):
+        target = candidates[index][0]
+        state = outcome_by_line.get(index)
+        if state == "caught":
+            lines_caught += 1
+        elif state == "missed":
+            lines_missed += 1
+            tally.unverified.append((target.path, target.shown_line))
         else:
             tally.not_checked += 1
-            tally.unverified.append((mutant.path, mutant.line))
+            tally.unverified.append((target.path, target.shown_line))
 
     if findings:
         status = "fail"
@@ -719,11 +820,11 @@ def check_changed_lines(ctx: CheckContext) -> CheckResult:
         status = "incomplete"
     else:
         status = "pass"
-    unchecked = tally.uncovered + tally.survived
+    unchecked = tally.uncovered + lines_missed
     summary = (
         f"{unchecked} of {tally.targets} changed lines are not checked by any test"
         if unchecked
-        else f"Tests checked {tally.killed} of {tally.targets} changed lines"
+        else f"Tests checked {lines_caught} of {tally.targets} changed lines"
         if tally.not_checked
         else f"Tests check all {tally.targets} changed lines"
     )
@@ -741,6 +842,8 @@ def check_changed_lines(ctx: CheckContext) -> CheckResult:
             "mutants": tally.mutants,
             "caught": tally.killed,
             "missed": tally.survived,
+            "lines_caught": lines_caught,
+            "lines_missed": lines_missed,
             "not_checked": tally.not_checked,
             "covered_only": tally.covered_only,
             "summary": summary[:120],
@@ -765,15 +868,22 @@ def _line_ranges(lines: list[int]) -> str:
     return ", ".join(parts)
 
 
-def _spread(mutants: list[tuple[Mutant, set[str]]]) -> list[tuple[Mutant, set[str]]]:
-    """Most informative mutations first, taking turns across files."""
-    by_file: dict[str, list[tuple[Mutant, set[str]]]] = {}
-    for item in sorted(mutants, key=lambda m: (m[0].priority, m[0].path, m[0].line)):
-        by_file.setdefault(item[0].path, []).append(item)
+def _spread(
+    queued: list[tuple[int, int, Mutant, set[str]]],
+) -> list[tuple[int, int, Mutant, set[str]]]:
+    """Every line's first mutation before any line's second; within a rank,
+    most informative first, taking turns across files."""
     ordered = []
-    queues = [by_file[path] for path in sorted(by_file)]
-    while any(queues):
-        for queue in queues:
-            if queue:
-                ordered.append(queue.pop(0))
+    for rank in sorted({item[1] for item in queued}):
+        by_file: dict[str, list] = {}
+        same_rank = [item for item in queued if item[1] == rank]
+        for item in sorted(
+            same_rank, key=lambda m: (m[2].priority, m[2].path, m[2].line)
+        ):
+            by_file.setdefault(item[2].path, []).append(item)
+        queues = [by_file[path] for path in sorted(by_file)]
+        while any(queues):
+            for queue in queues:
+                if queue:
+                    ordered.append(queue.pop(0))
     return ordered
