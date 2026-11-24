@@ -2,7 +2,7 @@
 
 ARG PYTHON_VERSION=3.14
 
-FROM golang:1.22 AS go-build
+FROM golang:1.26.11 AS go-build
 
 WORKDIR /src/skylos/engines/go
 

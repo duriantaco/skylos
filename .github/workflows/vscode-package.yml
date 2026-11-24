@@ -1,0 +1,75 @@
+name: VS Code package
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/vscode-package.yml'
+      - 'editors/vscode/**'
+      - 'tools/release/artifact_sbom.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vscode-package-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+          check-latest: true
+          package-manager-cache: false
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Test the extension
+        run: npm test
+
+      - name: Build and verify the VSIX
+        run: |
+          dist="$RUNNER_TEMP/skylos-vsix"
+          mkdir -p "$dist"
+          npm run package -- --out "$dist/skylos.vsix"
+          python3 - "$dist/skylos.vsix" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          source = json.loads(Path('package.json').read_text(encoding='utf-8'))
+          with ZipFile(sys.argv[1]) as vsix:
+              manifest = json.loads(vsix.read('extension/package.json'))
+              for field in ('publisher', 'name', 'version', 'capabilities'):
+                  if manifest[field] != source[field]:
+                      raise SystemExit(f'Unexpected {field} in the packaged manifest')
+              trust = manifest['capabilities']['untrustedWorkspaces']
+              if trust['supported'] != 'limited' or 'skylos.path' not in trust['restrictedConfigurations']:
+                  raise SystemExit('Packaged workspace trust settings are missing')
+              entry = Path(source['main'])
+              if vsix.read('extension/' + entry.as_posix()) != entry.read_bytes():
+                  raise SystemExit('Packaged extension entry point does not match the build')
+          PY
+          python3 "$GITHUB_WORKSPACE/tools/release/artifact_sbom.py" --out-dir "$dist" "$dist/skylos.vsix"
+          cd "$dist"
+          sha256sum skylos.vsix > SHA256SUMS
+
+      - name: Upload the verified release candidate
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: skylos-vsix
+          path: ${{ runner.temp }}/skylos-vsix/
+          if-no-files-found: error

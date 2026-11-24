@@ -13,6 +13,7 @@ REQUIRED_CHECKS = (
     "corpus",
     "quality-benchmark",
     "scan",
+    "dependency-audit",
 )
 
 

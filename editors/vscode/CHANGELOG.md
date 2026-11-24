@@ -2,6 +2,11 @@
 
 ## [0.6.1] - unreleased
 
+### Security
+
+- Require workspace trust for extension-triggered workspace execution and use user settings for the Skylos executable and AI endpoints.
+- Restrict cloud and local AI endpoints and treat hover Markdown as untrusted.
+
 ### Changed
 - Listing: Python-first description and keywords; Go is listed with its `skylos-go` engine requirement
 - Listing: square icon and light gallery banner

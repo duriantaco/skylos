@@ -9,6 +9,7 @@ on:
       - Corpus Guard
       - Quality Benchmark
       - Skylos Advisory Scan
+      - Dependency Audit
     branches: [main]
     types: [completed]
 
@@ -126,6 +127,60 @@ jobs:
       id-token: write
     with:
       ref: ${{ needs.release-please.outputs.tag_name }}
+
+  publish-sboms:
+    name: Attach SBOMs to the GitHub release
+    needs: [release-please, pypi-publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download release SBOMs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-sboms
+          path: release-sboms
+
+      - name: Verify SBOM hashes against the published PyPI files
+        env:
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from urllib.parse import quote
+          from urllib.request import urlopen
+
+          version = quote(os.environ["RELEASE_TAG"].removeprefix("v"), safe="")
+          with urlopen(f"https://pypi.org/pypi/skylos/{version}/json", timeout=20) as response:
+              published = {item["filename"]: item["digests"]["sha256"] for item in json.load(response)["urls"]}
+          inventories = {}
+          for path in Path("release-sboms").glob("*.cdx.json"):
+              component = json.loads(path.read_text(encoding="utf-8"))["metadata"]["component"]
+              inventories[path.name.removesuffix(".cdx.json")] = component["hashes"][0]["content"]
+          if not inventories or inventories != published:
+              raise SystemExit("Release SBOM hashes must match every published PyPI release file")
+          PY
+
+      - name: Upload release SBOMs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          assets="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.assets')"
+          for sbom in release-sboms/*.cdx.json; do
+            name="${sbom##*/}"
+            existing="$(jq -r --arg name "$name" '.[] | select(.name == $name) | .digest' <<< "$assets")"
+            if [[ -n "$existing" ]]; then
+              read -r hash _ < <(sha256sum "$sbom")
+              [[ "$existing" == "sha256:$hash" ]] || { echo "Existing SBOM differs: $name" >&2; exit 1; }
+              continue
+            fi
+            gh release upload "$RELEASE_TAG" "$sbom" --repo "$GITHUB_REPOSITORY"
+          done
 
   # PyPI Trusted Publishing (OIDC) for releases. PyPI matches the token to this
   # top-level workflow file and the "pypi" environment; there is no stored

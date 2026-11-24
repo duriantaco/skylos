@@ -496,6 +496,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
     "test": "npm run compile && node --test test/*.test.js",
+    "vscode:prepublish": "npm run compile",
     "package": "vsce package --baseContentUrl https://github.com/duriantaco/skylos/blob/main/editors/vscode --baseImagesUrl https://github.com/duriantaco/skylos/raw/main/editors/vscode"
   },
   "devDependencies": {
