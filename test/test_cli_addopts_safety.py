@@ -20,6 +20,8 @@ def test_sanitize_addopts_keeps_safe_scan_options_only():
         [
             "--json",
             "--ai-defects",
+            "--secrets-credential-material-only",
+            "--secrets-include-aws-key-ids",
             "--select",
             "SKY-L012",
             "--select=SKY-D225",

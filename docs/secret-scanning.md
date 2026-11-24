@@ -7,7 +7,8 @@ accepted the credential. Scanning does not contact credential providers.
 ## Detection pipeline
 
 1. Discover source/configuration files and a separate set of secret-bearing text
-   files, including HTML, Markdown, text, PEM/key files and common SSH key names.
+   files, including HTML, Markdown, text, logs, CSV exports, PEM/key files and
+   common SSH key names.
 2. Match known provider formats, complete structured credentials and private JWK
    material, retaining the existing generic credential checks.
 3. Inspect bounded decoded text for provider signatures, including Base64,
@@ -53,6 +54,12 @@ is separate from text decoding.
 Masked previews remain available for review. Audit output also redacts
 fine-grained GitHub tokens appearing in ordinary text or dictionary keys.
 
+Bare entropy checks skip candidate fragments wholly inside a quoted inline PNG
+when the scanner can validate the complete image and its raster within the scan
+budget. The check requires complete chunks with valid checksums and a bounded
+image data stream. Provider checks and credential-named values keep their
+normal coverage. [PNG specification](https://www.w3.org/TR/png/)
+
 ## Provider depth and precision
 
 The independently specified provider profiles cover npm, PyPI, DigitalOcean,
@@ -84,6 +91,14 @@ AWS access-key detection distinguishes `AKIA`/`ASIA` from public IAM resource
 identifiers. [AWS's identifier table](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html)
 identifies the group/user/role/profile prefixes. Existing broad output masking
 is preserved even where credential classification becomes narrower.
+
+Local reports from `skylos . --secrets` focus on credential material. They omit
+standalone AWS access-key IDs and retain signing material and values with
+structured or independently recognized credential evidence. Add
+`--secrets-include-aws-key-ids` to see standalone IDs in the local report.
+When the report omits IDs, local JSON records the count in
+`analysis_summary.aws_access_key_identifiers_hidden`. CI reports, gates,
+annotations, SARIF and uploads use the complete findings.
 
 ## Structured credentials and private keys
 
@@ -119,6 +134,12 @@ acceptance, complete mathematical key validity or successful decryption. An
 unrecognized structure never suppresses a legacy PEM finding. OpenSSH and other
 legacy private-key detection retain their existing behavior.
 
+When a structurally recognized PEM key has a header finding, the report groups
+bare high-entropy body fragments under that finding. The original header remains
+the primary location. The `private_key_container` evidence records the block
+range and the fragment locations. A changed body line can still bring the key
+into a diff report.
+
 Structured findings use `structured_credential` for safe evidence. Parsing and
 record-count limits produce incomplete analysis; ordinary raw checks continue.
 Distinct decoded records keep separate source paths even when their outer
@@ -136,11 +157,16 @@ incomplete execution are reported separately. These cases do not establish
 live-credential validity or production precision and recall.
 
 Normal scans retain provider signatures in test paths. The internal
-`ignore_tests=True` option remains an explicit opt-out. New document/key scopes
-and native HTML scanning use provider-only detection: they retain known provider
-formats and private-key material while avoiding generic entropy noise. Production
-source/configuration generic checks and existing direct HTML checks keep their
-behavior.
+`ignore_tests=True` option remains an explicit opt-out. Document, log, CSV and
+key files retain known provider formats and structured credential checks.
+Markdown, plain text, native `.log` files and `.csv` exports outside test paths
+also check literal passwords in recognized database connection strings.
+Supported records include SQL Server JDBC and ODBC properties, libpq
+keyword/value connections and supported JDBC URL query options. Generic
+entropy checks continue to focus on source and configuration files.
+[PostgreSQL connection strings](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING) ·
+[PostgreSQL JDBC connection parameters](https://jdbc.postgresql.org/documentation/use/#connection-parameters) ·
+[SQL Server JDBC connection URLs](https://learn.microsoft.com/en-us/sql/connect/jdbc/building-the-connection-url)
 
 For synthetic test credentials, construct the value at runtime or use adjacent
 string literals rather than storing a contiguous provider-shaped key in source.
@@ -155,8 +181,27 @@ be read safely is reported as incomplete and does not increment the count.
 Explicit exclusions, changed-file scope, containment and bounded no-follow reads
 remain enforced.
 
-This implementation does not add Git-history, cloud-storage or
-collaboration-service collection.
+## Local Git history
+
+`skylos secrets-history .` reads stored Git objects to find credentials in local
+commits. It can find a value removed from the working tree. Each finding records
+the historical path and line alongside the commit and blob IDs.
+
+```bash
+skylos secrets-history .
+skylos secrets-history ./services --ref main --format json
+```
+
+The command starts at `HEAD` and visits up to 500 reachable commits by default.
+A path inside the repository limits the scan to that path in history.
+`--max-commits` changes the traversal limit. The command reads supported text
+from the local object database, with separate limits for blob size, total bytes
+and traversal time. It reports each distinct path and blob version once. The
+reported commit is a visited snapshot containing the finding.
+Shallow history, unavailable objects and exhausted scan limits produce
+`analysis_summary.git_history.status: "incomplete"` and exit 2. A complete scan
+exits 0, or exits 1 with `--strict` when the scan found credentials. The local
+listing uses the same credential-material view as `--secrets`.
 
 Provider-side verification remains separate work. A future verifier should
 distinguish success, rejected credentials, unavailable verification and a skipped

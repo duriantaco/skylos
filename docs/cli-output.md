@@ -274,10 +274,12 @@ diff. `skylos cicd annotate --input report.json` does the same using the
 project root recorded in the report. A file outside the repository keeps its
 absolute path.
 
-`json-ci` keeps the same findings, per-finding evidence, and summary counts as
-`json`. It omits only the top-level `dead_code_evidence` ledger and
-`definitions` map, which can make a full scan report large. Use `json` when
-you need those full symbol details.
+`json-ci` keeps the complete secrets findings and per-finding evidence. It
+omits the top-level `dead_code_evidence` ledger and `definitions` map, which
+can make a full scan report large. Use `json` when you need those full symbol
+details. Outside CI, secrets scans use the credential-material view in local
+JSON. Use `--secrets-include-aws-key-ids` to include standalone AWS access-key
+IDs in that view.
 
 When provenance is available, `ai_security_stats.by_category` groups the
 included findings by their top-level JSON array (`danger`, `quality`, and so
@@ -854,7 +856,7 @@ skylos . --select SKY-L029 --expand-advice
 skylos . -a --format json -o report.json
 ```
 
-JSON and JSON-CI retain every finding and its evidence, including unlisted Advice.
+JSON and JSON-CI retain unlisted Advice and its evidence.
 For example, `"listing": {"version": 1, "listed": false, "reason": "measurement"}`
 keeps a measurement available without listing it by default. Findings also carry
 `finding_type`. `analysis_summary.finding_type_counts` and `quality_count` count

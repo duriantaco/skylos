@@ -13,13 +13,16 @@ from functools import lru_cache
 from hashlib import blake2s
 from html import unescape
 from html.parser import HTMLParser
+from itertools import chain, islice
 from math import log2
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote
 
 from skylos.core.message_catalogs import is_message_catalog_path
 from skylos.rules import secret_shapes
+from skylos.rules.secret_database import database_passwords
 from skylos.rules.secret_decoding import decode_provider_views
+from skylos.rules.secret_key_material import MAX_PEM_CHARS, inspect_pem_private_key
 from skylos.rules.secret_providers import (
     DEPTH_PROVIDER_PATTERNS,
     DEPTH_PROVIDER_PREFIXES,
@@ -187,7 +190,8 @@ SECRET_ONLY_FILE_SUFFIXES = (
     ".dockerfile",
 )
 
-PROVIDER_ONLY_FILE_SUFFIXES = (".md", ".txt", ".key", ".pem")
+SECRET_TEXT_FILE_SUFFIXES = (".md", ".txt")
+PROVIDER_ONLY_FILE_SUFFIXES = (*SECRET_TEXT_FILE_SUFFIXES, ".key", ".pem", ".log", ".csv")
 _PRIVATE_KEY_FILE_NAMES = frozenset(
     {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "identity"}
 )
@@ -4166,6 +4170,29 @@ URL_CREDENTIAL_RE = re.compile(
     r"@(?P<host>[A-Za-z0-9\[_][^\s/:'\"`<>?#]{0,253})"
 )
 
+_DATABASE_URL_SCHEMES = frozenset(
+    {
+        "postgres",
+        "postgresql",
+        "mysql",
+        "mariadb",
+        "mongodb",
+        "mongodb+srv",
+        "redis",
+        "rediss",
+    }
+)
+_DATABASE_HOST_RE = re.compile(r"[a-z0-9][a-z0-9.-]*(?:,[a-z0-9][a-z0-9.-]*)*")
+_DATABASE_USER_RE = re.compile(r"(?:[a-zA-Z0-9._~!+,-]|%[0-9a-fA-F]{2}){0,128}")
+_DATABASE_QUERY_URL_RE = re.compile(
+    r"(?<![\w+.-])(?P<scheme>jdbc:postgresql|jdbc:mysql|postgresql|postgres)://"
+    r"(?P<host>\[[0-9a-f:.]+\]|[a-z0-9][a-z0-9.-]{0,252})"
+    r"(?::[0-9]{1,5})?/[^\s?#'\"`<>(){}\[\]]{1,1024}"
+    r"\?(?P<query>[^\s#'\"`<>()]{1,4096})(?![^\s#'\"`<>()])",
+    re.IGNORECASE,
+)
+_DATABASE_QUERY_FIELD_RE = re.compile(r"(?:^|&)(?P<name>user|password)=(?P<value>[^&]*)")
+
 _CREDENTIAL_PLACEHOLDER_VALUES = frozenset(
     {
         "",
@@ -4553,19 +4580,69 @@ def _is_placeholder_multihost_url(user: str, password: str, host: str) -> bool:
     )
 
 
-def _url_credential_candidates(line_content: str):
+def _is_placeholder_url_host(host: str) -> bool:
+    return host in _PLACEHOLDER_HOSTS or "example" in host
+
+
+def _url_credential_candidates(line_content: str, *, database_only: bool = False):
     for match in URL_CREDENTIAL_RE.finditer(line_content):
+        scheme = match.group("scheme")
         user = match.group("user")
         password = match.group("pw")
         start = match.start("pw")
         host = match.group("host").lower()
+        if database_only:
+            if scheme.lower() not in _DATABASE_URL_SCHEMES:
+                continue
+            # A query or fragment can contain colons and @ characters without
+            # being the authority's user information.
+            if not _DATABASE_USER_RE.fullmatch(user) or any(
+                symbol in password for symbol in "?#@"
+            ):
+                continue
+            host = host.rstrip(".,;)]")
+            if not _DATABASE_HOST_RE.fullmatch(host):
+                continue
         if _is_placeholder_url_password(password, user):
             continue
         if _is_placeholder_multihost_url(user, password, host):
             continue
-        if host in _PLACEHOLDER_HOSTS or "example" in host:
+        if _is_placeholder_url_host(host):
             continue
-        yield match.group("scheme"), start, start + len(password), password
+        yield scheme, start, start + len(password), password
+
+
+def _database_query_candidates(line_content: str):
+    if "://" not in line_content:
+        return
+    for match in _DATABASE_QUERY_URL_RE.finditer(line_content):
+        host = match.group("host").lower().rstrip(".")
+        if _is_placeholder_url_host(host):
+            continue
+        fields = list(_DATABASE_QUERY_FIELD_RE.finditer(match.group("query")))
+        if len(fields) != 2 or fields[0]["name"] == fields[1]["name"]:
+            continue
+        params = {field["name"]: field for field in fields}
+        user = params["user"]["value"]
+        password = params["password"]
+        value = password["value"]
+        if not user or not _DATABASE_USER_RE.fullmatch(user) or len(value) > 256:
+            continue
+        if _is_placeholder_url_password(value, user):
+            continue
+        start = match.start("query") + password.start("value")
+        yield match.group("scheme"), start, start + len(value), value
+
+
+def _database_property_candidates(line_content: str):
+    for match in database_passwords(line_content):
+        host = match.host.lower().removeprefix("tcp:").rstrip(".")
+        hostname = re.split(r"[:,\\]", host, maxsplit=1)[0]
+        if _is_placeholder_url_host(host) or _is_placeholder_url_host(hostname):
+            continue
+        if _is_placeholder_credential(match.password, user=match.user):
+            continue
+        yield match
 
 
 def _config_credential_candidates(line_content: str, *, message_catalog: bool = False):
@@ -4600,14 +4677,20 @@ def _config_credential_candidates(line_content: str, *, message_catalog: bool = 
         yield match.group("key"), start, start + len(value), value
 
 
-def _spans_overlap(findings, line_number: int, start: int, end: int) -> bool:
+def _credential_span_overlaps(findings, start: int, end: int, context: str) -> bool:
     for existing in findings:
-        if existing.get("line") != line_number:
-            continue
         existing_start = existing.get("col", 0)
         existing_end = existing.get("end_col", existing_start + 1)
-        if start < existing_end and existing_start < end:
-            return True
+        if start >= existing_end or existing_start >= end:
+            continue
+        if existing.get("provider") == "aws_access_key_id":
+            if (start, end) == (existing_start, existing_end):
+                existing["credential_context"] = context
+                return True
+            # An identifier within a larger credential does not report the
+            # credential's full occurrence.
+            continue
+        return True
     return False
 
 
@@ -4667,6 +4750,91 @@ def _extra_private_key_findings(file_lines, line_number, rel_path):
             }
         )
     return found
+
+
+_PRIVATE_PEM_HEADER = re.compile(
+    r"-----BEGIN (?P<label>(?:(?:RSA|EC|ENCRYPTED) )?PRIVATE KEY)-----"
+)
+_MAX_PRIVATE_PEM_GROUPING_ATTEMPTS = 64
+
+
+def _proven_private_key_bodies(findings, text, line_starts):
+    headers = (
+        finding
+        for finding in findings
+        if finding.get("provider") == "private_key_block"
+        and "decoding" not in finding
+    )
+    bodies = []
+    for finding in islice(headers, _MAX_PRIVATE_PEM_GROUPING_ATTEMPTS):
+        line_start = line_starts[finding["line"] - 1]
+        start = line_start + finding["col"]
+        body_start = line_start + finding["end_col"]
+        header = _PRIVATE_PEM_HEADER.fullmatch(text, start, body_start)
+        if header is None:
+            continue
+        footer = f"-----END {header['label']}-----"
+        body_end = text.find(footer, body_start, start + MAX_PEM_CHARS)
+        if body_end < 0:
+            continue
+        end = body_end + len(footer)
+        pem = text[start:end]
+        # A single-line serialized PEM may contain escaped line breaks. Match
+        # its delimiters in source before decoding, and parse its entire body.
+        if "\n" not in pem:
+            pem = pem.replace(r"\r\n", "\r\n").replace(r"\n", "\n")
+        proof = inspect_pem_private_key(pem)
+        if proof is not None:
+            bodies.append((body_start, body_end, end, finding, proof))
+    return sorted(bodies, key=lambda body: body[0])
+
+
+def _group_private_key_body_findings(file_lines, findings, bare_findings):
+    if not bare_findings or not any(
+        finding.get("provider") == "private_key_block" for finding in findings
+    ):
+        return findings
+    text, line_starts = source_text_and_starts(file_lines)
+    bodies = _proven_private_key_bodies(findings, text, line_starts)
+    body_starts = [body[0] for body in bodies]
+    grouped = set()
+    for fragment in bare_findings:
+        line_start = line_starts[fragment["line"] - 1]
+        start = line_start + fragment["col"]
+        end = line_start + fragment["end_col"]
+        index = bisect_right(body_starts, start) - 1
+        if index < 0 or end > bodies[index][1]:
+            continue
+        _, _, footer_end, header, proof = bodies[index]
+        container = header.get("private_key_container")
+        if container is None:
+            end_line, end_col = source_location(line_starts, footer_end - 1)
+            container = header["private_key_container"] = {
+                "format": proof.format,
+                "algorithm": proof.algorithm,
+                "validation": proof.validation,
+                "encrypted": proof.encrypted,
+                "line": header["line"],
+                "col": header["col"],
+                "end_line": end_line,
+                "end_col": end_col + 1,
+                "fragments": [],
+            }
+        container["fragments"].append(
+            {key: fragment[key] for key in ("line", "col", "end_col", "entropy")}
+        )
+        # Diff-scoped reports must retain a key when a body finding overlaps
+        # the diff even if its header does not.
+        header.setdefault("related_locations", []).append(
+            {
+                "file": fragment["file"],
+                "start_line": fragment["line"],
+                "end_line": fragment["line"],
+                "message": "High-entropy fragment of this private key",
+            }
+        )
+        grouped.add(id(fragment))
+    return [finding for finding in findings if id(finding) not in grouped]
 
 
 def _is_shell_script_file(rel_name: str, lines) -> bool:
@@ -5052,11 +5220,15 @@ def scan_ctx(
         docstring_lines = _docstring_lines(syntax_tree)
 
     config_credential_file = _is_config_credential_file(rel_name)
+    database_credential_text = (
+        rel_name.lower().endswith((*SECRET_TEXT_FILE_SUFFIXES, ".log", ".csv"))
+        and not in_tests
+    )
     message_catalog = is_message_catalog_path(rel_path)
-    public_pem = (
-        secret_shapes.public_pem_spans(file_lines)
-        if any("-----BEGIN " in line for line in file_lines)
-        else {}
+    has_pem_marker = any("-----BEGIN " in line for line in file_lines)
+    public_pem = secret_shapes.public_pem_spans(file_lines) if has_pem_marker else {}
+    group_private_key_fragments = has_pem_marker and ctx.get(
+        "group_private_key_fragments", True
     )
 
     rust_test_lines = (
@@ -5077,10 +5249,12 @@ def scan_ctx(
     record_diagnostics = set(record_issues)
 
     findings = []
+    bare_findings = []
     decode_candidates_left = _MAX_SECRET_DECODE_CANDIDATES
     decode_bytes_left = _MAX_SECRET_DECODE_BYTES
     decode_diagnostics = set()
     decode_incomplete_line = None
+    png_scan_lines_left = 32
     if context_incomplete is not None:
         _append_secret_context_incomplete(
             findings,
@@ -5097,6 +5271,7 @@ def scan_ctx(
 
     for line_number, raw_line in enumerate(file_lines, start=1):
         line_content = raw_line.rstrip("\n")
+        inline_png_spans = None
 
         if ctx.get("honor_inline_ignores", True) and IGNORE_DIRECTIVE in line_content:
             continue
@@ -5348,7 +5523,8 @@ def scan_ctx(
 
             if not clean_token:
                 continue
-            if (clean_token, col_pos, source_end) in provider_values:
+            provider_duplicate = (clean_token, col_pos, source_end) in provider_values
+            if provider_duplicate and not keyed:
                 continue
             if is_bare and _looks_like_identifier(clean_token):
                 continue
@@ -5373,6 +5549,17 @@ def scan_ctx(
             if _is_obvious_placeholder(clean_token):
                 continue
             if _is_parameter_expansion_reference(clean_token):
+                continue
+            if provider_duplicate:
+                # This is a literal binding to a credential field, with a
+                # provider signature supplying the independent value evidence.
+                for existing in findings[line_finding_start:]:
+                    if (
+                        existing.get("provider") == "aws_access_key_id"
+                        and existing.get("col") == col_pos
+                        and existing.get("end_col") == source_end
+                    ):
+                        existing["credential_context"] = "keyed_secret"
                 continue
             tok_entropy = _entropy(clean_token)
 
@@ -5401,6 +5588,25 @@ def scan_ctx(
                 first_secret_name_at not in (-1, None)
                 and first_secret_name_at < col_pos
             )
+            if is_bare and not keyed:
+                if inline_png_spans is None:
+                    inline_png_spans = []
+                    if (
+                        png_scan_lines_left
+                        and "data:image/png;base64," in line_content.lower()
+                    ):
+                        png_scan_lines_left -= 1
+                        inline_png_spans = secret_shapes.inline_png_payload_spans(
+                            line_content
+                        )
+                # A credential word inside the Base64 data does not name the
+                # value. A credential word before the image still counts.
+                if any(
+                    start <= col_pos and source_end <= end
+                    and (not named or first_secret_name_at >= start)
+                    for start, end in inline_png_spans
+                ):
+                    continue
             if (
                 is_bare
                 and not named
@@ -5440,50 +5646,76 @@ def scan_ctx(
                 generic_finding["severity"] = "HIGH"
                 generic_finding["severity_reason"] = "no_secret_name"
             findings.append(generic_finding)
+            if is_bare and not keyed and group_private_key_fragments:
+                bare_findings.append(generic_finding)
 
-        if not line_provider_only:
-            for scheme, start, end, _password in _url_credential_candidates(
-                line_content
-            ):
-                if _spans_overlap(findings, line_number, start, end):
+        if not line_provider_only or database_credential_text:
+            url_credentials = chain(
+                _url_credential_candidates(line_content, database_only=line_provider_only),
+                _database_query_candidates(line_content),
+            )
+            for scheme, start, end, password in url_credentials:
+                if _credential_span_overlaps(
+                    findings[line_finding_start:], start, end, "url_password"
+                ):
                     continue
                 findings.append(
                     {
                         "rule_id": "SKY-S101",
                         "severity": "HIGH",
                         "provider": "url_credentials",
+                        "message": f"Hard-coded password in {scheme}:// connection URL",
+                        "file": rel_path,
+                        "line": line_number,
+                        "col": start,
+                        "end_col": end,
+                        "preview": _mask_credential(password),
+                    }
+                )
+            for password in _database_property_candidates(line_content):
+                if _credential_span_overlaps(
+                    findings[line_finding_start:], password.start, password.end, "database_password"
+                ):
+                    continue
+                findings.append(
+                    {
+                        "rule_id": "SKY-S101",
+                        "severity": "HIGH",
+                        "provider": "database_credentials",
+                        "message": f"Hard-coded password in {password.kind} connection string",
+                        "file": rel_path,
+                        "line": line_number,
+                        "col": password.start,
+                        "end_col": password.end,
+                        "preview": _mask_credential(password.password),
+                    }
+                )
+        if not line_provider_only and config_credential_file:
+            for key, start, end, _value in _config_credential_candidates(
+                line_content, message_catalog=message_catalog
+            ):
+                if _credential_span_overlaps(
+                    findings[line_finding_start:], start, end, "config_credential"
+                ):
+                    continue
+                findings.append(
+                    {
+                        "rule_id": "SKY-S101",
+                        "severity": "HIGH",
+                        "provider": "config_credential",
                         "message": (
-                            f"Hard-coded password in {scheme}:// connection URL"
+                            f"Hard-coded credential literal for '{key}' "
+                            "in config file"
                         ),
                         "file": rel_path,
                         "line": line_number,
                         "col": start,
                         "end_col": max(start + 1, end),
-                        "preview": _mask_credential(_password),
+                        "preview": _mask_credential(_value),
                     }
                 )
-            if config_credential_file:
-                for key, start, end, _value in _config_credential_candidates(
-                    line_content, message_catalog=message_catalog
-                ):
-                    if _spans_overlap(findings, line_number, start, end):
-                        continue
-                    findings.append(
-                        {
-                            "rule_id": "SKY-S101",
-                            "severity": "HIGH",
-                            "provider": "config_credential",
-                            "message": (
-                                f"Hard-coded credential literal for '{key}' "
-                                "in config file"
-                            ),
-                            "file": rel_path,
-                            "line": line_number,
-                            "col": start,
-                            "end_col": max(start + 1, end),
-                            "preview": _mask_credential(_value),
-                        }
-                    )
+
+    findings = _group_private_key_body_findings(file_lines, findings, bare_findings)
 
     if record_diagnostics:
         _append_secret_record_incomplete(

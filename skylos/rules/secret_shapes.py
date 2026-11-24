@@ -15,9 +15,92 @@ import base64
 import binascii
 import hashlib
 import re
+import struct
 import unicodedata
+import zlib
 from functools import lru_cache
-from itertools import pairwise
+from itertools import islice, pairwise
+
+
+# Only small, quoted PNGs with a complete raster and no metadata enter this
+# check. The limits bound work on untrusted inline assets.
+_INLINE_PNG_PAYLOAD = re.compile(
+    r"""(?P<quote>["'])data:image/png;base64,(?P<data>[A-Za-z0-9+/]{1,32768}={0,2})(?P=quote)""",
+    re.IGNORECASE | re.ASCII,
+)
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_PNG_CHANNELS = {0: 1, 2: 3, 4: 2, 6: 4}
+_MAX_PNG_RASTER = 128 * 1024
+
+
+def _png_chunks(data: bytes) -> list[tuple[bytes, bytes]]:
+    if not data.startswith(_PNG_SIGNATURE):
+        return []
+    offset = len(_PNG_SIGNATURE)
+    chunks = []
+    for _ in range(32):
+        if offset + 12 > len(data):
+            break
+        length = int.from_bytes(data[offset : offset + 4], "big")
+        end = offset + 12 + length
+        if end > len(data):
+            break
+        if zlib.crc32(data[offset + 4 : end - 4]) != int.from_bytes(data[end - 4 : end], "big"):
+            break
+        kind = data[offset + 4 : offset + 8]
+        if kind == b"IEND":
+            return chunks if length == 0 and end == len(data) else []
+        chunks.append((kind, data[offset + 8 : end - 4]))
+        offset = end
+    return []
+
+
+def _has_complete_png_raster(data: bytes) -> bool:
+    chunks = _png_chunks(data)
+    if len(chunks) < 2 or chunks[0][0] != b"IHDR" or len(chunks[0][1]) != 13:
+        return False
+    if any(kind != b"IDAT" for kind, _ in chunks[1:]):
+        return False
+    width, height, depth, color, compression, filtering, interlace = struct.unpack(
+        ">IIBBBBB", chunks[0][1]
+    )
+    channels = _PNG_CHANNELS.get(color)
+    if not width or not height or not channels or depth != 8 or any(
+        (compression, filtering, interlace)
+    ):
+        return False
+    row_bytes = 1 + width * channels
+    expected = row_bytes * height
+    if expected > _MAX_PNG_RASTER:
+        return False
+    decompressor = zlib.decompressobj()
+    try:
+        raster = decompressor.decompress(
+            b"".join(payload for _, payload in chunks[1:]), expected + 1
+        )
+    except zlib.error:
+        return False
+    return (
+        len(raster) == expected
+        and decompressor.eof
+        and not decompressor.unused_data
+        and not decompressor.unconsumed_tail
+        and all(filter_byte <= 4 for filter_byte in raster[::row_bytes])
+    )
+
+
+def inline_png_payload_spans(line: str) -> list[tuple[int, int]]:
+    """Locate checked PNG raster containers for the bare entropy heuristic."""
+    spans = []
+    for match in islice(_INLINE_PNG_PAYLOAD.finditer(line), 4):
+        payload = match.group("data").encode("ascii")
+        try:
+            decoded = base64.b64decode(payload, validate=True)
+        except binascii.Error:
+            continue
+        if base64.b64encode(decoded) == payload and _has_complete_png_raster(decoded):
+            spans.append(match.span("data"))
+    return spans
 
 # ---------------------------------------------------------------------------
 # Digests

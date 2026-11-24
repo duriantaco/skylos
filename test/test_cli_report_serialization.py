@@ -218,3 +218,175 @@ def test_output_format_does_not_filter_the_result_used_by_a_strict_gate(
 
     assert exc.value.code == 1
     capsys.readouterr()
+
+
+@pytest.fixture
+def aws_identifier_finding():
+    return {
+        "file": "app.py",
+        "line": 1,
+        "rule_id": "SKY-S101",
+        "severity": "CRITICAL",
+        "provider": "aws_access_key_id",
+        "message": "Potential AWS access-key identifier detected",
+    }
+
+
+@pytest.mark.parametrize("secret_flag", ["--secrets", "--all", "--select=SKY-S101"])
+def test_default_credential_material_view_keeps_signers_and_the_full_upload(
+    monkeypatch, capsys, tmp_path, aws_identifier_finding, secret_flag
+):
+    _configure(monkeypatch, tmp_path, "json", upload=True)
+    monkeypatch.setattr(cli, "_is_ci", lambda: False)
+    monkeypatch.setattr(cli.sys, "argv", [*cli.sys.argv, secret_flag])
+    raw = _report()
+    evidence = {"credential_record": "aws_pair", "validation": "structural"}
+    related_identifier = {
+        **aws_identifier_finding,
+        "line": 2,
+        "structured_credential": evidence,
+    }
+    signing_material = {
+        **related_identifier,
+        "line": 3,
+        "provider": "aws_secret_access_key",
+        "message": "Potential AWS signing material detected",
+    }
+    raw["secrets"] = [aws_identifier_finding, related_identifier, signing_material]
+    raw["analysis_summary"].update(
+        secrets_count=3,
+        dead_code_evidence={"record_count": 1},
+        grep_verify={"complete": True, "verified": 1},
+    )
+    monkeypatch.setattr(cli, "run_analyze", lambda *_args, **_kwargs: json.dumps(raw))
+    monkeypatch.setattr(cli, "_attach_upload_project_context", lambda *_args: None)
+    uploaded = []
+
+    def upload(result, **_kwargs):
+        uploaded.append(copy.deepcopy(result))
+        return {"success": True}
+
+    monkeypatch.setattr(cli, "upload_report", upload)
+    cli.main()
+
+    display = json.loads(capsys.readouterr().out)
+    assert [finding["line"] for finding in display["secrets"]] == [2, 3]
+    assert display["analysis_summary"]["secrets_count"] == 2
+    assert (
+        display["analysis_summary"]["secrets_display_scope"]
+        == "credential_material_only"
+    )
+    assert display["analysis_summary"]["aws_access_key_identifiers_hidden"] == 1
+
+    monkeypatch.setattr(
+        cli.sys, "argv", [*cli.sys.argv, "--secrets-include-aws-key-ids"]
+    )
+    cli.main()
+
+    raw_display = json.loads(capsys.readouterr().out)
+    assert [finding["line"] for finding in raw_display["secrets"]] == [1, 2, 3]
+    assert raw_display["analysis_summary"]["secrets_count"] == 3
+    assert "aws_access_key_identifiers_hidden" not in raw_display["analysis_summary"]
+    for field in ("dead_code_evidence", "grep_verify"):
+        assert (
+            display["analysis_summary"].get(field)
+            == raw_display["analysis_summary"].get(field)
+        )
+    assert uploaded[0]["secrets"] == uploaded[1]["secrets"]
+    assert [finding["line"] for finding in uploaded[0]["secrets"]] == [1, 2, 3]
+    assert uploaded[0]["analysis_summary"]["secrets_count"] == 3
+    assert "aws_access_key_identifiers_hidden" not in uploaded[0]["analysis_summary"]
+
+
+@pytest.mark.parametrize(
+    "output_format,gate_options",
+    [
+        ("json", ["--strict"]),
+        ("json", ["--gate", "--strict"]),
+        ("json", ["--strict", "--secrets-credential-material-only"]),
+        ("pretty", ["--strict"]),
+        ("concise", ["--strict"]),
+    ],
+)
+def test_default_credential_material_view_keeps_the_identifier_blocking(
+    monkeypatch, capsys, tmp_path, aws_identifier_finding, output_format, gate_options
+):
+    _configure(monkeypatch, tmp_path, output_format)
+    monkeypatch.setattr(cli, "_is_ci", lambda: False)
+    raw = _report()
+    raw["unused_functions"] = []
+    raw["secrets"] = [aws_identifier_finding]
+    raw["analysis_summary"]["secrets_count"] = 1
+    monkeypatch.setattr(cli, "run_analyze", lambda *_args, **_kwargs: json.dumps(raw))
+    monkeypatch.setattr(cli.sys, "argv", [*cli.sys.argv, "--secrets", *gate_options])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    if output_format == "json":
+        output = json.loads(captured.out)
+        assert output["gate"]["passed"] is False
+        assert output["secrets"] == []
+        assert output["analysis_summary"]["aws_access_key_identifiers_hidden"] == 1
+    elif output_format == "pretty":
+        assert "Credential material view hides 1 standalone" in captured.out
+        assert "No findings to display." in captured.out
+        assert "Quality Gate: FAILED" in captured.out
+    else:
+        assert aws_identifier_finding["message"] not in captured.out
+
+
+def test_secret_scan_without_standalone_identifiers_preserves_report_shape(
+    monkeypatch, capsys, tmp_path
+):
+    _configure(monkeypatch, tmp_path, "json")
+    monkeypatch.setattr(cli, "_is_ci", lambda: False)
+    monkeypatch.setattr(cli.sys, "argv", [*cli.sys.argv, "--secrets"])
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["dead_code_evidence"] == _report()["dead_code_evidence"]
+    assert "secrets_display_scope" not in output["analysis_summary"]
+
+
+@pytest.mark.parametrize(
+    "output_format", ["json-in-ci", "json-ci", "github", "gitlab", "sarif"]
+)
+def test_credential_material_view_preserves_ci_reports(
+    monkeypatch, capsys, tmp_path, aws_identifier_finding, output_format
+):
+    cli_format = {"json-in-ci": "json", "sarif": "rich"}.get(
+        output_format, output_format
+    )
+    _configure(monkeypatch, tmp_path, cli_format)
+    monkeypatch.setattr(cli, "_is_ci", lambda: output_format == "json-in-ci")
+    raw = _report()
+    raw["unused_functions"] = []
+    raw["secrets"] = [aws_identifier_finding]
+    raw["analysis_summary"]["secrets_count"] = 1
+    monkeypatch.setattr(cli, "run_analyze", lambda *_args, **_kwargs: json.dumps(raw))
+    argv = [*cli.sys.argv, "--secrets", "--strict"]
+    sarif = tmp_path / "result.sarif"
+    if output_format == "sarif":
+        argv.extend(["--sarif", str(sarif)])
+    monkeypatch.setattr(cli.sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 1
+    output = capsys.readouterr().out
+    if output_format in {"json-in-ci", "json-ci"}:
+        result = json.loads(output)
+        assert [item["provider"] for item in result["secrets"]] == ["aws_access_key_id"]
+        assert "secrets_display_scope" not in result["analysis_summary"]
+    elif output_format == "github":
+        assert aws_identifier_finding["message"] in output
+    elif output_format == "gitlab":
+        assert [item["check_name"] for item in json.loads(output)] == ["SKY-S101"]
+    else:
+        results = json.loads(sarif.read_text())["runs"][0]["results"]
+        assert [item["ruleId"] for item in results] == ["SKY-S101"]

@@ -56,24 +56,28 @@ def test_new_literal_file_names_are_case_insensitive(path):
 
 
 @pytest.mark.parametrize(
-    "path",
+    ("path", "database_url_expected"),
     [
-        "tests/test_settings.py",
-        "tests/config.yaml",
-        "README.md",
-        "notes.txt",
-        "service.key",
-        "service.pem",
-        "id_rsa",
-        "examples/notes.txt",
+        ("tests/test_settings.py", False),
+        ("tests/config.yaml", False),
+        ("README.md", True),
+        ("notes.txt", True),
+        ("service.key", False),
+        ("service.pem", False),
+        ("id_rsa", False),
+        ("examples/notes.txt", True),
     ],
 )
-def test_generic_entropy_does_not_expand_into_provider_only_scopes(path):
+def test_generic_entropy_does_not_expand_into_provider_only_scopes(
+    path, database_url_expected
+):
     source = (
         f'API_TOKEN = "{GENERIC_TOKEN}"\n'
         "DATABASE_URL=postgres://service:Zr8kLq2vW9xP4mT@db.internal/app\n"
+        "SERVICE_URL=https://service:Zr8kLq2vW9xP4mT@svc.internal/app\n"
     )
-    assert _scan(path, source) == []
+    locations = [(finding["provider"], finding["line"]) for finding in _scan(path, source)]
+    assert locations == ([("url_credentials", 2)] if database_url_expected else [])
 
 
 def test_explicit_test_opt_out_remains_explicit():
