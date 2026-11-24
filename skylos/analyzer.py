@@ -5668,11 +5668,18 @@ class Skylos:
                                 )
                                 src_lines = src.splitlines(True)
                             rel = str(Path(file).relative_to(root))
+                            f_ignore = per_file_ignore_lines.get(str(file), set())
+                            f_ignore_rules = per_file_ignore_rules.get(str(file), {})
                             ctx = {
                                 "relpath": rel,
                                 "lines": src_lines,
                                 "tree": None,
                                 "abs_path": str(file),
+                                # Keep original finding boundaries when the
+                                # native analyzer partitions inline ignores.
+                                "group_private_key_fragments": not (
+                                    f_ignore or f_ignore_rules
+                                ),
                             }
                             if str(file).endswith(_TS_JS_SOURCE_EXTS) or (
                                 comment_family(file) is not None
@@ -5688,10 +5695,6 @@ class Skylos:
                                     )
                             secret_checked_files.add(str(Path(file).resolve()))
                             if findings:
-                                f_ignore = per_file_ignore_lines.get(str(file), set())
-                                f_ignore_rules = per_file_ignore_rules.get(
-                                    str(file), {}
-                                )
                                 if f_ignore or f_ignore_rules:
                                     for sf in findings:
                                         if _finding_is_inline_ignored(

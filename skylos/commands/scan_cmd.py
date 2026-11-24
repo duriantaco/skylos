@@ -1812,16 +1812,32 @@ def _run_scan_command(
 
         result = refresh_listing_summary(result)
         output_result = result
-        _cli_severity = getattr(args, "severity", None)
-        _cli_category = getattr(args, "category", None)
-        _cli_file_filter = getattr(args, "file_filter", None)
-        if _cli_severity or _cli_category or _cli_file_filter:
-            output_result = _apply_display_filters(
-                result,
-                severity=_cli_severity,
-                category=_cli_category,
-                file_filter=_cli_file_filter,
+        display_filters = {
+            key: getattr(args, key)
+            for key in ("severity", "category", "file_filter")
+            if getattr(args, key, None)
+        }
+        # Review local secrets as credential material. Keep machine reports
+        # complete in CI and avoid rebuilding reports with nothing to hide.
+        if (
+            args.secrets
+            and not getattr(args, "secrets_include_aws_key_ids", False)
+            and not (
+                getattr(args, "json_ci", False)
+                or args.sarif
+                or gitlab_output
+                or args.github
+                or _is_ci()
             )
+            and any(
+                cli_module._standalone_aws_access_key_id(finding)
+                for section in ("secrets", "reviewed_findings")
+                for finding in result.get(section) or ()
+            )
+        ):
+            display_filters["secrets_credential_material_only"] = True
+        if display_filters:
+            output_result = _apply_display_filters(result, **display_filters)
         if args.json:
             # Only JSON output consumes this normalized, independent snapshot.
             # Other formats render output_result and upload the complete result.
@@ -1830,12 +1846,9 @@ def _run_scan_command(
             if _skip_provenance and json_result.get("provenance") is None:
                 json_result.pop("provenance", None)
             json_output_result = json.loads(json.dumps(json_result))
-            if _cli_severity or _cli_category or _cli_file_filter:
+            if display_filters:
                 json_output_result = _apply_display_filters(
-                    json_output_result,
-                    severity=_cli_severity,
-                    category=_cli_category,
-                    file_filter=_cli_file_filter,
+                    json_output_result, **display_filters
                 )
             from skylos.reporting.top_risks import add_report_guidance
 
@@ -2559,11 +2572,7 @@ def _run_scan_command(
                     **view_options,
                 )
 
-    display_filtered = bool(
-        getattr(args, "severity", None)
-        or getattr(args, "category", None)
-        or getattr(args, "file_filter", None)
-    )
+    display_filtered = bool(display_filters)
     unused_total = sum(
         len(output_result.get(k, []))
         for k in (

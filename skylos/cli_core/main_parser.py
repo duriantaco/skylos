@@ -303,7 +303,21 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--secrets", action="store_true", help="Scan for API keys. Off by default."
+        "--secrets", action="store_true", help="Scan for credentials. Off by default."
+    )
+    aws_id_display = parser.add_mutually_exclusive_group()
+    aws_id_display.add_argument(
+        "--secrets-include-aws-key-ids",
+        action="store_true",
+        help=(
+            "Include standalone AWS access-key IDs in local secrets reports."
+        ),
+    )
+    aws_id_display.add_argument(
+        "--secrets-credential-material-only",
+        dest="secrets_include_aws_key_ids",
+        action="store_false",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--danger",

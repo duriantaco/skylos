@@ -26,6 +26,13 @@ def scope_note_lines(result: dict) -> list[str]:
         lines.append(generated)
     lines.extend(_below_threshold_notes(summary.get("dead_code_below_threshold")))
     lines.extend(_experimental_dead_code_notes(summary.get("dead_code_experimental")))
+    hidden_aws_ids = _count(summary.get("aws_access_key_identifiers_hidden"))
+    if hidden_aws_ids:
+        noun = "identifier" if hidden_aws_ids == 1 else "identifiers"
+        lines.append(
+            f"Credential material view hides {hidden_aws_ids:,} standalone "
+            f"AWS access-key {noun}."
+        )
     bare_noqa = _count(summary.get("bare_noqa_security_findings"))
     if bare_noqa:
         noun = "finding sits" if bare_noqa == 1 else "findings sit"

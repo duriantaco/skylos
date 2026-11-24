@@ -53,6 +53,12 @@ is separate from text decoding.
 Masked previews remain available for review. Audit output also redacts
 fine-grained GitHub tokens appearing in ordinary text or dictionary keys.
 
+Bare entropy checks skip candidate fragments wholly inside a quoted inline PNG
+when the scanner can validate the complete image and its raster within the scan
+budget. The check requires complete chunks with valid checksums and a bounded
+image data stream. Provider checks and credential-named values keep their
+normal coverage. [PNG specification](https://www.w3.org/TR/png/)
+
 ## Provider depth and precision
 
 The independently specified provider profiles cover npm, PyPI, DigitalOcean,
@@ -84,6 +90,14 @@ AWS access-key detection distinguishes `AKIA`/`ASIA` from public IAM resource
 identifiers. [AWS's identifier table](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html)
 identifies the group/user/role/profile prefixes. Existing broad output masking
 is preserved even where credential classification becomes narrower.
+
+Local reports from `skylos . --secrets` focus on credential material. They omit
+standalone AWS access-key IDs and retain signing material and values with
+structured or independently recognized credential evidence. Add
+`--secrets-include-aws-key-ids` to see standalone IDs in the local report.
+When the report omits IDs, local JSON records the count in
+`analysis_summary.aws_access_key_identifiers_hidden`. CI reports, gates,
+annotations, SARIF and uploads use the complete findings.
 
 ## Structured credentials and private keys
 
@@ -119,6 +133,12 @@ acceptance, complete mathematical key validity or successful decryption. An
 unrecognized structure never suppresses a legacy PEM finding. OpenSSH and other
 legacy private-key detection retain their existing behavior.
 
+When a structurally recognized PEM key has a header finding, the report groups
+bare high-entropy body fragments under that finding. The original header remains
+the primary location. The `private_key_container` evidence records the block
+range and the fragment locations. A changed body line can still bring the key
+into a diff report.
+
 Structured findings use `structured_credential` for safe evidence. Parsing and
 record-count limits produce incomplete analysis; ordinary raw checks continue.
 Distinct decoded records keep separate source paths even when their outer
@@ -136,11 +156,13 @@ incomplete execution are reported separately. These cases do not establish
 live-credential validity or production precision and recall.
 
 Normal scans retain provider signatures in test paths. The internal
-`ignore_tests=True` option remains an explicit opt-out. New document/key scopes
-and native HTML scanning use provider-only detection: they retain known provider
-formats and private-key material while avoiding generic entropy noise. Production
-source/configuration generic checks and existing direct HTML checks keep their
-behavior.
+`ignore_tests=True` option remains an explicit opt-out. Document and key scopes
+and native HTML scanning retain known provider formats and private-key material.
+Markdown and plain text outside test paths also check literal passwords in
+recognized database URLs, including PostgreSQL and supported JDBC query options.
+Generic entropy checks continue to focus on source and configuration files.
+[PostgreSQL connection strings](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING) ·
+[PostgreSQL JDBC connection parameters](https://jdbc.postgresql.org/documentation/use/#connection-parameters)
 
 For synthetic test credentials, construct the value at runtime or use adjacent
 string literals rather than storing a contiguous provider-shaped key in source.

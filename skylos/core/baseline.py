@@ -199,6 +199,22 @@ def _baseline_path(project_root: str | Path) -> Path:
     return Path(project_root) / BASELINE_DIR / BASELINE_FILE
 
 
+def _private_key_fragment_fingerprints(finding: dict):
+    container = finding.get("private_key_container")
+    if finding.get("provider") != "private_key_block" or not isinstance(
+        container, dict
+    ):
+        return
+    fragments = container.get("fragments")
+    if not isinstance(fragments, list):
+        return
+    rule = finding.get("rule_id", "")
+    file = finding.get("file", "")
+    for fragment in fragments:
+        if isinstance(fragment, dict) and type(fragment.get("line")) is int:
+            yield f"{rule}:{file}:{fragment['line']}"
+
+
 def save_baseline(project_root: str | Path, result: dict) -> Path:
     path = _baseline_path(project_root)
 
@@ -221,6 +237,8 @@ def save_baseline(project_root: str | Path, result: dict) -> Path:
         for finding in result.get(category, []):
             fp = f"{finding.get('rule_id', '')}:{finding.get('file', '')}:{finding.get('line', 0)}"
             fingerprints.add(fp)
+            if category == "secrets":
+                fingerprints.update(_private_key_fragment_fingerprints(finding))
             stable = _stable_fingerprint(finding, project_root)
             if stable is not None:
                 fingerprints.add(stable)
@@ -299,6 +317,11 @@ def filter_new_findings(
         for finding in original:
             fp = f"{finding.get('rule_id', '')}:{finding.get('file', '')}:{finding.get('line', 0)}"
             matched = _known(finding, fp, known, stable, project_root)
+            if matched and category == "secrets":
+                matched = all(
+                    item in known
+                    for item in _private_key_fragment_fingerprints(finding)
+                )
             if (
                 matched
                 and policy_base

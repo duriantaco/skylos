@@ -1889,8 +1889,23 @@ def _filter_architecture_advisories(result, filtered, keep_signal):
     filtered["architecture_metrics"] = selected_metrics
 
 
+def _standalone_aws_access_key_id(item):
+    return (
+        isinstance(item, dict)
+        and item.get("provider") == "aws_access_key_id"
+        and not item.get("structured_credential")
+        and not item.get("credential_context")
+    )
+
+
 def _apply_display_filters(
-    result, severity=None, category=None, file_filter=None, *, preserve_grade=True
+    result,
+    severity=None,
+    category=None,
+    file_filter=None,
+    *,
+    preserve_grade=True,
+    secrets_credential_material_only=False,
 ):
     import copy
 
@@ -1898,6 +1913,7 @@ def _apply_display_filters(
     allowed_cats = _display_filter_allowed_categories(category)
 
     filtered = copy.copy(result)
+    hidden_aws_ids = 0
 
     for key, cat in _DISPLAY_FILTER_CATEGORY_MAP.items():
         items = result.get(key, []) or []
@@ -1908,7 +1924,12 @@ def _apply_display_filters(
             filtered[key] = []
             continue
 
-        filtered[key] = _display_filter_items(items, file_filter, min_rank, key)
+        visible = _display_filter_items(items, file_filter, min_rank, key)
+        if key == "secrets" and secrets_credential_material_only:
+            unfiltered_count = len(visible)
+            visible = [item for item in visible if not _standalone_aws_access_key_id(item)]
+            hidden_aws_ids = unfiltered_count - len(visible)
+        filtered[key] = visible
 
     _filter_architecture_advisories(
         result,
@@ -1936,6 +1957,13 @@ def _apply_display_filters(
                 [item], file_filter, min_rank, str(item.get("section") or "")
             ):
                 continue
+            if (
+                secrets_credential_material_only
+                and reviewed_category == "secret"
+                and _standalone_aws_access_key_id(item)
+            ):
+                hidden_aws_ids += 1
+                continue
             reviewed_kept.append(item)
         filtered["reviewed_findings"] = reviewed_kept
         reviewed_summary = copy.copy(result.get("reviewed_findings_summary") or {})
@@ -1943,12 +1971,16 @@ def _apply_display_filters(
         filtered["reviewed_findings_summary"] = reviewed_summary
 
     summary = copy.copy(result.get("analysis_summary") or {})
-    incomplete_grep_verify = _incomplete_grep_verify_report(summary)
+    if secrets_credential_material_only:
+        summary["secrets_display_scope"] = "credential_material_only"
+        summary["aws_access_key_identifiers_hidden"] = hidden_aws_ids
     summary.pop("by_directory", None)
-    summary.pop("dead_code_evidence", None)
-    summary.pop("grep_verify", None)
-    if incomplete_grep_verify is not None:
-        summary["grep_verify"] = incomplete_grep_verify
+    if not secrets_credential_material_only or severity or category or file_filter:
+        incomplete_grep_verify = _incomplete_grep_verify_report(summary)
+        summary.pop("dead_code_evidence", None)
+        summary.pop("grep_verify", None)
+        if incomplete_grep_verify is not None:
+            summary["grep_verify"] = incomplete_grep_verify
     for key, count_key in _RULE_SELECTION_SUMMARY_COUNTS.items():
         if key in result or count_key in summary:
             summary[count_key] = len(filtered.get(key) or [])
