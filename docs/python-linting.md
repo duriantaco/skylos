@@ -1,68 +1,50 @@
-# Python Linting With Ruff
+# Linting with Skylos
 
-Skylos can run [Ruff](https://docs.astral.sh/ruff/) through the same `skylos`
-CLI used for repository analysis. Ruff remains an optional dependency, so the
-core Skylos install stays focused on its multi-language analyzers.
-
-## Install
-
-```bash
-pip install "skylos[lint]"
-```
-
-The `all` extra also includes lint support:
-
-```bash
-pip install "skylos[all]"
-```
-
-## Run
-
-Lint the current directory:
+## Architecture linting
 
 ```bash
 skylos lint
 ```
 
-Pass paths and Ruff `check` options after `lint`:
+Skylos checks the current directory with local static analysis. The command
+comes with the core install and needs no model or account. Pass a project
+directory to check another location.
+
+It reports module import cycles in Python, TypeScript, and JavaScript
+(`SKY-CIRC`), cycles between sibling Python packages (`SKY-Q807`), and
+configured import layer violations in all three languages (`SKY-Q805`).
+Package cycles use resolved top-level imports between packages with
+`__init__.py`. Cycle findings list the contributing import sites. Exit codes
+are `0` for clean, `1` for findings, and `2` for an error or incomplete analysis.
+
+To include sibling-package cycles in ordinary quality scans and the
+cleanup queue, set `check_package_cycles = true` under
+`[tool.skylos.architecture]` in `pyproject.toml`. [Cleanup](./cleanup.md)
+
+### In CI
+
+Use `--diff REF` to check changed import lines for cycles and changed source
+modules for layer violations. Use `--format json` for structured evidence.
 
 ```bash
-skylos lint src test
-skylos lint src --select E,F,I
-skylos lint . --fix
-skylos lint . --diff
+skylos lint --diff origin/main
+skylos lint --format json
 ```
 
-With no arguments, Skylos invokes `ruff check .`. Other than the top-level
-`-h` / `--help` flags, which display Skylos wrapper help, it forwards the
-arguments unchanged to `ruff check` using the Python environment that runs
-Skylos. It does not use a shell.
+To record existing architecture debt and check for new findings, run the
+baseline command first.
 
-## Configuration And Exit Codes
+```bash
+skylos baseline . --architecture
+skylos lint --baseline
+```
 
-Ruff continues to discover configuration from `pyproject.toml`, `ruff.toml`,
-or `.ruff.toml`. Skylos does not translate Ruff rules into `SKY-*` findings or
-merge them into Skylos reports.
+`skylos baseline . --architecture` replaces `.skylos/baseline.json` with the
+architecture findings from the selected directory. Use the same directory
+for both commands. Refresh older baselines to record layer violations by
+dependency edge.
 
-The command preserves Ruff's output and exit code:
+## Existing Ruff checks
 
-| Exit code | Meaning |
-|:---|:---|
-| `0` | No lint violations remain |
-| `1` | Lint violations were found |
-| `2` | Ruff could not run because of invalid options, configuration, or another error |
-
-This means existing CI checks can replace `ruff check ...` with
-`skylos lint ...` without changing their pass/fail behavior.
-
-## Relationship To Skylos Analysis
-
-`skylos lint` is a convenience entry point for Ruff's fast Python lint rules.
-It is separate from `skylos .` and `skylos . -a`, which cover Skylos dead
-code, security, secrets, dependency, quality, and AI-defect analysis across
-multiple languages. Installing the `lint` extra does not make Ruff run during
-a normal Skylos scan.
-
-For all Ruff options and configuration behavior, see the
-[Ruff linter documentation](https://docs.astral.sh/ruff/linter/) and
-[Ruff configuration documentation](https://docs.astral.sh/ruff/configuration/).
+Run Ruff directly with `ruff check .` and pass any existing Ruff options to
+`ruff check`.

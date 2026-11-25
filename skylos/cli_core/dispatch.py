@@ -75,6 +75,7 @@ NATIVE_HELP_COMMANDS = frozenset(
         "explain",
         "graph",
         "image",
+        "lint",
         "open",
         "mcp",
         "preflight",

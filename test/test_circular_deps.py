@@ -7,15 +7,17 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from skylos.analysis import circular_deps
 from skylos.analysis.architecture import get_architecture_findings
-from skylos.analysis.file_processing import collect_python_raw_imports
 from skylos.analysis.circular_deps import (
     CircularDependencyAnalyzer,
     CircularDependencyRule,
     DependencyGraphBuilder,
     analyze_circular_dependencies,
 )
+from skylos.analysis.file_processing import collect_python_raw_imports
+from skylos.cicd.review import filter_findings_to_diff
 
 
 def _rule_for_sources(sources, mode):
@@ -327,6 +329,41 @@ def test_circular_finding_has_stable_location_on_a_real_cycle_edge(mode, reverse
     assert set(findings[0]["cycle"]) == {"alpha", "beta"}
     assert findings[0]["file"] == "/project/alpha.py"
     assert findings[0]["line"] == 3
+    assert findings[0]["related_locations"] == [
+        {
+            "file": "/project/alpha.py",
+            "start_line": 3,
+            "message": "alpha imports beta",
+        },
+        {
+            "file": "/project/alpha.py",
+            "start_line": 4,
+            "message": "alpha imports beta",
+        },
+        {
+            "file": "/project/beta.py",
+            "start_line": 1,
+            "message": "beta imports alpha",
+        },
+    ]
+    assert (
+        filter_findings_to_diff(
+            findings, [{"file": "/project/beta.py", "start": 1, "end": 1}]
+        )
+        == findings
+    )
+    assert (
+        filter_findings_to_diff(
+            findings, [{"file": "/project/alpha.py", "start": 4, "end": 4}]
+        )
+        == findings
+    )
+    assert (
+        filter_findings_to_diff(
+            findings, [{"file": "/project/alpha.py", "start": 1, "end": 1}]
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize("mode", ["ast", "raw"])
@@ -345,6 +382,11 @@ def test_cycle_location_does_not_use_an_edge_from_another_cycle(mode):
 
     assert long_cycle["file"] == "/project/alpha.py"
     assert long_cycle["line"] == 3
+    assert [site["message"] for site in long_cycle["related_locations"]] == [
+        "alpha imports beta",
+        "beta imports gamma",
+        "gamma imports alpha",
+    ]
 
 
 def test_manual_cycle_graph_does_not_invent_an_import_location():
@@ -356,6 +398,37 @@ def test_manual_cycle_graph_does_not_invent_an_import_location():
 
     assert "file" not in finding
     assert "line" not in finding
+    assert "related_locations" not in finding
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+def test_exact_architecture_import_evidence_excludes_truncated_modules(mode):
+    source = (
+        "import other.missing\n"
+        "from other.missing import value\n"
+        "from other import child\n"
+        "import other.child\n"
+    )
+    rule = _rule_for_sources(
+        {
+            "app.main": ("/project/app/main.py", source),
+            "other": ("/project/other/__init__.py", ""),
+            "other.child": ("/project/other/child.py", ""),
+        },
+        mode,
+    )
+
+    rule.analyze()
+
+    analyzer = rule._analyzer
+    assert analyzer.architecture_dependencies["app.main"] == {"other", "other.child"}
+    assert [
+        (edge.from_module, edge.to_module, edge.import_line)
+        for edge in analyzer.architecture_imports
+    ] == [
+        ("app.main", "other.child", 3),
+        ("app.main", "other.child", 4),
+    ]
 
 
 @pytest.mark.parametrize("child_source", ["value = 'label'", "import package"])

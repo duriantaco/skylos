@@ -303,6 +303,7 @@ RULE_DOCS_ANCHORS = {
     "SKY-Q804": "sky-q804--dependency-inversion-principle-violation",
     "SKY-Q805": "sky-q805--architecture-layer-policy-violation",
     "SKY-Q806": "sky-q806--opaque-identifier",
+    "SKY-Q807": "quality-rules-sky-q",
     "SKY-R101": "repository-policy-rules-sky-r",
     "SKY-R102": "repository-policy-rules-sky-r",
     "SKY-R103": "repository-policy-rules-sky-r",

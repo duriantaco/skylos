@@ -36,7 +36,7 @@ Rule IDs use a stable public prefix:
 | Core scan | `skylos .`; dead-code focused scan. |
 | Full audit | `skylos . -a`; enables security, secrets, dependency, quality, and AI-defect checks in addition to dead code. |
 | Generated files | Django migrations, `static/**/lib/**`, `*.min.js`, `*.min.css` and JS/CSS files that open with a vendored-library licence banner. Skipped by default with a one-line count; migrations are still parsed for references and keep security and secret findings. Scan them with `--include-generated` or `[tool.skylos] include_generated = true`. |
-| Ruff lint integration | `skylos lint`; optional Python-only delegation to `ruff check` with native Ruff configuration, output, fixes, and exit codes. Install with `skylos[lint]`; it is not part of normal Skylos scans. |
+| Architecture linting | `skylos lint` checks module import cycles and configured import layers in Python, TypeScript, and JavaScript, plus sibling-package cycles in Python. |
 | Dead code | Unused functions, classes, imports, variables, parameters, files, unnecessary exports, and unreachable code. |
 | Security / danger | Potentially exploitable code paths such as injection, SSRF, path traversal, weak crypto, unsafe deserialization, and CI/CD supply-chain risk. |
 | Secrets | Hardcoded credentials, tokens, API keys, and client-side exposure of server-only values. |
@@ -2150,6 +2150,7 @@ provided. See [cleanup test-quality checks](docs/cleanup.md#python-test-quality-
 | Q803 | ADVISORY by default | Zone of Pain / Zone of Uselessness | Python, TS/JS | grouped with Q802 per module by default |
 | Q804 | MEDIUM | Dependency Inversion Principle violation | Python, TS/JS |
 | Q805 | MEDIUM | Architecture layer policy violation | Python, TS/JS |
+| Q807 | LOW | Sibling package dependency cycle | Python | opt in with `[tool.skylos.architecture] check_package_cycles = true` |
 | C303 | MEDIUM | Too many arguments | Python, TS/JS, Java, Go | default >5 required / >10 total; Python compares required positional arguments (keyword-only arguments count toward the total only) and accounts for implicit receivers |
 | C304 | MEDIUM | Function too long | Python, TS/JS, Java, Go | default >50 lines; Python counts code lines (blank, comment-only and docstring lines excluded); direct test and suite callbacks in TS/JS test files are excluded |
 | C401 | MEDIUM | Duplicated implementation fragments | Python |
@@ -2706,6 +2707,13 @@ module and its name appears in
 `architecture_metrics.abstractness_unavailable_modules`. Q804 and Q805 can
 still use its resolved imports. Q801 is cataloged but does not currently emit
 findings in any language.
+
+SKY-Q807 reports groups of sibling Python packages that depend on one another
+through resolved top-level imports. It includes the source location of each
+contributing import, including dependencies between files that do not form a
+cycle themselves. Run `skylos lint` to check for them. Set
+`check_package_cycles = true` under `[tool.skylos.architecture]` to include
+this rule in quality scans and the cleanup queue.
 
 For Python modules with both `.py` and `.pyi` files, architecture measurements
 come from the runtime file represented by the dependency graph. A stub cannot

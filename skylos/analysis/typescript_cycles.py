@@ -86,7 +86,7 @@ def _display_name(path, root):
         relative = os.path.relpath(path, root)
     except ValueError:
         return path
-    if relative.startswith(".."):
+    if relative == os.pardir or relative.startswith(os.pardir + os.sep):
         return path
     return relative.replace(os.sep, "/")
 
@@ -94,8 +94,8 @@ def _display_name(path, root):
 _DECLARATION_SUFFIXES = (".d.ts", ".d.mts", ".d.cts")
 
 
-def runtime_import_edges(module_requests, resolver):
-    """Return ``{(importer, target): first line}`` for load-time requests.
+def _runtime_import_sites(module_requests, resolver):
+    """Return source lines for each resolved load-time import edge.
 
     Declaration files never run, so they are not nodes of the load graph.
     """
@@ -104,28 +104,27 @@ def runtime_import_edges(module_requests, resolver):
         for path in set(module_requests.files) | set(module_requests.component_files)
         if not path.endswith(_DECLARATION_SUFFIXES)
     }
-    edges = {}
+    sites = defaultdict(set)
     for request in module_requests.requests:
         if not request.loads_at_startup or request.importer not in nodes:
             continue
         target = resolver.resolve(request.source, request.importer)
         if target is None or target == request.importer or target not in nodes:
             continue
-        key = (request.importer, target)
-        edges[key] = min(edges.get(key, request.line), request.line)
-    return edges
+        sites[request.importer, target].add(request.line)
+    return sites
 
 
 def find_typescript_cycles(module_requests, resolver, project_root):
     """Return SKY-CIRC findings, one per JS/TS strongly connected component."""
     root = os.path.realpath(str(project_root))
-    edges = runtime_import_edges(module_requests, resolver)
-    if not edges:
+    sites = _runtime_import_sites(module_requests, resolver)
+    if not sites:
         return []
     names = {}
     successors = defaultdict(set)
     incoming = defaultdict(int)
-    for importer, target in edges:
+    for importer, target in sites:
         names.setdefault(importer, _display_name(importer, root))
         names.setdefault(target, _display_name(target, root))
         successors[importer].add(target)
@@ -151,8 +150,19 @@ def find_typescript_cycles(module_requests, resolver, project_root):
             key=lambda node: incoming[node] - len(successors.get(node, ())),
         )
         location = min(
-            (importer, edges[(importer, target)])
+            (importer, min(sites[importer, target]))
             for importer, target in zip(path, path[1:] + path[:1])
+        )
+        component_edges = [
+            (importer, target)
+            for importer in component
+            for target in ordered_successors[importer]
+            if target in members
+        ]
+        locations = sorted(
+            (importer, line, target)
+            for importer, target in component_edges
+            for line in sites[importer, target]
         )
         finding = {
             "rule_id": "SKY-CIRC",
@@ -162,9 +172,21 @@ def find_typescript_cycles(module_requests, resolver, project_root):
             "message": f"Circular dependency: {' → '.join(cycle)} → {cycle[0]}",
             "cycle": cycle,
             "cycle_length": len(cycle),
+            "cycle_edges": sorted(
+                [names[importer], names[target]] for importer, target in component_edges
+            ),
             "suggested_break": names[best],
             "file": location[0],
             "line": location[1],
+            "related_locations": [
+                {
+                    "file": importer,
+                    "start_line": line,
+                    "end_line": line,
+                    "message": f"{names[importer]} imports {names[target]}",
+                }
+                for importer, line, target in locations
+            ],
         }
         if len(component) > len(path):
             finding["component_files"] = sorted(names[node] for node in component)

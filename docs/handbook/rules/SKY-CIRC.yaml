@@ -16,8 +16,10 @@ gate:
 what_it_is: >-
   A circular dependency is a loop of imports: module A imports B and B
   imports A, directly or through other modules. SKY-CIRC reports each loop
-  of module-level imports between the Python modules of the project once,
-  and each group of JS/TS files whose load-time imports form loops once.
+  of module-level Python imports and each group of JavaScript or TypeScript
+  files whose load-time imports form loops. JSON and SARIF reports identify
+  the contributing import sites. A diff scan includes the finding when a
+  changed line matches one of those sites.
 
 why_it_matters: >-
   Python runs a module while importing it, so in a loop one module is
@@ -243,9 +245,10 @@ false_alarms_and_suppression:
         from shop.orders import Order  # skylos: ignore[SKY-CIRC] tracked
     - check:
         kind: baseline
-        expect: reported
+        expect: hidden
       text: >-
-        A baseline does not hide it either: after `skylos baseline .`, a
-        scan with `--baseline` still reports the existing loop.
+        After `skylos baseline .`, a scan with `--baseline` hides the existing
+        loop while its directed imports stay the same. It still matches when
+        source line numbers change.
 
 related: [SKY-Q804, SKY-Q805, SKY-Q701]

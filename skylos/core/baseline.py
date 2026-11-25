@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 import json
 import os
 import re
+from hashlib import sha256
 from pathlib import Path
 
 from skylos.core.safe_cache_io import (
@@ -25,6 +27,7 @@ _FINDING_CATEGORIES = (
     "quality",
     "secrets",
     "unused_files",
+    "circular_dependencies",
 )
 _DEAD_CODE_CATEGORIES = (
     "unused_functions",
@@ -43,6 +46,7 @@ _SUMMARY_COUNT_KEYS = {
     "ai_defects": "ai_defects_count",
     "quality": "quality_count",
     "secrets": "secrets_count",
+    "circular_dependencies": "circular_dependencies_count",
     "dependency_vulnerabilities": "dependency_vulnerabilities_count",
 }
 _STALE_SUMMARY_AGGREGATES = (
@@ -61,6 +65,69 @@ _STALE_RESULT_AGGREGATES = (
 RULE_COVERAGE_VERSION = 1
 _STABLE_PREFIX = "stable:"
 _HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
+_ARCHITECTURE_RULES = frozenset({"SKY-CIRC", "SKY-Q805", "SKY-Q807"})
+
+
+def _module_cycle_edges(finding: dict) -> set[tuple[str, str]] | None:
+    cycle_edges = finding.get("cycle_edges")
+    if cycle_edges is not None:
+        if (
+            not isinstance(cycle_edges, list)
+            or not cycle_edges
+            or not all(
+                isinstance(edge, list)
+                and len(edge) == 2
+                and all(isinstance(module, str) and module for module in edge)
+                for edge in cycle_edges
+            )
+        ):
+            return None
+        return {(source, target) for source, target in cycle_edges}
+
+    cycle = finding.get("cycle")
+    if (
+        not isinstance(cycle, list)
+        or not cycle
+        or not all(isinstance(member, str) and member for member in cycle)
+    ):
+        return None
+    return set(zip(cycle, cycle[1:] + cycle[:1]))
+
+
+def _architecture_fingerprint(finding: dict) -> str | None:
+    rule_id = finding.get("rule_id")
+    if rule_id == "SKY-CIRC":
+        edges = _module_cycle_edges(finding)
+        if edges is None:
+            return None
+    elif rule_id == "SKY-Q805":
+        edge = tuple(
+            finding.get(key)
+            for key in ("from_layer", "to_layer", "from_module", "to_module")
+        )
+        if not all(isinstance(node, str) and node for node in edge):
+            return None
+        edges = {edge}
+    else:
+        dependencies = finding.get("dependency_edges")
+        if not isinstance(dependencies, list) or not dependencies:
+            return None
+        edges = set()
+        for dependency in dependencies:
+            if not isinstance(dependency, dict):
+                return None
+            edge = tuple(
+                dependency.get(key)
+                for key in ("from_package", "to_package", "from_module", "to_module")
+            )
+            if not all(isinstance(node, str) and node for node in edge):
+                return None
+            edges.add(edge)
+
+    # Match the exact directed graph, independent of the chosen anchor,
+    # source line shifts, duplicated import sites or traversal order.
+    identity = json.dumps(sorted(edges), separators=(",", ":"))
+    return f"architecture:v1:{rule_id}:{sha256(identity.encode()).hexdigest()}"
 
 
 def _stable_rules() -> frozenset[str]:
@@ -143,10 +210,11 @@ def _stable_known(
 
 
 def _known(finding: dict, fp: str, known: set[str], stable, project_root=None) -> bool:
-    """Agent-config and publish-job findings match only by their stable
-    identity: a hook whose command changed in place keeps its line, so a line
-    match would hide the change."""
-    if str(finding.get("rule_id") or "") in _stable_rules():
+    """Match graph and command identities without falling back to a source line."""
+    rule_id = str(finding.get("rule_id") or "")
+    if rule_id in _ARCHITECTURE_RULES:
+        return _architecture_fingerprint(finding) in known
+    if rule_id in _stable_rules():
         return _stable_known(finding, stable, project_root)
     return fp in known
 
@@ -229,12 +297,18 @@ def save_baseline(project_root: str | Path, result: dict) -> Path:
         "ai_defects": len(result.get("ai_defects", [])),
         "quality": len(result.get("quality", [])),
         "secrets": len(result.get("secrets", [])),
+        "circular_dependencies": len(result.get("circular_dependencies", [])),
         "dependency_vulnerabilities": len(result.get("dependency_vulnerabilities", [])),
     }
 
     fingerprints = set()
     for category in _FINDING_CATEGORIES:
         for finding in result.get(category, []):
+            if str(finding.get("rule_id") or "") in _ARCHITECTURE_RULES:
+                architecture = _architecture_fingerprint(finding)
+                if architecture is not None:
+                    fingerprints.add(architecture)
+                continue
             fp = f"{finding.get('rule_id', '')}:{finding.get('file', '')}:{finding.get('line', 0)}"
             fingerprints.add(fp)
             if category == "secrets":
@@ -312,6 +386,8 @@ def filter_new_findings(
     not_honoured = 0
 
     for category in _FINDING_CATEGORIES:
+        if category == "circular_dependencies" and category not in result:
+            continue
         original = result.get(category, [])
         new_findings = []
         for finding in original:

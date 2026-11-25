@@ -322,7 +322,7 @@ Oder das Container-Image ausführen:
 docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . -a
 ```
 
-Weitere Extras (`lint`, `verdict`, `dart`), Image-Tags je Python-Version und
+Weitere Extras (`verdict`, `dart`), Image-Tags je Python-Version und
 Installation aus dem Quellcode: [Installation](https://docs.skylos.dev/installation).
 
 ## Was deinen Rechner verlässt

@@ -15,6 +15,12 @@ generic label that code is "slop". JSON preserves the original finding evidence;
 `--context` shows nearby source with the reported line marked. Defects,
 contextual review and optional style advice retain their different purposes.
 
+Run `skylos lint` for a local check of import cycles and configured
+layers. [Architecture linting](./python-linting.md#architecture-linting)
+
+Set `check_package_cycles = true` under `[tool.skylos.architecture]` to include
+`SKY-Q807` sibling-package cycles in the cleanup queue.
+
 ```bash
 skylos cleanup . --top 5
 skylos cleanup src --format json
@@ -39,11 +45,11 @@ and enforced regression gates, use the regular `--diff` scan and
 [`skylos done`](done-gate.md) workflows.
 
 `cleanup --diff BASE` analyzes the full Git project, then displays tasks in
-changed files, including staged, unstaged and untracked source files. It pins
-the comparison commit and merge base and retains the full inventory in local
-history. A finding in a changed file may predate the change: this selection
-does not establish that every finding was introduced by the diff. Saved
-reports cannot supply a diff baseline.
+changed files, including staged, unstaged and untracked source files. It also
+displays cycle findings when a related import is in a changed file. The command
+pins the comparison commit and merge base and retains the full inventory in
+local history. Findings in this view may predate the change. Saved reports
+cannot supply a diff baseline.
 
 ## Python test-quality checks
 
@@ -230,58 +236,14 @@ that a fix worked. Language
 support follows the underlying [AI checks](ai-code-verification.md) and quality
 analyzers. No result identifies whether a human or an AI wrote the code.
 
-## Research and implementation trace
-
-Research on 9 November 2026 identified four relevant projects. Skylos's queue
-is an independent implementation over its own detectors and reporting
-contracts, with no upstream runtime dependency or copied implementation.
-
-| Project | What it offers | Useful idea for Skylos |
-| --- | --- | --- |
-| [Desloppify](https://github.com/peteromallet/desloppify/tree/3a7735d531a96b6a226bfbdc9fd662b14195f857) | Mechanical checks, subjective review, a persistent plan and prioritized work queue | A concrete scan → choose work → fix → rescan loop |
-| [paslavskyi/anti-slop](https://github.com/paslavskyi/anti-slop/tree/539ed54c1bb7efb9799cf3b88a5cde7dd30b4988) | Diff cleanup and neighboring-code review with a finding ledger | Focus review on active work while retaining earlier findings |
-| [miqdadbadjuber/anti-slop](https://github.com/miqdadbadjuber/anti-slop/tree/c8a7fbc688c4a3b5cbfa72206b9e477df61c8bd0) | Agent guidance for UI, copy and comment hygiene | Optional guidance; UI style checks are outside this cleanup queue |
-| [cursedcoder/deslopify](https://github.com/cursedcoder/deslopify/tree/0ea9cb284321d2669df0b21440cd487438475461) | Architecture and context-pressure heuristics with agent-readable recommendations | Explicit, navigable tasks; token savings would require separate measurement |
-
-Desloppify's
-[`build_work_queue`](https://github.com/peteromallet/desloppify/blob/3a7735d531a96b6a226bfbdc9fd662b14195f857/desloppify/engine/_work_queue/core.py)
-delegates to snapshot selection and finalization; the `next` command consumes
-the same query service. Its
-[`ranking.py`](https://github.com/peteromallet/desloppify/blob/3a7735d531a96b6a226bfbdc9fd662b14195f857/desloppify/engine/_work_queue/ranking.py)
-uses plan ordering and estimated score impact. Skylos instead separates
-advice from defects and orders work by recorded severity and purpose.
-
-Desloppify's
-[`merge_issues.py`](https://github.com/peteromallet/desloppify/blob/3a7735d531a96b6a226bfbdc9fd662b14195f857/desloppify/engine/_state/merge_issues.py)
-tracks reappearance and disappeared findings. Its out-of-scope verification
-branch illustrates why absence needs a comparable scan scope. Skylos records
-absence as `not_reported`; explicit edit receipts separately record tests,
-rescan results and rollback. Cloud retains its coverage-qualified issue
-resolution. Desloppify's pinned
-[license](https://github.com/peteromallet/desloppify/blob/3a7735d531a96b6a226bfbdc9fd662b14195f857/LICENSE)
-is OSNL v0.2, another reason to keep this implementation independent.
-
-Anti-slop's
-[`ledger.mjs`](https://github.com/paslavskyi/anti-slop/blob/539ed54c1bb7efb9799cf3b88a5cde7dd30b4988/skills/domain-review/ledger.mjs)
-builds a bounded neighborhood using changed files, same-directory files and
-relative import relationships. It fingerprints symbol-adjacent text and
-reconciles a persistent finding ledger. Its
-[`domain-review` instructions](https://github.com/paslavskyi/anti-slop/blob/539ed54c1bb7efb9799cf3b88a5cde7dd30b4988/skills/domain-review/SKILL.md)
-delegate blocking versus follow-up judgment to the model. Its
-[`stop hook`](https://github.com/paslavskyi/anti-slop/blob/539ed54c1bb7efb9799cf3b88a5cde7dd30b4988/hooks/stop-hook.mjs)
-deduplicates using filenames and change counts. Skylos's optional model review
-uses bounded source excerpts, its parsed dependency graph and separately
-labeled candidate callers. Dynamic and broader domain review still require
-additional evidence. Patch
-verification already uses comparable scans and source content rather than
-treating equal change counts as equal changes.
+## Implementation and coverage
 
 Existing Skylos detectors already cover duplicate code, long functions,
 coupling, cohesion, broad or empty exception handlers, unfinished code and
 invented APIs. New detectors should address demonstrated gaps with positive
 and negative controls. A new name alone does not expand detection coverage.
 
-| Workflow gap | Skylos implementation in this round | Remaining limit |
+| Workflow | Skylos implementation | Coverage limit |
 | --- | --- | --- |
 | Focus on active changes | Pinned `cleanup --diff BASE`, full-project detection, changed-file display | No claim that every displayed finding is newly introduced |
 | Review neighboring effects | Existing parsed graph, separate name candidates and suggested tests | Bounded static context; dynamic or external callers can remain unknown |
@@ -290,11 +252,6 @@ and negative controls. A new name alone does not expand detection coverage.
 | Check a supported edit | Observed test evidence, comparable rescan, exact-byte rollback | Passing checks are scoped evidence; broad refactors remain manual |
 | Broaden language edits | Conservative Python transforms and a narrow TypeScript type-import adapter | Most TypeScript/JavaScript and architecture changes remain review-only |
 | Share outcomes | Optional bounded CLI receipt metadata in existing uploads | Client claims remain separate from trusted scan resolution and gates |
-
-The differentiator is the connection between specific detector evidence,
-explicit edits and honest check receipts. This round does not add an opaque
-"slop score", infer AI authorship or claim complete subjective architecture
-review.
 
 The [five-repository exploratory evaluation](../benchmarks/cleanup/2026-11-10/README.md)
 records actual scans of documented AI-assisted projects, source-reviewed

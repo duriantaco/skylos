@@ -219,6 +219,7 @@ tests, removes auth checks, changes dependencies or weakens CI. See
 
 ```bash
 skylos .                         # dead code (fast, default)
+skylos lint                      # local import cycles and configured layers
 skylos . -a                      # every check
 skylos . -a --diff origin/main   # only findings on changed lines
 skylos . --format pretty         # grouped report with code snippets
@@ -349,7 +350,7 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . -a
 The Go 1.26 build of the bundled engine requires macOS 12 or later. On earlier
 macOS versions, pip selects the pure Python wheel, which omits the Go engine.
 
-Other extras (`lint`, `verdict`, `dart`), Python-specific image tags and
+Other extras (`verdict`, `dart`), Python-specific image tags and
 source installs: [installation](https://docs.skylos.dev/installation).
 
 ## What leaves your machine
@@ -411,6 +412,7 @@ More: [FAQ](https://docs.skylos.dev/faq).
 | Install, extras, Docker | [Installation](https://docs.skylos.dev/installation) |
 | Config files, ignores, baselines | [Configuration](https://docs.skylos.dev/configuration) |
 | Output formats and exit codes | [CLI output](./docs/cli-output.md) |
+| Architecture linting | [Linting with Skylos](./docs/python-linting.md) |
 | Agent hooks | [Agent hooks](./docs/agent-hooks.md) |
 | `skylos done` | [Done gate](./docs/done-gate.md) |
 | Pull-request gates | [First gated PR](./docs/first-gated-pr.md), [any CI](./docs/ci-platforms.md) |

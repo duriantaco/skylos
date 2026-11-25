@@ -121,6 +121,7 @@ Run the narrowest relevant test first, then a broader check before opening a PR.
 ```bash
 pytest -q test/test_file_you_changed.py
 pytest -q
+python -m pip install ruff
 python -m ruff check skylos test
 ```
 

@@ -156,7 +156,7 @@ def test_symlinked_source_is_compared_through_its_real_file(tmp_path, monkeypatc
     ("name", "target", "resolved"),
     [
         ("CLAUDE.md", "AGENTS.md", "AGENTS.md"),
-        (".claude/skills/deslop", "../../skills/deslop", "skills/deslop"),
+        (".claude/skills/review_example", "../../skills/review_example", "skills/review_example"),
         ("pkg/alias.py", "real.py", "pkg/real.py"),
         ("docs", "../outside", None),
         ("a/b", "../../..", None),
@@ -171,7 +171,7 @@ def test_symlinked_source_is_compared_through_its_real_file(tmp_path, monkeypatc
     ],
 )
 def test_resolve_single_link(name, target, resolved):
-    files = ["AGENTS.md", "skills/deslop/SKILL.md", "pkg/real.py"]
+    files = ["AGENTS.md", "skills/review_example/SKILL.md", "pkg/real.py"]
     assert _resolve_link(name, {name: target}, files)[0] == resolved
 
 
