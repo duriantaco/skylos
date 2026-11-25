@@ -599,6 +599,33 @@ def test_analysis_crash_gate_says_could_not_decide(project, monkeypatch, capsys)
 # `skylos cicd gate` ----------------------------------------------------------
 
 
+@pytest.mark.parametrize(("data", "status", "label", "code"), [
+    ({}, "advisory-passed", "PASSED (advisory)", 0),
+    (
+        {"secrets": [{"rule_id": "SKY-S101", "severity": "HIGH"}]},
+        "advisory-would-fail", "ADVISORY - WOULD FAIL", 0,
+    ),
+    (_sca_result(unresolved_lockfile_dependency_count=1), "incomplete", "INCOMPLETE", 2),
+])
+def test_advisory_gate_exports_its_actual_policy_result(
+    project, monkeypatch, capsys, data, status, label, code
+):
+    output = project / "step-output"
+    summary = project / "step-summary"
+    report = project / "report.json"
+    report.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setenv("RUNNER_TEMP", str(project))
+    monkeypatch.setenv("SKYLOS_GATE_OUTPUT", str(output))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+
+    result, _, _ = _run(
+        monkeypatch, capsys, "cicd", "gate", "--input", str(report), "--advisory", "--summary"
+    )
+    assert result == code
+    assert output.read_text() == f"policy_result={status}\n"
+    assert label in summary.read_text()
+
+
 def test_cicd_gate_input_with_incomplete_scan_explains_itself(
     project, monkeypatch, capsys
 ):

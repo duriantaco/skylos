@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from skylos.cicd import review
+from skylos.cicd.pr_summary import SummaryInputs
 from skylos.cicd.review import (
     SUMMARY_MARKER,
     _post_pr_review,
@@ -243,6 +244,82 @@ def test_summary_on_a_later_page_is_found():
     assert next(c for c in gh.issue_comments if c["id"] == 900)["edits"] == 1
     pages = [p for m, p in gh.calls if m == "GET" and "/issues/7/comments" in p]
     assert len(pages) == 2
+
+
+@pytest.mark.parametrize("prior_count", [None, 2])
+def test_missing_scan_updates_sticky_without_recording_a_clean_result(monkeypatch, prior_count):
+    gh = FakeGitHub()
+    if prior_count:
+        _run(gh, [_finding(3), _finding(9)])
+    inputs = SummaryInputs(gate_result="failure", run_url="https://github.com/acme/app/actions/runs/13")
+    monkeypatch.setattr(review, "_gh_available", lambda: True)
+    with patch("skylos.cicd.review.subprocess.run", side_effect=gh):
+        for _ in range(2):
+            review.run_pr_review(None, pr_number=7, repo="acme/app", summary_inputs=inputs)
+
+    assert len(gh.issue_comments) == 1
+    body = gh.issue_comments[0]["body"]
+    assert "Scan report unavailable" in body
+    assert inputs.run_url in body
+    assert "**Gate:** failed" in body
+    assert "are fixed" not in body
+    assert "Merge recommendation:" not in body
+    assert "**0** issue(s)" not in body
+    assert review._previous_summary_counts(gh.issue_comments[0]) == (prior_count, prior_count or 0)
+    _run(gh, [])
+    assert len(gh.issue_comments) == 1
+    body = gh.issue_comments[0]["body"]
+    assert "**0** issue(s) on changed lines" in body
+    assert ("(was 2)" in body) == bool(prior_count)
+    assert ("are fixed" in body) == bool(prior_count)
+
+
+def test_unavailable_summary_does_not_turn_a_successful_job_into_a_gate_pass():
+    gh = FakeGitHub()
+    with patch("skylos.cicd.review.subprocess.run", side_effect=gh):
+        _post_summary_comment([], None, 7, "acme/app", summary_inputs=SummaryInputs(gate_result="success"))
+    body = gh.issue_comments[0]["body"]
+    assert "**Gate:** passed" not in body
+    assert "**Gate:** policy result unavailable" in body
+
+
+@pytest.mark.parametrize("prior_count", [None, 2])
+def test_incomplete_scan_keeps_findings_provisional_until_recovery(prior_count):
+    gh = FakeGitHub()
+    if prior_count:
+        _run(gh, [_finding(3), _finding(9)])
+    with patch("skylos.cicd.review.subprocess.run", side_effect=gh):
+        for findings in ([_finding(6)], []):
+            _post_summary_comment(
+                findings, findings, 7, "acme/app",
+                summary_inputs=SummaryInputs(gate_result="incomplete"),
+                risk_passport={"recommendation": "PASS"},
+            )
+            body = gh.issue_comments[0]["body"]
+            assert "Finding counts are provisional" in body
+            assert f"**{len(findings)}** finding(s) observed" in body
+            assert "are fixed" not in body
+            assert "Merge recommendation:" not in body
+            assert review._previous_summary_counts(gh.issue_comments[0]) == (prior_count, prior_count or 0)
+    _run(gh, [])
+    assert len(gh.issue_comments) == 1
+    assert ("(was 2)" in gh.issue_comments[0]["body"]) == bool(prior_count)
+
+
+def test_partial_artifact_overrides_legacy_job_success():
+    results = {"analysis_summary": {"analysis_coverage": {"status": "partial"}}}
+    assert review._has_coverage_gaps(results)
+    assert review._has_coverage_gaps({"analysis_errors": [{"file": "a.py"}]})
+    gh = FakeGitHub()
+    with patch("skylos.cicd.review.subprocess.run", side_effect=gh):
+        _post_summary_comment(
+            [], [], 7, "acme/app",
+            partial_report=review._has_coverage_gaps(results),
+            summary_inputs=SummaryInputs(gate_result="success"),
+        )
+    body = gh.issue_comments[0]["body"]
+    assert "**Gate:** analysis incomplete" in body
+    assert "Finding counts are provisional" in body
 
 
 def test_legacy_unmarked_summary_by_the_bot_is_reused():

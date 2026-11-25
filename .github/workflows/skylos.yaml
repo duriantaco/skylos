@@ -15,6 +15,8 @@ concurrency:
 
 jobs:
   scan:
+    outputs:
+      policy_result: ${{ steps.policy.outputs.policy_result }}
     runs-on: ubuntu-latest
     # Leave time after the scanner's own deadline for reports and cleanup.
     timeout-minutes: 45
@@ -124,10 +126,6 @@ jobs:
         shell: bash
         run: |
           echo "REPORT=$REPORT" >> "$GITHUB_OUTPUT"
-          AI_DEFECTS_FLAG=""
-          if .venv/bin/skylos --help | grep -q -- "--ai-defects"; then
-            AI_DEFECTS_FLAG="--ai-defects"
-          fi
           # The grep budget only bounds dead-code verification. Bound the
           # whole process too, and print stacks during otherwise silent scans.
           # The stacks come from a Python thread, which holds the GIL while it
@@ -155,10 +153,10 @@ jobs:
           ')
           set +e
           if [ -n "$DIFF_BASE" ]; then
-            "${SKYLOS[@]}" . --quality --danger --secrets $AI_DEFECTS_FLAG --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
+            "${SKYLOS[@]}" . --quality --danger --secrets --ai-defects --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
             SCAN_STATUS=$?
           else
-            "${SKYLOS[@]}" . --quality --danger --secrets $AI_DEFECTS_FLAG --json -o "$REPORT"
+            "${SKYLOS[@]}" . --quality --danger --secrets --ai-defects --json -o "$REPORT"
             SCAN_STATUS=$?
           fi
           set -e
@@ -169,11 +167,12 @@ jobs:
           fi
 
       - name: Report findings (advisory)
+        id: policy
         if: always() && steps.scan.outcome == 'success'
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
         run: |
-          .venv/bin/skylos cicd gate --input "$REPORT" --summary --advisory
+          SKYLOS_GATE_OUTPUT="$GITHUB_OUTPUT" .venv/bin/skylos cicd gate --input "$REPORT" --summary --advisory
 
       - name: GitHub annotations
         if: always() && steps.scan.outcome == 'success'
@@ -308,7 +307,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          SKYLOS_GATE_RESULT: ${{ needs.scan.result }}
+          SKYLOS_GATE_RESULT: >-
+            ${{ needs.scan.result == 'success' && (needs.scan.outputs.policy_result || 'unavailable') ||
+            needs.scan.result == 'failure' && (needs.scan.outputs.policy_result == 'incomplete' && 'incomplete' || 'job-failed') ||
+            needs.scan.result }}
         run: |
           if [[ ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
             echo "Invalid pull request identity or comparison base" >&2

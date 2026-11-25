@@ -131,14 +131,6 @@ time.sleep = accelerated_sleep
 traceback.print_stack = observed_print_stack
 """)
     write_fixture(purelib, f"{probe_module}.pth", f"import {probe_module}\n")
-    help_script = write_fixture(environment, "bin/skylos", """#!/bin/sh
-if [ "$1" = "--help" ]; then
-  if [ "$SCAN_AI_SUPPORTED" = "1" ]; then echo "--ai-defects"; else echo "--quality"; fi
-  exit 0
-fi
-exit 99
-""")
-    help_script.chmod(0o755)
     timeout = write_fixture(
         root,
         "timeout",
@@ -161,7 +153,7 @@ raise SystemExit(int(override) if override else result.returncode)
     return root, environment, purelib
 
 
-def _run_scan(tmp_path, installed_scanner, *, status=0, report=True, diff="", ai=True):
+def _run_scan(tmp_path, installed_scanner, *, status=0, report=True, diff=""):
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("workflow execution requires bash")
@@ -187,7 +179,6 @@ raise RuntimeError("untrusted checkout import")
             "SCAN_TIMEOUT_INVOCATION": str(tmp_path / "timeout.json"),
             "SCAN_HOSTILE_IMPORT": str(tmp_path / "hostile-imported"),
             "SCAN_WRITE_REPORT": str(int(report)),
-            "SCAN_AI_SUPPORTED": str(int(ai)),
             "SCAN_STUB_STATUS": str(status if status not in {124, 137} else 0),
             "SCAN_TIMEOUT_STATUS": str(status) if status in {124, 137} else "",
         }
@@ -247,16 +238,13 @@ def test_scan_and_final_status_survive_reports_and_watchdog_failures(
 
 
 @pytest.mark.parametrize("diff", ["", "a" * 40])
-@pytest.mark.parametrize("ai", [False, True])
 def test_actual_isolated_entry_preserves_security_flags_and_diff_scope(
-    tmp_path, installed_scanner, diff, ai
+    tmp_path, installed_scanner, diff
 ):
-    result, _env = _run_scan(tmp_path, installed_scanner, diff=diff, ai=ai)
+    result, _env = _run_scan(tmp_path, installed_scanner, diff=diff)
     assert result.returncode == 0, result.stderr
     invocation = json.loads((tmp_path / "invocation.json").read_text())
-    expected = [".", "--quality", "--danger", "--secrets"]
-    if ai:
-        expected.append("--ai-defects")
+    expected = [".", "--quality", "--danger", "--secrets", "--ai-defects"]
     if diff:
         expected.extend(["--diff-base", diff, "--diff", diff])
     expected.extend(["--json", "-o", "scan report.json"])

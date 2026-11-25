@@ -450,6 +450,17 @@ Useful options: `--upload` / `--no-upload`, `--done` / `--no-done`, `--default-b
 report without failing, and `--python-version`. See
 `skylos cicd init --help`.
 
+With an advisory gate, a successful job can report that the policy would
+fail. The PR comment shows the policy outcome when the scanner supplies it.
+If the scan report is unavailable, the comment links to the run so you can
+check what happened. Only a completed scan can mark earlier findings fixed.
+
+Under **Details**, the PR comment groups security findings that the scanner
+explicitly marked for review only. For example, several writes whose paths
+could not be traced to external input can share a single entry. GitHub
+annotations show one notice per rule and review reason, and the JSON artifact
+contains the individual locations.
+
 ## Gate settings
 
 The gate (`skylos . --gate`, `skylos cicd gate`, and the generated workflow)

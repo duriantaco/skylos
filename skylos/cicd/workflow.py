@@ -518,6 +518,7 @@ def _build_summary_job(
     use_defend: bool,
     done_job: bool,
     risk_review_job: bool,
+    advisory_gate: bool,
 ) -> str:
     saved = f"$RUNNER_TEMP/{SUMMARY_DIR}"
     review_args = [f'--input "{saved}/skylos-results.json"']
@@ -537,6 +538,12 @@ def _build_summary_job(
         ]
     if risk_review_job:
         review_args.append(f'--risk-review "{saved}/risk-review.json"')
+    gate_result = "${{ needs.skylos.result }}"
+    if advisory_gate:
+        gate_result = """>-
+            ${{ needs.skylos.result == 'success' && (needs.skylos.outputs.policy_result || 'unavailable') ||
+            needs.skylos.result == 'failure' && (needs.skylos.outputs.policy_result == 'incomplete' && 'incomplete' || 'job-failed') ||
+            needs.skylos.result }}"""
     review_command = f"skylos cicd review {scan_target} " + " ".join(review_args)
     return f"""
   summary:
@@ -580,7 +587,7 @@ def _build_summary_job(
           {review_command}
         env:
           GH_TOKEN: ${{{{ github.token }}}}
-          SKYLOS_GATE_RESULT: ${{{{ needs.skylos.result }}}}
+          SKYLOS_GATE_RESULT: {gate_result}
 """
 
 
@@ -1006,8 +1013,16 @@ def generate_workflow(
         else ""
     )
     gate_advisory_flag = " --advisory" if advisory_gate else ""
+    policy_outputs = ""
+    policy_step_id = ""
+    policy_output_env = []
+    if advisory_gate:
+        policy_outputs = "\n    outputs:\n      policy_result: ${{ steps.policy.outputs.policy_result }}"
+        policy_step_id = "\n        id: policy"
+        policy_output_env = ['          export SKYLOS_GATE_OUTPUT="$GITHUB_OUTPUT"']
     gate_run = "\n".join(
         [
+            *policy_output_env,
             *base_select,
             '          if [ -n "$pr_base_ref" ]; then',
             f'            skylos cicd gate {scan_target} --input skylos-results.json --diff-base "$pr_base_ref" --summary{gate_advisory_flag}',
@@ -1050,7 +1065,7 @@ permissions:
   contents: read
 
 jobs:
-  skylos:{gate_condition}
+  skylos:{gate_condition}{policy_outputs}
     name: {GATE_JOB_NAME}
     runs-on: ubuntu-latest
     timeout-minutes: 15{skylos_environment}
@@ -1075,7 +1090,7 @@ jobs:
         run: |
 {analysis_run}{merge_group_step_env}
 {llm_step}{defend_step}
-{answers_save_step}      - name: Quality Gate
+{answers_save_step}      - name: Quality Gate{policy_step_id}
         if: always()
         run: |
 {gate_run}{merge_group_step_env}
@@ -1123,6 +1138,7 @@ jobs:
             install_command=_skylos_install_command(skylos_version, dart=False),
             scan_target=scan_target,
             needs=needs,
+            advisory_gate=advisory_gate,
             use_llm=use_llm,
             use_defend=use_defend,
             done_job=done_job,

@@ -9,6 +9,8 @@ import copy
 import json
 from unittest.mock import Mock, patch
 
+import pytest
+
 from skylos.cicd import review
 from skylos.cicd.pr_summary import (
     MAX_BLOCKING_FINDINGS,
@@ -309,6 +311,17 @@ def test_absent_inputs_drop_their_sections(monkeypatch):
     assert "\n**Gate:** passed\n" in body
     assert "**Blocking**" not in body
 
+    for status, label in (
+        ("advisory-passed", "passed (advisory)"),
+        ("advisory-would-fail", "would fail (advisory)"),
+        ("incomplete", "analysis incomplete"),
+        ("job-failed", "scan job failed"),
+        ("unavailable", "policy result unavailable"),
+    ):
+        body = _post(SummaryInputs(gate_result=status))
+        assert f"\n**Gate:** {label}\n" in body
+        assert "**Blocking**" not in body
+
     body = _post(SummaryInputs(gate_result="cancelled", done_requested=True, risk_requested=True))
     assert "**Gate:** not run · **Done:** not run · **Risk review:** not run" in body
     for marker in ("**Blocking**", "**Not checked by tests**", "**Needs a person**"):
@@ -463,7 +476,7 @@ def test_review_reads_the_saved_files_and_tolerates_missing_ones(tmp_path, monke
         ],
     )
     assert code == 0
-    assert seen["results"] == {}
+    assert seen["results"] is None
     assert "No scan results" in printed
     inputs = seen["summary_inputs"]
     assert inputs.gate_result == "failure"
@@ -476,6 +489,17 @@ def test_review_reads_the_saved_files_and_tolerates_missing_ones(tmp_path, monke
     code, seen, _ = _run_review(tmp_path, monkeypatch, ["--input", str(tmp_path / "missing.json")])
     assert code == 1
     assert "results" not in seen
+
+
+@pytest.mark.parametrize("data", [b"", b"{", b"\xff", b"[]", b"null"])
+def test_unreadable_report_updates_summary_and_keeps_failure_exit(tmp_path, monkeypatch, data):
+    report = tmp_path / "skylos-results.json"
+    report.write_bytes(data)
+    code, seen, _ = _run_review(
+        tmp_path, monkeypatch, ["--input", str(report), "--gate-result", "failure"]
+    )
+    assert code == 1
+    assert seen["results"] is None
 
 
 def test_review_takes_the_gate_reasons_from_the_gate_itself(tmp_path, monkeypatch):

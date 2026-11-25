@@ -701,7 +701,8 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
 
     scan_step = next(s for s in steps if s.get("name") == "Run Skylos")
     assert "python -m skylos.cli" not in scan_step["run"]
-    assert ".venv/bin/skylos" in scan_step["run"]
+    assert ".venv/bin/python -I -c" in scan_step["run"]
+    assert "from skylos.entry import main" in scan_step["run"]
     full_scan = scan_step["run"].split("\nelse\n", 1)[1].split("\nfi", 1)[0]
     assert "--baseline" not in full_scan
     assert "--diff" not in full_scan
