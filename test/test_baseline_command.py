@@ -9,8 +9,8 @@ import pytest
 
 from skylos.commands import baseline_cmd
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
-from skylos.core.baseline import filter_new_findings, load_baseline
 from skylos.core import review_decisions
+from skylos.core.baseline import filter_new_findings, load_baseline
 
 
 def _result(root: Path, *, status="complete", complete=True):
@@ -102,7 +102,55 @@ def test_sca_flag_before_or_after_path_enables_dependency_scan(command_env, argv
     assert load_baseline(project) is not None
 
 
-@pytest.mark.parametrize("argv", [["--sc"], ["--unknown"], [".", "extra"]])
+def test_architecture_flag_uses_only_the_native_lint_scan(command_env, monkeypatch):
+    from skylos.commands import lint_cmd
+
+    project, analyze, console = command_env
+    architecture_scan = Mock(
+        return_value={
+            "circular_dependencies": [
+                {"rule_id": "SKY-CIRC", "cycle": ["app", "web"], "file": "app.py"}
+            ]
+        }
+    )
+    monkeypatch.setattr(lint_cmd, "scan_architecture", architecture_scan)
+
+    assert baseline_cmd.run_baseline_command([".", "--architecture"]) == 0
+
+    analyze.assert_not_called()
+    architecture_scan.assert_called_once_with(project.resolve())
+    assert load_baseline(project)["counts"]["circular_dependencies"] == 1
+    assert any(
+        "1 existing findings captured" in str(call)
+        for call in console.print.call_args_list
+    )
+
+
+def test_failed_architecture_baseline_preserves_existing_file(command_env, monkeypatch):
+    from skylos.commands import lint_cmd
+
+    project, analyze, _console = command_env
+    path = baseline_cmd.save_baseline(
+        project,
+        {
+            "circular_dependencies": [
+                {"rule_id": "SKY-CIRC", "cycle": ["app", "web"], "file": "app.py"}
+            ]
+        },
+    )
+    before = path.read_bytes()
+    architecture_scan = Mock(side_effect=ValueError("Incomplete architecture scan"))
+    monkeypatch.setattr(lint_cmd, "scan_architecture", architecture_scan)
+
+    assert baseline_cmd.run_baseline_command([".", "--architecture"]) == 2
+
+    analyze.assert_not_called()
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "argv", [["--sc"], ["--unknown"], [".", "extra"], ["--architecture", "--sca"]]
+)
 def test_invalid_arguments_do_not_scan_or_write(command_env, argv):
     project, analyze, _console = command_env
 

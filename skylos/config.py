@@ -102,6 +102,7 @@ DEFAULTS = {
     "architecture": {
         "strict": False,
         "enforce_iad": False,
+        "check_package_cycles": False,
         "layers": [],
         "rules": [],
     },
@@ -1007,7 +1008,7 @@ def _sanitize_architecture_section(value):
     else:
         raw = {}
     safe = copy.deepcopy(DEFAULTS["architecture"])
-    for key in ("strict", "enforce_iad", "strict_iad"):
+    for key in ("strict", "enforce_iad", "strict_iad", "check_package_cycles"):
         if key in raw:
             safe[key] = _safe_bool(raw.get(key), safe.get(key, False))
     safe["layers"] = _safe_dict_list(raw.get("layers"), safe["layers"])

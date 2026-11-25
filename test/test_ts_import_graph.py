@@ -474,7 +474,9 @@ def test_runtime_import_cycle_is_reported_once_per_component(tmp_path):
         tmp_path,
         {
             "package.json": json.dumps({"name": "app"}),
-            "src/a.ts": "import { b } from './b';\nexport const a = () => b;\n",
+            "src/a.ts": (
+                "import { b } from './b';\nimport './b';\nexport const a = () => b;\n"
+            ),
             "src/b.ts": (
                 "import { a } from './a';\nimport { c } from './c';\n"
                 "export const b = () => [a, c];\n"
@@ -496,6 +498,22 @@ def test_runtime_import_cycle_is_reported_once_per_component(tmp_path):
     assert finding["cycle"] == ["src/a.ts", "src/b.ts"]
     assert finding["cycle_length"] == 2
     assert finding["component_files"] == ["src/a.ts", "src/b.ts", "src/c.ts"]
+    assert finding["cycle_edges"] == [
+        ["src/a.ts", "src/b.ts"],
+        ["src/b.ts", "src/a.ts"],
+        ["src/b.ts", "src/c.ts"],
+        ["src/c.ts", "src/b.ts"],
+    ]
+    assert [
+        (_relative(tmp_path, site["file"]), site["start_line"], site["end_line"])
+        for site in finding["related_locations"]
+    ] == [
+        ("src/a.ts", 1, 1),
+        ("src/a.ts", 2, 2),
+        ("src/b.ts", 1, 1),
+        ("src/b.ts", 2, 2),
+        ("src/c.ts", 1, 1),
+    ]
     assert finding["message"] == (
         "Circular dependency: src/a.ts → src/b.ts → src/a.ts"
     )

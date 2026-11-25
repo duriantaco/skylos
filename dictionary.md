@@ -2149,6 +2149,7 @@ provided. See [cleanup test-quality checks](docs/cleanup.md#python-test-quality-
 | Q803 | ADVISORY by default | Zone of Pain / Zone of Uselessness | Python, TS/JS | grouped with Q802 per module by default |
 | Q804 | MEDIUM | Dependency Inversion Principle violation | Python, TS/JS |
 | Q805 | MEDIUM | Architecture layer policy violation | Python, TS/JS |
+| Q807 | LOW | Sibling package dependency cycle | Python | opt in with `[tool.skylos.architecture] check_package_cycles = true` |
 | C303 | MEDIUM | Too many arguments | Python, TS/JS, Java, Go | default >5 required / >10 total; Python compares required positional arguments (keyword-only arguments count toward the total only) and accounts for implicit receivers |
 | C304 | MEDIUM | Function too long | Python, TS/JS, Java, Go | default >50 lines; Python counts code lines (blank, comment-only and docstring lines excluded); direct test and suite callbacks in TS/JS test files are excluded |
 | C401 | MEDIUM | Duplicated implementation fragments | Python |
@@ -2705,6 +2706,13 @@ module and its name appears in
 `architecture_metrics.abstractness_unavailable_modules`. Q804 and Q805 can
 still use its resolved imports. Q801 is cataloged but does not currently emit
 findings in any language.
+
+SKY-Q807 reports groups of sibling Python packages that depend on one another
+through resolved top-level imports. It includes the source location of each
+contributing import, including dependencies between files that do not form a
+cycle themselves. Run `skylos lint` to check for them. Set
+`check_package_cycles = true` under `[tool.skylos.architecture]` to include
+this rule in quality scans and the cleanup queue.
 
 For Python modules with both `.py` and `.pyi` files, architecture measurements
 come from the runtime file represented by the dependency graph. A stub cannot

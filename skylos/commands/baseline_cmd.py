@@ -24,7 +24,13 @@ def _build_baseline_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "path", nargs="?", default=".", help="File or directory to scan (default: .)"
     )
-    parser.add_argument(
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument(
+        "--architecture",
+        action="store_true",
+        help="Replace the baseline with findings from the native architecture linter only.",
+    )
+    scope.add_argument(
         "--sca",
         action="store_true",
         help=(
@@ -43,24 +49,14 @@ def _baseline_scan_roots(path: str) -> tuple[Path, Path]:
     return target, find_git_root(scan_root) or scan_root
 
 
-def run_baseline_command(argv: list[str]) -> int:
-    args = _build_baseline_parser().parse_args(argv)
-    path = args.path
-    target, project_root = _baseline_scan_roots(path)
-    # Normal scans load from their scan target, not necessarily the Git root.
-    # A subdirectory baseline must not replace a repository-wide baseline.
-    baseline_root = target.parent if target.is_file() else target
-
+def _scan_default_baseline(path: str, project_root: Path, *, sca: bool) -> dict:
     config_file = resolve_config_file_path()
     project_config = load_config(project_root, config_file=config_file)
     exclude_folders = parse_exclude_folders(
         config_exclude_folders=project_config.get("exclude"),
     )
 
-    from skylos.core.review_decisions import (
-        apply_trusted_review_decisions,
-        review_scan_requirements,
-    )
+    from skylos.core.review_decisions import review_scan_requirements
 
     include_review_context, include_review_proofs = review_scan_requirements(
         project_root
@@ -83,20 +79,37 @@ def run_baseline_command(argv: list[str]) -> int:
         analyze_kwargs["include_review_context"] = True
     if include_review_proofs:
         analyze_kwargs["include_review_proofs"] = True
-    if args.sca:
+    if sca:
         analyze_kwargs["enable_sca"] = True
+    with quiet_analyzer_logs():
+        return json.loads(run_analyze(path, **analyze_kwargs))
+
+
+def run_baseline_command(argv: list[str]) -> int:
+    args = _build_baseline_parser().parse_args(argv)
+    path = args.path
+    target, project_root = _baseline_scan_roots(path)
+    # Normal scans load from their scan target, not necessarily the Git root.
+    # A subdirectory baseline must not replace a repository-wide baseline.
+    baseline_root = target.parent if target.is_file() else target
 
     console = Console()
     console.print(f"[bold]Creating baseline for {escape(path)}...[/bold]")
 
     try:
-        with quiet_analyzer_logs():
-            result = json.loads(run_analyze(path, **analyze_kwargs))
-    except (OSError, RuntimeError, TypeError, ValueError):
+        if args.architecture:
+            from skylos.commands.lint_cmd import scan_architecture
+
+            result = scan_architecture(target)
+        else:
+            result = _scan_default_baseline(path, project_root, sca=args.sca)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
         console.print(
             "[red]Baseline not saved: the scan did not return a usable result. "
             "Any existing baseline was left unchanged.[/red]"
         )
+        if args.architecture:
+            console.print(f"[red]{escape(str(exc))}[/red]")
         return 2
     if not isinstance(result, dict):
         console.print(
@@ -129,10 +142,10 @@ def run_baseline_command(argv: list[str]) -> int:
             console.print(f"[red]{escape(reason)}[/red]")
         return 2
 
-    result = apply_trusted_review_decisions(
-        result,
-        project_root,
-    )
+    if not args.architecture:
+        from skylos.core.review_decisions import apply_trusted_review_decisions
+
+        result = apply_trusted_review_decisions(result, project_root)
     try:
         baseline_path = save_baseline(str(baseline_root), result)
     except (OSError, ValueError):
@@ -153,6 +166,7 @@ def run_baseline_command(argv: list[str]) -> int:
             "ai_defects",
             "quality",
             "secrets",
+            "circular_dependencies",
             "dependency_vulnerabilities",
         ]
     )

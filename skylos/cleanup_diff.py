@@ -168,14 +168,34 @@ def cleanup_diff_environment(selection: CleanupDiff | None):
             os.environ["SKYLOS_DIFF_BASE"] = previous
 
 
+def _task_change_relation(task, selection: CleanupDiff) -> str | None:
+    if selection.includes(task["file"]):
+        return "changed_file"
+    if task["rule_id"].upper() not in {"SKY-CIRC", "SKY-Q807"}:
+        return None
+    locations = task["finding"].get("related_locations")
+    if isinstance(locations, list) and any(
+        isinstance(location, dict)
+        and isinstance(location.get("file"), str)
+        and location["file"]
+        and selection.includes(location["file"])
+        for location in locations
+    ):
+        return "related_changed_file"
+    return None
+
+
 def select_cleanup_diff(report, selection: CleanupDiff, inventory):
     """Narrow display and task selection after full inventory reconciliation."""
     original = {section: report[section] for section in ("tasks", "advisories")}
     all_visible = {task["id"] for rows in original.values() for task in rows}
     for section, rows in original.items():
-        report[section] = [task for task in rows if selection.includes(task["file"])]
-        for task in report[section]:
-            task["change_relation"] = "changed_file"
+        report[section] = []
+        for task in rows:
+            relation = _task_change_relation(task, selection)
+            if relation:
+                task["change_relation"] = relation
+                report[section].append(task)
         report["counts"][section] = len(report[section])
         report["counts"]["shown_" + section] = len(report[section])
     report["counts"]["optional_advice"] = sum(
@@ -211,7 +231,7 @@ def select_cleanup_diff(report, selection: CleanupDiff, inventory):
     if report["status"] != "incomplete":
         report["status"] = "ready" if selected else "clear"
     report["next_step"] = (
-        "Review the changed-file task and its evidence, make a focused change, run authorized "
+        "Review the selected task and its evidence, make a focused change, run authorized "
         "checks, then rerun skylos cleanup with the same PATH and --diff base. Findings in "
-        "changed files may predate this change."
+        "or related to changed files may predate this change."
     )

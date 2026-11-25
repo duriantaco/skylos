@@ -1,0 +1,135 @@
+id: SKY-Q807
+title: Sibling package dependency cycle
+family: quality
+severity: LOW
+languages: [Python]
+run_with: >-
+  `--quality` with `check_package_cycles = true` under
+  `[tool.skylos.architecture]`
+gate:
+  full: counted
+  opt_in: >-
+    Set `check_package_cycles = true` under `[tool.skylos.architecture]`.
+  note: >-
+    Findings from the enabled check count toward `max_quality`.
+
+what_it_is: >-
+  Sibling Python packages import one another directly or through other
+  siblings. Each import may involve a different file, so a cycle can exist
+  between packages even when the individual files form an acyclic graph.
+
+why_it_matters: >-
+  When packages depend on one another, a change to one package's interface
+  can require edits on both sides. The import locations show which parts of
+  each interface create the dependency.
+
+flagged_example:
+  language: python
+  files:
+    - filename: shop/__init__.py
+      code: |
+        """Shop package."""
+    - filename: shop/billing/__init__.py
+      code: |
+        """Billing package."""
+    - filename: shop/billing/invoices.py
+      code: |
+        from shop.orders.records import order_total
+
+        INVOICE_TOTAL = order_total
+    - filename: shop/billing/records.py
+      code: |
+        TAX_RATE = 0.08
+    - filename: shop/orders/__init__.py
+      code: |
+        """Orders package."""
+    - filename: shop/orders/checkout.py
+      code: |
+        from shop.billing.records import TAX_RATE
+
+        CHECKOUT_TAX = TAX_RATE
+    - filename: shop/orders/records.py
+      code: |
+        order_total = 100
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.architecture]
+        check_package_cycles = true
+  expect_file: shop/billing/invoices.py
+  expect_line: 1
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: shop/__init__.py
+      code: |
+        """Shop package."""
+    - filename: shop/billing/__init__.py
+      code: |
+        """Billing package."""
+    - filename: shop/billing/invoices.py
+      code: |
+        def invoice_total(order_total):
+            return order_total
+    - filename: shop/billing/records.py
+      code: |
+        TAX_RATE = 0.08
+    - filename: shop/orders/__init__.py
+      code: |
+        """Orders package."""
+    - filename: shop/orders/checkout.py
+      code: |
+        from shop.billing.records import TAX_RATE
+
+        CHECKOUT_TAX = TAX_RATE
+    - filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.architecture]
+        check_package_cycles = true
+  why: >-
+    Orders imports billing. Billing receives the order total as a value and
+    has no import dependency on orders.
+
+how_skylos_decides:
+  - >-
+    Start with resolved top-level imports between scanned Python modules.
+    Exclude test files and imports whose module cannot be resolved.
+  - >-
+    For each import between branches, identify the packages below the
+    nearest common parent. Both packages must have a scanned
+    `__init__.py` and share a parent directory.
+  - >-
+    Report one finding per mutually dependent group of packages. Include
+    each contributing import site in the finding evidence.
+
+source_refs:
+  - path: skylos/analysis/package_cycles.py
+    symbol: "def get_package_cycle_findings("
+  - path: skylos/reporting/architecture_result.py
+    symbol: "def _architecture_findings("
+
+fix:
+  explanation: >-
+    Remove the dependency that crosses the boundary in the wrong direction.
+    For this example, pass the order total into the invoice code.
+  filename: shop/billing/invoices.py
+  code: |
+    def invoice_total(order_total):
+        return order_total
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Namespace packages without `__init__.py`, imports inside functions,
+      and imports inside `if TYPE_CHECKING` are outside the check.
+    - >-
+      A cycle can be deliberate, such as between sibling adapters that
+      compose their interfaces at startup.
+  suppress:
+    - text: >-
+        Use the findings baseline to accept existing package cycles, or
+        set `check_package_cycles = false` to disable the quality check.
+
+related: [SKY-CIRC, SKY-Q805]

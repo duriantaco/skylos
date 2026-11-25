@@ -503,11 +503,11 @@ def test_cli_guardrail_clean_dispatch_preserves_argv(monkeypatch):
     mock_clean.assert_called_once_with(["pkg"])
 
 
-def test_cli_guardrail_lint_dispatch_preserves_ruff_argv(monkeypatch):
+def test_cli_guardrail_lint_dispatch_forwards_native_options(monkeypatch):
     monkeypatch.setattr(
         sys,
         "argv",
-        ["skylos", "lint", "src", "--select", "E,F", "--no-cache"],
+        ["skylos", "lint", "src", "--diff", "HEAD", "--format", "json"],
     )
 
     with (
@@ -517,24 +517,24 @@ def test_cli_guardrail_lint_dispatch_preserves_ruff_argv(monkeypatch):
         cli.main()
 
     assert exc.value.code == 1
-    mock_lint.assert_called_once_with(["src", "--select", "E,F", "--no-cache"])
+    mock_lint.assert_called_once_with(["src", "--diff", "HEAD", "--format", "json"])
 
 
-def test_cli_guardrail_lint_help_documents_optional_extra(monkeypatch, capsys):
+def test_cli_guardrail_lint_help_documents_native_checks(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["skylos", "lint", "--help"])
 
     with (
-        patch("skylos.commands.lint_cmd.run_lint_command") as mock_lint,
+        patch("skylos.commands.lint_cmd.scan_architecture") as mock_scan,
         pytest.raises(SystemExit) as exc,
     ):
         cli.main()
 
     assert exc.value.code == 0
-    mock_lint.assert_not_called()
+    mock_scan.assert_not_called()
     output = capsys.readouterr().out
-    assert "skylos lint [RUFF_ARGS ...]" in output
-    assert 'pip install "skylos[lint]"' in output
-    assert "ruff check" in output
+    assert "usage: skylos lint" in output
+    assert "import cycles and configured layers" in output
+    assert "--diff REF" in output
 
 
 def test_cli_guardrail_clean_help_lists_noninteractive_flags(monkeypatch, capsys):

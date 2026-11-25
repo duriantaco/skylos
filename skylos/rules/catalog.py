@@ -376,6 +376,13 @@ _RULES = (
         "SKY-Q806", "Opaque identifier", "quality", "LOW", finding_type="advice"
     ),
     RuleCatalogEntry(
+        "SKY-Q807",
+        "Sibling package dependency cycle",
+        "quality",
+        "LOW",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-L001", "Mutable default argument", "quality", finding_type="defect"
     ),
     RuleCatalogEntry("SKY-L002", "Bare except block", "quality", finding_type="review"),

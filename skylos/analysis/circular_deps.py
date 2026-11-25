@@ -165,6 +165,7 @@ class DependencyGraphBuilder(ast.NodeVisitor):
         self.known_modules = known_modules
         self.dependencies: List[ModuleDependency] = []
         self.architecture_dependencies: List[ModuleDependency] = []
+        self.architecture_imports: list[ModuleDependency] = []
 
     def generic_visit(self, node):
         for child in ast.iter_child_nodes(node):
@@ -195,15 +196,18 @@ class DependencyGraphBuilder(ast.NodeVisitor):
             (self.architecture_dependencies, architecture_targets),
         ):
             for target, target_names in graph_targets.items():
-                graph.append(
-                    ModuleDependency(
-                        from_module=self.module_name,
-                        to_module=target,
-                        import_line=line,
-                        import_type=import_type,
-                        imported_names=target_names,
-                    )
+                dep = ModuleDependency(
+                    from_module=self.module_name,
+                    to_module=target,
+                    import_line=line,
+                    import_type=import_type,
+                    imported_names=target_names,
                 )
+                graph.append(dep)
+                if graph is self.architecture_dependencies and _is_module_or_descendant(
+                    target, module
+                ):
+                    self.architecture_imports.append(dep)
 
     def _is_internal_module(self, module: str) -> bool:
         return _resolve_known_module(module, self.known_modules) is not None
@@ -214,6 +218,8 @@ class CircularDependencyAnalyzer:
         self.modules: Dict[str, str] = {}
         self.dependencies: Dict[str, Set[str]] = defaultdict(set)
         self.architecture_dependencies: Dict[str, Set[str]] = defaultdict(set)
+        # Source evidence for exact imports, without a fallback to an ancestor.
+        self.architecture_imports: list[ModuleDependency] = []
         self.all_deps: List[ModuleDependency] = []
         self.known_modules: Set[str] = set()
 
@@ -246,8 +252,18 @@ class CircularDependencyAnalyzer:
                     )
                     self.dependencies[dep.from_module].add(dep.to_module)
                     self.all_deps.append(dep)
-                for target in architecture_targets:
+                for target, target_names in architecture_targets.items():
                     self.architecture_dependencies[module_name].add(target)
+                    if _is_module_or_descendant(target, import_module):
+                        self.architecture_imports.append(
+                            ModuleDependency(
+                                from_module=module_name,
+                                to_module=target,
+                                import_line=line,
+                                import_type=import_type,
+                                imported_names=target_names,
+                            )
+                        )
 
     def build_graph(self, trees: Dict[str, ast.AST]):
         for module_name in self.modules:
@@ -265,6 +281,7 @@ class CircularDependencyAnalyzer:
                     self.all_deps.append(dep)
                 for dep in builder.architecture_dependencies:
                     self.architecture_dependencies[dep.from_module].add(dep.to_module)
+                self.architecture_imports.extend(builder.architecture_imports)
 
     def find_simple_cycles(self) -> List[List[str]]:
         if _fast_find_cycles is not None:
@@ -384,27 +401,46 @@ class CircularDependencyAnalyzer:
         return findings
 
     def get_findings(self) -> List[Dict[str, Any]]:
+        cycles = [
+            (cd, list(zip(cd.cycle, cd.cycle[1:] + cd.cycle[:1])))
+            for cd in self.analyze()
+        ]
+        if not cycles:
+            return []
+
         # Use recorded import edges, not filenames guessed from module names.
         # A graph assembled without source evidence should remain locationless.
-        edge_locations = {}
+        locations_by_edge: dict[tuple[str, str], set[tuple[str, int]]] = {
+            edge: set() for _, edges in cycles for edge in edges
+        }
         for dep in self.all_deps:
+            edge = (dep.from_module, dep.to_module)
+            if edge not in locations_by_edge:
+                continue
             source = self.modules.get(dep.from_module)
             if source and dep.import_line > 0:
-                edge = (dep.from_module, dep.to_module)
-                location = (str(source), dep.import_line)
-                edge_locations[edge] = min(edge_locations.get(edge, location), location)
+                locations_by_edge[edge].add((str(source), dep.import_line))
 
         findings = []
-        for cd in self.analyze():
+        for cd, edges in cycles:
             finding = cd.to_dict()
-            edges = zip(cd.cycle, cd.cycle[1:] + cd.cycle[:1])
             locations = [
-                edge_locations[edge] for edge in edges if edge in edge_locations
+                (file, line, importer, imported)
+                for importer, imported in edges
+                for file, line in sorted(locations_by_edge[importer, imported])
             ]
             if locations:
                 # Stable across file discovery order and repeated imports. Only
                 # edges in this cycle qualify, not chords forming another cycle.
-                finding["file"], finding["line"] = min(locations)
+                finding["file"], finding["line"], _, _ = min(locations)
+                finding["related_locations"] = [
+                    {
+                        "file": file,
+                        "start_line": line,
+                        "message": f"{importer} imports {imported}",
+                    }
+                    for file, line, importer, imported in locations
+                ]
             findings.append(finding)
         return findings
 

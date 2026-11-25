@@ -109,7 +109,6 @@ Source = "https://github.com/duriantaco/skylos"
 
 [project.optional-dependencies]
 llm = ["litellm>=1.84.0,<1.107.0", "aiohttp>=3.14.0", "filelock>=4.2.1"]
-lint = ["ruff>=0.15.0"]
 test = ["pytest>=9.0.2", "packaging>=24.2"]
 verdict = ["cryptography>=42"]
 # Dart parsing; this grammar ships no wheels, so installing it compiles C.
@@ -120,7 +119,6 @@ all = [
     "packaging>=24.2",
     "litellm>=1.84.0,<1.107.0",
     "aiohttp>=3.14.0",
-    "ruff>=0.15.0",
     "cryptography>=42",
     "tree-sitter-dart-orchard>=0.3.2,<0.6",
 ]

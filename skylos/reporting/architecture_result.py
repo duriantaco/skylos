@@ -225,6 +225,20 @@ def _architecture_findings(
             project_cfg.get("architecture")
         ),
     )
+    architecture_config = project_cfg.get("architecture")
+    if (
+        isinstance(architecture_config, dict)
+        and architecture_config.get("check_package_cycles") is True
+    ):
+        from skylos.analysis.package_cycles import get_package_cycle_findings
+
+        findings.extend(
+            get_package_cycle_findings(
+                circular_rule._analyzer.modules,
+                circular_rule._analyzer.architecture_imports,
+                project_root=Path(project_root) if project_root is not None else None,
+            )
+        )
     if unmeasured_ts_modules:
         # Graph and layer checks remain valid without a parseable source, but
         # file-level I/A/D warnings would assume A=0 and invent a signal.

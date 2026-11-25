@@ -105,6 +105,46 @@ def test_diff_selects_committed_staged_unstaged_untracked_and_preserves_full_sca
     assert all("unchanged.py" not in group["files"] for group in report["groups"])
 
 
+def test_diff_selects_cycles_by_related_import_file(repo):
+    (repo / "unstaged.py").write_text("import unchanged\n", encoding="utf-8")
+
+    def scan(*_a, **_kw):
+        raw = _raw(repo, ["unchanged.py"])
+        cycle = {
+            "rule_id": "SKY-CIRC",
+            "file": str(repo / "unchanged.py"),
+            "line": 1,
+            "severity": "LOW",
+            "message": "Circular dependency",
+            "related_locations": [{"file": "unstaged.py", "start_line": 1}],
+        }
+        raw["quality"][0]["related_locations"] = cycle["related_locations"]
+        raw["quality"].append(
+            {
+                **cycle,
+                "rule_id": "SKY-Q807",
+                "message": "Sibling package dependency cycle",
+                "finding_type": "review",
+                "related_locations": [
+                    {"file": str(repo / "unstaged.py"), "start_line": 1}
+                ],
+            }
+        )
+        raw["circular_dependencies"] = [cycle]
+        return raw
+
+    code, report = _run(repo, "--diff", "HEAD", analyze=scan)
+
+    assert code == 0, report
+    assert report["selection"]["changed_files"] == ["unstaged.py"]
+    assert {task["rule_id"] for task in report["tasks"]} == {"SKY-CIRC", "SKY-Q807"}
+    assert all(task["file"] == "unchanged.py" for task in report["tasks"])
+    assert all(
+        task["change_relation"] == "related_changed_file" for task in report["tasks"]
+    )
+    assert report["selection"]["excluded_tasks"] == 1
+
+
 @pytest.mark.parametrize("as_file", [False, True])
 def test_diff_path_selects_locally_but_analyzes_git_root(repo, as_file):
     subdir = repo / "src"
