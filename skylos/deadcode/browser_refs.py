@@ -812,6 +812,7 @@ def collect_browser_script_entry_files(
             scanned_scripts,
             static_asset_index,
             external_summaries,
+            include_vite_globs=True,
         )
         entries.update(inline_entries)
     return entries
@@ -1387,6 +1388,8 @@ def _template_inline_script_effects(
     scanned_scripts,
     static_asset_index,
     external_summaries,
+    *,
+    include_vite_globs=False,
 ):
     # Component single-file formats compile their scripts as modules, rather
     # than executing them with the browser's HTML script-tag semantics.
@@ -1395,6 +1398,11 @@ def _template_inline_script_effects(
     source = _read_text(root, template_file, source_cache)
     if source is None:
         return set(), set()
+    vite_index = False
+    if include_vite_globs and "import.meta.glob" in source:
+        from skylos.visitors.languages.typescript.vite_globs import is_vite_index
+
+        vite_index = is_vite_index(template_file, root)
     parser = _TemplateScripts()
     try:
         parser.feed(_strip_template_comments(source))
@@ -1454,6 +1462,16 @@ def _template_inline_script_effects(
         if is_module:
             entries.update(proof.entries)
             refs.update(proof.refs)
+            if vite_index and proof.root is not None and "import.meta.glob" in code:
+                from skylos.visitors.languages.typescript.vite_globs import (
+                    eager_inline_glob_entries,
+                )
+
+                entries.update(
+                    eager_inline_glob_entries(
+                        proof.text, proof.root, template_file.parent, scanned_scripts
+                    )
+                )
         else:
             page_bindings.update(bindings)
         for name in proof.names:

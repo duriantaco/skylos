@@ -32,6 +32,7 @@ from .nextjs import (
     is_nextjs_pages_api_file,
     is_nextjs_pages_router_file,
     is_nextjs_project_entry_file,
+    is_nextjs_project_pages_file,
 )
 from .resolve import (
     _find_nearest_tsconfig,
@@ -722,7 +723,9 @@ _TS_ENTRY_FILES = frozenset(
 )
 
 
-def _is_ts_entry_or_infra(sf: str, *, path_roots: bool = True) -> bool:
+def _is_ts_entry_or_infra(
+    sf: str, *, path_roots: bool = True, require_nextjs_project: bool = False
+) -> bool:
     """Files that are entries or tooling by path.
 
     ``path_roots=False`` leaves out the blanket ``/scripts/`` and
@@ -754,13 +757,15 @@ def _is_ts_entry_or_infra(sf: str, *, path_roots: bool = True) -> bool:
     if path_roots and "/scripts/" in sf:
         return True
     basename = os.path.basename(sf)
-    if is_nextjs_pages_router_file(sf) or is_nextjs_pages_api_file(sf):
-        return True
-    if basename in _NEXTJS_CONVENTION_FILES:
-        return True
     if basename in _CONFIG_FILES:
         return True
     if is_nextjs_project_entry_file(sf):
+        return True
+    if (is_nextjs_pages_router_file(sf) or is_nextjs_pages_api_file(sf)) and (
+        not require_nextjs_project or is_nextjs_project_pages_file(sf)
+    ):
+        return True
+    if not require_nextjs_project and basename in _NEXTJS_CONVENTION_FILES:
         return True
     if site_generator_entry(sf) is not None:
         return True
@@ -1873,6 +1878,8 @@ def _iter_entry_discoveries(
     project_root: str | None = None,
     workspace_inventory=None,
     exclude_folders=None,
+    *,
+    require_nextjs_project: bool = False,
 ) -> list[_TsEntryDiscovery]:
     discoveries: list[_TsEntryDiscovery] = []
 
@@ -1880,7 +1887,7 @@ def _iter_entry_discoveries(
         if (
             os.path.basename(tf) in _TS_ENTRY_FILES
             and not _shadowed_index(tf, ts_files)
-        ) or _is_ts_entry_or_infra(tf):
+        ) or _is_ts_entry_or_infra(tf, require_nextjs_project=require_nextjs_project):
             reason = "default-root"
             discoveries.append(
                 _TsEntryDiscovery(
@@ -2560,6 +2567,8 @@ def _discover_ts_reachability_entry_files(
     workspace_inventory=None,
     exclude_folders=None,
     include_dev_roots: bool = True,
+    *,
+    require_nextjs_project: bool = False,
 ) -> set[str]:
     exclude_root = _resolve_exclude_root(files, project_root)
     ts_files = {
@@ -2576,6 +2585,7 @@ def _discover_ts_reachability_entry_files(
         project_root=project_root,
         workspace_inventory=workspace_inventory,
         exclude_folders=exclude_folders,
+        require_nextjs_project=require_nextjs_project,
     )
     return {
         discovery.file
@@ -3789,6 +3799,9 @@ def find_unused_ts_exports(
         workspace_inventory=workspace_inventory,
         exclude_folders=exclude_folders,
         include_dev_roots=False,
+        # The export surface requires a real Next project and route path.
+        # Filename-only roots remain available to file-liveness analysis.
+        require_nextjs_project=True,
     )
 
     api_surface = set()

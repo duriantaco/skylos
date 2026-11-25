@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from skylos.analyzer import analyze
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.visitors.languages.typescript import scan_typescript_file
 from skylos.visitors.languages.typescript.analysis import find_dead_ts_files
@@ -28,6 +29,46 @@ def _unused(root, files):
     paths = [path for path in root.rglob("*") if path.suffix in {".js", ".ts"}]
     rows = find_dead_ts_files(paths, set(), {}, {}, project_root=str(root.resolve()))
     return {Path(row["file"]).relative_to(root.resolve()).as_posix() for row in rows}
+
+
+@pytest.mark.parametrize(
+    "metadata, path, unnecessary",
+    [
+        ({"private": True}, "src/template.ts", True),
+        ({"private": True}, "app/template.ts", True),
+        ({"dependencies": {"next": "15.0.0"}}, "lib/template.ts", True),
+        ({"dependencies": {"next": "15.0.0"}}, "app/template.ts", False),
+        ({"dependencies": {"next": "15.0.0"}}, "pages/dashboard.ts", False),
+        ({"exports": "./src/template.ts"}, "src/template.ts", False),
+    ],
+)
+def test_nextjs_export_roots_need_project_and_route_evidence(
+    tmp_path, metadata, path, unnecessary
+):
+    _write(tmp_path, "package.json", json.dumps(metadata))
+    template = _write(
+        tmp_path,
+        path,
+        "export function prepare() { return 'ready'; }\n"
+        "export function render() { return prepare(); }\n"
+        "export default function Page() { return render(); }\n",
+    )
+    import_path = Path(path).with_suffix("").as_posix()
+    _write(
+        tmp_path,
+        "index.ts",
+        f'import Page, {{render}} from "./{import_path}";\n'
+        "console.log(Page(), render());\n",
+    )
+
+    report = json.loads(analyze(str(tmp_path), grep_cache=False))
+    assert not report.get("analysis_errors")
+    findings = {
+        (Path(row["file"]), row["name"], row["line"])
+        for row in report.get("unused_exports", [])
+    }
+    assert findings == ({(template.resolve(), "prepare", 1)} if unnecessary else set())
+    assert not report["unused_functions"]
 
 
 @pytest.mark.parametrize(

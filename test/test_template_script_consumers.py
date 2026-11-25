@@ -215,6 +215,66 @@ def test_inline_module_without_proven_consumer_keeps_export_unused(tmp_path, cod
     assert ("greet", str(script)) not in _refs(root, script)
 
 
+def test_vite_inline_eager_globs_resolve_only_selected_files(tmp_path):
+    from skylos.analyzer import analyze
+
+    root = tmp_path.resolve()
+    (root / "package.json").write_text('{"private":true,"scripts":{"dev":"vite site"}}')
+    site = root / "site"
+    selected = [
+        site / "routes" / "chosen.js",
+        site / "effects" / "nested" / "ready.js",
+    ]
+    unused = [
+        site / "routes" / "excluded.js",
+        root / "effects" / "outside.js",
+        site / "routes" / "commented.js",
+        site / "unused" / "never.js",
+    ]
+    for file in selected + unused:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("globalThis.booted = true;\nexport default true;\n")
+    (site / "index.html").write_text(
+        '<script type="module">\n'
+        "const modules = import.meta.glob("
+        "['!./routes/excluded.js', '!./routes/commented.js', './routes/*.js'],"
+        "{eager: true, import: 'default'});\n"
+        "import.meta.glob('/effects/**', {eager: true});\n"
+        "</script>\n"
+        "<template><script type=\"module\">import.meta.glob('/unused/*.js', "
+        "{eager: true});</script></template>\n"
+        "<!-- <script type=\"module\">import.meta.glob('/routes/commented.js', "
+        "{eager: true});</script> -->"
+    )
+
+    report = json.loads(analyze(str(root), conf=60, grep_verify=False))
+    assert not report.get("analysis_errors")
+    assert {Path(row["file"]) for row in report["unused_files"]} == set(unused)
+
+
+@pytest.mark.parametrize(
+    "command, filename, script_type, pattern",
+    [
+        ("node tools.js", "index.html", "module", "./chosen.js"),
+        ("vite", "unloaded.html", "module", "./chosen.js"),
+        ("vite", "index.html", "text/plain", "./chosen.js"),
+        ("vite", "index.html", "", "./chosen.js"),
+        ("vite", "index.html", "module", "../chosen.js"),
+    ],
+)
+def test_vite_inline_lookalikes_do_not_root_files(
+    tmp_path, command, filename, script_type, pattern
+):
+    root = tmp_path.resolve()
+    script = root / "chosen.js"
+    script.write_text("globalThis.booted = true;")
+    (root / "package.json").write_text(json.dumps({"scripts": {"dev": command}}))
+    (root / filename).write_text(
+        f'<script type="{script_type}">import.meta.glob("{pattern}", {{eager: true}});</script>'
+    )
+    assert browser_refs.collect_browser_script_entry_files(root, [script]) == set()
+
+
 @pytest.mark.parametrize(
     "body",
     ["try {} catch (error) { greet(); }", "switch (0) { case 1: greet(); break; }"],
