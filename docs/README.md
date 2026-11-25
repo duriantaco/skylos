@@ -15,6 +15,7 @@ This repository keeps lightweight local docs for features that need examples clo
 | Optional Ruff Python linting through the Skylos CLI | [Python Linting](./python-linting.md) |
 | Deterministic AI-code verification coverage and language support | [AI Code Verification](./ai-code-verification.md) |
 | Local contracts for verifying AI-written code | [AI Hallucination Contracts](./ai-hallucination-contracts.md) |
+| Replay a pytest test against a fix and an earlier implementation | [Regression Replay and Test Grading](./regression-replay-prototype.md) |
 | Pre-deployment agent verification, evidence reports, and attestation | [Agent Verification](./agent-verification.md) |
 | Runtime agent behavior contracts and deterministic scenario testing | [Agent Behavior Testing](./agent-behavior-testing.md) |
 | Verifying Skylos Cloud signed check verdicts in a deploy gate | [Verify a Signed Verdict](./verify-verdict.md) |

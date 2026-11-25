@@ -154,6 +154,10 @@ def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
         return _run_receipt_command(argv[1:], console=console)
     if argv and argv[0] == "map":
         return _run_map_command(argv[1:], console=console)
+    if argv and argv[0] == "replay":
+        from skylos.done.regression_replay import main as run_replay
+
+        return run_replay(argv[1:], prog="skylos done replay")
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.type_checker is not None and not args.type_check:

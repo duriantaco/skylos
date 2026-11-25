@@ -1,0 +1,39 @@
+{
+  "benchmark": "Skylos regression test pilot",
+  "cases": [
+    {
+      "id": "ignore-unused-export",
+      "title": "Honor ignored TypeScript export findings",
+      "context": {
+        "test_setup": "Write a TypeScript fixture with an exported helper and configure [tool.skylos] to ignore SKY-E004. Analyze the fixture and read the unused_exports list.",
+        "buggy_behavior": "The report builder appended TypeScript export findings without consulting the project ignore list. The test still saw a SKY-E004 finding for helper.",
+        "fix": "Pass the project configuration to the TypeScript export reporting step and filter findings whose rule ID is in the ignore list.",
+        "assertion": "The unused_exports list is empty after applying the ignore setting."
+      },
+      "fixed": "7372b5f2572e7e32491b5362ddf952af3a6cba70",
+      "buggy": ["629f7df0132b0a0c8d48a17c4d24b568b490fe1a"],
+      "source": ["skylos/reporting/result_builder.py"],
+      "baseline_test": "test/test_typescript_expanded.py::TestMixedRepoIntegration::test_inline_ignore_suppresses_e003_and_records_decision",
+      "expected_assertion": 1520
+    },
+    {
+      "id": "dynamic-dispatch",
+      "title": "Keep methods used through dynamic dispatch",
+      "context": {
+        "test_setup": "Build a channel fixture whose action table stores method names as strings and calls them through getattr. Include an unrelated method named _stale as a control.",
+        "buggy_behavior": "The analyzer failed to connect the names in the action table to the methods on the channel instance. It reported _cli_read and _api_read as unused.",
+        "fix": "Track method names built in the channel and resolve those names against the receiver when the code dispatches with getattr.",
+        "assertion": "_cli_read and _api_read are absent from unused methods, while _stale is still reported."
+      },
+      "fixed": "68ac79f5cb3918eac64eac49f1ed4fdbc0ed5fe3",
+      "buggy": ["fa017f037285d3b468bc6e52478ecbc034cb30be"],
+      "source": [
+        "skylos/analysis/implicit_refs.py",
+        "skylos/analyzer.py",
+        "skylos/deadcode/_registration_methods.py",
+        "skylos/visitors/base.py"
+      ],
+      "expected_assertion": 86
+    }
+  ]
+}
