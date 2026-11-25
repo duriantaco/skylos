@@ -1489,6 +1489,10 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D383", "Undersized RSA key generation", "security", "MEDIUM",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-D510", "Prototype pollution", "security", "HIGH", finding_type="review"
     ),
     RuleCatalogEntry(
@@ -2035,6 +2039,7 @@ _SECURITY_RULE_CWES = {
     "SKY-D349": ("CWE-1336",),
     "SKY-D378": ("CWE-22",),
     "SKY-D379": ("CWE-1333",),
+    "SKY-D383": ("CWE-326",),
     "SKY-SC001": ("CWE-862",),
 }
 

@@ -204,6 +204,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D281 | CRITICAL | Untrusted server action input reaching raw SQL text | TS/JS | CWE-89 |
 | D282 | HIGH | Webhook handler missing signature verification | Python, TS/JS | CWE-347 |
 | D283 | HIGH-CRITICAL | Unauthenticated route that controls a device or the host, deletes data, administers or runs commands (see the SKY-F102 notes) | Python (FastAPI, Flask, Quart, Starlette, Sanic) | CWE-306, CWE-862 / A01 |
+| D383 | MEDIUM | A Django form default or a registered Oslo integer option can give `openssl genrsa` a key size below 2048 bits. Skylos flags the setting that supplies the size. | Python | CWE-326 |
 | D510 | HIGH | Prototype pollution: request data chooses the key of a nested write or reaches an unguarded recursive merge | TS/JS | CWE-1321 |
 
 For D251, a bare `sessionId` name is not treated as credential evidence by

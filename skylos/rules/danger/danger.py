@@ -25,6 +25,7 @@ from .danger_logging import scan as scan_secret_logging
 from .pickle_provenance import safe_pickle_loads
 from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
 from .callable_bindings import callable_names
+from .rsa_config_defaults import scan_configured_rsa
 from .python_security_gaps import (
     mentions_graph_query,
     scan as scan_python_security_gaps,
@@ -669,6 +670,12 @@ def scan_file_with_tree(
     tree, file_path, findings, *, source: str | None = None, project_root=None
 ):
     """Run taint-flow scanners on an already-parsed AST (no re-read/re-parse)."""
+    if (
+        source is None
+        or ("IntOpt" in source and "oslo" in source)
+        or ("initial" in source and "django" in source)
+    ):
+        scan_configured_rsa(tree, file_path, findings, project_root)
     if (
         source is None
         or _has_any(

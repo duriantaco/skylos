@@ -1,0 +1,111 @@
+id: SKY-D383
+title: RSA key size defaults below 2048 bits
+family: security
+severity: MEDIUM
+languages: [Python]
+cwe: [CWE-326]
+gate:
+  full: counted
+
+what_it_is: >-
+  Skylos flags a Django form default or a registered Oslo integer option
+  that can give `openssl genrsa` a key size below 2048 bits.
+  The finding points to the line that sets the default.
+
+why_it_matters: >-
+  A mailbox with no saved key size can inherit a 1024-bit default.
+  OpenSSL then creates a weaker signing key for that mailbox.
+
+flagged_example:
+  language: python
+  expect_file: policy.py
+  expect_line: 5
+  files:
+    - filename: policy.py
+      code: |
+        from django import forms
+
+
+        class KeyPolicy(forms.Form):
+            bits = forms.IntegerField(initial=1024)
+
+
+        def configured(name, settings):
+            if name not in settings:
+                return KeyPolicy.base_fields[name].initial
+            return int(settings[name])
+    - &model
+      filename: models.py
+      code: |
+        from django.db import models
+        from policy import configured
+
+
+        class Mailbox(models.Model):
+            key_bits = models.PositiveIntegerField(null=True)
+
+            def signing_bits(self, settings):
+                size = self.key_bits
+                if size is not None:
+                    return size
+                return configured("bits", settings)
+    - &generator
+      filename: signing.py
+      code: |
+        import subprocess
+        from models import Mailbox
+
+
+        def generate_key(mailbox: Mailbox, settings, key_file):
+            size = mailbox.signing_bits(settings)
+            subprocess.run(["openssl", "genrsa", str(size)], stdout=key_file, check=True)
+
+not_flagged_example:
+  language: python
+  files:
+    - filename: policy.py
+      code: |
+        from django import forms
+
+
+        class KeyPolicy(forms.Form):
+            bits = forms.IntegerField(initial=2048)
+
+
+        def configured(name, settings):
+            if name not in settings:
+                return KeyPolicy.base_fields[name].initial
+            return int(settings[name])
+    - *model
+    - *generator
+  why: >-
+    When the mailbox has no saved size and the settings omit `bits`,
+    the form supplies 2048.
+
+how_skylos_decides:
+  - Finds a positive default below 2048 on a Django form field or a registered Oslo integer option.
+  - Follows the value through settings reads, including Django model methods that fall back to the form when a saved value is missing.
+  - Reports the default when it can reach the key-size argument of `openssl genrsa`. A fixed 4096-bit override on that path clears the finding.
+
+source_refs:
+  - path: skylos/rules/danger/rsa_config_defaults.py
+    symbol: def scan_configured_rsa(
+  - path: skylos/rules/danger/django_rsa_consumers.py
+    symbol: def rsa_setting_lookups(
+
+fix:
+  explanation: >-
+    Set the default to at least 2048 bits. Apply the same minimum to
+    user-supplied sizes. Replace any undersized keys already in use.
+
+false_alarms_and_suppression:
+  misfires:
+    - A deployment can require a larger override through settings that Skylos cannot see. Check whether a fresh installation can still use the weak default.
+  suppress:
+    - text: >-
+        If every supported deployment enforces a safe size, add
+        `# skylos: ignore[SKY-D383]` to the flagged field or option and
+        record where that minimum is enforced.
+      check: inline
+
+related: [SKY-D207, SKY-D208]
