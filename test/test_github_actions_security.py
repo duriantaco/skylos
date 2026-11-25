@@ -542,6 +542,7 @@ def test_release_please_rechecks_completed_ci_on_current_main():
         "corpus.yml",
         "quality-benchmark.yml",
         "skylos.yaml",
+        "dependency-audit.yml",
     ]
     # Workflow-name filters are globs, including '+' as a quantifier.
     escape_globs = str.maketrans(
@@ -850,7 +851,8 @@ def test_composite_action_builds_platform_native_go_engine():
     setup_ref = setup_step["uses"].split("@", 1)[1]
     assert len(setup_ref) == 40
     assert all(char in "0123456789abcdef" for char in setup_ref)
-    assert setup_step["with"]["go-version"] == "1.22.x"
+    release_go = Path("tools/release/go-version.txt").read_text(encoding="utf-8").strip()
+    assert setup_step["with"]["go-version"] == release_go
     assert setup_step["with"]["cache"] is False
 
     assert build_step["env"]["SKYLOS_ACTION_PATH"] == "${{ github.action_path }}"

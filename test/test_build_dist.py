@@ -236,15 +236,21 @@ def test_dist_check_and_publish_share_the_build_script():
         < publish_names.index("Smoke test the bundled Go engine")
         < publish_names.index("Check dist contents")
     )
-    # Same toolchains in both.
-    def uses(steps, prefix):
-        return [s["uses"] for s in steps if str(s.get("uses", "")).startswith(prefix)]
-
-    assert uses(build["steps"], "actions/setup-go@") == uses(publish_steps, "actions/setup-go@")
-    go_version = [s["with"]["go-version"] for s in build["steps"] if s.get("name") == "Set up Go"]
-    assert go_version == [
-        s["with"]["go-version"] for s in publish_steps if s.get("name") == "Set up Go"
-    ]
+    # Keep fresh release builds aligned with PR checks and preserve the Go
+    # version for historical tags whose published wheels used older macOS tags.
+    check_go = next(step for step in build["steps"] if step.get("name") == "Set up Go")
+    publish_go = next(step for step in publish_steps if step.get("name") == "Set up Go")
+    historical_go = next(
+        step for step in publish_steps if step.get("name") == "Set up Go for historical tags"
+    )
+    assert check_go["uses"] == publish_go["uses"] == historical_go["uses"]
+    version_file = check_go["with"]["go-version-file"]
+    assert version_file == publish_go["with"]["go-version-file"] == "tools/release/go-version.txt"
+    assert (REPO / version_file).read_text(encoding="utf-8").strip()
+    assert publish_go["if"] == f"hashFiles('{version_file}') != ''"
+    assert historical_go["if"] == f"hashFiles('{version_file}') == ''"
+    assert historical_go["with"]["go-version"] == "1.22.12"
+    assert publish_names.index("Set up Go for historical tags") < publish_names.index("Build sdist and wheels")
 
 
 def test_dist_check_installs_the_wheels_on_macos_and_windows():

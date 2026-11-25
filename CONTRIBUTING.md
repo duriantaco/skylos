@@ -142,6 +142,13 @@ python scripts/agent_review_benchmark.py
 Only run benchmark scripts that are relevant to your change. If a benchmark
 result changes, explain why in the PR.
 
+### Maintainer merge checks
+
+In GitHub branch protection for `main`, require the GitHub Actions checks
+`test` and `dependency-audit` after both are available in the check picker.
+These checks run for every pull request. Keep the existing code-owner review
+and conversation resolution requirements.
+
 ## Pull Request Checklist
 
 Before opening a PR:

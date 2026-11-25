@@ -323,12 +323,26 @@ npm run compile
 # Press F5 in VS Code to launch extension development host
 ```
 
-- Package a VSIX:
+### Build a Marketplace release candidate
+
+Use Node.js 26 LTS from `editors/vscode` to build and test the extension.
+
 ```bash
+npm ci --ignore-scripts
+npm test
 npm run package
 ```
 
-Packaging uses `@vscode/vsce` 3.9.2 on Node 20. Overrides scoped to that
+Packaging recompiles the extension. For a Marketplace release, run
+[VS Code package](../../.github/workflows/vscode-package.yml) on the reviewed
+`main` commit. Download the `skylos-vsix` artifact, verify `SHA256SUMS`,
+and install the VSIX locally to check the release version and workspace trust
+behavior. Publish the tested file with `vsce publish --packagePath` and
+confirm the version on the [Marketplace listing][marketplace].
+
+[marketplace]: https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension
+
+Packaging uses `@vscode/vsce` 3.9.2. Overrides scoped to that
 packager version select `glob` 14.0.4 and `minimatch` 11.0.7 for the
 [glob cancellation advisory](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4)
 and [minimatch amplification advisory](https://github.com/advisories/GHSA-g3hv-75wg-m249).

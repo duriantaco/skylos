@@ -1,0 +1,40 @@
+name: Dependency Audit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '18 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Download and verify OSV Scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$RUNNER_TEMP/osv-scanner"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/google/osv-scanner/releases/download/v2.7.1/osv-scanner_linux_amd64 \
+            --output "$binary"
+          echo "fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8  $binary" | sha256sum --check
+          chmod +x "$binary"
+
+      - name: Audit CLI and extension lockfiles
+        shell: bash
+        run: |
+          # Python CLI resolution plus npm build tooling for the distributed VSIX.
+          # Benchmark/corpus fixtures and the unshipped Rust prototype are outside this gate.
+          "$RUNNER_TEMP/osv-scanner" scan source --no-resolve \
+            --lockfile uv.lock --lockfile editors/vscode/package-lock.json

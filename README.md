@@ -346,6 +346,9 @@ Or run the container image:
 docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . -a
 ```
 
+The Go 1.26 build of the bundled engine requires macOS 12 or later. On earlier
+macOS versions, pip selects the pure Python wheel, which omits the Go engine.
+
 Other extras (`lint`, `verdict`, `dart`), Python-specific image tags and
 source installs: [installation](https://docs.skylos.dev/installation).
 

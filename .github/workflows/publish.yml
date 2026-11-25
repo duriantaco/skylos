@@ -134,7 +134,11 @@ jobs:
           import json
           import sys
 
+          from pathlib import Path
+
           required = json.loads(sys.argv[1])
+          if Path(".github/workflows/dependency-audit.yml").is_file():
+              required.append("dependency-audit")
           data_path = sys.argv[2]
           data = json.load(open(data_path, encoding="utf-8"))
           runs = data.get("check_runs", [])
@@ -206,9 +210,19 @@ jobs:
           fi
 
       - name: Set up Go
+        if: hashFiles('tools/release/go-version.txt') != ''
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: "1.22.x"
+          go-version-file: tools/release/go-version.txt
+          cache: false
+
+      # Keep the published macOS wheel names when rebuilding tags cut before
+      # the release toolchain version was recorded in the tag.
+      - name: Set up Go for historical tags
+        if: hashFiles('tools/release/go-version.txt') == ''
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.22.12'
           cache: false
 
       # The sdist, the pure py3-none-any wheel, and one wheel per platform
@@ -239,6 +253,18 @@ jobs:
         run: |
           ls -lah dist
           python -m twine check dist/*
+
+      - name: Generate release SBOMs
+        if: hashFiles('tools/release/artifact_sbom.py') != ''
+        run: python tools/release/artifact_sbom.py --out-dir release-sboms dist/*.whl dist/*.tar.gz
+
+      - name: Upload release SBOMs
+        if: hashFiles('tools/release/artifact_sbom.py') != ''
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: release-sboms
+          path: release-sboms/*.cdx.json
+          if-no-files-found: error
 
       - name: Upload dist artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -389,6 +415,7 @@ jobs:
               --label "org.opencontainers.image.version=${VERSION}" \
               --label "org.opencontainers.image.revision=${revision}" \
               --label "org.opencontainers.image.python.version=${PYTHON_VERSION}" \
+              --sbom=true \
               --push \
               .
           }
