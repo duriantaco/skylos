@@ -6,11 +6,15 @@ from skylos.rules.danger.danger import scan_ctx
 
 
 @pytest.mark.parametrize(
+    "statement", ["{run}", "return {run}.stdout"], ids=["run", "stdout"]
+)
+@pytest.mark.parametrize(
     ("argument", "operand", "policy_change", "expected"),
     [
         ("options", "size", "", True),
         ("{}", "size", "", True),
         ("{'modulus': 4096}", "size", "", False),
+        ("{'modulus': 2048}", "size", "", False),
         ("options", "max(2048, size)", "", False),
         ("options", "size", "Policy.base_fields['modulus'].initial = 4096", False),
         (
@@ -22,8 +26,9 @@ from skylos.rules.danger.danger import scan_ctx
     ],
 )
 def test_model_method_forwards_the_actual_policy_to_key_generation(
-    tmp_path, argument, operand, policy_change, expected
+    tmp_path, argument, operand, policy_change, expected, statement
 ):
+    run = f"subprocess.run(['openssl', 'genrsa', str({operand})], capture_output=True)"
     sources = {
         "policy.py": """
             from django import forms
@@ -56,7 +61,7 @@ def test_model_method_forwards_the_actual_policy_to_key_generation(
 
             def generate(mailbox: Mailbox, options):
                 size = mailbox.signing_bits({argument})
-                subprocess.run(['openssl', 'genrsa', str({operand})])
+                {statement.format(run=run)}
         """,
     }
     paths = []

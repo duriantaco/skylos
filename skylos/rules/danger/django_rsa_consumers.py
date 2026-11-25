@@ -465,12 +465,12 @@ def _model_method_replaced(project, model, name):
     return False
 
 
-def _typed_lookup(project, unit, fn, call, size):
+def _typed_lookup(project, unit, fn, statement, size):
     """Prove the selection under the caller's Django model type contract."""
     if fn.decorator_list or fn not in unit.tree.body:
         return None
     body = _body(fn)
-    selection = _selection(body[: body.index(unit.parents[id(call)])], size)
+    selection = _selection(body[: body.index(statement)], size)
     if not selection:
         return None
     field, value = selection
@@ -552,9 +552,19 @@ def _optional_from_loop(project, unit, fn, call, source_scope, override):
     return _model_allows_blank(project, unit, query, override.attr)
 
 
-def _direct_call(unit, call, block):
-    stmt = unit.parents.get(id(call))
-    return isinstance(stmt, (ast.Assign, ast.Return, ast.Expr)) and stmt in block.body
+def _direct_statement(unit, call, block, *, allow_stdout=False):
+    parent = unit.parents.get(id(call))
+    if (
+        allow_stdout
+        and isinstance(parent, ast.Attribute)
+        and parent.attr == "stdout"
+        and isinstance(parent.ctx, ast.Load)
+    ):
+        # Reading stdout evaluates the call before accessing its result.
+        parent = unit.parents.get(id(parent))
+    if isinstance(parent, (ast.Assign, ast.Return, ast.Expr)) and parent in block.body:
+        return parent
+    return None
 
 
 def _unguarded(unit, call, fn):
@@ -645,7 +655,7 @@ def _sources(project, unit, fn, sink, value):
             or _objects_escape(unit, caller.node, call, {_first(caller.node)})
         ):
             continue
-        if override is None and not _direct_call(unit, call, caller.node):
+        if override is None and _direct_statement(unit, call, caller.node) is None:
             continue
         if override is not None and not _optional_from_loop(
             project, unit, fn, call, caller, override
@@ -660,14 +670,17 @@ def rsa_setting_lookups(project, unit):
     for call, scope in unit.calls:
         project.charge()
         fn = scope.node
-        if not isinstance(fn, ast.FunctionDef) or not _direct_call(unit, call, fn):
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        statement = _direct_statement(unit, call, fn, allow_stdout=True)
+        if statement is None:
             continue
         size = _size_at(project, unit, scope, call)
         if size is None:
             continue
         # First follow branches whose nullable model field can be resolved.
         # Other guards may reject or replace the default before generation.
-        fallback = _typed_lookup(project, unit, fn, call, size)
+        fallback = _typed_lookup(project, unit, fn, statement, size)
         if fallback is not None:
             owner, lookup, forwarded = fallback
             yield owner, lookup, call, forwarded
