@@ -102,7 +102,8 @@ def test_liveness_primer_workflow_pins_actions_and_toolchain():
     }
 
     setup_go = next(step for step in steps if step.get("name") == "Install Go")
-    assert setup_go["with"] == {"go-version": "1.22", "cache": False}
+    release_go = Path("tools/release/go-version.txt").read_text(encoding="utf-8").strip()
+    assert setup_go["with"] == {"go-version": release_go, "cache": False}
 
     setup_uv = next(step for step in steps if step.get("name") == "Install uv")
     assert setup_uv["with"] == {
