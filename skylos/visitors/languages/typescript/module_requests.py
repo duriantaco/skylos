@@ -10,6 +10,7 @@ Astro script blocks are read as source data (never compiled or executed).
 from __future__ import annotations
 
 import os
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -146,19 +147,59 @@ def collect_module_requests(
     )
 
 
+def _proved_request_targets(raw_imports) -> dict[tuple[str, str], str]:
+    targets = defaultdict(set)
+    for importer, records in (raw_imports or {}).items():
+        for record in records or ():
+            if not isinstance(record, dict):
+                continue
+            if record.get("type_import") or record.get("type_only"):
+                continue
+            component = record.get("component_file")
+            if component:
+                path = str(component)
+                source = record.get("component_source")
+            elif "resolved_file" in record:
+                path = str(importer)
+                source = record.get("source")
+            else:
+                continue
+            if not isinstance(source, str) or not source or not os.path.isabs(path):
+                continue
+            target = record.get("resolved_file")
+            resolved = (
+                os.path.realpath(target)
+                if isinstance(target, str) and os.path.isabs(target) and os.path.isfile(target)
+                else None
+            )
+            targets[(source, os.path.realpath(path))].add(resolved)
+    # A component may be reached by hosts with different resolve settings.
+    # Only one agreed, proved target can replace ordinary resolution.
+    return {
+        key: next(iter(options))
+        for key, options in targets.items()
+        if len(options) == 1 and None not in options
+    }
+
+
 class CachedModuleResolver:
-    """Resolve a specifier once per importing directory.
+    """Reuse proved targets, then resolve a specifier once per importing directory.
 
     Relative, tsconfig ``paths`` and package ``imports`` resolution all depend
     only on the importer's directory, so the cache key is exact.
     """
 
-    def __init__(self, resolver=None) -> None:
+    def __init__(self, resolver=None, *, ts_raw_imports=None) -> None:
         self.resolver = resolver
+        self._proved = _proved_request_targets(ts_raw_imports)
         self._cache: dict[tuple[str, str], str | None] = {}
 
     def resolve(self, source: str, importer: str) -> str | None:
         from .analysis import resolve_ts_module
+
+        proved = self._proved.get((source, importer))
+        if proved is not None:
+            return proved
 
         key = (source, os.path.dirname(importer))
         if key not in self._cache:

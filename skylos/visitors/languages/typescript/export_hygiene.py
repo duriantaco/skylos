@@ -52,6 +52,7 @@ def find_ts_export_hygiene(
     exclude_folders=None,
     browser_entry_points=(),
     analysis_errors=(),
+    framework_reexport_reads=None,
 ):
     """Return export findings, namespace member findings, their receipt and the surface."""
     receipt = {
@@ -71,6 +72,7 @@ def find_ts_export_hygiene(
         exclude_folders=exclude_folders,
         browser_entry_points=browser_entry_points,
         analysis_errors=analysis_errors,
+        framework_reexport_reads=framework_reexport_reads,
     )
     if surface is None:
         receipt.update(

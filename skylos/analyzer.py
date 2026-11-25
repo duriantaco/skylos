@@ -2557,6 +2557,7 @@ class Skylos:
         *,
         credit_references=True,
         reexport_context=None,
+        framework_reexport_reads=None,
     ):
         self._ts_reexport_ref_counts = {}
         self._ts_source_raw_imports = ts_raw_imports
@@ -2572,16 +2573,29 @@ class Skylos:
             credit_references=credit_references,
             reexport_context=reexport_context,
             discarded_reexport_refs=self._ts_reexport_ref_counts,
+            framework_reexport_reads=framework_reexport_reads,
         )
 
     def _demote_unconsumed_ts_exports(
-        self, files=None, exclude_folders=None, workspace_inventory=None
+        self,
+        files=None,
+        exclude_folders=None,
+        workspace_inventory=None,
+        *,
+        framework_bindings=None,
     ):
         if not hasattr(self, "ts_consumed_exports"):
             return
         from skylos.visitors.languages.typescript.analysis import (
             mark_source_data_ts_exports_consumed,
         )
+
+        if framework_bindings:
+            for defn in self.defs.values():
+                bindings = framework_bindings.get(os.path.realpath(defn.filename), ())
+                if (defn.name, defn.line) in bindings:
+                    defn.references = max(defn.references, 1)
+                    _mark_evidence_ref(defn, "framework_root")
 
         self._ts_source_read_edges = mark_source_data_ts_exports_consumed(
             self.defs,
@@ -2599,6 +2613,7 @@ class Skylos:
             browser_entry_points=getattr(self, "_browser_script_entry_files", ()),
             raw_imports=getattr(self, "_ts_source_raw_imports", {}),
             monorepo_resolver=getattr(self, "_ts_source_resolver", None),
+            framework_entry_points=getattr(self, "_ts_framework_entry_points", ()),
         )
         mark_package_api_ts_exports_consumed(
             self.defs,
@@ -2625,6 +2640,7 @@ class Skylos:
             self.ts_consumed_exports,
             lifecycle_entry_points=lifecycle_entry_points,
             bundle_entry_points=bundle_entry_points,
+            framework_bindings=framework_bindings,
         )
 
     def _collect_ts_module_requests(
@@ -2659,7 +2675,9 @@ class Skylos:
             return
         self._ts_module_requests = requests
         # One resolution per specifier and directory, shared with SKY-CIRC.
-        self._ts_module_resolver = CachedModuleResolver(resolver)
+        self._ts_module_resolver = CachedModuleResolver(
+            resolver, ts_raw_imports=ts_raw_imports
+        )
         if not enable_quality or "SKY-Q414" in project_ignore:
             return
         from skylos.visitors.languages.typescript.unresolved_imports import (
@@ -2712,6 +2730,7 @@ class Skylos:
             browser_entry_points=getattr(self, "_browser_script_entry_files", ()),
             source_read_edges=getattr(self, "_ts_source_read_edges", {}),
             evidence_roots=True,
+            framework_entry_points=getattr(self, "_ts_framework_entry_points", ()),
         )
 
     def _find_unused_ts_exports(self, files, exclude_folders, workspace_inventory=None):
@@ -2743,6 +2762,7 @@ class Skylos:
             exclude_folders=exclude_folders,
             browser_entry_points=getattr(self, "_browser_script_entry_files", ()),
             analysis_errors=analysis_errors,
+            framework_reexport_reads=getattr(self, "_ts_framework_reexport_reads", {}),
         )
         self._ts_export_surface = report["surface"]
         return report
@@ -6988,13 +7008,37 @@ class Skylos:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("JS API hallucination scan failed", exc_info=True)
 
+        from skylos.deadcode.sveltekit import discover_sveltekit_entries
+        from skylos.deadcode.sveltekit_aliases import (
+            resolve_sveltekit_entry_imports,
+            sveltekit_resolver,
+        )
+
+        sveltekit = discover_sveltekit_entries(
+            project_root, files, exclude_folders=exclude_folders
+        )
+        component_root = Path(root).resolve()
+        entry_components = {
+            component
+            for component in sveltekit.components
+            if Path(component).is_relative_to(component_root)
+        }
+        self._ts_framework_entry_points = set(sveltekit.module_exports) | entry_components
+        self._ts_framework_reexport_reads = sveltekit.reexport_reads
+        framework_resolver = sveltekit_resolver(monorepo_resolver, sveltekit.lib_directories)
+
         component_import_coverage = {}
         try:
             from skylos.deadcode.component_imports import expand_component_imports
 
             component_imports, component_import_coverage = expand_component_imports(
-                Path(root), files, ts_raw_imports,
-                resolver=monorepo_resolver, exclude_folders=exclude_folders,
+                Path(root),
+                files,
+                ts_raw_imports,
+                resolver=monorepo_resolver,
+                exclude_folders=exclude_folders,
+                framework_entries=self._ts_framework_entry_points,
+                framework_resolver=framework_resolver,
             )
             for importer, entries in component_imports.items():
                 ts_raw_imports.setdefault(importer, []).extend(entries)
@@ -7005,8 +7049,13 @@ class Skylos:
             # Pages, layouts and auto-registered components are graph roots
             # (their imports are reachable), like MDX documents above.
             for component, entries in expand_framework_component_imports(
-                Path(root), files, ts_raw_imports,
-                resolver=monorepo_resolver, exclude_folders=exclude_folders,
+                Path(root),
+                files,
+                ts_raw_imports,
+                resolver=monorepo_resolver,
+                exclude_folders=exclude_folders,
+                sveltekit_explicit_packages=sveltekit.configured_packages,
+                framework_entries=entry_components,
             ).items():
                 ts_raw_imports.setdefault(component, []).extend(entries)
         except Exception as error:
@@ -7016,6 +7065,10 @@ class Skylos:
             }
             if os.getenv("SKYLOS_DEBUG"):
                 logger.error("Component import graph scan failed", exc_info=True)
+
+        resolve_sveltekit_entry_imports(
+            ts_raw_imports, self._ts_framework_entry_points, framework_resolver
+        )
 
         if component_import_coverage.get("complete") is False:
             for issue in component_import_coverage.get("issues", []):
@@ -7134,6 +7187,7 @@ class Skylos:
         # rebuilt without those consumers.
         self._ts_file_importers_of = self._ts_importers_of
         self._ts_file_wildcard_edges = self._ts_wildcard_edges
+        # Framework entries protect live consumers during pruning.
         live_ts_imports, dead_ts_modules = prune_dead_ts_import_consumers(
             ts_raw_imports,
             self.defs,
@@ -7146,6 +7200,7 @@ class Skylos:
             browser_entry_points=self._browser_script_entry_files,
             monorepo_resolver=graph_resolver,
             analysis_errors=analysis_errors,
+            framework_entry_points=self._ts_framework_entry_points,
         )
         if dead_ts_modules:
             local_import_reads = {
@@ -7173,6 +7228,7 @@ class Skylos:
             live_ts_imports,
             graph_resolver,
             reexport_context=reexport_context,
+            framework_reexport_reads=self._ts_framework_reexport_reads,
         )
         if self._ts_reexport_ref_counts:
             from skylos.visitors.languages.typescript.reexport_demand import (
@@ -7288,7 +7344,10 @@ class Skylos:
         )
 
         self._demote_unconsumed_ts_exports(
-            files, exclude_folders, workspace_inventory=workspace_inventory
+            files,
+            exclude_folders,
+            workspace_inventory=workspace_inventory,
+            framework_bindings=sveltekit.export_bindings,
         )
 
         if progress_callback:

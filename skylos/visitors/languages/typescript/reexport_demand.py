@@ -9,7 +9,9 @@ _STAR = "**star**"
 _SOURCE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs")
 
 
-def build_reexport_demand(raw_imports, definitions, resolve, context):
+def build_reexport_demand(
+    raw_imports, definitions, resolve, context, *, framework_reexport_reads=None,
+):
     """Return precise demand or None before mutating any definition.
 
     Local source references and the syntactic file graph are independent of
@@ -20,6 +22,8 @@ def build_reexport_demand(raw_imports, definitions, resolve, context):
     files = context["files"]
     consumed = defaultdict(set)
     requests = defaultdict(set)
+    for file, names in (framework_reexport_reads or {}).items():
+        requests[file].update((name,) for name in names)
     importers = defaultdict(set)
     wildcard = defaultdict(set)
     named = defaultdict(lambda: defaultdict(list))
@@ -39,7 +43,7 @@ def build_reexport_demand(raw_imports, definitions, resolve, context):
             total += 1
             if total > _MAX_EXPORT_DEMAND_ITEMS:
                 return None
-            target = resolve(item["source"], importer)
+            target = item.get("resolved_file") or resolve(item["source"], importer)
             if target:
                 importers[target].add(importer)
             if item.get("is_reexport"):

@@ -170,8 +170,11 @@ def _imports(path, source):
     return imports, complete, notes, len(blocks)
 
 
-def expand_component_imports(project_root, source_files, raw_imports, *, resolver=None, exclude_folders=None):
-    """Return extra graph records keyed by their actual JS/TS loading source.
+def expand_component_imports(
+    project_root, source_files, raw_imports, *, resolver=None,
+    exclude_folders=None, framework_entries=(), framework_resolver=None,
+):
+    """Return graph records keyed by their loading source or framework entry.
 
     The returned receipt describes import extraction only, not full component
     declaration, security or quality analysis. Unsupported source is explicit.
@@ -180,8 +183,31 @@ def expand_component_imports(project_root, source_files, raw_imports, *, resolve
     """
     from skylos.deadcode.component_providers import generated_component_provider_limits
     from skylos.visitors.languages.typescript.analysis import resolve_ts_module
+    from skylos.visitors.languages.typescript.resolve import _find_nearest_package_dir
 
     root = Path(project_root).resolve()
+    component_packages = {}
+
+    def owning_package(path):
+        if path not in component_packages:
+            component_packages[path] = _find_nearest_package_dir(path, str(root))
+        return component_packages[path]
+
+    def resolve(specifier, importer, owner):
+        if framework_resolver is not None and owner in framework_entries:
+            from skylos.deadcode.sveltekit_aliases import resolve_sveltekit_component
+
+            if (
+                (specifier == "$lib" or specifier.startswith("$lib/"))
+                and owning_package(importer) != owning_package(owner)
+            ):
+                # Kit installs its alias in the host Vite build.
+                importer = owner
+            return resolve_sveltekit_component(
+                specifier, importer, framework_resolver, entry=owner
+            )
+        return resolve_ts_module(specifier, importer, resolver)
+
     selected = {str(Path(file).absolute()) for file in source_files}
     cache = {}
     extras = {}
@@ -238,7 +264,7 @@ def expand_component_imports(project_root, source_files, raw_imports, *, resolve
         ancestors = ancestors | {component}
         for raw in entries:
             specifier = raw.get("source", "")
-            target = resolve_ts_module(specifier, str(component), resolver)
+            target = resolve(specifier, str(component), owner)
             if _component_specifier(specifier) and not _rune_module(target):
                 if target is None:
                     issues.append({"file": str(component), "reason": "unresolved_component", "source": specifier})
@@ -248,6 +274,8 @@ def expand_component_imports(project_root, source_files, raw_imports, *, resolve
             item = deepcopy(raw)
             if target is not None:
                 item["source"] = "./" + os.path.relpath(target, Path(owner).parent).replace(os.sep, "/")
+                if owner in framework_entries:
+                    item["resolved_file"] = target
             elif specifier.startswith("."):
                 # Preserve the actual module location even when its provider
                 # is unavailable; a bridge must not resolve beside the loader.
@@ -262,6 +290,7 @@ def expand_component_imports(project_root, source_files, raw_imports, *, resolve
                 item.pop("reexport_reference_names", None)
             item["component_file"] = str(component)
             item["component_line"] = item.get("line", 1)
+            item["component_source"] = specifier
             item["is_component_import"] = True
             edge_count += 1
             if edge_count > MAX_IMPORT_EDGES:
@@ -277,11 +306,15 @@ def expand_component_imports(project_root, source_files, raw_imports, *, resolve
             specifier = raw.get("source", "")
             if not _component_specifier(specifier):
                 continue
-            target = resolve_ts_module(specifier, owner, resolver)
+            target = resolve(specifier, owner, owner)
             if target is None:
                 issues.append({"file": owner, "reason": "unresolved_component", "source": specifier})
             elif not _rune_module(target):
                 visit(Path(target), owner, 0, set())
+    for entry in sorted(framework_entries):
+        path = Path(entry)
+        if path.suffix.lower() in COMPONENT_SUFFIXES:
+            visit(path, entry, 0, set())
     receipt = {
         "status": "incomplete" if issues else "complete" if cache else "not_applicable",
         "complete": not issues,
@@ -353,7 +386,7 @@ _FRAMEWORK_COMPONENT_REGEXES = tuple(
 )
 
 
-def framework_component_root(path):
+def framework_component_root(path, *, sveltekit_explicit_packages=()):
     """The framework loads this component by its location (a page, layout or auto-registered component)."""
     from skylos.visitors.languages.typescript.conventions import (
         _depends_on,
@@ -371,12 +404,27 @@ def framework_component_root(path):
                 continue
             if "astro" in enablers and any(part.startswith("_") for part in relative.split("/")[2:]):
                 continue
+            if "@sveltejs/kit" in enablers and sveltekit_explicit_packages:
+                # Match inherited dependencies only up to the next explicitly
+                # configured app. Its discovery owns its paths, including
+                # configurations for which the analyzer cannot prove entries.
+                if any(root in sveltekit_explicit_packages for root in roots[:index + 1]):
+                    continue
+                for root, data in zip(roots[index:], manifests):
+                    if root in sveltekit_explicit_packages:
+                        break
+                    if _depends_on(data, "@sveltejs/kit"):
+                        return True
+                continue
             if any(_depends_on(data, name) for data in manifests for name in enablers):
                 return True
     return False
 
 
-def expand_framework_component_imports(project_root, source_files, raw_imports, *, resolver=None, exclude_folders=None):
+def expand_framework_component_imports(
+    project_root, source_files, raw_imports, *, resolver=None, exclude_folders=None,
+    sveltekit_explicit_packages=(), framework_entries=(),
+):
     """Import records of components the framework loads by location.
 
     Route pages, layouts and auto-registered components
@@ -389,11 +437,17 @@ def expand_framework_component_imports(project_root, source_files, raw_imports, 
     its component tree live, and an orphan component outside these locations
     stays unused. Budgets abstain silently: a missing root only keeps today's
     findings.
+
+    ``sveltekit_explicit_packages`` delegates SvelteKit discovery to the
+    configuration-aware collector. ``framework_entries`` lists components
+    already supplied to :func:`expand_component_imports`.
     """
     from skylos.core.file_discovery import discover_source_files
     from skylos.visitors.languages.typescript.analysis import resolve_ts_module
 
     root = Path(project_root).resolve()
+    explicit_packages = {os.path.realpath(str(path)) for path in sveltekit_explicit_packages}
+    explicit_entries = {os.path.realpath(str(path)) for path in framework_entries}
     try:
         components = discover_source_files(root, COMPONENT_SUFFIXES, exclude_folders=exclude_folders)
     except (OSError, ValueError):
@@ -422,7 +476,9 @@ def expand_framework_component_imports(project_root, source_files, raw_imports, 
 
     extras = {}
     for owner in sorted(parsed):
-        if not framework_component_root(owner):
+        if str(owner) in explicit_entries or not framework_component_root(
+            owner, sveltekit_explicit_packages=explicit_packages,
+        ):
             continue
         records, pending, seen = [], [(owner, 0)], set()
         while pending:
@@ -451,6 +507,7 @@ def expand_framework_component_imports(project_root, source_files, raw_imports, 
                     item.pop("reexport_reference_names", None)
                 item["component_file"] = str(component)
                 item["component_line"] = item.get("line", 1)
+                item["component_source"] = specifier
                 item["is_component_import"] = True
                 records.append(item)
                 if len(records) > MAX_IMPORT_EDGES:

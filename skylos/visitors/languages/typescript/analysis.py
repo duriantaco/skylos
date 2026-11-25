@@ -185,9 +185,9 @@ def _resolve_ts_module_spelling(
             if resolved is not None:
                 return resolved
         if source == "$lib" or source.startswith("$lib/"):
-            resolved = resolve_sveltekit_alias(source, importer)
-            if resolved is not None:
-                return resolved
+            if monorepo_resolver:
+                return monorepo_resolver.resolve(source, importer)
+            return resolve_sveltekit_alias(source, importer)
         if monorepo_resolver:
             return monorepo_resolver.resolve(source, importer)
         return None
@@ -243,6 +243,10 @@ def _resolve_ts_module_spelling(
     return None
 
 
+def _resolve_ts_import(item, importer, resolver):
+    return item.get("resolved_file") or resolve_ts_module(item.get("source", ""), importer, resolver)
+
+
 def build_ts_import_graph(
     ts_raw_imports: dict,
     defs: dict,
@@ -251,6 +255,7 @@ def build_ts_import_graph(
     credit_references: bool = True,
     reexport_context=None,
     discarded_reexport_refs=None,
+    framework_reexport_reads=None,
 ):
     """Build module demand, optionally without changing symbol references.
 
@@ -276,13 +281,16 @@ def build_ts_import_graph(
                     source, importer, monorepo_resolver
                 ),
                 reexport_context,
+                framework_reexport_reads=framework_reexport_reads,
             )
             if refined is not None:
                 consumed, wildcard, importers, discarded = refined
                 if discarded_reexport_refs is not None:
                     discarded_reexport_refs.update(discarded)
                 return consumed, wildcard, importers
-        return _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver)
+        return _build_ts_import_graph(
+            ts_raw_imports, defs, monorepo_resolver, framework_reexport_reads
+        )
 
     if credit_references or not ts_raw_imports:
         return build()
@@ -375,8 +383,12 @@ def discover_ts_reexport_context(
     return {"files": source_files, "roots": roots}
 
 
-def _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver=None):
+def _build_ts_import_graph(
+    ts_raw_imports, defs, monorepo_resolver=None, framework_reexport_reads=None,
+):
     consumed_exports = defaultdict(set)
+    for file, names in (framework_reexport_reads or {}).items():
+        consumed_exports[file].update(names)
     wildcard_edges = defaultdict(set)
     importers_of = defaultdict(set)
     consume_all_exports: set[str] = set()
@@ -407,9 +419,7 @@ def _build_ts_import_graph(ts_raw_imports, defs, monorepo_resolver=None):
 
     for importer_file, raw_imports in ts_raw_imports.items():
         for imp in raw_imports:
-            resolved = resolve_ts_module(
-                imp["source"], str(importer_file), monorepo_resolver
-            )
+            resolved = _resolve_ts_import(imp, str(importer_file), monorepo_resolver)
             if resolved:
                 importers_of[resolved].add(str(importer_file))
                 if imp.get("consume_all_exports") or (
@@ -514,9 +524,7 @@ def _resolve_reexport_aliases(
 
     for importer_file, raw_imports in ts_raw_imports.items():
         for imp in raw_imports:
-            resolved = resolve_ts_module(
-                imp["source"], str(importer_file), monorepo_resolver
-            )
+            resolved = _resolve_ts_import(imp, str(importer_file), monorepo_resolver)
             if not resolved:
                 continue
             for name in imp["names"]:
@@ -568,9 +576,7 @@ def _resolve_namespace_reexports(
                 if str(importer_file) != reexporter:
                     continue
                 for imp in raw_imports:
-                    resolved = resolve_ts_module(
-                        imp["source"], str(importer_file), monorepo_resolver
-                    )
+                    resolved = _resolve_ts_import(imp, str(importer_file), monorepo_resolver)
                     if resolved != source_file:
                         continue
                     if "*" in imp["names"]:
@@ -616,7 +622,8 @@ def _export_read_by_loading_tool(defn) -> bool:
 
 
 def demote_unconsumed_ts_exports(
-    defs, consumed_exports, lifecycle_entry_points=None, bundle_entry_points=None
+    defs, consumed_exports, lifecycle_entry_points=None, bundle_entry_points=None,
+    *, framework_bindings=None,
 ):
     lifecycle_entry_points = {
         os.path.realpath(str(path)) for path in lifecycle_entry_points or ()
@@ -656,6 +663,10 @@ def demote_unconsumed_ts_exports(
         if os.path.realpath(str(defn.filename)) in bundle_entry_points:
             continue
         if _export_read_by_loading_tool(defn):
+            continue
+        if framework_bindings and (defn.name, defn.line) in framework_bindings.get(
+            os.path.realpath(defn.filename), ()
+        ):
             continue
 
         consumed = consumed_exports.get(str(defn.filename), set())
@@ -3296,6 +3307,7 @@ def find_dead_ts_files(
     source_read_edges=None,
     *,
     evidence_roots: bool = False,
+    framework_entry_points=(),
 ):
     exclude_root = _resolve_exclude_root(files, project_root)
     ts_files = set()
@@ -3331,6 +3343,7 @@ def find_dead_ts_files(
     entry_points.update(
         os.path.realpath(str(path)) for path in browser_entry_points or ()
     )
+    entry_points.update(framework_entry_points)
 
     def dead_files():
         dead = _dead_ts_file_set(ts_files, entry_points, norm_importers)
@@ -3370,6 +3383,7 @@ def find_dead_ts_files(
             norm_importers,
             dead_set,
         )
+        unevidenced.difference_update(framework_entry_points)
         dead_set |= unevidenced
 
     if dead_set and project_root:
@@ -3424,6 +3438,7 @@ def mark_source_data_ts_exports_consumed(
     browser_entry_points=None,
     raw_imports=None,
     monorepo_resolver=None,
+    framework_entry_points=(),
 ):
     """Source text consumers preserve exact public exports, not whole folders.
 
@@ -3464,7 +3479,7 @@ def mark_source_data_ts_exports_consumed(
         for record in imports:
             if record.get("type_only") or record.get("is_reexport"):
                 continue
-            target = resolve_ts_module(record["source"], importer, monorepo_resolver)
+            target = _resolve_ts_import(record, importer, monorepo_resolver)
             if target is None:
                 continue
             for name in record.get("names", ()):
@@ -3512,6 +3527,7 @@ def mark_source_data_ts_exports_consumed(
             workspace_inventory=workspace_inventory,
             browser_entry_points=browser_entry_points,
             source_read_edges=edges,
+            framework_entry_points=framework_entry_points,
         )
     }
     consumed_files = {target for target, consumers in edges.items() if consumers - dead}
@@ -3645,6 +3661,7 @@ def prune_dead_ts_import_consumers(
     browser_entry_points=None,
     monorepo_resolver=None,
     analysis_errors=None,
+    framework_entry_points=(),
 ):
     """Remove demand from closed ESM consumers outside the selected program.
 
@@ -3683,6 +3700,7 @@ def prune_dead_ts_import_consumers(
             project_root=project_root,
             workspace_inventory=workspace_inventory,
             browser_entry_points=browser_entry_points,
+            framework_entry_points=framework_entry_points,
         )
     }
     if not candidates or len(candidates) > 512:
@@ -3718,7 +3736,7 @@ def prune_dead_ts_import_consumers(
     for importer, imports in imports_by_file.items():
         for item in imports:
             specifier = item.get("source", "")
-            if resolve_ts_module(specifier, importer, monorepo_resolver) is None:
+            if _resolve_ts_import(item, importer, monorepo_resolver) is None:
                 tail = specifier.split("?", 1)[0].rsplit("/", 1)[-1].lstrip("#")
                 unresolved_names.add(Path(tail).stem)
 
@@ -3757,9 +3775,7 @@ def prune_dead_ts_import_consumers(
             continue
         if any(
             (
-                resolved := resolve_ts_module(
-                    item.get("source", ""), path, monorepo_resolver
-                )
+                resolved := _resolve_ts_import(item, path, monorepo_resolver)
             )
             is None
             or os.path.realpath(resolved) not in analyzed

@@ -553,7 +553,8 @@ def plugin_entry(path: str | os.PathLike[str]) -> PluginEntry | None:
     if absolute.endswith(_DECLARATION_SUFFIXES):
         return None
     matches: list[tuple[str, str, frozenset[str]]] = []
-    for package_root in _enclosing_package_roots(absolute):
+    package_roots = _enclosing_package_roots(absolute)
+    for package_root in package_roots:
         relative = _relative(absolute, package_root)
         if relative is None:
             continue
@@ -575,6 +576,18 @@ def plugin_entry(path: str | os.PathLike[str]) -> PluginEntry | None:
                     kind = "abstain"
             if kind is None:
                 continue
+            if plugin.name == "sveltekit" and kind in {"production", "entry"}:
+                from skylos.deadcode.sveltekit import supersedes_default_entry
+
+                manifest = _package_data(package_root) or {}
+                if package_root != package_roots[0] or not any(
+                    isinstance(manifest.get(field), dict)
+                    and "@sveltejs/kit" in manifest[field]
+                    for field in _DEPENDENCY_FIELDS
+                ):
+                    continue
+                if supersedes_default_entry(package_root, relative):
+                    continue
             # An abstained file may be an entry whose exports the tool reads.
             exports = ALL_EXPORTS if kind == "abstain" else plugin.exports_for(relative, kind)
             if kind == "config":

@@ -171,6 +171,7 @@ def find_unused_ts_reexports(
     exclude_folders=None,
     browser_entry_points=(),
     analysis_errors=(),
+    framework_reexport_reads=None,
 ):
     surface = build_ts_export_surface(
         files,
@@ -181,6 +182,7 @@ def find_unused_ts_reexports(
         exclude_folders=exclude_folders,
         browser_entry_points=browser_entry_points,
         analysis_errors=analysis_errors,
+        framework_reexport_reads=framework_reexport_reads,
     )
     return reexport_findings(surface) if surface is not None else []
 
@@ -195,6 +197,7 @@ def build_ts_export_surface(
     exclude_folders=None,
     browser_entry_points=(),
     analysis_errors=(),
+    framework_reexport_reads=None,
 ):
     """Return the project's :class:`ExportSurface`, or ``None`` to abstain."""
     if not project_root or not raw_imports:
@@ -209,6 +212,7 @@ def build_ts_export_surface(
             exclude_folders=exclude_folders,
             browser_entry_points=browser_entry_points,
             analysis_errors=analysis_errors,
+            framework_reexport_reads=framework_reexport_reads,
         )
     except (_Declined, OSError, RecursionError, UnicodeError, ValueError):
         return None
@@ -253,6 +257,7 @@ def _build_surface(
     exclude_folders,
     browser_entry_points,
     analysis_errors,
+    framework_reexport_reads,
 ):
     exclude_root = _resolve_exclude_root(files, project_root)
     analysed = _analysed_ts_files(files, exclude_folders, exclude_root)
@@ -264,8 +269,29 @@ def _build_surface(
         return None
     consumers = _module_consumers(exclude_root, exclude_folders)
 
+    imports_by_file = {
+        os.path.realpath(str(path)): items for path, items in raw_imports.items()
+    }
+    exact_targets = {
+        (importer, item["source"]): item["resolved_file"]
+        for importer, items in imports_by_file.items()
+        for item in items
+        if item.get("resolved_file") and not item.get("component_file")
+    }
+    component_targets = defaultdict(set)
+    for items in imports_by_file.values():
+        for item in items:
+            component = item.get("component_file")
+            source = item.get("component_source")
+            if component and source:
+                identity = (os.path.realpath(component), source, item.get("component_line"))
+                target = item.get("resolved_file")
+                component_targets[identity].add(os.path.realpath(target) if target else None)
+
     def resolve(source, importer):
-        resolved = resolve_ts_module(source, importer, resolver)
+        resolved = exact_targets.get((importer, source)) or resolve_ts_module(
+            source, importer, resolver
+        )
         if resolved is None:
             return None
         return os.path.realpath(resolved)
@@ -279,11 +305,12 @@ def _build_surface(
             unresolved_tails.update(_specifier_tails(source))
 
     unresolved_tails = set()
-    demand_seeds = []
+    demand_seeds = [
+        (file, (name,))
+        for file, names in (framework_reexport_reads or {}).items()
+        for name in names
+    ]
     importers = defaultdict(set)
-    imports_by_file = {
-        os.path.realpath(str(path)): items for path, items in raw_imports.items()
-    }
     for importer in sorted(set(imports_by_file) | set(modules)):
         if importer.lower().endswith(_CONSUMER_SUFFIXES):
             # Read below from the consumer's own text.
@@ -311,7 +338,8 @@ def _build_surface(
         for source, item in sources:
             if not source:
                 continue
-            target = resolve(source, importer)
+            exact_target = item.get("resolved_file") if item is not None else None
+            target = os.path.realpath(exact_target) if exact_target else resolve(source, importer)
             built = None
             if target is None:
                 built = _built_output_source(source, importer)
@@ -329,21 +357,26 @@ def _build_surface(
                 )
     entry_scripts = set()
 
-    def request_from_consumer(consumer, source, paths):
-        target = resolve(source, consumer)
-        built = _built_output_source(source, consumer) if target is None else None
-        if target is None and built is None:
-            note_unresolved(source)
-            return
-        target = target or built
-        importers[target].add(consumer)
-        demand_seeds.extend((target, path) for path in paths)
+    def request_from_consumer(consumer, source, paths, exact=()):
+        # The same component can be loaded by several hosts. Keep their
+        # proved targets, and retain ordinary resolution for non-exact traces.
+        targets = {target for target in exact if target is not None}
+        if not exact or None in exact:
+            target = resolve(source, consumer) or _built_output_source(source, consumer)
+            if target is None:
+                note_unresolved(source)
+            else:
+                targets.add(target)
+        for target in sorted(targets):
+            importers[target].add(consumer)
+            demand_seeds.extend((target, path) for path in paths)
 
     for consumer_path, consumer in sorted(consumers.consumers.items()):
         for item in consumer.imports:
             # A consumer's import and re-export both request their names.
-            paths = _requested_paths(item)
-            request_from_consumer(consumer_path, item.get("source", ""), paths)
+            source = item.get("source", "")
+            exact = component_targets.get((consumer_path, source, item.get("line")), ())
+            request_from_consumer(consumer_path, source, _requested_paths(item), exact)
         for source in sorted(consumer.held):
             request_from_consumer(consumer_path, source, [(_ALL,)])
         for value in sorted(consumer.entries):
