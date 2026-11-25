@@ -618,13 +618,6 @@ class MonorepoResolver:
             if result:
                 return result
 
-        if source == "$lib" or source.startswith("$lib/"):
-            from .framework_aliases import resolve_sveltekit_alias
-
-            result = resolve_sveltekit_alias(source, importer)
-            if result:
-                return result
-
         if source.startswith("#"):
             result = _resolve_package_imports(self.project_root, importer, source)
             if result:
@@ -640,7 +633,16 @@ class MonorepoResolver:
             if result:
                 return result
 
-        return self._resolve_via_packages(source)
+        result = self._resolve_via_packages(source)
+        if result is not None:
+            return result
+        if (
+            source == "$lib" or source.startswith("$lib/")
+        ) and not self.claims_local_source(source, importer):
+            from .framework_aliases import resolve_sveltekit_alias
+
+            return resolve_sveltekit_alias(source, importer)
+        return None
 
     def _resolve_via_tsconfig(
         self, source: str, base_url: str, tsconfig_paths: dict[str, list[str]]

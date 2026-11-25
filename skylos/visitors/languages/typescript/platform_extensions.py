@@ -73,6 +73,8 @@ def expand_platform_imports(raw_imports: dict, resolve) -> dict:
             continue
         extra = []
         for item in imports:
+            if item.get("resolved_file"):
+                continue
             source = item.get("source")
             if not isinstance(source, str) or not source:
                 continue

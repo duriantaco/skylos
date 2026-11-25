@@ -503,6 +503,48 @@ def test_runtime_import_cycle_is_reported_once_per_component(tmp_path):
     assert finding["line"] == 1
 
 
+@pytest.mark.parametrize(
+    ("specifier", "cyclic_suffix", "expected"),
+    [
+        ("$lib/runtime.js", "js", [["src/lib/runtime.js", "src/routes/+page.js"]]),
+        ("../lib/runtime.js", "ts", []),
+    ],
+)
+def test_sveltekit_cycles_follow_the_proved_runtime_file(
+    tmp_path, specifier, cyclic_suffix, expected
+):
+    providers = {suffix: "export const helper = () => 1;" for suffix in ("js", "ts")}
+    providers[cyclic_suffix] = (
+        "import { load } from '../routes/+page.js';\n"
+        "export const helper = () => typeof load;\n"
+    )
+    result = _scan(
+        tmp_path,
+        {
+            "package.json": json.dumps(
+                {
+                    "name": "app",
+                    "private": True,
+                    "type": "module",
+                    "devDependencies": {"@sveltejs/kit": "^2.55.0"},
+                }
+            ),
+            "svelte.config.js": "export default { kit: {} };\n",
+            "vite.config.js": (
+                "import { sveltekit } from '@sveltejs/kit/vite';\n"
+                "export default { plugins: [sveltekit()] };\n"
+            ),
+            "src/routes/+page.js": (
+                f"import {{ helper }} from '{specifier}';\n"
+                "export const load = () => ({ value: typeof helper });\n"
+            ),
+            **{f"src/lib/runtime.{suffix}": text for suffix, text in providers.items()},
+        },
+        quality=False,
+    )
+    assert _cycles(result) == expected
+
+
 def test_reexport_require_and_component_cycles_are_reported(tmp_path):
     result = _scan(
         tmp_path,

@@ -12,12 +12,14 @@ specifier.
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 
-from .glob_patterns import expand_braces
-from .resolve import _SOURCE_FILE_SUFFIXES, _read_json_file
+from .resolve import _read_json_file
 
-_DEPENDENCY_FIELDS = ("dependencies", "devDependencies", "peerDependencies")
+_DEPENDENCY_FIELDS = ("dependencies", "devDependencies")
+_IMPLICIT_LIB_VERSIONS = re.compile(r"[~^]?[12](?:\.(?:\d+|[xX*])){0,2}")
+_VITE_CONFIG_OPTION = re.compile(r"\s(?:--config|-c)(?:\s|=)")
 
 
 def _sveltekit_row():
@@ -28,24 +30,35 @@ def _sveltekit_row():
 
 @lru_cache(maxsize=4096)
 def sveltekit_root(directory: str) -> str | None:
-    """The SvelteKit project holding ``directory`` (first enclosing
-    ``package.json`` that declares an enabler or has a Svelte config)."""
+    """The enclosing package when it declares a Kit version with implicit lib."""
     row = _sveltekit_row()
     if row is None:
         return None
-    config_names = [
-        name for pattern in row.enable_files for name in expand_braces(pattern)
-    ]
     current = os.path.abspath(directory)
     while True:
         manifest = os.path.join(current, "package.json")
-        if os.path.isfile(manifest):
+        if os.path.lexists(manifest):
+            if os.path.islink(manifest) or not os.path.isfile(manifest):
+                return None
             data = _read_json_file(manifest)
-            if any(
-                isinstance(data.get(field), dict)
-                and any(name in data[field] for name in row.enabler_names)
+            scripts = data.get("scripts")
+            if isinstance(scripts, dict) and any(
+                isinstance(command, str)
+                and "vite" in command.split()
+                and _VITE_CONFIG_OPTION.search(command)
+                for command in scripts.values()
+            ):
+                return None
+            versions = [
+                data[field][name]
                 for field in _DEPENDENCY_FIELDS
-            ) or any(os.path.isfile(os.path.join(current, name)) for name in config_names):
+                if isinstance(data.get(field), dict)
+                for name in row.enabler_names & data[field].keys()
+            ]
+            if versions and all(
+                isinstance(version, str) and _IMPLICIT_LIB_VERSIONS.fullmatch(version)
+                for version in versions
+            ):
                 return current
             return None
         parent = os.path.dirname(current)
@@ -55,6 +68,10 @@ def sveltekit_root(directory: str) -> str | None:
 
 
 def resolve_sveltekit_alias(source: str, importer: str) -> str | None:
+    """Resolve legacy aliases when a separate config-bound resolver cannot."""
+    from skylos.deadcode.sveltekit import supersedes_default_library
+    from skylos.deadcode.sveltekit_aliases import resolve_default_sveltekit_library
+
     row = _sveltekit_row()
     aliases = (row.skylos.get("aliases") or {}) if row is not None else {}
     for alias, target in aliases.items():
@@ -63,12 +80,9 @@ def resolve_sveltekit_alias(source: str, importer: str) -> str | None:
         root = sveltekit_root(os.path.dirname(os.path.abspath(importer)))
         if root is None:
             return None
-        relative = source[len(alias) + 1 :] if source != alias else ""
-        if ".." in relative.split("/"):
+        if supersedes_default_library(root):
             return None
-        base = os.path.normpath(os.path.join(root, target, relative))
-        for candidate in (base, *(base + suffix for suffix in _SOURCE_FILE_SUFFIXES)):
-            if os.path.isfile(candidate):
-                return candidate
-        return None
+        return resolve_default_sveltekit_library(
+            source, importer, root, os.path.join(root, target)
+        )
     return None
