@@ -7,7 +7,6 @@ Use this reference when running Skylos or interpreting CLI output.
 ```bash
 pip install -e .
 pip install -e ".[llm]"
-pip install -e ".[lint]"
 pip install -e ".[all]"
 skylos --version
 skylos doctor
@@ -143,8 +142,7 @@ filters every scan output format; analysis errors remain visible.
 - `skylos cicd init`: generate CI workflow.
 - `skylos baseline .`: save current findings baseline.
 - `skylos clean`: interactively remove or comment dead code.
-- `skylos lint [path ...] [Ruff options]`: run optional Ruff Python linting;
-  install with `skylos[lint]`. Arguments are forwarded to `ruff check`, with
-  `.` used when no arguments are supplied.
+- `skylos lint [path]`: check import cycles and configured layers in Python,
+  TypeScript, and JavaScript, plus sibling-package cycles in Python.
 - `skylos cache stats|clear`: manage cache data.
 - `skylos doctor`: installation health check.

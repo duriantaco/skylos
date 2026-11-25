@@ -265,7 +265,7 @@ pip install "skylos[all]"       # 全部可选扩展
 docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . -a
 ```
 
-其他扩展（`lint`、`verdict`、`dart`）、按 Python 版本区分的镜像标签和源码安装：[安装](https://docs.skylos.dev/installation)。
+其他扩展（`verdict`、`dart`）、按 Python 版本区分的镜像标签和源码安装：[安装](https://docs.skylos.dev/installation)。
 
 ## 哪些数据会离开你的机器
 

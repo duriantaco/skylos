@@ -36,7 +36,7 @@ Rule IDs use a stable public prefix:
 | Core scan | `skylos .`; dead-code focused scan. |
 | Full audit | `skylos . -a`; enables security, secrets, dependency, quality, and AI-defect checks in addition to dead code. |
 | Generated files | Django migrations, `static/**/lib/**`, `*.min.js`, `*.min.css` and JS/CSS files that open with a vendored-library licence banner. Skipped by default with a one-line count; migrations are still parsed for references and keep security and secret findings. Scan them with `--include-generated` or `[tool.skylos] include_generated = true`. |
-| Ruff lint integration | `skylos lint`; optional Python-only delegation to `ruff check` with native Ruff configuration, output, fixes, and exit codes. Install with `skylos[lint]`; it is not part of normal Skylos scans. |
+| Architecture linting | `skylos lint` checks module import cycles and configured import layers in Python, TypeScript, and JavaScript, plus sibling-package cycles in Python. |
 | Dead code | Unused functions, classes, imports, variables, parameters, files, unnecessary exports, and unreachable code. |
 | Security / danger | Potentially exploitable code paths such as injection, SSRF, path traversal, weak crypto, unsafe deserialization, and CI/CD supply-chain risk. |
 | Secrets | Hardcoded credentials, tokens, API keys, and client-side exposure of server-only values. |
