@@ -435,12 +435,14 @@ def _scan_typescript_like_file(
     *,
     enable_quality_rules: bool,
     enable_danger_rules: bool,
+    project_root=None,
 ):
     return scan_typescript_file(
         file,
         cfg,
         enable_quality_rules=enable_quality_rules,
         enable_danger_rules=enable_danger_rules,
+        project_root=project_root,
         _include_analysis_metadata=True,
     )
 
@@ -689,6 +691,8 @@ def scan_non_python_file(
                 if scanner is _scan_go_file and go_scan_scope is not None
                 else {}
             )
+            if scanner is _scan_typescript_like_file:
+                scope_options["project_root"] = project_root
             out = scanner(
                 file,
                 cfg,

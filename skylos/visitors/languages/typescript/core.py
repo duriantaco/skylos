@@ -484,9 +484,12 @@ def parse_typescript_source(
 
 
 class TypeScriptCore:
-    def __init__(self, file_path: str, source_bytes: bytes) -> None:
+    def __init__(
+        self, file_path: str, source_bytes: bytes, *, project_root=None
+    ) -> None:
         self.file_path: str = file_path
         self.source: bytes = source_bytes
+        self._project_root = project_root
         self.defs: list[Definition] = []
         self.refs: list[tuple[str, str]] = []
         self.imports: list[dict[str, str | int]] = []
@@ -1957,21 +1960,102 @@ class TypeScriptCore:
             return [relative]
         return ["./" + relative]
 
-    def _glob_import_sources(self, node) -> list[str]:
-        matches: list[str] = []
-        for pattern in self._string_sources_from_node(node):
-            if not pattern:
+    def _has_bounded_vite_patterns(
+        self, node, patterns: list[str], options, *, has_root_pattern: bool
+    ) -> bool:
+        literals = node.named_children if node.type == "array" else [node]
+        literal_nodes = [child for child in literals if child.type != "comment"]
+        if len(literal_nodes) != len(patterns) or any(
+            child.type != "string" for child in literal_nodes
+        ):
+            return False
+        for pattern in patterns:
+            relative = pattern.removeprefix("!")
+            prefix_length = 2 if relative.startswith("./") else 1
+            if (
+                not relative.startswith(("./", "/"))
+                or any(
+                    part in {"", ".", ".."}
+                    for part in relative[prefix_length:].split("/")
+                )
+                or re.search(r"[\\{}\[\]()+!?]", relative)
+            ):
+                return False
+        if options is None:
+            return True
+        if options.type != "object":
+            return False
+        option_names = {"eager"} if has_root_pattern else {"eager", "import", "query"}
+        for child in options.named_children:
+            if child.type == "comment":
                 continue
-            base_dir = os.path.dirname(self.file_path)
-            for matched in safe_glob_paths(
-                base_dir,
+            key = child.child_by_field_name("key") if child.type == "pair" else None
+            if key is None or self._get_text(key).strip("'\"") not in option_names:
+                return False
+        return True
+
+    def _glob_import_sources(self, node, options) -> list[str]:
+        patterns = self._string_sources_from_node(node)
+        positive_patterns = [
+            pattern for pattern in patterns if not pattern.startswith("!")
+        ]
+        negative_patterns = [
+            pattern[1:] for pattern in patterns if pattern.startswith("!")
+        ]
+        base_dir = os.path.dirname(self.file_path)
+        has_root_pattern = any(
+            pattern.removeprefix("!").startswith("/") for pattern in patterns
+        )
+        bounded = (bool(negative_patterns) or has_root_pattern) and (
+            self._has_bounded_vite_patterns(
+                node, patterns, options, has_root_pattern=has_root_pattern
+            )
+        )
+        vite_root = None
+        if bounded and has_root_pattern and self._project_root is not None:
+            from .vite_globs import vite_root_for_script
+
+            vite_root = vite_root_for_script(
+                Path(self.file_path).resolve(), Path(self._project_root).resolve()
+            )
+        use_exclusions = (
+            bounded
+            and bool(negative_patterns)
+            and (not has_root_pattern or vite_root is not None)
+        )
+
+        def matches(pattern, *, lexical):
+            directory = base_dir
+            if vite_root is not None and pattern.startswith("/"):
+                directory = str(vite_root)
+                pattern = "." + pattern
+            return safe_glob_paths(
+                directory,
                 pattern,
                 allowed_suffixes=_RAW_IMPORT_FILE_EXTENSIONS,
-            ):
-                matches.append(
-                    self._relative_source_for_match(os.path.realpath(matched))
-                )
-        return matches
+                preserve_lexical_paths=lexical,
+            )
+
+        excluded = set()
+        if use_exclusions:
+            excluded = {
+                match
+                for pattern in negative_patterns
+                for match in matches(pattern, lexical=True)
+            }
+        real_matches = (
+            os.path.realpath(match)
+            for pattern in positive_patterns
+            for match in matches(pattern, lexical=use_exclusions)
+            if match not in excluded
+        )
+        # Vite does not import the module containing the glob itself.
+        importer = os.path.realpath(self.file_path) if vite_root is not None else None
+        return [
+            self._relative_source_for_match(match)
+            for match in real_matches
+            if match != importer
+        ]
 
     def _scan_dynamic_raw_imports(self) -> None:
         if not self.root_node:
@@ -2086,7 +2170,10 @@ class TypeScriptCore:
                 continue
 
             if property_name in _DYNAMIC_GLOB_METHODS:
-                for source_path in self._glob_import_sources(first_arg):
+                options = first_arg.next_named_sibling
+                while options is not None and options.type == "comment":
+                    options = options.next_named_sibling
+                for source_path in self._glob_import_sources(first_arg, options):
                     self._append_raw_import(source_path, line, consume_all_exports=True)
 
     def _build_call_graph(self) -> None:

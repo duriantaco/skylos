@@ -84,9 +84,19 @@ jobs:
           uv pip install --python .venv/bin/python -e "${{ matrix.install_target }}"
           uv pip install --python .venv/bin/python pytest pytest-cov pytest-xdist
 
+      # Keep the wall-clock benchmark on an idle runner, with its normal budget.
+      - name: Run timed dead-code benchmark
+        if: matrix.shard == 1
+        run: >-
+          .venv/bin/python -m pytest -q
+          test/test_dead_code_benchmark.py::test_checked_in_dead_code_benchmark_passes
+          --cov=skylos --cov-report=
+
       - name: Run tests with coverage
         run: |
-          .venv/bin/python -m pytest -q -n auto --dist loadfile --cov=skylos --cov-report=term-missing --cov-report=xml $(.venv/bin/python scripts/ci/test_shard.py ${{ matrix.shard }}/4)
+          .venv/bin/python -m pytest -q -n auto --dist loadfile --cov=skylos --cov-append --cov-report=term-missing --cov-report=xml \
+            --deselect=test/test_dead_code_benchmark.py::test_checked_in_dead_code_benchmark_passes \
+            $(.venv/bin/python scripts/ci/test_shard.py ${{ matrix.shard }}/4)
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe

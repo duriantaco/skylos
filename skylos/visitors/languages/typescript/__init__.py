@@ -179,6 +179,7 @@ def scan_typescript_file(
     *,
     enable_quality_rules: bool = True,
     enable_danger_rules: bool = True,
+    project_root=None,
     _include_analysis_metadata: bool = False,
 ) -> tuple:
     if config is None:
@@ -198,7 +199,7 @@ def scan_typescript_file(
     lang_overrides: dict = config.get("languages", {}).get("typescript", {})
     complexity_limit = lang_overrides.get("complexity", complexity_limit)
 
-    core = TypeScriptCore(file_path, source)
+    core = TypeScriptCore(file_path, source, project_root=project_root)
     core.scan()
 
     fw = TSFrameworkVisitor()

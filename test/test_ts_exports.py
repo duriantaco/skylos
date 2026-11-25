@@ -4,20 +4,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from skylos.visitors.base import Definition
 from skylos.visitors.languages.typescript import scan_typescript_file
-from skylos.visitors.languages.typescript.workspace import (
-    discover_workspace_inventory,
-)
 from skylos.visitors.languages.typescript.analysis import (
-    build_ts_import_graph,
-    demote_unconsumed_ts_exports,
-    find_unused_ts_exports,
-    find_dead_ts_files,
-    mark_package_api_ts_exports_consumed,
-    _is_nextjs_convention_file,
     _NEXTJS_CONVENTION_EXPORTS,
     _discover_vitest_config_entries,
+    _is_nextjs_convention_file,
+    build_ts_import_graph,
+    demote_unconsumed_ts_exports,
+    find_dead_ts_files,
+    find_unused_ts_exports,
+    mark_package_api_ts_exports_consumed,
+)
+from skylos.visitors.languages.typescript.workspace import (
+    discover_workspace_inventory,
 )
 
 
@@ -1275,6 +1277,115 @@ export default defineConfig({
         )
 
         assert dead_files == []
+
+    @pytest.mark.parametrize(
+        "patterns",
+        [
+            "'./routes/*.ts', '!./routes/ignored.ts'",
+            "'!./routes/ignored.ts', './routes/*.ts'",
+            "'./routes/*.ts', '!./routes/ignored*.ts'",
+        ],
+    )
+    def test_import_meta_glob_subtracts_negative_patterns(self, tmp_path, patterns):
+        entry = tmp_path / "main.ts"
+        chosen = tmp_path / "routes" / "chosen.ts"
+        ignored = tmp_path / "routes" / "ignored.ts"
+        chosen.parent.mkdir()
+        entry.write_text(
+            f"const routes = import.meta.glob([{patterns}], {{ eager: true }});",
+            encoding="utf-8",
+        )
+        chosen.write_text("export const chosen = true;", encoding="utf-8")
+        ignored.write_text("export const ignored = true;", encoding="utf-8")
+
+        raw_imports = scan_typescript_file(str(entry))[12]
+        assert [edge["source"] for edge in raw_imports] == ["./routes/chosen.ts"]
+
+    @pytest.mark.parametrize(
+        "patterns, options",
+        [
+            ("'./routes/*.ts', '!./routes/ignored.ts', otherPatterns", ""),
+            ("'./routes/*.ts', '!./routes/ignored.ts'", ", { base: './other' }"),
+            ("'./routes/*.ts', '!./routes/[i]gnored.ts'", ""),
+        ],
+    )
+    def test_import_meta_glob_keeps_matches_if_exclusion_is_uncertain(
+        self, tmp_path, patterns, options
+    ):
+        entry = tmp_path / "main.ts"
+        ignored = tmp_path / "routes" / "ignored.ts"
+        ignored.parent.mkdir()
+        entry.write_text(
+            f"const routes = import.meta.glob([{patterns}]{options});",
+            encoding="utf-8",
+        )
+        ignored.write_text("export const route = true;", encoding="utf-8")
+
+        raw_imports = scan_typescript_file(str(entry))[12]
+        assert [edge["source"] for edge in raw_imports] == ["./routes/ignored.ts"]
+
+    def test_import_meta_glob_exclusion_only_removes_the_matching_symlink_spelling(
+        self, tmp_path
+    ):
+        entry = tmp_path / "main.ts"
+        target = tmp_path / "routes" / "target.ts"
+        alias = tmp_path / "routes" / "alias.ts"
+        target.parent.mkdir()
+        target.write_text("export const route = true;", encoding="utf-8")
+        try:
+            alias.symlink_to(target)
+        except OSError:
+            pytest.skip("symlink creation unavailable")
+        entry.write_text(
+            "const routes = import.meta.glob(['./routes/*.ts', '!./routes/alias.ts']);",
+            encoding="utf-8",
+        )
+
+        raw_imports = scan_typescript_file(str(entry))[12]
+        assert [edge["source"] for edge in raw_imports] == ["./routes/target.ts"]
+
+    def test_import_meta_glob_uses_the_literal_vite_project_root(self, tmp_path):
+        app = tmp_path / "web"
+        entry = app / "src" / "main.ts"
+        chosen = app / "routes" / "chosen.ts"
+        ignored = app / "routes" / "ignored.ts"
+        outside = tmp_path / "routes" / "other.ts"
+        for file in (entry, chosen, outside):
+            file.parent.mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"dev":"vite web"}}', encoding="utf-8"
+        )
+        (app / "index.html").write_text(
+            '<script type="module" src="/src/main.ts"></script>', encoding="utf-8"
+        )
+        entry.write_text(
+            "import.meta.glob(['/src/*.ts', '/routes/*.ts', '!/routes/ignored.ts']);",
+            encoding="utf-8",
+        )
+        for file in (chosen, ignored, outside):
+            file.write_text("export const route = true;", encoding="utf-8")
+
+        raw_imports = scan_typescript_file(str(entry), project_root=tmp_path)[12]
+        assert [edge["source"] for edge in raw_imports] == ["../routes/chosen.ts"]
+
+    @pytest.mark.parametrize("command", ["serve", "vite build", "vite web"])
+    def test_import_meta_glob_declines_unproven_vite_roots(self, tmp_path, command):
+        app = tmp_path / "build"
+        entry = app / "src" / "main.ts"
+        route = app / "routes" / "route.ts"
+        entry.parent.mkdir(parents=True)
+        route.parent.mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            f'{{"scripts":{{"dev":"{command}"}}}}', encoding="utf-8"
+        )
+        (app / "index.html").write_text(
+            '<script type="module" src="/src/main.ts"></script>', encoding="utf-8"
+        )
+        entry.write_text("import.meta.glob('/routes/*.ts');", encoding="utf-8")
+        route.write_text("export const route = true;", encoding="utf-8")
+
+        raw_imports = scan_typescript_file(str(entry), project_root=tmp_path)[12]
+        assert raw_imports == []
 
     def test_import_meta_glob_ignores_absolute_outside_file_root(self, tmp_path):
         app_file = tmp_path / "src" / "main.ts"

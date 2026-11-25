@@ -58,6 +58,7 @@ def safe_glob_paths(
     *,
     allowed_suffixes: frozenset[str] | set[str] | None = None,
     max_matches: int = MAX_TYPESCRIPT_GLOB_MATCHES,
+    preserve_lexical_paths: bool = False,
 ) -> list[str]:
     root = os.path.realpath(base_dir)
     full_pattern = _absolute_pattern(root, pattern)
@@ -76,7 +77,7 @@ def safe_glob_paths(
         if allowed_suffixes and Path(real_path).suffix.lower() not in allowed_suffixes:
             continue
 
-        matches.append(real_path)
+        matches.append(candidate if preserve_lexical_paths else real_path)
         if len(matches) >= max_matches:
             break
 
