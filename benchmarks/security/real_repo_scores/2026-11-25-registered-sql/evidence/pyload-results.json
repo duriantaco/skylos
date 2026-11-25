@@ -1,0 +1,388 @@
+{
+  "label_sha256": "13ee55884a3fb745c7eb0548e34e9eedce8b7452449c7cdd96ecc7c94c7209de",
+  "context_sha256": "0904771085f59161e5d15ccb5daf5b902015262b7b044000f8aa692f56c6a351",
+  "engine_python_sha256": {
+    "upstream-baseline": "87696181ddfc83bc0cbefe0161ca74ba7551bfff95aff2cc84a98b3aacc64a12",
+    "publish-candidate": "5276975e2026e83c7ec52de4dcaa9c4bb2138312532d873d6ab8ea03c81c25e1",
+    "workspace-baseline": "5e6cc29d36271baa76d89e5e638aa3e528e45a8f042f85b07bd6c645e7616d96",
+    "workspace-candidate": "ff6b85a36b7d9543dfd38d68e4c86be31836e2dd09be9a97095202d4c59cae89"
+  },
+  "runs": [
+    {
+      "case": "pyload-before",
+      "arm": "upstream-baseline",
+      "scope": "original",
+      "file_count": 12,
+      "analysis_errors": 0,
+      "outcome": "FN",
+      "raw_sha256": "7b9bdf86a5bf366fe6a1b4a05a55486630f60333092feef88a2a7870c7e7de5a",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-before",
+      "arm": "publish-candidate",
+      "scope": "original",
+      "file_count": 12,
+      "analysis_errors": 0,
+      "outcome": "FN",
+      "raw_sha256": "5ce51e32c59c932ea02d26e857a08267f1d224a98c7968d032dd713aabb548f9",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-before",
+      "arm": "workspace-baseline",
+      "scope": "original",
+      "file_count": 12,
+      "analysis_errors": 0,
+      "outcome": "FN",
+      "raw_sha256": "bca78b59c5ae9e86124902d78ba406fff3335b8758fdb9b5c4bf597c5c98b343",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        },
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 85,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-before",
+      "arm": "workspace-candidate",
+      "scope": "original",
+      "file_count": 12,
+      "analysis_errors": 0,
+      "outcome": "FN",
+      "raw_sha256": "80ff2711dfce58295e4c5f0b14abb0ac03beea0e1c5fbac01dfc9ebbb4c50a65",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        },
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 85,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-after",
+      "arm": "upstream-baseline",
+      "scope": "original",
+      "file_count": 12,
+      "analysis_errors": 0,
+      "outcome": "TN",
+      "raw_sha256": "0a6f0d2665482f2101786b9b45c8fdde7714ac1f5c34c7c8ddd82a14ab35752a",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-after",
+      "arm": "publish-candidate",
+      "scope": "original",
+      "file_count": 12,
+      "analysis_errors": 0,
+      "outcome": "TN",
+      "raw_sha256": "1d823d4a6d8c8eb276ce2f45c0ef59bd8d2ef000f89b4d07bde74c43c178ad9e",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-after",
+      "arm": "workspace-baseline",
+      "scope": "original",
+      "file_count": 12,
+      "analysis_errors": 0,
+      "outcome": "TN",
+      "raw_sha256": "78bdf6b4792c4e9fbda1bdefd55740bee454ffdc31333b7723cb3175a018b992",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        },
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 85,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-after",
+      "arm": "workspace-candidate",
+      "scope": "original",
+      "file_count": 12,
+      "analysis_errors": 0,
+      "outcome": "TN",
+      "raw_sha256": "3f8e135d9cf9640dd168a463e4d206ee324e939130f35669bbd13edad35dc59f",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        },
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 85,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-before",
+      "arm": "upstream-baseline",
+      "scope": "enriched",
+      "file_count": 19,
+      "analysis_errors": 0,
+      "outcome": "FN",
+      "raw_sha256": "745c5b2f16db76d876e35a7e545b2ef706fe6806f06c58ecb3c943f27fd7a727",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-before",
+      "arm": "publish-candidate",
+      "scope": "enriched",
+      "file_count": 19,
+      "analysis_errors": 0,
+      "outcome": "TP",
+      "raw_sha256": "05f4dfbd15784748ac561a21e38dd3ab1921b0f81f2dab492f876f307f87ba5b",
+      "hits": [
+        {
+          "file": "src/pyload/core/database/file_database.py",
+          "line": 271,
+          "rule": "SKY-D211",
+          "message": "Caller-supplied row values enter SQL text on a registered SQLite worker. Use separate bound values.",
+          "type": "caller_supplied"
+        }
+      ],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-before",
+      "arm": "workspace-baseline",
+      "scope": "enriched",
+      "file_count": 19,
+      "analysis_errors": 0,
+      "outcome": "FN",
+      "raw_sha256": "1153afb1eb8be87806c5a934a5622a4150ecf10f4e966044b8c1bbe345683b3f",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        },
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 85,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-before",
+      "arm": "workspace-candidate",
+      "scope": "enriched",
+      "file_count": 19,
+      "analysis_errors": 0,
+      "outcome": "TP",
+      "raw_sha256": "66311d6673ca47e9e0957443947021c926756e3179773ec27a80c3a2a3b95fde",
+      "hits": [
+        {
+          "file": "src/pyload/core/database/file_database.py",
+          "line": 271,
+          "rule": "SKY-D211",
+          "message": "Caller-supplied row values enter SQL text on a registered SQLite worker. Use separate bound values.",
+          "type": "caller_supplied"
+        }
+      ],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        },
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 85,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-after",
+      "arm": "upstream-baseline",
+      "scope": "enriched",
+      "file_count": 19,
+      "analysis_errors": 0,
+      "outcome": "TN",
+      "raw_sha256": "aa067e139c5a793372d53437e10cd3077584506b57c64cc80fd947a0be424408",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-after",
+      "arm": "publish-candidate",
+      "scope": "enriched",
+      "file_count": 19,
+      "analysis_errors": 0,
+      "outcome": "TN",
+      "raw_sha256": "3960ddf4a067a81bfe2755a39a03ae6ff44325f364367da0c267f879c833a14b",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-after",
+      "arm": "workspace-baseline",
+      "scope": "enriched",
+      "file_count": 19,
+      "analysis_errors": 0,
+      "outcome": "TN",
+      "raw_sha256": "0276e4adb769f93f753f2840c667db4ec6fab19d9ac48076c7f465441802281f",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        },
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 85,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    },
+    {
+      "case": "pyload-after",
+      "arm": "workspace-candidate",
+      "scope": "enriched",
+      "file_count": 19,
+      "analysis_errors": 0,
+      "outcome": "TN",
+      "raw_sha256": "6e5a17b190293b154fda8ce686b481d520dad4eedb7de4d2738aaa9311c2c6d4",
+      "hits": [],
+      "other_danger": [
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 29,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        },
+        {
+          "file": "src/pyload/core/managers/plugin_manager.py",
+          "line": 85,
+          "rule": "SKY-D202",
+          "message": "Use of exec()",
+          "type": null
+        }
+      ]
+    }
+  ]
+}

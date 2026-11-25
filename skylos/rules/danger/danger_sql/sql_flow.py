@@ -1571,7 +1571,9 @@ class _SQLFlowChecker(TaintVisitor):
             and proof["effects"].get("database") == "none"
         )
 
-    def _sqli_finding(self, node, severity, message, query_expr, sink, evidence=None):
+    def _sqli_finding(
+        self, node, severity, message, query_expr, sink, evidence=None, *, worker=False
+    ):
         if self.sql_source_ast_sha256 is None:
             self.sql_source_ast_sha256 = hashlib.sha256(
                 ast.dump(self.tree).encode()
@@ -1585,7 +1587,7 @@ class _SQLFlowChecker(TaintVisitor):
             "col": node.col_offset,
             "symbol": self._current_symbol(),
         }
-        if evidence is None:
+        if evidence is None and not worker:
             evidence = self._source_evidence(node, query_expr, sink)
         metadata = {
             "sql_operand": {
@@ -1603,6 +1605,10 @@ class _SQLFlowChecker(TaintVisitor):
         else:
             metadata["source_status"] = "unresolved"
             metadata["audit_only"] = True
+            if worker:
+                metadata["sql_worker_candidate"] = "required"
+            elif isinstance(node, ast.Call) and self._deferred_statement(node) is query_expr:
+                metadata["sql_worker_candidate"] = "fallback"
             finding["message"] = (
                 "Review SQL execution: the query's origin is unresolved; "
                 "attacker control has not been established."
@@ -1614,6 +1620,44 @@ class _SQLFlowChecker(TaintVisitor):
         if metadata:
             finding["metadata"] = metadata
         self.findings.append(finding)
+
+    def _deferred_statement(self, node):
+        method = self._current_function()
+        if (
+            not isinstance(node.func, ast.Attribute)
+            or node.func.attr != "execute"
+            or not isinstance(method, ast.FunctionDef)
+            or id(method) not in self.method_classes
+            or len(method.decorator_list) != 1
+            or len(node.args) not in (1, 2)
+            or node.keywords
+            or any(isinstance(arg, ast.Starred) for arg in node.args)
+        ):
+            return None
+        receiver = node.func.value
+        formals = [*method.args.posonlyargs, *method.args.args]
+        if (
+            not formals
+            or not isinstance(receiver, ast.Attribute)
+            or not isinstance(receiver.value, ast.Name)
+            or receiver.value.id != formals[0].arg
+        ):
+            return None
+        statement = node.args[0]
+        if (
+            _is_interpolated_string(statement)
+            and _has_sql_keyword(statement)
+            and not self._is_safe_query(statement)
+        ):
+            return statement
+        return None
+
+    def _check_deferred_execute(self, node):
+        if (statement := self._deferred_statement(node)) is not None:
+            self._sqli_finding(
+                node, self.SEVERITY_HIGH, "", statement,
+                "SQL passed to a deferred .execute() call", worker=True,
+            )
 
     def _is_fetch_receiver(self, node: ast.Call) -> bool:
         """A database handle for asyncpg/``databases``/peewee query methods:
@@ -2054,6 +2098,7 @@ class _SQLFlowChecker(TaintVisitor):
 
         if qual_name and qual_name.endswith(self.DBAPI_SQL_SINK_SUFFIXES):
             if not self._is_likely_db_receiver(node):
+                self._check_deferred_execute(node)
                 self.generic_visit(node)
                 return
 
@@ -2120,6 +2165,7 @@ class _SQLFlowChecker(TaintVisitor):
 
         if isinstance(node.func, ast.Attribute) and node.func.attr == "execute":
             if not self._is_likely_db_receiver(node):
+                self._check_deferred_execute(node)
                 self.generic_visit(node)
                 return
 

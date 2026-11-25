@@ -1,0 +1,456 @@
+{
+  "label_sha256": "e27f31aebc953c2567e0187829ad911536860d75cba68363214b76d86229322b",
+  "engine_sha256": {
+    "development": "87696181ddfc83bc0cbefe0161ca74ba7551bfff95aff2cc84a98b3aacc64a12",
+    "candidate": "5276975e2026e83c7ec52de4dcaa9c4bb2138312532d873d6ab8ea03c81c25e1"
+  },
+  "engine_paths": {
+    "development": "/private/tmp/skylos-worker-sql/upstream-baseline",
+    "candidate": "/private/tmp/skylos-worker-sql/publish-candidate"
+  },
+  "replay_source_sha256": "bf5cec078ef67ac157729fda5361e8e715191c9f596cf50d3d81fc8fc59b9c30",
+  "comparator_profile_sha256": "8f2a2ddffd5ef8194bf3eec10e5c5af5b388642b518f526172ddfab8faad08d5",
+  "comparator_diagnostic_configs": [
+    {
+      "rule_id": "formatted-sql-query",
+      "path": "python/lang/security/audit/formatted-sql-query.yaml",
+      "sha256": "3543d454e520952116963c7913a2c2bad9bf9192b6c8c80be91ab7529a88ff09",
+      "scope": "Matches direct Python string formatting or local formatted assignment at execute; the selected call uses a Psycopg composable built in a separate method."
+    },
+    {
+      "rule_id": "psycopg-sqli",
+      "path": "python/lang/security/audit/sqli/psycopg-sqli.yaml",
+      "sha256": "22f640c86a6e4d594b8193dd40a99830e211c4af46e526306dc261f0c1a334a0",
+      "scope": "Requires psycopg2.connect and direct string construction; the selected code uses Psycopg 3 and composed SQL fragments across methods."
+    }
+  ],
+  "versions": {
+    "bandit": "1.9.4",
+    "semgrep_core": "1.185.0"
+  },
+  "comparator_binary_plugin_sha256": {
+    "semgrep_core": "4bfb5ad15e695ea54cab9c9d507ff476815d52d891a36e3741a139cb496fe9f5",
+    "bandit_B608": "51bdc4d629fdf3436202a1d78ff5ef0fa659b1dfab96d64aa988630e30eab655"
+  },
+  "policy_counts": {
+    "development": {
+      "FN": 1,
+      "TN": 1
+    },
+    "candidate": {
+      "FN": 1,
+      "TN": 1
+    }
+  },
+  "skylos": [
+    {
+      "target": "backend-before",
+      "arm": "development",
+      "family": "sql-injection",
+      "status": "complete",
+      "labels": [
+        {
+          "file": "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+          "start": 321,
+          "end": 321,
+          "outcome": "FN",
+          "hits": [],
+          "adjacent": []
+        }
+      ],
+      "unreviewed_findings": [],
+      "off_label_adjacent_findings": [],
+      "raw_report_sha256": "c02f23ddd4ffe092a74ddf8b88d0597b5719e3bf9c9037c3fa8b39084c79486d",
+      "raw_report": "backend-before.development.json",
+      "cli_analysis_error_count": 0,
+      "analyzed_files": 10,
+      "primary_verdict": "FN",
+      "exact_hits": [],
+      "alternate_anchor_observations": [],
+      "outside_windows": [],
+      "normalized_danger_findings": [
+        [
+          "SKY-D207",
+          "lib/rucio/core/did.py",
+          99,
+          "Weak hash (MD5)"
+        ],
+        [
+          "SKY-D231",
+          "lib/rucio/web/rest/flaskapi/v1/common.py",
+          175,
+          "CORS misconfiguration: Access-Control-Allow-Origin echoes the request's Origin header without an allowlist check, so every site is allowed."
+        ]
+      ]
+    },
+    {
+      "target": "backend-before",
+      "arm": "candidate",
+      "family": "sql-injection",
+      "status": "complete",
+      "labels": [
+        {
+          "file": "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+          "start": 321,
+          "end": 321,
+          "outcome": "FN",
+          "hits": [],
+          "adjacent": []
+        }
+      ],
+      "unreviewed_findings": [],
+      "off_label_adjacent_findings": [],
+      "raw_report_sha256": "601aa4e99085a5b37dd9dfa6078567786cef88075b004c11c53cd7ab37e18b98",
+      "raw_report": "backend-before.candidate.json",
+      "cli_analysis_error_count": 0,
+      "analyzed_files": 10,
+      "primary_verdict": "FN",
+      "exact_hits": [],
+      "alternate_anchor_observations": [],
+      "outside_windows": [],
+      "normalized_danger_findings": [
+        [
+          "SKY-D207",
+          "lib/rucio/core/did.py",
+          99,
+          "Weak hash (MD5)"
+        ],
+        [
+          "SKY-D231",
+          "lib/rucio/web/rest/flaskapi/v1/common.py",
+          175,
+          "CORS misconfiguration: Access-Control-Allow-Origin echoes the request's Origin header without an allowlist check, so every site is allowed."
+        ]
+      ]
+    },
+    {
+      "target": "backend-after",
+      "arm": "development",
+      "family": "sql-injection",
+      "status": "complete",
+      "labels": [
+        {
+          "file": "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+          "start": 323,
+          "end": 323,
+          "outcome": "TN",
+          "hits": [],
+          "adjacent": []
+        }
+      ],
+      "unreviewed_findings": [],
+      "off_label_adjacent_findings": [],
+      "raw_report_sha256": "32455c6b4b501b5ce8b521882cd671d4b0ff3f025e6cc6b00fc772b168c6b400",
+      "raw_report": "backend-after.development.json",
+      "cli_analysis_error_count": 0,
+      "analyzed_files": 10,
+      "primary_verdict": "TN",
+      "exact_hits": [],
+      "alternate_anchor_observations": [],
+      "outside_windows": [],
+      "normalized_danger_findings": [
+        [
+          "SKY-D207",
+          "lib/rucio/core/did.py",
+          99,
+          "Weak hash (MD5)"
+        ],
+        [
+          "SKY-D231",
+          "lib/rucio/web/rest/flaskapi/v1/common.py",
+          175,
+          "CORS misconfiguration: Access-Control-Allow-Origin echoes the request's Origin header without an allowlist check, so every site is allowed."
+        ]
+      ]
+    },
+    {
+      "target": "backend-after",
+      "arm": "candidate",
+      "family": "sql-injection",
+      "status": "complete",
+      "labels": [
+        {
+          "file": "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+          "start": 323,
+          "end": 323,
+          "outcome": "TN",
+          "hits": [],
+          "adjacent": []
+        }
+      ],
+      "unreviewed_findings": [],
+      "off_label_adjacent_findings": [],
+      "raw_report_sha256": "48f81cea43f4dda0fd39009c75456c5044fc8da202c09a4b69d2b74349835d9b",
+      "raw_report": "backend-after.candidate.json",
+      "cli_analysis_error_count": 0,
+      "analyzed_files": 10,
+      "primary_verdict": "TN",
+      "exact_hits": [],
+      "alternate_anchor_observations": [],
+      "outside_windows": [],
+      "normalized_danger_findings": [
+        [
+          "SKY-D207",
+          "lib/rucio/core/did.py",
+          99,
+          "Weak hash (MD5)"
+        ],
+        [
+          "SKY-D231",
+          "lib/rucio/web/rest/flaskapi/v1/common.py",
+          175,
+          "CORS misconfiguration: Access-Control-Allow-Origin echoes the request's Origin header without an allowlist check, so every site is allowed."
+        ]
+      ]
+    }
+  ],
+  "normalized_deltas": {
+    "backend-before": {
+      "added": [],
+      "removed": []
+    },
+    "backend-after": {
+      "added": [],
+      "removed": []
+    }
+  },
+  "comparator_policy": "Diagnostic only. No rule in the selected profiles matches the frozen Psycopg composable mechanism, so no comparator TP, FP, FN, or TN credit.",
+  "diagnostics": [
+    {
+      "target": "backend-before",
+      "arm": "bandit",
+      "applicability": "unsupported_mechanism",
+      "reason": "B608 recognizes SQL-shaped direct formatting. The values enter separately formatted partial predicates and the execute argument is a composable object.",
+      "status": "complete",
+      "findings": [],
+      "raw": [
+        {
+          "file": "backend-before.bandit.json",
+          "sha256": "11bc6808265fdf85ca388fdfbe6f41f3172b084f3ee9de8b04eec5aa924ea7e1"
+        }
+      ],
+      "raw_directory": "diagnostic-bandit"
+    },
+    {
+      "target": "backend-before",
+      "arm": "formatted-sql-query",
+      "applicability": "unsupported_mechanism",
+      "reason": "Matches direct Python string formatting or local formatted assignment at execute; the selected call uses a Psycopg composable built in a separate method.",
+      "status": "complete",
+      "findings": [],
+      "raw": [
+        {
+          "file": "backend-before.semgrep.0.json",
+          "sha256": "ffa9652d31387b3144fdebf858f0024169aa89d1df8d7107ecbe65674e54dc2e"
+        },
+        {
+          "file": "backend-before.semgrep.1.json",
+          "sha256": "7c8cd30730dabb81cca9e4bade751c9ff038a6cd9859044333de70f366a42e14"
+        },
+        {
+          "file": "backend-before.semgrep.2.json",
+          "sha256": "a2df2bd6ce44e583a27aa1b88710638b01fb99ad549b4861ba785f7c208725b9"
+        },
+        {
+          "file": "backend-before.semgrep.3.json",
+          "sha256": "123b58108cc2b97a6089403c2e5a73eca380c7db8c81e82c3603d1b846b793f3"
+        },
+        {
+          "file": "backend-before.semgrep.4.json",
+          "sha256": "d493571d61d85b3cb188261d0f80690b8b8883f162f0fad76f0cb7c167b83088"
+        },
+        {
+          "file": "backend-before.semgrep.5.json",
+          "sha256": "b92fd90f934e32fe8190b6a00d16fd5aa864bd83d34fa2d93ea574482b5653db"
+        },
+        {
+          "file": "backend-before.semgrep.6.json",
+          "sha256": "14a6a5e0a723f9879f9c02d6d42e85437c7f9e5e4bde67b5cd9076fee58b4508"
+        },
+        {
+          "file": "backend-before.semgrep.7.json",
+          "sha256": "decf8e66e8fa12f43ab8fb807b3244c7a7347d7a51ea70e7297b0c58d056ef95"
+        },
+        {
+          "file": "backend-before.semgrep.8.json",
+          "sha256": "012f84e23734a54d5f61190cd894b9a684a4dd49969ec624bf219b2e9230ea54"
+        },
+        {
+          "file": "backend-before.semgrep.9.json",
+          "sha256": "27cf7e500c362a1d0edb783fd0ebae6cd4beb532ad7189b3178133a9381f9766"
+        }
+      ],
+      "raw_directory": "diagnostic-formatted-sql-query"
+    },
+    {
+      "target": "backend-before",
+      "arm": "psycopg-sqli",
+      "applicability": "unsupported_mechanism",
+      "reason": "Requires psycopg2.connect and direct string construction; the selected code uses Psycopg 3 and composed SQL fragments across methods.",
+      "status": "complete",
+      "findings": [],
+      "raw": [
+        {
+          "file": "backend-before.semgrep.0.json",
+          "sha256": "dd546340be22d69334c19fb73d88980bcb37554429ec12da5f83ca7f6572a5eb"
+        },
+        {
+          "file": "backend-before.semgrep.1.json",
+          "sha256": "44a5ef4aeb8c855e416e530b7bc87dd45977a0cb5514bde1421dbc5d2ee310ad"
+        },
+        {
+          "file": "backend-before.semgrep.2.json",
+          "sha256": "e40ad01916a47d98572a5dd760f41d44c3664b9b65bb9cc578f2c7f3ba60fd80"
+        },
+        {
+          "file": "backend-before.semgrep.3.json",
+          "sha256": "f00d0258b17869db2f6ad37c842c3d4bb0646bea4295c001ccd368b7a121828c"
+        },
+        {
+          "file": "backend-before.semgrep.4.json",
+          "sha256": "01552048c4baf9cb3481a37c7b55cc52be13419cb3315f8101a146ff6327cad4"
+        },
+        {
+          "file": "backend-before.semgrep.5.json",
+          "sha256": "d696d2be0dd825a8dba67e1c4c2873291935d6177dd8c7793248cbb2c5e6ab9e"
+        },
+        {
+          "file": "backend-before.semgrep.6.json",
+          "sha256": "3d7d071b6da184f25640bbddc432fd1472fdeb381cddffa26a7dbb97617ca346"
+        },
+        {
+          "file": "backend-before.semgrep.7.json",
+          "sha256": "6bc87b660c515502cd824dc64cd7a527872092e6bbcc37a77a4f7d177dbc58e1"
+        },
+        {
+          "file": "backend-before.semgrep.8.json",
+          "sha256": "76cf7de26adbc9077f5b3ef6ff4bb3ce361d7fe33cf784492c7051a0b9647351"
+        },
+        {
+          "file": "backend-before.semgrep.9.json",
+          "sha256": "b963b13c8673a85a430233df4d6505256a87643cbbe18693dbacbd066e74746c"
+        }
+      ],
+      "raw_directory": "diagnostic-psycopg-sqli"
+    },
+    {
+      "target": "backend-after",
+      "arm": "bandit",
+      "applicability": "unsupported_mechanism",
+      "reason": "B608 recognizes SQL-shaped direct formatting. The values enter separately formatted partial predicates and the execute argument is a composable object.",
+      "status": "complete",
+      "findings": [],
+      "raw": [
+        {
+          "file": "backend-after.bandit.json",
+          "sha256": "0ebe704d4657d390139fa3b2afcd427acf82d9b65ef0d1da94cad51d157a89b2"
+        }
+      ],
+      "raw_directory": "diagnostic-bandit"
+    },
+    {
+      "target": "backend-after",
+      "arm": "formatted-sql-query",
+      "applicability": "unsupported_mechanism",
+      "reason": "Matches direct Python string formatting or local formatted assignment at execute; the selected call uses a Psycopg composable built in a separate method.",
+      "status": "complete",
+      "findings": [],
+      "raw": [
+        {
+          "file": "backend-after.semgrep.0.json",
+          "sha256": "079459bd4981600ffc8cd393573361a08637632df2141866f2f54d4286c84dfb"
+        },
+        {
+          "file": "backend-after.semgrep.1.json",
+          "sha256": "c273fb721b908fd519b4b5d435924b79777d063a9696e9a79d9c0b142f709f8c"
+        },
+        {
+          "file": "backend-after.semgrep.2.json",
+          "sha256": "e95293324b94b919401d8a8a76a4cf76fba74d01933e7118d59da74317b526a8"
+        },
+        {
+          "file": "backend-after.semgrep.3.json",
+          "sha256": "17181fd8e5ed915e15c28479ea32462c8729733f2886cc5539dde79bcdcea847"
+        },
+        {
+          "file": "backend-after.semgrep.4.json",
+          "sha256": "822f03ac5742af23709b91d50a83badfd18c6740caf565c5f24159ce77fe5bae"
+        },
+        {
+          "file": "backend-after.semgrep.5.json",
+          "sha256": "7ec7f7821078a53924122a442a63ac5cd3527611e6ab847094ab668df77b72da"
+        },
+        {
+          "file": "backend-after.semgrep.6.json",
+          "sha256": "f19ca970301e38f343bcd901f56a2dc745202557137e281f856cb9482560f3bb"
+        },
+        {
+          "file": "backend-after.semgrep.7.json",
+          "sha256": "26731dbb12ccfbe7853d270f35a89c4595d07867f826877c83016f4cee8a4d10"
+        },
+        {
+          "file": "backend-after.semgrep.8.json",
+          "sha256": "bce22b8649efd1deafe7e3cb825e69615fb2910ab0506d4f2f869b66aa392855"
+        },
+        {
+          "file": "backend-after.semgrep.9.json",
+          "sha256": "ded275f8ffa0e5342d1d95facb9d7c74ceea284666d614f0b7ea16b41a0e7243"
+        }
+      ],
+      "raw_directory": "diagnostic-formatted-sql-query"
+    },
+    {
+      "target": "backend-after",
+      "arm": "psycopg-sqli",
+      "applicability": "unsupported_mechanism",
+      "reason": "Requires psycopg2.connect and direct string construction; the selected code uses Psycopg 3 and composed SQL fragments across methods.",
+      "status": "complete",
+      "findings": [],
+      "raw": [
+        {
+          "file": "backend-after.semgrep.0.json",
+          "sha256": "faa893af8cf8c45a5a50860a2de47bf8b320e92ee159c4a7c8fcda13dd27215f"
+        },
+        {
+          "file": "backend-after.semgrep.1.json",
+          "sha256": "44d5d5a9fc26ea861e4cc2076321114f3a9c836cad4c47c5d765bf0d6fb85509"
+        },
+        {
+          "file": "backend-after.semgrep.2.json",
+          "sha256": "82b7221ca6dda108ba53ec6e9ba7be0ba785010466e305ef2ee0ed61001c4d50"
+        },
+        {
+          "file": "backend-after.semgrep.3.json",
+          "sha256": "09776f8b901aa520fc25be673084b8fdba2aab0294f21f1d120bbdf3992793f1"
+        },
+        {
+          "file": "backend-after.semgrep.4.json",
+          "sha256": "6c2b5ec745259b37a3e6846433b4e5dcb8e7edc87f4dd4f833bac687505df07f"
+        },
+        {
+          "file": "backend-after.semgrep.5.json",
+          "sha256": "c95cd7575e4ff44d70e49908ed88b246768e66ad0fe3a60b1d3f8e781f7ec892"
+        },
+        {
+          "file": "backend-after.semgrep.6.json",
+          "sha256": "42323bcb73cbc80170521b7b309fbeaa409845d5c59361916193b26737e580d9"
+        },
+        {
+          "file": "backend-after.semgrep.7.json",
+          "sha256": "31e2536126816dc9e9354b19b6f88c346cc742f6d015b58a926d3c0bce8176b6"
+        },
+        {
+          "file": "backend-after.semgrep.8.json",
+          "sha256": "b7ca39c4e98875073d72bf01e1acea39faad4e730165286bf321de0d70a6530d"
+        },
+        {
+          "file": "backend-after.semgrep.9.json",
+          "sha256": "571a4087560f4c8f350c9bb75da5b3182f088f0a54646488055775a6e695d646"
+        }
+      ],
+      "raw_directory": "diagnostic-psycopg-sqli"
+    }
+  ],
+  "capture_note": "The first four Skylos reports and the Semgrep raw captures were preserved. The original receipt build stopped on a Bandit adapter family-key mismatch. Only Bandit ran during recovery.",
+  "case_scope": "Adjacent to the new worker proof. Stream generator and configured Psycopg plugin instead of queued SQLite worker."
+}

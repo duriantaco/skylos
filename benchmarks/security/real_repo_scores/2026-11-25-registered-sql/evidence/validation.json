@@ -1,0 +1,82 @@
+{
+  "upstream_base": "00140f8b01f10b7630ad76cb3d8a4714c1878a77",
+  "publish_tree_matches_tested_snapshot": true,
+  "publish_python_tree_sha256": "5276975e2026e83c7ec52de4dcaa9c4bb2138312532d873d6ab8ea03c81c25e1",
+  "pytest": {
+    "selected_modules": 108,
+    "passed": 4447,
+    "duration_seconds": 306.87,
+    "log_sha256": "c6df002ac904084942ae0ec9a8ea04d9642332cc325e0dcee9e3aa4f82aebd51"
+  },
+  "fixture_benchmarks": {
+    "publish": [
+      {
+        "manifest": "manifest.json",
+        "sha256": "1de242ea6020a1915d3fcbaeb4e49baa3871918d2483f81f23c65cffde4038f7",
+        "passed": 277
+      },
+      {
+        "manifest": "adversarial_manifest.json",
+        "sha256": "78cd8f3cce6bdd8a9de70157b6fccdf90aa55beada16089409b2741e2a8f9122",
+        "passed": 9
+      }
+    ],
+    "workspace": [
+      {
+        "manifest": "manifest.json",
+        "sha256": "1de242ea6020a1915d3fcbaeb4e49baa3871918d2483f81f23c65cffde4038f7",
+        "passed": 277
+      },
+      {
+        "manifest": "adversarial_manifest.json",
+        "sha256": "78cd8f3cce6bdd8a9de70157b6fccdf90aa55beada16089409b2741e2a8f9122",
+        "passed": 9
+      }
+    ]
+  },
+  "wide_revisions": 87,
+  "unchanged_incomplete_publish_targets": [
+    "ts-lodash-before",
+    "ts-lodash-after"
+  ],
+  "previous_workspace_pairs": {
+    "exposed_release": {
+      "TP": 1,
+      "TN": 3,
+      "FN": 2
+    },
+    "extra_baseline": {
+      "FN": 1,
+      "TN": 1
+    },
+    "extra_release": {
+      "FN": 1,
+      "TN": 1
+    },
+    "extra_peers": {
+      "bandit": {
+        "TP": 1,
+        "FP": 1
+      },
+      "semgrep_core": {
+        "TP": 1,
+        "TN": 1
+      }
+    },
+    "receipt_sha256": "2cfdd48954a7e50fc21ea3f93d2016c14d8dbde5c1fe84068f0afaf9dadefbd1"
+  },
+  "independent_python_fixtures": {
+    "TP": 5,
+    "FN": 0,
+    "FP": 2,
+    "TN": 4
+  },
+  "langgraph_enriched": {
+    "prior_raw_sha256": "17fbaa02f7d40c6ad4e56a5b4642b5f2d2e2d765b63ca635ea46ff9b9e719bd2",
+    "fixed_raw_sha256": "cfea8cc76ba98d9667b9df6572d99b8f5416d3fe51d1216441ba43a59c93779f",
+    "historical_d211_lines": [
+      335
+    ],
+    "fixed_d211_lines": []
+  }
+}

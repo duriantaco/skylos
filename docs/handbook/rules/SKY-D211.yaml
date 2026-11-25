@@ -102,6 +102,13 @@ how_skylos_decides:
     stricter: `q` must carry data from a real outside source, not just a
     helper's parameter.
   - >-
+    A project proof can recognize a native SQLite cursor initialized by a
+    registered queue worker. It checks the source-defined registration,
+    decorator, forwarding of the callback and arguments, and the cursor
+    lifetime. Row values interpolated into SQL on that path produce a
+    HIGH finding for caller-supplied data. Valid placeholder construction
+    with values in a separate binding argument can remain quiet.
+  - >-
     The other languages have their own checks with the same idea: template
     literals in TypeScript, concatenated SQL passed to `executeQuery()`,
     `execute()` or `prepareStatement()` in Java, `fmt.Sprintf` in Go,
@@ -109,6 +116,9 @@ how_skylos_decides:
     are reported as SKY-D211.
 
 source_refs:
+  - path: skylos/rules/danger/danger_sql/registered_sql.py
+    symbol: "def registered_sql_structure"
+    note: proves source-owned registration and exact worker dispatch.
   - path: skylos/rules/danger/danger_sql/sql_flow.py
     symbol: "class _SQLFlowChecker"
     note: Python detector; `visit_Call` holds the decision order.

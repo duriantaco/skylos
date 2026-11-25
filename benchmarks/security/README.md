@@ -2,6 +2,10 @@
 
 This benchmark suite measures deterministic Skylos security-analysis behavior against labeled fixtures.
 
+The [registered SQLite worker replay](real_repo_scores/2026-11-25-registered-sql/README.md)
+records same-commit PyLoad source context, an independent blind pair, and
+security-wide regression comparisons on two pinned scanner baselines.
+
 The [7 November score log](real_repo_scores/2026-11-07.md) records the latest
 before/after corpus results and reviewed repository comparisons with Bandit and
 Semgrep, including their configuration limits and the untested Snyk comparison.

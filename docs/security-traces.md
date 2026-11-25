@@ -36,6 +36,11 @@ An exact, unambiguous call location can be traced even when its name is absent f
 
 Rules exclude a lookalike only when source proof establishes the relevant non-database or non-filesystem effect. Unknown receiver warnings, real unsafe paths, SQL interpolation and interpolated SQL with an additional parameter argument remain detectable. This feature does not lower severity or change gate policy.
 
+For a registered SQLite worker finding, check which class supplied the
+callback, which object receives it after the queue hop, and which argument
+supplies the assembled SQL text. The evidence can establish caller control
+of the rows while the application's input origin remains unresolved.
+
 The status describes the recorded explanation:
 
 | Status | Meaning |
