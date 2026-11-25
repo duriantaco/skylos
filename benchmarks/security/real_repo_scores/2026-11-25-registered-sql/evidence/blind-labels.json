@@ -1,0 +1,312 @@
+{
+  "scope": "Independent prospective real-source holdout selected after first blind SQL work. It tests request filters across a deferred stream generator and dynamically registered database backend. It uses Psycopg/PostgreSQL and synchronous execution inside the generator, a different provider and deferral carrier from the SQLite queued worker. This is the nearest independently source-proven public pair found in the search, not evidence for public exact queued-worker replication. No source or exact identity was provided to implementers, and no scanner ran before sealing.",
+  "advisory": "https://github.com/rucio/rucio/security/advisories/GHSA-6j7p-qjhg-9947",
+  "fix_commits": [
+    "https://github.com/rucio/rucio/commit/7bd5e2e304fa8a398143495eb957c9abea6e98ba",
+    "https://github.com/rucio/rucio/commit/bc4894df7efa3bdf11517e12e9c729c1867dd07e"
+  ],
+  "rules": [
+    "SKY-D211",
+    "SKY-D217"
+  ],
+  "policy": "Score the same registered external PostgreSQL metadata search mechanism at the exact execute line; report matched composition at two separately declared line ranges and outside-window findings separately. Unsupported provider or lifecycle evidence is distinct from an unavailable scan. The scope remains the same under both releases.",
+  "targets": [
+    {
+      "id": "backend-before",
+      "repo": "rucio/rucio",
+      "tag": "40.1.0",
+      "commit": "3ef402f4c3951e08ddbeb6f64a02f5548c268894",
+      "paths": [
+        "lib/rucio/core/did_meta_plugins/filter_engine.py",
+        "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+        "lib/rucio/core/did_meta_plugins/__init__.py",
+        "lib/rucio/core/did_meta_plugins/did_column_meta.py",
+        "lib/rucio/core/did.py",
+        "lib/rucio/gateway/did.py",
+        "lib/rucio/web/rest/flaskapi/v1/dids.py",
+        "lib/rucio/web/rest/flaskapi/v1/main.py",
+        "lib/rucio/web/rest/flaskapi/v1/common.py",
+        "lib/rucio/web/rest/flaskapi/authenticated_bp.py"
+      ],
+      "expected_git_blobs": {
+        "lib/rucio/core/did.py": "ccf0c111912baaf5c2bacbfa5a4ba5d315529de4",
+        "lib/rucio/core/did_meta_plugins/__init__.py": "8b129e22efeba3a3c51c98a4fbae5e5c76dd1d4f",
+        "lib/rucio/core/did_meta_plugins/did_column_meta.py": "331f9f28fb6ff1acfb6407353d5d967a74b92461",
+        "lib/rucio/core/did_meta_plugins/filter_engine.py": "8b7a07f573bceb3e17edfe223c6f87d53f8bd69b",
+        "lib/rucio/core/did_meta_plugins/postgres_meta.py": "2c3508c648718973761a10364aafbd5609260bcb",
+        "lib/rucio/gateway/did.py": "2c22bb2cd689a78af56be7874be30b80f06a386c",
+        "lib/rucio/web/rest/flaskapi/v1/common.py": "e1407425e3ad86b5f27eec3575364c1201f82df1",
+        "lib/rucio/web/rest/flaskapi/v1/dids.py": "0235050f028fcb8e91e6903e8704cc7b1e7b2e51",
+        "lib/rucio/web/rest/flaskapi/v1/main.py": "25b1cfb182096c00576cb3022468c6404bef8fd8",
+        "lib/rucio/web/rest/flaskapi/authenticated_bp.py": "35648347ab29178f4582c2174c82aabe70993de6"
+      },
+      "labels": [
+        {
+          "family": "sql-injection",
+          "file": "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+          "start": 321,
+          "end": 321,
+          "status": "positive",
+          "evidence": "The authenticated DID search parses request filters, captures them in the streamed generator, and delegates through the gateway and dynamically selected external PostgreSQL JSON metadata plugin. A filter fragment built from string values and metadata keys is wrapped with native sql.SQL and used as raw predicate syntax at cursor.execute.",
+          "assumptions": "Authenticated DID search on a Rucio deployment with the affected external PostgreSQL JSON metadata plugin configured and a valid backend. The request names a custom metadata key selected by that single plugin and yields an ordinary text filter group. Nonrecursive search only. The default metadata plugin, database credentials, trusted server configuration, and Oracle code are outside scope.",
+          "url": "https://github.com/rucio/rucio/blob/3ef402f4c3951e08ddbeb6f64a02f5548c268894/lib/rucio/core/did_meta_plugins/postgres_meta.py#L321",
+          "alternate_anchors": [
+            [
+              "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+              314,
+              318
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/filter_engine.py",
+              442,
+              449
+            ]
+          ],
+          "context": [
+            [
+              "lib/rucio/web/rest/flaskapi/v1/main.py",
+              30,
+              36
+            ],
+            [
+              "lib/rucio/web/rest/flaskapi/v1/main.py",
+              57,
+              76
+            ],
+            [
+              "lib/rucio/web/rest/flaskapi/v1/main.py",
+              89,
+              99
+            ],
+            [
+              "lib/rucio/web/rest/flaskapi/authenticated_bp.py",
+              19,
+              27
+            ],
+            [
+              "lib/rucio/web/rest/flaskapi/v1/common.py",
+              148,
+              167
+            ],
+            [
+              "lib/rucio/web/rest/flaskapi/v1/dids.py",
+              265,
+              291
+            ],
+            [
+              "lib/rucio/web/rest/flaskapi/v1/dids.py",
+              2599,
+              2603
+            ],
+            [
+              "lib/rucio/gateway/did.py",
+              34,
+              72
+            ],
+            [
+              "lib/rucio/core/did.py",
+              2298,
+              2325
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/__init__.py",
+              34,
+              63
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/__init__.py",
+              222,
+              253
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/did_column_meta.py",
+              434,
+              459
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+              69,
+              90
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+              283,
+              321
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+              344,
+              345
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/filter_engine.py",
+              408,
+              486
+            ]
+          ]
+        }
+      ],
+      "files": {
+        "lib/rucio/core/did_meta_plugins/filter_engine.py": "b4546d03503e4f50cd95f7df81f65d4c9d0b09fba4c728ac210cba5a07c08bef",
+        "lib/rucio/core/did_meta_plugins/postgres_meta.py": "e26ace62fd0b921db6dc0392b6b36c5f372ada800aba196ddd90f8e12fdce889",
+        "lib/rucio/core/did_meta_plugins/__init__.py": "2ed9e088ada20922de48c94db67bba071976997ac0136aa3493642548c5bc3f7",
+        "lib/rucio/core/did_meta_plugins/did_column_meta.py": "de08ea4f377452ef8745f14db37f80c5287f1ef1ea1880ca0a30ea065bf70989",
+        "lib/rucio/core/did.py": "9e2af84b8a3bae924ab257b29f7ba04cfcc66310cc8e84eee725d0b44c41280e",
+        "lib/rucio/gateway/did.py": "bcfc98ecfa6145287693ccf4420ebb70b2d9680805bf21a4da2cfb496487ff1f",
+        "lib/rucio/web/rest/flaskapi/v1/dids.py": "920d16f74b5a4e24e1af11314c93a6529cad0cc1329db6408f015a832fcb0823",
+        "lib/rucio/web/rest/flaskapi/v1/main.py": "fdc8628b1aae39a5dfe30802be8381a534d75531c88f8111e4cbce35d1bb478d",
+        "lib/rucio/web/rest/flaskapi/v1/common.py": "305ce05eabbc82eba147e39ad16ce1703aba40b9cd15e423552945e16c7b712e",
+        "lib/rucio/web/rest/flaskapi/authenticated_bp.py": "439c912d101fbb4f7519569e8972a129de4535d03c0e50a55d60eff39eb64d6f"
+      }
+    },
+    {
+      "id": "backend-after",
+      "repo": "rucio/rucio",
+      "tag": "40.1.1",
+      "commit": "434838676b32e56cc8582263bc815a187dd3214e",
+      "paths": [
+        "lib/rucio/core/did_meta_plugins/filter_engine.py",
+        "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+        "lib/rucio/core/did_meta_plugins/__init__.py",
+        "lib/rucio/core/did_meta_plugins/did_column_meta.py",
+        "lib/rucio/core/did.py",
+        "lib/rucio/gateway/did.py",
+        "lib/rucio/web/rest/flaskapi/v1/dids.py",
+        "lib/rucio/web/rest/flaskapi/v1/main.py",
+        "lib/rucio/web/rest/flaskapi/v1/common.py",
+        "lib/rucio/web/rest/flaskapi/authenticated_bp.py"
+      ],
+      "expected_git_blobs": {
+        "lib/rucio/core/did.py": "ccf0c111912baaf5c2bacbfa5a4ba5d315529de4",
+        "lib/rucio/core/did_meta_plugins/__init__.py": "8b129e22efeba3a3c51c98a4fbae5e5c76dd1d4f",
+        "lib/rucio/core/did_meta_plugins/did_column_meta.py": "331f9f28fb6ff1acfb6407353d5d967a74b92461",
+        "lib/rucio/core/did_meta_plugins/filter_engine.py": "88d9cb9823abf21baeafcf6c0808f5d37e346c24",
+        "lib/rucio/core/did_meta_plugins/postgres_meta.py": "5dd744163bbd6b0914bda9c5702d2f1fd6ae1290",
+        "lib/rucio/gateway/did.py": "2c22bb2cd689a78af56be7874be30b80f06a386c",
+        "lib/rucio/web/rest/flaskapi/v1/common.py": "e1407425e3ad86b5f27eec3575364c1201f82df1",
+        "lib/rucio/web/rest/flaskapi/v1/dids.py": "50aa8358cafc51b535749200c57e85db8c8a5795",
+        "lib/rucio/web/rest/flaskapi/v1/main.py": "25b1cfb182096c00576cb3022468c6404bef8fd8",
+        "lib/rucio/web/rest/flaskapi/authenticated_bp.py": "35648347ab29178f4582c2174c82aabe70993de6"
+      },
+      "labels": [
+        {
+          "family": "sql-injection",
+          "file": "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+          "start": 323,
+          "end": 323,
+          "status": "negative",
+          "evidence": "The same plugin uses psycopg composable identifiers and literals for structure, finite SQL comparison operators, and placeholders for actual filter values. Cursor.execute receives filter_args separately.",
+          "assumptions": "Authenticated DID search on a Rucio deployment with the affected external PostgreSQL JSON metadata plugin configured and a valid backend. The request names a custom metadata key selected by that single plugin and yields an ordinary text filter group. Nonrecursive search only. The default metadata plugin, database credentials, trusted server configuration, and Oracle code are outside scope.",
+          "url": "https://github.com/rucio/rucio/blob/434838676b32e56cc8582263bc815a187dd3214e/lib/rucio/core/did_meta_plugins/postgres_meta.py#L323",
+          "alternate_anchors": [
+            [
+              "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+              316,
+              320
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/filter_engine.py",
+              485,
+              494
+            ]
+          ],
+          "context": [
+            [
+              "lib/rucio/web/rest/flaskapi/v1/main.py",
+              30,
+              36
+            ],
+            [
+              "lib/rucio/web/rest/flaskapi/v1/main.py",
+              57,
+              76
+            ],
+            [
+              "lib/rucio/web/rest/flaskapi/v1/main.py",
+              89,
+              99
+            ],
+            [
+              "lib/rucio/web/rest/flaskapi/authenticated_bp.py",
+              19,
+              27
+            ],
+            [
+              "lib/rucio/web/rest/flaskapi/v1/common.py",
+              148,
+              167
+            ],
+            [
+              "lib/rucio/web/rest/flaskapi/v1/dids.py",
+              266,
+              292
+            ],
+            [
+              "lib/rucio/web/rest/flaskapi/v1/dids.py",
+              2602,
+              2606
+            ],
+            [
+              "lib/rucio/gateway/did.py",
+              34,
+              72
+            ],
+            [
+              "lib/rucio/core/did.py",
+              2298,
+              2325
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/__init__.py",
+              34,
+              63
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/__init__.py",
+              222,
+              253
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/did_column_meta.py",
+              434,
+              459
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+              69,
+              90
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+              283,
+              323
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/postgres_meta.py",
+              346,
+              347
+            ],
+            [
+              "lib/rucio/core/did_meta_plugins/filter_engine.py",
+              410,
+              494
+            ]
+          ]
+        }
+      ],
+      "files": {
+        "lib/rucio/core/did_meta_plugins/filter_engine.py": "5004da76edf61c89056f353cb1dd8d8de7c5d3541ccda640be66bfe13884c55c",
+        "lib/rucio/core/did_meta_plugins/postgres_meta.py": "b9c871a23c1fbde878de5d2cbe03905e219fb11bb7c852dd7cb054bf4ee04605",
+        "lib/rucio/core/did_meta_plugins/__init__.py": "2ed9e088ada20922de48c94db67bba071976997ac0136aa3493642548c5bc3f7",
+        "lib/rucio/core/did_meta_plugins/did_column_meta.py": "de08ea4f377452ef8745f14db37f80c5287f1ef1ea1880ca0a30ea065bf70989",
+        "lib/rucio/core/did.py": "9e2af84b8a3bae924ab257b29f7ba04cfcc66310cc8e84eee725d0b44c41280e",
+        "lib/rucio/gateway/did.py": "bcfc98ecfa6145287693ccf4420ebb70b2d9680805bf21a4da2cfb496487ff1f",
+        "lib/rucio/web/rest/flaskapi/v1/dids.py": "1dff8e86e3e7bbbab27b9b7fdae82fbb6346d160a2d51c3785a937bb0b2ccfa6",
+        "lib/rucio/web/rest/flaskapi/v1/main.py": "fdc8628b1aae39a5dfe30802be8381a534d75531c88f8111e4cbce35d1bb478d",
+        "lib/rucio/web/rest/flaskapi/v1/common.py": "305ce05eabbc82eba147e39ad16ce1703aba40b9cd15e423552945e16c7b712e",
+        "lib/rucio/web/rest/flaskapi/authenticated_bp.py": "439c912d101fbb4f7519569e8972a129de4535d03c0e50a55d60eff39eb64d6f"
+      }
+    }
+  ],
+  "frozen_at_utc": "2026-11-25T02:43:46+00:00"
+}

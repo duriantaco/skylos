@@ -508,6 +508,13 @@ counts only in a module that imports asyncpg, `databases` or peewee. A
 SQLAlchemy `text()` or pandas `read_sql` call is reported once, as D211 (no
 second D217 finding).
 
+Python D211 can also recognize native SQLite calls on a registered queue
+worker. It verifies the source-defined registration and decorator, callback
+argument forwarding, and the native cursor before following caller-supplied
+row values into SQL text. This proof supports a HIGH finding and leaves the
+application-specific input origin unresolved. Placeholder counts and bound
+values are evaluated separately.
+
 Python D211 also reports a Cypher graph query passed to `.query()`,
 `.ro_query()`, `.run()`, `.execute_query()`, `.cypher()` or `.evaluate()` when
 an f-string or `str.format` value sits inside a quoted string of the query

@@ -1,0 +1,245 @@
+{
+  "profiles_sha256": "8f2a2ddffd5ef8194bf3eec10e5c5af5b388642b518f526172ddfab8faad08d5",
+  "results": [
+    {
+      "target": "pyload-before",
+      "arm": "semgrep_core",
+      "outcome": "TP",
+      "hits": [
+        [
+          "formatted-sql-query",
+          "src/pyload/core/database/file_database.py",
+          271
+        ]
+      ],
+      "off_window": [],
+      "raw": [
+        {
+          "file": "pyload-before.semgrep.0.json",
+          "sha256": "81cf5ed3db6b9bda12f1978022b4295365eedcbbac77a6664faad7c2491277d4"
+        },
+        {
+          "file": "pyload-before.semgrep.1.json",
+          "sha256": "018d6a2779b393c8952616dd90920d8ca3462f6ff3419548847be90075bfdaf8"
+        },
+        {
+          "file": "pyload-before.semgrep.2.json",
+          "sha256": "98a901021066af445ac861c0df6ee5cbecd963fc6f4c2e0d97ca544bf5f6ddf5"
+        },
+        {
+          "file": "pyload-before.semgrep.3.json",
+          "sha256": "1399a7dda3728964a77bb3d9967f7b53505a0a26b191e4540d02197784245abc"
+        },
+        {
+          "file": "pyload-before.semgrep.4.json",
+          "sha256": "0f41f08e05e97b20c04fd7e260a9b99cb31af347a04054467a4d4a13fff78fc0"
+        },
+        {
+          "file": "pyload-before.semgrep.5.json",
+          "sha256": "1c44580c8bea0cf2154b5e4fef91edd297d29313060345f769bad20aba7b7d90"
+        },
+        {
+          "file": "pyload-before.semgrep.6.json",
+          "sha256": "7724a9784c13db49a08d5d8091f701833bee186c2a7469d5fe6d9ec9cf57d980"
+        },
+        {
+          "file": "pyload-before.semgrep.7.json",
+          "sha256": "af8dd7423aa79f43ea34472805268f39dc4370badeab337b40625cd7947099a0"
+        },
+        {
+          "file": "pyload-before.semgrep.8.json",
+          "sha256": "265dbaff3b1cc60283176e1c3f5c5bdb091fea4a6dff14a55ee72888d0d5e3e5"
+        },
+        {
+          "file": "pyload-before.semgrep.9.json",
+          "sha256": "81c9112b568dc101defe26aa8880866c6f7eb4886f8ec65abafe46b93bd73551"
+        },
+        {
+          "file": "pyload-before.semgrep.10.json",
+          "sha256": "745f2c14a81876e8eacc05220d09ead3cdf52eb4f017092a50e3fda87b8ddbd6"
+        },
+        {
+          "file": "pyload-before.semgrep.11.json",
+          "sha256": "19a71bb03d62f89bc8139ab8040f068d2fec29d8d7e8d4b948e64ef06b4ea1fe"
+        },
+        {
+          "file": "pyload-before.semgrep.12.json",
+          "sha256": "73d1940ddd8752a668e14ee9ac5b85f6c7e3e5331077a1499fe927c0e6542bca"
+        },
+        {
+          "file": "pyload-before.semgrep.13.json",
+          "sha256": "9a5c8278095e215763979c1500a4492cb355b76ce9ab6609b2211a60e048ad12"
+        },
+        {
+          "file": "pyload-before.semgrep.14.json",
+          "sha256": "16f37cebbcf55666dd0ee043e6cf4b453a13c6067fa13ef79d589c3d677676ab"
+        },
+        {
+          "file": "pyload-before.semgrep.15.json",
+          "sha256": "591a77c024e5d9adff3100da1573b66f9e75e46f35bdb10e87800baf451d3e5f"
+        },
+        {
+          "file": "pyload-before.semgrep.16.json",
+          "sha256": "7b45b61044f8d34827b0557b30cc95eabf995deab8ee2ce219999140568bb51b"
+        },
+        {
+          "file": "pyload-before.semgrep.17.json",
+          "sha256": "95436c6885d421193045c53052f9cf5c93fee446cf0601fdd24a115ecf44d598"
+        },
+        {
+          "file": "pyload-before.semgrep.18.json",
+          "sha256": "4fd44ceb87a555ecae90b4f2a566e2223afec644d901c30cec754134ebc0230f"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "target": "pyload-before",
+      "arm": "bandit",
+      "outcome": "TP",
+      "hits": [
+        [
+          "B608",
+          "src/pyload/core/database/file_database.py",
+          271
+        ]
+      ],
+      "off_window": [
+        [
+          "B608",
+          "src/pyload/core/database/file_database.py",
+          370
+        ],
+        [
+          "B608",
+          "src/pyload/core/database/file_database.py",
+          388
+        ]
+      ],
+      "raw": [
+        {
+          "file": "pyload-before.bandit.json",
+          "sha256": "73aa106ea67b1f23561779a533c32d1dd39523ac8562788c2ea2e67fb5128b94"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "target": "pyload-after",
+      "arm": "semgrep_core",
+      "outcome": "TN",
+      "hits": [],
+      "off_window": [],
+      "raw": [
+        {
+          "file": "pyload-after.semgrep.0.json",
+          "sha256": "e73e178bd63ce2e4fd8e40bf219b1d340f7e239a108b8570d07de1d6b6dfac0e"
+        },
+        {
+          "file": "pyload-after.semgrep.1.json",
+          "sha256": "22f9c07c9e974a57b398c0f38427e22ff4ee7e1814e93090e16aab1bb2e572c5"
+        },
+        {
+          "file": "pyload-after.semgrep.2.json",
+          "sha256": "a4a0530cc4668e81609dfb24e5e7caedf5a9862baa5daf651aba9cf032b4ae12"
+        },
+        {
+          "file": "pyload-after.semgrep.3.json",
+          "sha256": "c175d1ed78cfbc7be703fd3522ba37cc85dbb96b42bb8afcdb6957661f67bc6e"
+        },
+        {
+          "file": "pyload-after.semgrep.4.json",
+          "sha256": "63c56f5904188151fc1b892f46ba97a621dac6f29817460dbe93a4f44e5e5472"
+        },
+        {
+          "file": "pyload-after.semgrep.5.json",
+          "sha256": "2e3452bb22e5a1b0bd4068c06ba1d661a86859275320b449bebda2441c7bd366"
+        },
+        {
+          "file": "pyload-after.semgrep.6.json",
+          "sha256": "12f3603f4b52871a1cdfece95a79e87ce87af8e05f595fecd66097e784200aca"
+        },
+        {
+          "file": "pyload-after.semgrep.7.json",
+          "sha256": "75fde0c5eef1e4b1e4f448bfe27148f7868fcaf2348b6ad80e5baa6bb356401b"
+        },
+        {
+          "file": "pyload-after.semgrep.8.json",
+          "sha256": "c28c7a90511bb445f7d6a5ea2de1edc3939081df3a5683a4c4522de12641294e"
+        },
+        {
+          "file": "pyload-after.semgrep.9.json",
+          "sha256": "63a4797283942fe589ca45a52510d65f993f7fd7dac3a5836f91ae35cd4bee84"
+        },
+        {
+          "file": "pyload-after.semgrep.10.json",
+          "sha256": "0c30388a25d52c87a60c46eb89efeb05e8e37337684f0747bdf413b3b6ee3930"
+        },
+        {
+          "file": "pyload-after.semgrep.11.json",
+          "sha256": "b21da5fe36adb98c436d54c981b51299ce55f6430a0a369cabd587275602ef24"
+        },
+        {
+          "file": "pyload-after.semgrep.12.json",
+          "sha256": "661ac95a4539bbd8c001fba4e53400b3589b3d607035da9e8938a1b3a4de86d8"
+        },
+        {
+          "file": "pyload-after.semgrep.13.json",
+          "sha256": "be1914cbaea522b6dd2e0434ad35b1f5a325c8b8290f8d212b567fba2f8db6b1"
+        },
+        {
+          "file": "pyload-after.semgrep.14.json",
+          "sha256": "769c28c7992482861a2fa87980a18729107c8dd906253fc98cd7185aa7ce58c3"
+        },
+        {
+          "file": "pyload-after.semgrep.15.json",
+          "sha256": "0ae0a5efd7d29d728c6291681da5cb0160ab6bf0c7111f20d4054bd9747137c3"
+        },
+        {
+          "file": "pyload-after.semgrep.16.json",
+          "sha256": "885fbef4bf48936e3ae5816aa5b29b46004e47365e4e264fde9cc828b095e4e7"
+        },
+        {
+          "file": "pyload-after.semgrep.17.json",
+          "sha256": "af5a1d61fb7766fbc719cb2cda021849f1b8b9af4adf5bcccfaf1f4ab7fcd065"
+        },
+        {
+          "file": "pyload-after.semgrep.18.json",
+          "sha256": "6d7dccc4bab71a358f09264bb82ebcebc96e4ede5303a9633ff81ff5f9ec63eb"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "target": "pyload-after",
+      "arm": "bandit",
+      "outcome": "FP",
+      "hits": [
+        [
+          "B608",
+          "src/pyload/core/database/file_database.py",
+          271
+        ]
+      ],
+      "off_window": [
+        [
+          "B608",
+          "src/pyload/core/database/file_database.py",
+          370
+        ],
+        [
+          "B608",
+          "src/pyload/core/database/file_database.py",
+          388
+        ]
+      ],
+      "raw": [
+        {
+          "file": "pyload-after.bandit.json",
+          "sha256": "6c08919a40e8e86af763c4aef9e1aee9ede24a1a42d91680a113ce01935eac51"
+        }
+      ],
+      "errors": []
+    }
+  ]
+}

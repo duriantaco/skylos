@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import ast
 import hashlib
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from ..danger_fs import path_provenance as graph
 from ..project_source import project_source_snapshot
-
+from .registered_sql import registered_sql_structure
 
 UNKNOWN_REASON = (
     "SQL query sources remain unresolved; attacker control has not been "
@@ -126,6 +126,8 @@ def _record(status, finding, facts=None, *, complete=False, limits=()):
 def _incomplete(findings, reason):
     result = []
     for finding in findings:
+        if (finding.get("metadata") or {}).get("sql_worker_candidate") == "required":
+            continue
         if _candidate(finding):
             finding = {**finding, "metadata": dict(finding["metadata"])}
             finding["metadata"][_SPECS[finding["rule_id"]]["provenance"]] = _record(
@@ -133,6 +135,48 @@ def _incomplete(findings, reason):
             )
         result.append(finding)
     return result
+
+
+def _registered_worker_finding(tracer, unit, operand, finding):
+    call = unit.parents.get(id(operand))
+    if (
+        not isinstance(call, ast.Call)
+        or not call.args
+        or call.args[0] is not operand
+        or (call.lineno, call.col_offset) != (finding["line"], finding["col"])
+    ):
+        return None
+    proof = registered_sql_structure(
+        tracer, unit, unit.scope_of(operand), call, operand
+    )
+    if proof is None:
+        return None
+    parameter, path = proof
+    updated = {**finding, "metadata": dict(finding["metadata"])}
+    metadata = updated["metadata"]
+    metadata.pop("sql_worker_candidate", None)
+    metadata.pop("audit_only", None)
+    metadata.pop("receiver_resolution", None)
+    metadata["source_status"] = "caller_supplied"
+    source = f"caller-supplied rows in parameter `{parameter}`"
+    metadata["security_evidence"] = {
+        "evidence_kind": "python_sqlite_registered_worker",
+        "source": source,
+        "sources": [source],
+        "path": [
+            "registered callback preserves its worker and arguments",
+            *map(graph._strip_location, path[1:]),
+            "reaches SQL text on the worker's native SQLite cursor",
+        ],
+        "sink": "native SQLite cursor execute statement",
+        "analysis_complete": False,
+    }
+    updated["severity"] = "HIGH"
+    updated["message"] = (
+        "Caller-supplied row values enter SQL text on a registered SQLite "
+        "worker. Use separate bound values."
+    )
+    return updated
 
 
 def resolve_source_required_findings(findings, *, scan_path, project_root, suppressed):
@@ -183,7 +227,11 @@ def resolve_source_required_findings(findings, *, scan_path, project_root, suppr
             updated = {**finding, "metadata": dict(finding["metadata"])}
             metadata = updated["metadata"]
             spec = _SPECS[finding["rule_id"]]
+            worker = metadata.pop("sql_worker_candidate", None)
+            worker_required = worker == "required"
             if resolution_error is not None:
+                if worker_required:
+                    continue
                 metadata[spec["provenance"]] = _record(
                     graph.INCOMPLETE, finding, limits=[resolution_error]
                 )
@@ -216,6 +264,17 @@ def resolve_source_required_findings(findings, *, scan_path, project_root, suppr
                 if operand is None:
                     raise ValueError("SQL query expression could not be located")
                 tracer.work = 0
+                if worker:
+                    result_for_worker = _registered_worker_finding(
+                        tracer,
+                        unit,
+                        operand,
+                        updated,
+                    )
+                    if result_for_worker:
+                        result.append(result_for_worker)
+                    if result_for_worker or worker_required:
+                        continue
                 facts = tracer.trace(unit, unit.scope_of(operand), operand)
                 if facts.chains[graph.UNTRUSTED]:
                     status = graph.UNTRUSTED
@@ -261,6 +320,8 @@ def resolve_source_required_findings(findings, *, scan_path, project_root, suppr
                     updated["reason"] = spec["reason"]
                     suppressed.append(updated)
             except graph._ResolutionLimit as error:
+                if worker_required:
+                    continue
                 resolution_error = str(error)
                 metadata[spec["provenance"]] = _record(
                     graph.INCOMPLETE, finding, limits=[resolution_error]
@@ -276,6 +337,8 @@ def resolve_source_required_findings(findings, *, scan_path, project_root, suppr
                 AttributeError,
                 KeyError,
             ):
+                if worker_required:
+                    continue
                 metadata[spec["provenance"]] = _record(
                     graph.INCOMPLETE,
                     finding,

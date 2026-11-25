@@ -1,0 +1,184 @@
+{
+  "scope": "Same two PyLoad revisions and frozen labels with supplemental source for exact deferred worker binding",
+  "original_label_sha256": "13ee55884a3fb745c7eb0548e34e9eedce8b7452449c7cdd96ecc7c94c7209de",
+  "targets": [
+    {
+      "id": "pyload-before",
+      "repo": "pyload/pyload",
+      "commit": "a123accec0618798db77f9f5bc66838b741d9f58",
+      "paths": [
+        "src/pyload/core/database/file_database.py",
+        "src/pyload/core/threads/database_thread.py",
+        "src/pyload/core/utils/struct/style.py",
+        "src/pyload/core/managers/file_manager.py",
+        "src/pyload/core/managers/plugin_manager.py",
+        "src/pyload/core/managers/thread_manager.py",
+        "src/pyload/core/threads/info_thread.py",
+        "src/pyload/core/api/__init__.py",
+        "src/pyload/plugins/downloaders/DailymotionCom.py",
+        "src/pyload/webui/app/__init__.py",
+        "src/pyload/webui/app/blueprints/json_blueprint.py",
+        "src/pyload/webui/app/blueprints/__init__.py"
+      ],
+      "expected_git_blobs": {
+        "src/pyload/core/api/__init__.py": "13a79d2168aa2f5e5f4f13867c429b1f63ee7a2d",
+        "src/pyload/core/database/file_database.py": "b79790def7139cb4469be7821318666b9550ef0d",
+        "src/pyload/core/managers/file_manager.py": "3be3156b8d6eb75414f52a14498bb0befd3c388e",
+        "src/pyload/core/managers/plugin_manager.py": "f0923169195f2f20db4b134ee4dd0b7f686fc8c8",
+        "src/pyload/core/managers/thread_manager.py": "74b7858685a5f599ddec8dce2d6339556df54bf4",
+        "src/pyload/core/threads/database_thread.py": "4f73df02a02fdd7b5fe4a1435ef5b5ed0da1f75d",
+        "src/pyload/core/threads/info_thread.py": "73985063dcecd35100ddeb05771e8e30a7270d1d",
+        "src/pyload/core/utils/struct/style.py": "ee8d400504d3e5b8174f98b88f1377094af31c8c",
+        "src/pyload/plugins/downloaders/DailymotionCom.py": "85e9260adf122b9821969453bcdceb4c7cac91ef",
+        "src/pyload/webui/app/__init__.py": "0987e94e4fcbf324d3d14b443863f06a30a385cf",
+        "src/pyload/webui/app/blueprints/json_blueprint.py": "2d68a8794ab3801c7e34c81d65c2db2fc1da2785",
+        "src/pyload/webui/app/blueprints/__init__.py": "02ad0c1f3ebef7e574a660715cc08e6234904d76"
+      },
+      "labels": [
+        {
+          "file": "src/pyload/core/database/file_database.py",
+          "start": 271,
+          "end": 271,
+          "status": "positive",
+          "family": "structural-sql",
+          "scope": "Default deployed web UI with an authenticated ADD-capable user and an enabled built-in information plugin whose URL matcher retains the original URL and returns a nonempty metadata result. The source-reviewed representative plugin relies on a usable provider response. The labels are isolated to SELECT construction in the SQLite file database; no deployment prevalence or runtime outcome is asserted.",
+          "evidence": "Web form link values reach the built-in information worker and then its queued SQLite file-database call. The row URL values are joined into a query fragment and used as native SQL text.",
+          "url": "https://github.com/pyload/pyload/blob/a123accec0618798db77f9f5bc66838b741d9f58/src/pyload/core/database/file_database.py#L269-L271"
+        }
+      ],
+      "files": {
+        "src/pyload/core/database/file_database.py": "ab8f3ed7344ab99ff324da4c6d558b6c5fbba490c10abaff42da3994fbb4a3d3",
+        "src/pyload/core/threads/database_thread.py": "9efcda49e6378e02e529bc82fa3ba50517f94bb1879cc547b466bcf799e8f40d",
+        "src/pyload/core/utils/struct/style.py": "768212e6fc704cbbeb94c20ddedcfa29fd5b86fba5a6d5fb9cdeb08a2bf8662d",
+        "src/pyload/core/managers/file_manager.py": "02ea12af66e0eb6483e101fef2f42faf042abcb89f7778ff28924c3256aa4df1",
+        "src/pyload/core/managers/plugin_manager.py": "5d4370b6ce3373fa74e2fbdec390041b1bfb563b0dd04ac7736531755ceb2c1b",
+        "src/pyload/core/managers/thread_manager.py": "543de113eabe352940af9229bf82838196ee2090e17a831ac09d9a3c86ae1131",
+        "src/pyload/core/threads/info_thread.py": "1cc5b78494c33c32f0d80b7d53d67296014e080b9496f934bfb4aa6dd979df1c",
+        "src/pyload/core/api/__init__.py": "b275d0b99c3847238b3daad4d4d634e72551196422fe000d9c0fb74311b13262",
+        "src/pyload/plugins/downloaders/DailymotionCom.py": "fce0418b9f80dbb8aafc957745a5f0ba12d43e9f0c4e94eac72cdd4c715a4c3c",
+        "src/pyload/webui/app/__init__.py": "4bf331de11389d9eafa2964ee1759221a3f011b702998772b1b94a076854bf05",
+        "src/pyload/webui/app/blueprints/json_blueprint.py": "de5c169eef72b302d05d68ab96fee137bbff7ee74eb50c31de6c85ec96439b90",
+        "src/pyload/webui/app/blueprints/__init__.py": "5b1d76298d8254998d3e24ea0cabd9b06b00ef2adae0dc860be13c0c86302729"
+      },
+      "extra_files": {
+        "src/pyload/core/__init__.py": {
+          "git_blob": "b540fa7219f6d71190f154ddb03ef4af906f017f",
+          "sha256": "bfb9a34edc6e880a68a4b62461b309b24ba8ed4089d3715e1717f5d0d79d0413"
+        },
+        "src/pyload/core/database/__init__.py": {
+          "git_blob": "2e458e2c460403b25f08dc1e7956a81b3bb06e7f",
+          "sha256": "52eb8e0265c11b339ae5b8f1f3873085bb24fd822de2a0816eb4b29c27219bfe"
+        },
+        "src/pyload/core/database/storage_database.py": {
+          "git_blob": "c5e4ae7f3319b92d4f75e171d92529fb1fdfcff8",
+          "sha256": "e93610c7e952645c503a2b4f44dbe02878f3f4a331f7a77b53004b6f6432c557"
+        },
+        "src/pyload/core/database/user_database.py": {
+          "git_blob": "607fa8373f1ce1443923dbff9c320bac11b25dae",
+          "sha256": "cb419a50602452207814d92259e0da6f15e41bdc1cb1f7bcf12a1ca9c947ff36"
+        },
+        "src/pyload/core/threads/plugin_thread.py": {
+          "git_blob": "cd0592cf7972b486b83a1981c4d0be2c9cdf5726",
+          "sha256": "70ee75b065c025a4481aa908858220d3ddbd1d61c377c5bfaedbe8e4d5bf9b4e"
+        },
+        "src/pyload/core/utils/struct/lock.py": {
+          "git_blob": "3440cf2a64d41f91a9d315c9745e3a69f84e92f6",
+          "sha256": "77fbf4fd419cf5465addcf712c1807f3445cac6f238ecba7fd145dace2435af9"
+        },
+        "src/pyload/core/utils/struct/__init__.py": {
+          "git_blob": "d98a11b4ec84add1bc5707a864ebddcaa65072af",
+          "sha256": "0bed1506e3e150d4b5482c8edce89ea6fbad8423aa5d620a525d15aa9d606709"
+        }
+      }
+    },
+    {
+      "id": "pyload-after",
+      "repo": "pyload/pyload",
+      "commit": "134edcdf6e2a10c393743c254da3d9d90b74258f",
+      "paths": [
+        "src/pyload/core/database/file_database.py",
+        "src/pyload/core/threads/database_thread.py",
+        "src/pyload/core/utils/struct/style.py",
+        "src/pyload/core/managers/file_manager.py",
+        "src/pyload/core/managers/plugin_manager.py",
+        "src/pyload/core/managers/thread_manager.py",
+        "src/pyload/core/threads/info_thread.py",
+        "src/pyload/core/api/__init__.py",
+        "src/pyload/plugins/downloaders/DailymotionCom.py",
+        "src/pyload/webui/app/__init__.py",
+        "src/pyload/webui/app/blueprints/json_blueprint.py",
+        "src/pyload/webui/app/blueprints/__init__.py"
+      ],
+      "expected_git_blobs": {
+        "src/pyload/core/api/__init__.py": "13a79d2168aa2f5e5f4f13867c429b1f63ee7a2d",
+        "src/pyload/core/database/file_database.py": "bfd2ce5a35a1f6daba167d09029c599b0a8d0dee",
+        "src/pyload/core/managers/file_manager.py": "3be3156b8d6eb75414f52a14498bb0befd3c388e",
+        "src/pyload/core/managers/plugin_manager.py": "f0923169195f2f20db4b134ee4dd0b7f686fc8c8",
+        "src/pyload/core/managers/thread_manager.py": "74b7858685a5f599ddec8dce2d6339556df54bf4",
+        "src/pyload/core/threads/database_thread.py": "4f73df02a02fdd7b5fe4a1435ef5b5ed0da1f75d",
+        "src/pyload/core/threads/info_thread.py": "73985063dcecd35100ddeb05771e8e30a7270d1d",
+        "src/pyload/core/utils/struct/style.py": "ee8d400504d3e5b8174f98b88f1377094af31c8c",
+        "src/pyload/plugins/downloaders/DailymotionCom.py": "85e9260adf122b9821969453bcdceb4c7cac91ef",
+        "src/pyload/webui/app/__init__.py": "0987e94e4fcbf324d3d14b443863f06a30a385cf",
+        "src/pyload/webui/app/blueprints/json_blueprint.py": "2d68a8794ab3801c7e34c81d65c2db2fc1da2785",
+        "src/pyload/webui/app/blueprints/__init__.py": "02ad0c1f3ebef7e574a660715cc08e6234904d76"
+      },
+      "labels": [
+        {
+          "file": "src/pyload/core/database/file_database.py",
+          "start": 271,
+          "end": 271,
+          "status": "negative",
+          "family": "structural-sql",
+          "scope": "Default deployed web UI with an authenticated ADD-capable user and an enabled built-in information plugin whose URL matcher retains the original URL and returns a nonempty metadata result. The source-reviewed representative plugin relies on a usable provider response. The labels are isolated to SELECT construction in the SQLite file database; no deployment prevalence or runtime outcome is asserted.",
+          "evidence": "The same row values are passed in the separate SQLite parameter argument. The only dynamic part of SQL text counts the rows and emits fixed comma-separated placeholders. Source and native cursor routing are unchanged.",
+          "url": "https://github.com/pyload/pyload/blob/134edcdf6e2a10c393743c254da3d9d90b74258f/src/pyload/core/database/file_database.py#L269-L271"
+        }
+      ],
+      "files": {
+        "src/pyload/core/database/file_database.py": "2b47a1947a2ebcef611a72f649482dbbe45cafc3333118d5b873582c07ba4a83",
+        "src/pyload/core/threads/database_thread.py": "9efcda49e6378e02e529bc82fa3ba50517f94bb1879cc547b466bcf799e8f40d",
+        "src/pyload/core/utils/struct/style.py": "768212e6fc704cbbeb94c20ddedcfa29fd5b86fba5a6d5fb9cdeb08a2bf8662d",
+        "src/pyload/core/managers/file_manager.py": "02ea12af66e0eb6483e101fef2f42faf042abcb89f7778ff28924c3256aa4df1",
+        "src/pyload/core/managers/plugin_manager.py": "5d4370b6ce3373fa74e2fbdec390041b1bfb563b0dd04ac7736531755ceb2c1b",
+        "src/pyload/core/managers/thread_manager.py": "543de113eabe352940af9229bf82838196ee2090e17a831ac09d9a3c86ae1131",
+        "src/pyload/core/threads/info_thread.py": "1cc5b78494c33c32f0d80b7d53d67296014e080b9496f934bfb4aa6dd979df1c",
+        "src/pyload/core/api/__init__.py": "b275d0b99c3847238b3daad4d4d634e72551196422fe000d9c0fb74311b13262",
+        "src/pyload/plugins/downloaders/DailymotionCom.py": "fce0418b9f80dbb8aafc957745a5f0ba12d43e9f0c4e94eac72cdd4c715a4c3c",
+        "src/pyload/webui/app/__init__.py": "4bf331de11389d9eafa2964ee1759221a3f011b702998772b1b94a076854bf05",
+        "src/pyload/webui/app/blueprints/json_blueprint.py": "de5c169eef72b302d05d68ab96fee137bbff7ee74eb50c31de6c85ec96439b90",
+        "src/pyload/webui/app/blueprints/__init__.py": "5b1d76298d8254998d3e24ea0cabd9b06b00ef2adae0dc860be13c0c86302729"
+      },
+      "extra_files": {
+        "src/pyload/core/__init__.py": {
+          "git_blob": "b540fa7219f6d71190f154ddb03ef4af906f017f",
+          "sha256": "bfb9a34edc6e880a68a4b62461b309b24ba8ed4089d3715e1717f5d0d79d0413"
+        },
+        "src/pyload/core/database/__init__.py": {
+          "git_blob": "2e458e2c460403b25f08dc1e7956a81b3bb06e7f",
+          "sha256": "52eb8e0265c11b339ae5b8f1f3873085bb24fd822de2a0816eb4b29c27219bfe"
+        },
+        "src/pyload/core/database/storage_database.py": {
+          "git_blob": "c5e4ae7f3319b92d4f75e171d92529fb1fdfcff8",
+          "sha256": "e93610c7e952645c503a2b4f44dbe02878f3f4a331f7a77b53004b6f6432c557"
+        },
+        "src/pyload/core/database/user_database.py": {
+          "git_blob": "607fa8373f1ce1443923dbff9c320bac11b25dae",
+          "sha256": "cb419a50602452207814d92259e0da6f15e41bdc1cb1f7bcf12a1ca9c947ff36"
+        },
+        "src/pyload/core/threads/plugin_thread.py": {
+          "git_blob": "cd0592cf7972b486b83a1981c4d0be2c9cdf5726",
+          "sha256": "70ee75b065c025a4481aa908858220d3ddbd1d61c377c5bfaedbe8e4d5bf9b4e"
+        },
+        "src/pyload/core/utils/struct/lock.py": {
+          "git_blob": "3440cf2a64d41f91a9d315c9745e3a69f84e92f6",
+          "sha256": "77fbf4fd419cf5465addcf712c1807f3445cac6f238ecba7fd145dace2435af9"
+        },
+        "src/pyload/core/utils/struct/__init__.py": {
+          "git_blob": "d98a11b4ec84add1bc5707a864ebddcaa65072af",
+          "sha256": "0bed1506e3e150d4b5482c8edce89ea6fbad8423aa5d620a525d15aa9d606709"
+        }
+      }
+    }
+  ]
+}

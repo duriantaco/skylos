@@ -1,0 +1,129 @@
+{
+  "manifest_sha256": "12c7c1e2729353d8bdf1223ffbee56f5e4124c3d67fbe28a196a1242d3341725",
+  "pairs": {
+    "workspace": {
+      "revisions": 87,
+      "baseline": {
+        "TP": 25,
+        "unscored": 6,
+        "TN": 57,
+        "FN": 18,
+        "FP": 4,
+        "unsupported_positive": 1,
+        "unsupported_negative": 1,
+        "ambiguous": 1
+      },
+      "candidate": {
+        "TP": 25,
+        "unscored": 6,
+        "TN": 57,
+        "FN": 18,
+        "FP": 4,
+        "unsupported_positive": 1,
+        "unsupported_negative": 1,
+        "ambiguous": 1
+      },
+      "site_deltas": [],
+      "status_deltas": [],
+      "raw_danger_deltas": [],
+      "baseline_receipt_sha256": "d26cbbbfe4aa39c6b83cd6f831897959094c523f98ea09c69db1544ffca626d9",
+      "candidate_receipt_sha256": "29a110ad105209959f89484bbb776c79ed1f97e7e8c28cc459fce3c1bf30c0f9",
+      "changed_scanner_files": {
+        "rules/danger/danger_sql/deferred_sql.py": {
+          "before": null,
+          "after": "71ac0bbb64f3f6cf025b02fc21a8b013255b4713be8e7a1bde9beec3245aea8f"
+        },
+        "rules/danger/danger_sql/registered_sql.py": {
+          "before": null,
+          "after": "14144f093a2baf4e66043be67d3332335a48ae0dabd519ddcf39403596421c55"
+        },
+        "rules/danger/danger_sql/sql_flow.py": {
+          "before": "f4d5a7167e81f252773ca5f865bf797b37c40c8d90974f5acfa21a2c4fae2c6b",
+          "after": "bb8f77b8b3e7b95f8aca858efc1e71f36e0ba71b88a32fe24d705a24ffdc53fa"
+        },
+        "rules/danger/danger_sql/sql_fragments.py": {
+          "before": "d33bc4699813fb41b399534accac56dd94a4ed6eddfcad8c1e0aa374bfa40381",
+          "after": "7675dad1c4d9b4c507c8ee000a309b5cb08cca55f7ce7c7a9a3dae1ffec081cc"
+        },
+        "rules/danger/danger_sql/sql_source_policy.py": {
+          "before": "e32d025fbf0d8413ffee430aed254bea2dc1d82ad52a09dcad0984f9e11965fc",
+          "after": "990b57db8efa1e372e68a77df5aaf916a2315f354aefe23148de7423422e701d"
+        },
+        "rules/danger/danger_sql/sql_syntax.py": {
+          "before": null,
+          "after": "c6c86cf07015a2d12513076be01b898d3fb7fde87ea4d97223a18a9032b37b3d"
+        },
+        "rules/danger/danger_sql/sqlite_receivers.py": {
+          "before": "d790ccc9fe06e743d4d221bcdec1063a2aec0b4af1737fcf360158cd3e74b636",
+          "after": "7a23ed655e7660c87005b8cd5174cc1a89e13d8e59ffcda4b8945e3277944684"
+        },
+        "rules/danger/danger_sql/sqlite_schema.py": {
+          "before": "12683c224122bf6efd6af19d983455a12ec71d679afc095f0d14100d81acdcf3",
+          "after": "9ae8087e5756d4918314d84144cd1ccdd8f9da715fe1bb3fd506a0132b4e7487"
+        },
+        "rules/danger/danger_sql/sqlite_workers.py": {
+          "before": null,
+          "after": "47375e5173f1c78e93ae08041e52e9ac468cab1cd6c308197d5009ca3c774e88"
+        }
+      }
+    },
+    "publish": {
+      "revisions": 87,
+      "baseline": {
+        "FN": 35,
+        "unscored": 6,
+        "TN": 54,
+        "TP": 7,
+        "FP": 6,
+        "unsupported_positive": 1,
+        "unsupported_negative": 1,
+        "ambiguous": 1,
+        "incomplete_positive": 1,
+        "incomplete_negative": 1
+      },
+      "candidate": {
+        "FN": 35,
+        "unscored": 6,
+        "TN": 54,
+        "TP": 7,
+        "FP": 6,
+        "unsupported_positive": 1,
+        "unsupported_negative": 1,
+        "ambiguous": 1,
+        "incomplete_positive": 1,
+        "incomplete_negative": 1
+      },
+      "site_deltas": [],
+      "status_deltas": [],
+      "raw_danger_deltas": [],
+      "baseline_receipt_sha256": "a28101a36789c5197c359a47c584f50ced149eaeb7ea09db7d893524ccc09f79",
+      "candidate_receipt_sha256": "0878a45b6e806537ec879ebada7a9737fc93a738f469bc409123e35595e045a5",
+      "changed_scanner_files": {
+        "rules/danger/danger_sql/deferred_sql.py": {
+          "before": null,
+          "after": "71ac0bbb64f3f6cf025b02fc21a8b013255b4713be8e7a1bde9beec3245aea8f"
+        },
+        "rules/danger/danger_sql/registered_sql.py": {
+          "before": null,
+          "after": "14144f093a2baf4e66043be67d3332335a48ae0dabd519ddcf39403596421c55"
+        },
+        "rules/danger/danger_sql/sql_flow.py": {
+          "before": "f63853141e8d5e6c189441d6f2c853df5fbd83fae1929975616f395c27419a6e",
+          "after": "890d78fae1eb098abf8f4111acc1fae3e5909bb32de605f9babbad268547f1dd"
+        },
+        "rules/danger/danger_sql/sql_source_policy.py": {
+          "before": "e32d025fbf0d8413ffee430aed254bea2dc1d82ad52a09dcad0984f9e11965fc",
+          "after": "990b57db8efa1e372e68a77df5aaf916a2315f354aefe23148de7423422e701d"
+        },
+        "rules/danger/danger_sql/sql_syntax.py": {
+          "before": null,
+          "after": "c6c86cf07015a2d12513076be01b898d3fb7fde87ea4d97223a18a9032b37b3d"
+        },
+        "rules/danger/danger_sql/sqlite_workers.py": {
+          "before": null,
+          "after": "47375e5173f1c78e93ae08041e52e9ac468cab1cd6c308197d5009ca3c774e88"
+        }
+      }
+    }
+  }
+}
