@@ -1751,7 +1751,9 @@ def _append_failure_reasons(lines, reasons, *, heading="Failure Reasons"):
 def _summary_status(passed, *, advisory, incomplete):
     if incomplete:
         return "⚠️", "INCOMPLETE - COULD NOT DECIDE", "Incomplete Analysis"
-    if advisory and not passed:
+    if advisory:
+        if passed:
+            return "✅", "PASSED (advisory)", "Advisory Reasons"
         return "⚠️", "ADVISORY - WOULD FAIL", "Advisory Reasons"
     if passed:
         return "✅", "PASSED", "Failure Reasons"
@@ -1923,6 +1925,25 @@ def _handle_incomplete_gate(
     return 2
 
 
+def _write_advisory_policy_result(passed, incomplete):
+    # The check can succeed while policy would fail. Export only the decision
+    # made here; finding text and repository paths never enter Actions outputs.
+    raw_path = os.environ.get("SKYLOS_GATE_OUTPUT")
+    if not raw_path:
+        return
+    from skylos.commands.defend_cmd import (
+        _append_github_step_summary,
+        _github_step_summary_path,
+    )
+
+    status = "advisory-passed" if passed else "advisory-would-fail"
+    if incomplete:
+        status = "incomplete"
+    path = _github_step_summary_path(raw_path)
+    if path is None or not _append_github_step_summary(path, f"policy_result={status}"):
+        console.print("[yellow]Could not save the advisory verdict for the PR summary.[/yellow]")
+
+
 def run_gate_interaction(
     *,
     results=None,
@@ -1978,6 +1999,8 @@ def run_gate_interaction(
             coverage_gaps=coverage_gaps,
         )
         write_github_summary(md)
+        if advisory:
+            _write_advisory_policy_result(passed, bool(incomplete_reasons))
 
     if incomplete_reasons:
         return _handle_incomplete_gate(console, incomplete_reasons)

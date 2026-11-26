@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+from skylos.reporting.listing import is_gate_exempt_review
+
 _GITHUB_ANNOTATION_LEVELS = {
     "CRITICAL": "error",
     "HIGH": "error",
@@ -104,6 +106,7 @@ def _github_dead_code_annotation(item, label):
 
 def _github_annotation_items(result):
     annotations = []
+    review_groups = {}
     for error in result.get("analysis_errors", []) or []:
         if not isinstance(error, dict):
             continue
@@ -119,11 +122,23 @@ def _github_annotation_items(result):
 
     for category in _GITHUB_FINDING_CATEGORIES:
         for finding in result.get(category, []) or []:
+            if category == "danger" and is_gate_exempt_review(finding):
+                key = (finding["rule_id"], finding["review_item"]["kind"])
+                review_groups.setdefault(key, []).append(finding)
+                continue
             annotations.append(_github_finding_annotation(finding))
 
     for category, label in _GITHUB_DEAD_CODE_CATEGORIES:
         for item in result.get(category, []) or []:
             annotations.append(_github_dead_code_annotation(item, label))
+    for group in review_groups.values():
+        example = _github_finding_annotation(group[0])
+        count = len(group)
+        locations = "location" if count == 1 else "locations"
+        example["severity"] = "LOW"
+        example["title"] += " (review only)"
+        example["msg"] = f"{count} {locations} for review. {example['msg']}"
+        annotations.append(example)
     return annotations
 
 

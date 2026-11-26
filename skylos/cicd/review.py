@@ -7,7 +7,7 @@ import os
 import posixpath
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import requests
@@ -35,6 +35,7 @@ from skylos.cicd.risk_passport import (
     format_risk_passport_markdown,
 )
 from skylos.core.file_discovery import find_git_root
+from skylos.core.gate_incomplete import incomplete_analysis_reasons
 from skylos.core.git_safety import (
     read_only_git_command,
     read_only_git_environment,
@@ -45,6 +46,7 @@ from skylos.reporting.assessment_display import (
     assessment_rows,
     maintainability_rows,
 )
+from skylos.reporting.listing import UNPROVEN_SOURCE_KIND, is_gate_exempt_review
 from skylos.rules.quality.regression import detect_security_regressions
 
 console = Console()
@@ -52,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 
 def run_pr_review(
-    results: dict,
+    results: dict | None,
     *,
     pr_number: int | None = None,
     repo: str | None = None,
@@ -83,6 +85,13 @@ def run_pr_review(
         console.print(
             "[bold red]gh CLI not found. Install: https://cli.github.com[/bold red]"
         )
+        return
+
+    if results is None:
+        outcome = _post_summary_comment(
+            [], None, pr_number, repo, summary_inputs=summary_inputs
+        )
+        console.print(_review_outcome_line(pr_number, None, outcome), soft_wrap=True)
         return
 
     try:
@@ -141,18 +150,21 @@ def run_pr_review(
     provenance = _resolve_review_provenance(
         results, diff_base=diff_base, project_root=review_root
     )
+    # A review-only candidate has a documented gap in its evidence. Keep it
+    # in the report, without using it to recommend a block or post an inline.
+    individual_findings = [f for f in findings if not f.get("_review_only_kind")]
     risk_passport = build_risk_passport(
         all_findings=all_findings,
-        diff_findings=findings,
+        diff_findings=individual_findings,
         provenance=provenance,
         defense_report=defense_report,
     )
 
     identity = _TokenIdentity()
     review_outcome = None
-    if findings and not summary_only:
+    if individual_findings and not summary_only:
         review_outcome = _post_pr_review(
-            findings,
+            individual_findings,
             pr_number,
             repo,
             evidence_cards=evidence_cards,
@@ -181,6 +193,7 @@ def run_pr_review(
         identity=identity,
         left_unused=left_unused,
         summary_inputs=summary_inputs,
+        partial_report=_has_coverage_gaps(results),
     )
 
     console.print(
@@ -191,6 +204,14 @@ def run_pr_review(
 
 _LEFT_UNUSED_SCOPE = "dependency_impact"
 _MAX_LEFT_UNUSED_ROWS = 20
+
+
+def _has_coverage_gaps(results: dict) -> bool:
+    summary = results.get("analysis_summary")
+    coverage = summary.get("analysis_coverage") if isinstance(summary, dict) else None
+    if isinstance(coverage, dict) and coverage.get("status") in ("partial", "incomplete"):
+        return True
+    return bool(incomplete_analysis_reasons(results))
 
 
 def _left_unused_rows(
@@ -784,6 +805,8 @@ def _flatten_findings(results: dict) -> list[dict]:
             related_locations = f.get("related_locations")
             if isinstance(related_locations, list):
                 finding["related_locations"] = related_locations
+            if category == "danger" and is_gate_exempt_review(f):
+                finding["_review_only_kind"] = f["review_item"]["kind"]
             _copy_safe_finding_metadata(f, finding)
             findings.append(finding)
 
@@ -1647,9 +1670,34 @@ def _review_comment_location(
     return primary
 
 
+def _review_only_lines(groups: dict[tuple[str, str], list[dict]]) -> list[str]:
+    """Show examples from each kind of changed-line review candidate."""
+    if not groups:
+        return []
+
+    lines = ["", "### Review-only security findings", ""]
+    for (rule, kind), rows in sorted(groups.items()):
+        reason = (
+            "External input could not be established"
+            if kind == UNPROVEN_SOURCE_KIND
+            else "Directory access needs review"
+        )
+        if rule == "SKY-D206":
+            reason = "Project-wide loader verification was incomplete"
+        examples = []
+        for row in rows[:3]:
+            location = f"{os.path.basename(row['file'])}:{row['line']}"
+            examples.append(f"`{sanitize_markdown_text(location, max_length=300)}`")
+        safe_rule = sanitize_markdown_text(rule, max_length=120)
+        count = len(rows)
+        noun = "finding" if count == 1 else "findings"
+        lines.append(f"- `{safe_rule}` · {count} {noun} · {reason}. " + ", ".join(examples))
+    return lines
+
+
 def _post_summary_comment(
     all_findings: list[dict],
-    diff_findings: list[dict],
+    diff_findings: list[dict] | None,
     pr_number: int,
     repo: str,
     *,
@@ -1661,6 +1709,7 @@ def _post_summary_comment(
     identity: _TokenIdentity | None = None,
     left_unused: list[tuple[str, str]] | None = None,
     summary_inputs: SummaryInputs | None = None,
+    partial_report: bool = False,
 ) -> _CommentOutcome:
     left_unused = left_unused or []
     existing_comments, list_error = _gh_list(
@@ -1672,7 +1721,50 @@ def _post_summary_comment(
         else None
     )
     previous_changed, previous_max = _previous_summary_counts(previous)
+    confirmed_state = (
+        f"<!-- skylos-review-state: changed={previous_changed} max={previous_max} -->"
+        if previous_changed is not None
+        else ""
+    )
+    if diff_findings is None:
+        lines = [
+            SUMMARY_MARKER,
+            _SUMMARY_HEADING,
+            "",
+            (
+                "**Scan report unavailable.** Check the scan and artifact steps in "
+                "the workflow run. Findings for this run are unknown."
+            ),
+        ]
+        if summary_inputs is not None:
+            if summary_inputs.gate_result == "success":
+                summary_inputs = replace(summary_inputs, gate_result="unavailable")
+            verdict = verdict_line(summary_inputs)
+            if verdict:
+                lines.extend(["", verdict])
+            brief = brief_lines(summary_inputs)
+            if brief:
+                lines.extend(["", *brief])
+        else:
+            button = report_button(run_url_from_env())
+            if button:
+                lines.extend(["", button])
+        if previous_changed is not None:
+            lines.extend(
+                [
+                    "",
+                    f"The last complete report counted {previous_changed} issue(s) on changed lines.",
+                    confirmed_state,
+                ]
+            )
+        return _publish_summary_comment(
+            "\n".join(lines), previous, list_error, pr_number, repo
+        )
     changed_now = len(diff_findings)
+    if summary_inputs is not None:
+        partial_report = partial_report or summary_inputs.gate_result == "incomplete"
+        if partial_report and summary_inputs.gate_result == "success":
+            summary_inputs = replace(summary_inputs, gate_result="incomplete")
 
     by_severity = {}
     for f in all_findings:
@@ -1694,7 +1786,9 @@ def _post_summary_comment(
         verdict = verdict_line(summary_inputs)
         if verdict:
             head.extend([verdict, ""])
-    if changed_now == 0 and previous_max > 0:
+    if partial_report:
+        head.extend(["**Scan coverage is incomplete.** Finding counts are provisional.", ""])
+    elif changed_now == 0 and previous_max > 0:
         head.extend(
             [
                 "✅ **All issues Skylos reported on this PR's changed lines are "
@@ -1705,10 +1799,36 @@ def _post_summary_comment(
     left_unused_count = (
         f" | **{len(left_unused)}** left unused by this change" if left_unused else ""
     )
-    head.append(
-        f"**{changed_now}** issue(s) on changed lines{was} | "
-        f"**{len(all_findings)}** total{left_unused_count}"
-    )
+    review_groups = {}
+    for finding in diff_findings:
+        kind = finding.get("_review_only_kind")
+        if kind:
+            review_groups.setdefault((finding["rule_id"], kind), []).append(finding)
+    if partial_report:
+        head.append(
+            f"**{changed_now}** finding(s) observed on changed lines | "
+            f"**{len(all_findings)}** observed in the scan{left_unused_count}"
+        )
+    else:
+        if review_groups:
+            reviews = sum(len(rows) for rows in review_groups.values())
+            issues = changed_now - reviews
+            group_count = len(review_groups)
+            issue_word = "issue" if issues == 1 else "issues"
+            group_word = "group" if group_count == 1 else "groups"
+            review_word = "finding" if reviews == 1 else "findings"
+            previous_note = f" (previously {previous_changed} findings on changed lines)" if was else ""
+            headline = (
+                f"**{issues}** {issue_word} and **{group_count}** review-only {group_word} "
+                f"({reviews} {review_word}) on changed lines{previous_note}"
+            )
+        else:
+            headline = f"**{changed_now}** issue(s) on changed lines{was}"
+        head.append(f"{headline} | **{len(all_findings)}** total{left_unused_count}")
+        confirmed_state = (
+            f"<!-- skylos-review-state: changed={changed_now} "
+            f"max={max(previous_max, changed_now)} -->"
+        )
     if summary_inputs is not None:
         brief = brief_lines(summary_inputs)
         if brief:
@@ -1719,7 +1839,8 @@ def _post_summary_comment(
         if button:
             head.extend(["", button])
     lines: list[str] = []
-    lines.extend(format_risk_passport_markdown(risk_passport))
+    if not partial_report:
+        lines.extend(format_risk_passport_markdown(risk_passport))
     lines.extend(
         [
             "",
@@ -1779,7 +1900,9 @@ def _post_summary_comment(
             lines.append(f"| {control} | {file} | {msg} |")
 
     if evidence_cards:
-        cards = build_evidence_cards(all_findings)
+        cards = build_evidence_cards(
+            [f for f in all_findings if not f.get("_review_only_kind")]
+        )
         counts = evidence_counts(cards)
         if cards:
             lines.extend(
@@ -1797,9 +1920,11 @@ def _post_summary_comment(
                     lines.append(f"| {evidence_label_title(label)} | {count} |")
 
     critical_findings = [
-        f for f in diff_findings if f.get("severity") in ("CRITICAL", "HIGH")
+        f for f in diff_findings
+        if f.get("severity") in ("CRITICAL", "HIGH") and not f.get("_review_only_kind")
     ]
     if critical_findings:
+        critical_findings.sort(key=lambda f: f["severity"] != "CRITICAL")
         lines.extend(["", "### Top Issues", ""])
         for f in critical_findings[:5]:
             sev = f.get("severity", "MEDIUM")
@@ -1849,6 +1974,8 @@ def _post_summary_comment(
                         f"  - **Fix:** {sanitize_markdown_text(fix, max_length=500)}"
                     )
 
+    lines.extend(_review_only_lines(review_groups))
+
     if left_unused:
         lines.extend(
             [
@@ -1872,9 +1999,9 @@ def _post_summary_comment(
                 ["", f"…and {len(left_unused) - _MAX_LEFT_UNUSED_ROWS} more."]
             )
 
-    if isinstance(assessment, dict) and assessment:
+    if not partial_report and isinstance(assessment, dict) and assessment:
         lines.extend(_format_assessment_markdown(assessment))
-    elif grade:
+    elif not partial_report and grade:
         overall = grade["overall"]
         cats = grade["categories"]
 
@@ -1931,16 +2058,17 @@ def _post_summary_comment(
             "---",
             "_Skylos edits this comment on each push instead of adding a new "
             "one. Inline comments from earlier runs stay on the PR._",
-            "<!-- skylos-review-state: "
-            f"changed={changed_now} max={max(previous_max, changed_now)} -->",
+            confirmed_state,
         ]
     )
 
-    note = (
-        f"could not read existing comments ({list_error})"
-        if existing_comments is None
-        else ""
-    )
+    return _publish_summary_comment(body, previous, list_error, pr_number, repo)
+
+
+def _publish_summary_comment(
+    body: str, previous: dict | None, list_error: str, pr_number: int, repo: str
+) -> _CommentOutcome:
+    note = f"could not read existing comments ({list_error})" if list_error else ""
     if previous is not None:
         try:
             _gh_write(

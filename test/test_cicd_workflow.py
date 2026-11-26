@@ -90,6 +90,12 @@ def test_workflow_can_generate_advisory_gate():
     steps = parsed["jobs"]["skylos"]["steps"]
     quality_gate = next(s for s in steps if s.get("name") == "Quality Gate")
     assert "--advisory" in quality_gate["run"]
+    assert quality_gate["id"] == "policy"
+    assert 'export SKYLOS_GATE_OUTPUT="$GITHUB_OUTPUT"' in quality_gate["run"]
+    assert parsed["jobs"]["skylos"]["outputs"]["policy_result"] == "${{ steps.policy.outputs.policy_result }}"
+    verdict = _summary_step(parsed)["env"]["SKYLOS_GATE_RESULT"]
+    assert "needs.skylos.result == 'success' && (needs.skylos.outputs.policy_result || 'unavailable')" in verdict
+    assert "needs.skylos.result == 'failure'" in verdict and "'job-failed'" in verdict
 
 
 def test_workflow_triggers():

@@ -74,7 +74,13 @@ def test_summary_uses_the_same_pinned_renderer_and_exact_scan_artifact():
     scan = next(step for step in workflow["jobs"]["scan"]["steps"] if step.get("name") == "Run Skylos")
     assert workflow["jobs"]["summary"]["env"]["REPORT"] == scan["env"]["REPORT"]
     post = _step("Update the PR summary")
-    assert post["env"]["SKYLOS_GATE_RESULT"] == "${{ needs.scan.result }}"
+    verdict = post["env"]["SKYLOS_GATE_RESULT"]
+    assert "needs.scan.result == 'success' && (needs.scan.outputs.policy_result || 'unavailable')" in verdict
+    assert "needs.scan.result == 'failure'" in verdict and "'job-failed'" in verdict
+    scan_job = workflow["jobs"]["scan"]
+    policy = next(step for step in scan_job["steps"] if step.get("id") == "policy")
+    assert scan_job["outputs"]["policy_result"] == "${{ steps.policy.outputs.policy_result }}"
+    assert 'SKYLOS_GATE_OUTPUT="$GITHUB_OUTPUT"' in policy["run"]
     assert "${{" not in post["run"]
 
 

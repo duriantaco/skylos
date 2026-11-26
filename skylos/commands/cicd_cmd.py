@@ -48,7 +48,7 @@ def _cicd_load_results(args, *, console_factory, load_config_func, gate=False):
         try:
             with open(args.input_file) as f:
                 return json.load(f), 0
-        except (FileNotFoundError, json.JSONDecodeError) as e:
+        except (OSError, UnicodeError, json.JSONDecodeError) as e:
             _report_load_error(
                 console_factory, f"Error reading {args.input_file}: {e}", gate=gate
             )
@@ -916,8 +916,8 @@ def run_cicd_command(
     p_ci_rev.add_argument(
         "--gate-result",
         help=(
-            "Workflow-internal: the gate job's result (success, failure, "
-            "cancelled or skipped) for the summary comment's verdict line"
+            "Workflow-internal: the job or advisory policy result for the "
+            "summary comment's verdict line"
         ),
     )
     p_ci_rev.add_argument(
@@ -1075,20 +1075,26 @@ def run_cicd_command(
         from skylos.cicd.review import run_pr_review
 
         summary_requested = _summary_inputs_requested(cicd_args)
+        exit_code = 0
         if summary_requested and _missing_input_file(cicd_args):
             console.print(
                 f"[yellow]No scan results at {escape(cicd_args.input_file)}: "
-                "the gate job did not save them[/yellow]"
+                "the scan report artifact is unavailable[/yellow]"
             )
-            results = {}
+            results = None
         else:
             results, exit_code = _cicd_load_results(
                 cicd_args,
                 console_factory=console_factory,
                 load_config_func=load_config_func,
             )
-            if exit_code:
+            if exit_code and not (summary_requested and cicd_args.input_file):
                 return exit_code
+            if not exit_code and not isinstance(results, dict):
+                console.print("[red]Invalid scan report: expected a JSON object[/red]")
+                if not summary_requested:
+                    return 1
+                results, exit_code = None, 1
 
         llm_findings = None
         if getattr(cicd_args, "llm_input", None):
@@ -1125,7 +1131,7 @@ def run_cicd_command(
             evidence_cards=cicd_args.evidence_cards,
             summary_inputs=summary_inputs,
         )
-        return 0
+        return exit_code
 
     cicd_parser.print_help()
     return 0

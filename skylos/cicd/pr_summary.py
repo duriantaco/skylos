@@ -30,7 +30,15 @@ _WAITING_SUMMARY = "Earlier required checks failed or were incomplete"
 _GATE_JOB_FAILED = "The Skylos Quality Gate job failed; its log says why."
 _UNCHECKED_REASON = "no test checks this line"
 
-_GATE_WORDS = {"success": "passed", "failure": "failed"}
+_GATE_WORDS = {
+    "success": "passed",
+    "failure": "failed",
+    "advisory-passed": "passed (advisory)",
+    "advisory-would-fail": "would fail (advisory)",
+    "incomplete": "analysis incomplete",
+    "job-failed": "scan job failed",
+    "unavailable": "policy result unavailable",
+}
 _DONE_WORDS = {"pass": "passed", "fail": "failed", "incomplete": "unfinished"}
 _RISK_WORDS = {
     "eligible": "passed",
