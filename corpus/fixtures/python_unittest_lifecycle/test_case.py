@@ -10,6 +10,9 @@ class TestCase(unittest.TestCase):
     def tearDownClass(cls):
         return None
 
+    def test_lifecycle(self):
+        pass
+
 
 def setUpModule():
     return None
