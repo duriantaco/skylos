@@ -9,8 +9,8 @@ synthetic fixture scores below.
 
 The benchmark framework lives in the Skylos repo because it must version with analyzer output and CI. Larger realistic targets, such as `/Users/oha/skylos-demo`, stay external and are referenced by config.
 
-The default manifest contains **151 cases and 769 symbol labels**: 300 unused and
-469 used. The November 17 source audit corrects three mistaken used labels: two
+The default manifest contains **152 cases and 772 symbol labels** (301 unused and
+471 used). The November 17 source audit corrects three mistaken used labels: two
 unloaded JS files and an unreachable Python backend. The
 [final results](../review_2026_11_17/ground_truth_audit/confirmed_results.md)
 record the repairs; historical manifests and detailed source reports are
