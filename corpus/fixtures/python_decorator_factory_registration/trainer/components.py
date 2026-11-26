@@ -2,6 +2,7 @@ import functools
 
 import gin
 from gin import configurable
+from pydantic import validate_call
 from tenacity import retry, stop_after_attempt
 
 from trainer.wrappers import labelled
@@ -32,7 +33,7 @@ def unused_labelled():
     return 3
 
 
-@functools.lru_cache()
+@validate_call()
 def unused_empty_call():
     return 4
 
