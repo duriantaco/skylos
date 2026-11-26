@@ -208,6 +208,8 @@ class RustProject:
         self.packages = []
         self.crates = []
         self.modules_by_file = {}
+        self.all_targets_scanned = True
+        self.complete_target_set = None
         self.items_by_location = {}
         self.uses = []
         self.impls = []
@@ -250,7 +252,6 @@ class RustProject:
                 None,
                 crate.root_file.parent,
                 frozenset(),
-                is_root=True,
             )
             crate.root = root
             if crate.kind == "lib" and root is not None:
@@ -264,7 +265,7 @@ class RustProject:
             if path not in self.modules_by_file:
                 orphan = Crate(None, "orphan", path.stem, path)
                 orphan.root = self._load_module(
-                    orphan, (), path, None, path.parent, frozenset(), is_root=True
+                    orphan, (), path, None, path.parent, frozenset()
                 )
         for impl in self.impls:
             impl.target = self._impl_target(impl)
@@ -360,8 +361,11 @@ class RustProject:
             try:
                 resolved = (directory / path).resolve()
             except (OSError, RuntimeError, ValueError):
+                self.all_targets_scanned = False
                 return
-            if resolved in self.files and all(t[2] != resolved for t in targets):
+            if resolved not in self.files:
+                self.all_targets_scanned = False
+            elif all(t[2] != resolved for t in targets):
                 targets.append((kind, target_name, resolved, harness))
 
         lib_path = lib.get("path") if isinstance(lib.get("path"), str) else None
@@ -436,9 +440,7 @@ class RustProject:
             return ""
         return data[node.start_byte : node.end_byte].decode("utf-8", "replace")
 
-    def _load_module(
-        self, crate, path, file, parent, directory, lints, *, is_root=False
-    ):
+    def _load_module(self, crate, path, file, parent, directory, lints):
         key = (crate.key, file)
         if key in self._visited or len(path) > _MAX_DEPTH:
             return None
@@ -453,8 +455,6 @@ class RustProject:
             if child.type == "inner_attribute_item"
         ]
         module_lints = frozenset(lints) | frozenset(_allowed_lints(inner))
-        if not is_root and file.name != "mod.rs":
-            directory = file.parent / file.stem
         module = Module(crate, path, file, parent, directory, module_lints)
         self.modules_by_file.setdefault(file, []).append(module)
         if crate.package is not None:
@@ -814,9 +814,11 @@ class RustProject:
             self._index_block(child_module, body, data)
             return
         target = None
+        explicit_path = False
         for text in attributes:
-            match = re.search(r'#\[\s*path\s*=\s*"([^"]+)"', text)
+            match = re.match(r'#\[\s*path\s*=\s*"([^"]+)"', text)
             if match:
+                explicit_path = True
                 # Relative to the source file's directory, or to the inline
                 # module's directory when declared inside `mod x { ... }`.
                 inline = module.parent is not None and module.parent.file == module.file
@@ -840,12 +842,16 @@ class RustProject:
                     break
         if target is None or target not in self.files:
             return
+        # rustc searches for children alongside a file loaded by #[path].
+        directory = target.parent
+        if not explicit_path and target.name != "mod.rs":
+            directory = target.parent / target.stem
         item.target = self._load_module(
             module.crate,
             (*module.path, name),
             target,
             module,
-            target.parent,
+            directory,
             lints,
         )
 
@@ -891,6 +897,10 @@ class RustProject:
         except (OSError, RuntimeError, ValueError):
             return ()
         return tuple(self.modules_by_file.get(path, ()))
+
+    def source_tree(self, path):
+        parsed = self._sources.get(path)
+        return parsed[1] if parsed is not None else None
 
     def items_at(self, filename, line, name):
         try:

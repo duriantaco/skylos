@@ -1718,6 +1718,67 @@
       }
     },
     {
+      "id": "rust-file-modes",
+      "path": "fixtures/rust_file_modes",
+      "description": "Two Unix permission reviews and three safe alternatives on the same API types.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original regression fixture."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": [
+            {
+              "rule_id": "SKY-D415",
+              "file": "lib.rs",
+              "start_line": 5,
+              "end_line": 5
+            },
+            {
+              "rule_id": "SKY-D416",
+              "file": "lib.rs",
+              "start_line": 6,
+              "end_line": 6
+            }
+          ]
+        },
+        "absent": {
+          "danger": [
+            {
+              "rule_id": "SKY-D415",
+              "file": "lib.rs",
+              "start_line": 10,
+              "end_line": 10
+            },
+            {
+              "rule_id": "SKY-D416",
+              "file": "lib.rs",
+              "start_line": 11,
+              "end_line": 11
+            },
+            {
+              "rule_id": "SKY-D416",
+              "file": "lib.rs",
+              "start_line": 12,
+              "end_line": 12
+            }
+          ]
+        }
+      }
+    },
+    {
       "id": "rust-shell-arg-taint",
       "path": "fixtures/rust_shell_arg_taint",
       "description": "Rust CLI argument passed through sh -c should be reported as command injection.",

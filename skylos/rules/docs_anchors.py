@@ -204,6 +204,8 @@ RULE_DOCS_ANCHORS = {
     "SKY-D411": "sky-d411--sensitive-kubernetes-host-path-mounted",
     "SKY-D413": "sky-d413--ambiguous-http1-request-framing",
     "SKY-D414": "sky-d414--dns-retained-during-s3-deletion",
+    "SKY-D415": "sky-d415--unix-permission-value-grants-write-access-to-all-users",
+    "SKY-D416": "sky-d416--non-octal-unix-permission-mode-literal",
     "SKY-D510": "sky-d510--prototype-pollution",
     "SKY-DEP001": "kubernetes-deployment-exposure-sky-dep",
     "SKY-DEP002": "kubernetes-deployment-exposure-sky-dep",
@@ -341,6 +343,7 @@ RULE_DOCS_ANCHORS = {
     "SKY-U006": "sky-u006--unused-parameter",
     "SKY-U007": "dead-code-rules-sky-u",
     "SKY-U008": "dead-code-rules-sky-u",
+    "SKY-U009": "dead-code-rules-sky-u",
     "SKY-UC001": "sky-uc001--unreachable-code",
     "SKY-UC002": "sky-uc002--unreachable-statement",
 }

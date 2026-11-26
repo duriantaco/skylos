@@ -991,6 +991,7 @@ _DEAD_CODE_RULES = frozenset(
         "SKY-U006",
         "SKY-U007",
         "SKY-U008",
+        "SKY-U009",
     }
 )
 _CATEGORY_RULES = {

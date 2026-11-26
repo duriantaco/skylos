@@ -1,0 +1,60 @@
+id: SKY-D415
+title: Unix permission value grants write access to all users
+family: security
+severity: MEDIUM
+languages: [Rust]
+cwe: [CWE-732]
+gate:
+  full: listed
+  note: The advisory stays visible and does not fail the security gate.
+what_it_is: >-
+  Calling `std::fs::Permissions::set_readonly(false)` sets the Unix write bits
+  for the owner, group and others. Applying the resulting permissions can make
+  the file writable by other users.
+why_it_matters: >-
+  A program restoring write access for its own account may grant access to
+  other accounts that can reach the file.
+how_skylos_decides:
+  - >-
+    Resolves the standard-library type or associated function, including
+    imported aliases, typed parameters and permissions obtained from standard
+    filesystem metadata. The argument must be the literal false.
+  - >-
+    Checks code that can run on Unix and skips recognized Windows-only guards.
+    The advisory describes the permission value. Writing it to disk requires a
+    separate operation that the finding does not establish.
+source_refs:
+  - path: skylos/visitors/languages/rust/danger.py
+    symbol: 'def permission_review('
+  - path: skylos/visitors/languages/rust/permissions.py
+    symbol: 'def review_finding('
+flagged_example:
+  language: rust
+  filename: src/lib.rs
+  code: |
+    use std::fs::Permissions;
+    fn enable_writes(perms: &mut Permissions) {
+        perms.set_readonly(false);
+    }
+  expect_line: 3
+not_flagged_example:
+  language: rust
+  filename: src/lib.rs
+  code: &owner_write |
+    #[cfg(unix)]
+    fn enable_writes(perms: &mut std::fs::Permissions) {
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(perms.mode() | 0o200);
+    }
+  why: The code adds write access for the owner while retaining the other bits.
+fix:
+  explanation: On Unix, select the accounts that should receive write access by using an explicit mode or named flags.
+  filename: src/lib.rs
+  language: rust
+  code: *owner_write
+false_alarms_and_suppression:
+  misfires:
+    - A program may intentionally create shared writable files, or discard the modified permissions without applying them.
+  suppress:
+    - text: Add a Skylos ignore comment to a reviewed call that intentionally grants write access to every account.
+related: [SKY-D416, SKY-L020]

@@ -597,11 +597,14 @@ def apply_import_abstentions(definitions, project):
             definition.why_confidence_reduced.append(POSSIBLE_TRAIT_IMPORT)
 
 
-def apply_project_liveness(definitions, references, project):
+def apply_project_liveness(definitions, references, project, *, exclude_folders=()):
     """Credit resolved Rust references, honour lint levels, then decide which
     unread imports are reportable."""
     if project is not None and project.complete:
         liveness = _Liveness(definitions, project)
+        from .include_liveness import apply_include_liveness
+
+        apply_include_liveness(liveness, exclude_folders)
         liveness.apply_paths()
         liveness.apply_receiver_methods(references)
         liveness.apply_cfg_alternatives()

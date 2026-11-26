@@ -1830,6 +1830,54 @@
       "symbol_identity": "qualified"
     },
     {
+      "id": "rust-included-callback",
+      "path": "fixtures/rust_included_callback",
+      "description": "A literal source include calls one private function and leaves its sibling unused.",
+      "languages": [
+        "rust"
+      ],
+      "taxonomy": [
+        "rust",
+        "multi_file",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original regression fixture."
+      },
+      "scan": {
+        "confidence": 40,
+        "grep_verify": false
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "used": [
+          {
+            "kind": "function",
+            "file": "src/main.rs",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "src/main.rs",
+            "symbol": "on_event"
+          }
+        ],
+        "unused": [
+          {
+            "kind": "function",
+            "file": "src/main.rs",
+            "symbol": "old_handler"
+          }
+        ]
+      },
+      "symbol_identity": "qualified"
+    },
+    {
       "id": "rust-direct-calls",
       "path": "fixtures/rust_direct_calls",
       "description": "Closed source calls retain the selected implementation and report unreferenced siblings.",

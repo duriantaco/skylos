@@ -2860,6 +2860,7 @@ class Skylos:
             getattr(self, "_project_root", None),
             getattr(self, "_analysis_scope", None),
             analysis_errors,
+            project=getattr(self, "_rust_project", None),
         )
         self._rust_reachability_report = rust_report
         for key in rust_report.unreachable_keys:
@@ -7295,6 +7296,13 @@ class Skylos:
             # Cargo targets and the `mod` tree: crate identity for the
             # reference pass, then re-exports, aliases and lint levels.
             self._rust_project = build_project(root, files)
+            from skylos.visitors.languages.rust.effective_visibility import (
+                apply_effective_visibility,
+            )
+
+            apply_effective_visibility(
+                self.defs, self._rust_project, self._analysis_scope, analysis_errors
+            )
         if swift_reflection_facts:
             from skylos.visitors.languages.swift.project_reflection import (
                 apply_project_reflection,
@@ -7322,7 +7330,9 @@ class Skylos:
                 apply_project_liveness,
             )
 
-            apply_project_liveness(self.defs, self.refs, self._rust_project)
+            apply_project_liveness(
+                self.defs, self.refs, self._rust_project, exclude_folders=exclude_folders
+            )
         self._mark_reflected_module_members(set(modmap.values()))
         self._mark_call_arg_method_refs()
         mark_signature_contract_parameters(self.defs)
@@ -7486,6 +7496,13 @@ class Skylos:
             analysis_errors, changed_files
         )
         if enable_danger and all_dangers:
+            if self._rust_project is not None:
+                from skylos.visitors.languages.rust.danger import drop_non_unix_permission_reviews
+
+                all_dangers = drop_non_unix_permission_reviews(
+                    all_dangers, self._rust_project, self._analysis_scope,
+                    analysis_errors or outside_diff_warnings,
+                )
             from skylos.rules.danger.danger_fs.closed_world import (
                 drop_closed_world_helper_findings,
             )
@@ -7557,6 +7574,26 @@ class Skylos:
             )
             self._enum_member_findings = _report_member_findings(
                 enum_findings, enum_member_coverage, "SKY-U007", **member_filter
+            )
+        self._rust_variants_below_threshold = False
+        if self._rust_project is not None and "SKY-U009" not in project_ignore:
+            from skylos.deadcode.confidence import CONFIDENCE_CAPS
+            from skylos.visitors.languages.rust.unused_variants import (
+                find_unused_variants,
+            )
+
+            rust_variants = find_unused_variants(
+                self._rust_project, self._analysis_scope, analysis_errors
+            )
+            rust_coverage = {}
+            self._enum_member_findings.extend(
+                _report_member_findings(
+                    rust_variants, rust_coverage, "SKY-U009", **member_filter
+                )
+            )
+            self._rust_variants_below_threshold = (
+                thr > CONFIDENCE_CAPS["experimental_language"]
+                and rust_coverage["below_threshold_count"] > 0
             )
         self._namespace_member_findings = []
         namespace_member_coverage = {

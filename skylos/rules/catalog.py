@@ -42,6 +42,10 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-U009", "Unused private Rust enum variant", "dead_code", "LOW",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
         "SKY-UC001", "Unreachable Python code", "dead_code", finding_type="defect"
     ),
     RuleCatalogEntry(
@@ -1870,6 +1874,22 @@ _RULES = (
         "MEDIUM",
         aliases=("dangling DNS", "subdomain takeover", "terraform-plan"),
         finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D415",
+        "Unix permission value grants write access to all users",
+        "security",
+        "MEDIUM",
+        finding_type="review",
+        cwe=("CWE-732",),
+    ),
+    RuleCatalogEntry(
+        "SKY-D416",
+        "Non-octal Unix permission mode literal",
+        "security",
+        "MEDIUM",
+        finding_type="review",
+        cwe=("CWE-732",),
     ),
     RuleCatalogEntry(
         "SKY-DEP001",

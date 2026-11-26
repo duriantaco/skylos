@@ -3,8 +3,10 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 from functools import lru_cache
+from itertools import pairwise
 from pathlib import Path
 
+from . import permissions
 from ._security_bindings import (
     SYMBOLIC,
     UNKNOWN,
@@ -256,11 +258,86 @@ def _test_module_declarations(root, source, name):
     return declarations
 
 
-class _SecurityFlow:
+class _ScopeAttributes:
+    def __init__(self, source):
+        self.source = source
+
+    def text(self, node):
+        if node is None:
+            return ""
+        return self.source[node.start_byte : node.end_byte].decode("utf-8", "ignore")
+
+    def cfg_key(self, node):
+        """Compare exact cfg token trees; this does not evaluate features."""
+        tokens = []
+        pending = [node]
+        while pending:
+            part = pending.pop()
+            if (
+                part is None
+                or part.has_error
+                or part.type in {"line_comment", "block_comment"}
+            ):
+                continue
+            if (
+                part.type in {"string_literal", "raw_string_literal"}
+                or not part.child_count
+            ):
+                tokens.append(self.text(part))
+            else:
+                pending.extend(reversed(part.children))
+        return tuple(tokens)
+
+    def scope_entries(self, node):
+        conditional = scope_conditional = False
+        guards = scope_guards = frozenset()
+        unsupported = scope_unsupported = False
+        for child in node.named_children:
+            if child.type in {"attribute_item", "inner_attribute_item"}:
+                attribute = next(
+                    (part for part in child.named_children if part.type == "attribute"),
+                    None,
+                )
+                names = (
+                    [
+                        part
+                        for part in attribute.named_children
+                        if part.type not in {"line_comment", "block_comment"}
+                    ]
+                    if attribute is not None
+                    else []
+                )
+                optional = bool(names and self.text(names[0]) in {"cfg", "cfg_attr"})
+                cfg = bool(names and self.text(names[0]) == "cfg")
+                key = self.cfg_key(names[1]) if cfg and len(names) == 2 else ()
+                if child.type == "inner_attribute_item":
+                    scope_conditional |= optional
+                    if key:
+                        scope_guards |= {key}
+                    scope_unsupported |= optional and not key
+                else:
+                    conditional |= optional
+                    if key:
+                        guards |= {key}
+                    unsupported |= optional and not key
+                continue
+            if child.type in {"line_comment", "block_comment"}:
+                continue
+            yield (
+                child,
+                conditional or scope_conditional,
+                guards | scope_guards,
+                not (unsupported or scope_unsupported),
+            )
+            conditional = False
+            guards, unsupported = frozenset(), False
+
+
+class _SecurityFlow(_ScopeAttributes):
     def __init__(self, root, file_path, source, refuted=frozenset(), summaries=None):
         self.root = root
         self.file = str(Path(file_path))
-        self.source = source
+        super().__init__(source)
         self.findings = []
         self.return_values = []
         self.refuted = refuted
@@ -282,11 +359,6 @@ class _SecurityFlow:
         self.functions = []
         self.local_functions = {}
         self.index_functions(root, None)
-
-    def text(self, node):
-        if node is None:
-            return ""
-        return self.source[node.start_byte : node.end_byte].decode("utf-8", "ignore")
 
     def field(self, node, name):
         return node.child_by_field_name(name) if node is not None else None
@@ -437,60 +509,6 @@ class _SecurityFlow:
         for child, conditional, _guards, _complete in self.scope_entries(node):
             yield child, conditional
 
-    def cfg_key(self, node):
-        """Compare exact cfg token trees; this does not evaluate features."""
-        if node is None or node.has_error:
-            return ()
-        if node.type in {"line_comment", "block_comment"}:
-            return ()
-        if node.type in {"string_literal", "raw_string_literal"} or not node.children:
-            return (self.text(node),)
-        return tuple(part for child in node.children for part in self.cfg_key(child))
-
-    def scope_entries(self, node):
-        conditional = scope_conditional = False
-        guards = scope_guards = frozenset()
-        unsupported = scope_unsupported = False
-        for child in node.named_children:
-            if child.type in {"attribute_item", "inner_attribute_item"}:
-                attribute = next(
-                    (part for part in child.named_children if part.type == "attribute"),
-                    None,
-                )
-                names = (
-                    [
-                        part
-                        for part in attribute.named_children
-                        if part.type not in {"line_comment", "block_comment"}
-                    ]
-                    if attribute is not None
-                    else []
-                )
-                optional = bool(names and self.text(names[0]) in {"cfg", "cfg_attr"})
-                cfg = bool(names and self.text(names[0]) == "cfg")
-                key = self.cfg_key(names[1]) if cfg and len(names) == 2 else ()
-                if child.type == "inner_attribute_item":
-                    scope_conditional |= optional
-                    if key:
-                        scope_guards |= {key}
-                    scope_unsupported |= optional and not key
-                else:
-                    conditional |= optional
-                    if key:
-                        guards |= {key}
-                    unsupported |= optional and not key
-                continue
-            if child.type in {"line_comment", "block_comment"}:
-                continue
-            yield (
-                child,
-                conditional or scope_conditional,
-                guards | scope_guards,
-                not (unsupported or scope_unsupported),
-            )
-            conditional = False
-            guards, unsupported = frozenset(), False
-
     def module(self, node, inherited=None):
         state = inherited.copy() if inherited is not None else State()
         state.frames.append({})
@@ -606,6 +624,8 @@ class _SecurityFlow:
             name = self.text(pattern)
             sources = frozenset()
             kind = "path" if api in _PATH_TYPES else None
+            if api in permissions.FS_TYPES:
+                kind = self.fs_type_kind(self.field(param, "type"), state)
             if api in REQUEST_OBJECTS:
                 kind = "http_request"
             elif api in HTTP_CLIENT_TYPES:
@@ -654,6 +674,19 @@ class _SecurityFlow:
                 inner = self.text(first) if first is not None else None
             type_node = self.field(type_node, "type")
         return state.resolve(self.text(type_node)), inner
+
+    def fs_type_kind(self, node, state):
+        if node is not None and node.type == "reference_type":
+            mutable = any(child.type == "mutable_specifier" for child in node.named_children)
+            node = self.field(node, "type")
+        else:
+            mutable = True
+        if node is None or node.type not in {"type_identifier", "scoped_type_identifier"}:
+            return None
+        identity = state.resolve(self.text(node))
+        if identity in permissions.FS_TYPES and (mutable or identity in {permissions.METADATA, permissions.FILE}):
+            return identity
+        return None
 
     def rocket_route_parameters(self, node):
         """Names in ``<name>``/``<name..>`` segments and ``data = "<name>"``
@@ -746,6 +779,11 @@ class _SecurityFlow:
             return self.statement(children[0], state) if children else (UNKNOWN, True)
         if kind == "let_declaration":
             value = self.expression(self.field(node, "value"), state)
+            type_node = self.field(node, "type")
+            if type_node is not None:
+                fs_kind = self.fs_type_kind(type_node, state)
+                if fs_kind or value.kind in permissions.FS_TYPES:
+                    value = replace(value, kind=fs_kind)
             pattern = self.field(node, "pattern")
             self.bind_pattern(pattern, value, state)
             return value, True
@@ -807,6 +845,14 @@ class _SecurityFlow:
 
     def branch(self, node, state):
         condition = self.field(node, "condition")
+        unix_condition = None
+        if condition is not None and condition.type == "macro_invocation":
+            macro = self.text(self.field(condition, "macro"))
+            if state.resolve(macro) == "std::cfg" or (
+                macro == "cfg" and not any("cfg" in frame for frame in state.frames)
+            ):
+                tokens = next((child for child in condition.named_children if child.type == "token_tree"), None)
+                unix_condition = permissions.unix_cfg(self.cfg_key(tokens)[1:-1])
         bound = [
             (
                 self.field(item, "pattern"),
@@ -822,6 +868,8 @@ class _SecurityFlow:
             (False, self.field(node, "alternative")),
         ]:
             branch = state.copy()
+            if unix_condition is not None and truth != unix_condition:
+                branch.conditions |= {("(", "not", "(", "unix", ")", ")")}
             if truth and bound:
                 branch.frames.append({})
                 for pattern, value in bound:
@@ -1414,6 +1462,9 @@ class _SecurityFlow:
                 self.local_call(node, targets, args, state)
         else:
             self.library_calls.add((node.start_byte, node.end_byte))
+        fs_value = self.permission_call(node, callee, api, args, arg_nodes, state)
+        if fs_value is not None:
+            return fs_value
         if api in _ENV_LOOKUPS and self.cargo_build_variable(args):
             return Value(kind="result_string")
         if api in _SOURCES:
@@ -1466,6 +1517,8 @@ class _SecurityFlow:
                 return replace(
                     combined, kind="result_path", canonical=True, contained=False
                 )
+        if api in permissions.FS_CALL_RESULTS:
+            return Value(sources=combined.sources, kind=permissions.FS_CALL_RESULTS[api])
         if api in _PATH_CONSTRUCTORS:
             return replace(combined, kind="path", canonical=False)
         if api == "std::string::String::from":
@@ -1711,10 +1764,130 @@ class _SecurityFlow:
                         refuted.add((node.start_byte, self.text(pattern)))
         return frozenset(refuted)
 
+    def permission_call(self, node, callee, api, args, arg_nodes, state):
+        if api == permissions.PERMISSIONS + "::set_readonly" and len(args) == 2:
+            self.permission_review(node, api, arg_nodes[1], state)
+            return UNKNOWN
+        if api in permissions.MODE_RECEIVERS and len(args) == 2:
+            if args[0].kind == permissions.MODE_RECEIVERS[api] and not args[0].items:
+                self.permission_review(node, api, arg_nodes[1], state)
+            return UNKNOWN
+        name = self.text(self.field(callee, "name"))
+        if name not in {"from_mode", "set_mode", "mode"}:
+            return None
+        receiver = self.field(callee, "path")
+        explicit_trait = None
+        if (
+            receiver is not None
+            and receiver.type == "bracketed_type"
+            and receiver.named_children
+        ):
+            qualified = receiver.named_children[0]
+            explicit_trait = (
+                state.resolve(self.text(self.field(qualified, "alias"))) or ""
+            )
+            receiver = self.field(qualified, "type")
+        fs_type = state.resolve(self.text(receiver))
+        if name == "from_mode" and fs_type == permissions.PERMISSIONS:
+            trait = permissions.UNIX_FS + "PermissionsExt"
+            count = 1
+        else:
+            trait = permissions.MODE_TRAITS.get((fs_type, name))
+            count = 2
+        if not trait or len(args) != count:
+            return None
+        if explicit_trait != trait and (
+            explicit_trait is not None or not permissions.trait_in_scope(state, trait)
+        ):
+            return None
+        self.permission_review(node, f"{trait}::{name}", arg_nodes[-1], state)
+        return Value(kind=permissions.PERMISSIONS) if name == "from_mode" else UNKNOWN
+
+    def permission_review(self, node, api, argument, state):
+        while (
+            argument.type == "parenthesized_expression"
+            and len(argument.named_children) == 1
+        ):
+            argument = argument.named_children[0]
+        literal = self.text(argument)
+        if api == permissions.PERMISSIONS + "::set_readonly":
+            if argument.type != "boolean_literal" or literal != "false":
+                return
+            rule = permissions.READONLY_RULE
+        else:
+            if (
+                argument.type != "integer_literal"
+                or not permissions.ambiguous_mode_literal(literal)
+            ):
+                return
+            rule = permissions.MODE_RULE
+        if any(permissions.unix_cfg(cfg[1:-1]) is False for cfg in state.conditions):
+            return
+        self.findings.append(
+            permissions.review_finding(rule, node, self.file, api, literal)
+        )
+
     def method(self, node, receiver_node, receiver, name, args, state):
         combined = joined([receiver, *args])
         arguments = self.field(node, "arguments")
         arg_nodes = list(arguments.named_children) if arguments is not None else []
+        if not receiver.items:
+            if (
+                receiver.kind == permissions.PERMISSIONS
+                and name == "set_readonly"
+                and len(arg_nodes) == 1
+            ):
+                self.permission_review(
+                    node,
+                    permissions.PERMISSIONS + "::set_readonly",
+                    arg_nodes[0],
+                    state,
+                )
+                return UNKNOWN
+            trait = permissions.MODE_TRAITS.get((receiver.kind, name))
+            if (
+                trait
+                and len(arg_nodes) == 1
+                and permissions.trait_in_scope(state, trait)
+            ):
+                self.permission_review(node, f"{trait}::{name}", arg_nodes[0], state)
+                return receiver if name == "mode" else UNKNOWN
+            if (
+                receiver.kind == permissions.METADATA
+                and name == "permissions"
+                and not args
+            ):
+                return Value(kind=permissions.PERMISSIONS)
+            if (
+                receiver.kind in {permissions.FILE, "path"}
+                and name == "metadata"
+                and not args
+            ):
+                return Value(kind="result_" + permissions.METADATA)
+            if (
+                receiver.kind == permissions.PERMISSIONS
+                and name == "clone"
+                and not args
+            ):
+                return receiver
+            if receiver.kind == permissions.OPTIONS and len(args) == 1:
+                if name in {
+                    "read",
+                    "write",
+                    "append",
+                    "truncate",
+                    "create",
+                    "create_new",
+                }:
+                    return receiver
+                if name == "open":
+                    return Value(kind="result_" + permissions.FILE)
+            if (
+                receiver.kind == permissions.BUILDER
+                and name == "recursive"
+                and len(args) == 1
+            ):
+                return receiver
         if (
             name in {"danger_accept_invalid_certs", "danger_accept_invalid_hostnames"}
             and len(arg_nodes) == 1
@@ -1912,6 +2085,141 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
         flow = _SecurityFlow(root_node, file_path, source, refuted, flow.summaries)
         flow.module(root_node)
     return _dedupe_findings(flow.findings)
+
+
+def _module_source_guards(root):
+    """Index cfg on ordinary mod declarations. Unresolved source selection abstains."""
+    if root is None or root.has_error:
+        return None
+    reader = _ScopeAttributes(root.text)
+    guards = {}
+    doc_comment_import = False
+    doctest_calls = set()
+    pending = [root]
+    while pending:
+        node = pending.pop()
+        if node.type in {"source_file", "declaration_list"}:
+            for child, _, conditions, _ in reader.scope_entries(node):
+                if node == root and ("(", "doctest", ")") in conditions:
+                    if child.type == "extern_crate_declaration":
+                        previous = child.prev_named_sibling
+                        doc_comment_import |= (
+                            reader.text(child.child_by_field_name("name"))
+                            == "doc_comment"
+                            and child.child_by_field_name("alias") is None
+                            and reader.cfg_key(previous) == ("#", "[", "macro_use", "]")
+                        )
+                    elif child.type == "expression_statement" and child.named_children:
+                        invocation = child.named_children[0]
+                        if re.fullmatch(
+                            rb'doctest!\s*\(\s*"[^"\\]*\.md"\s*\)', invocation.text
+                        ):
+                            doctest_calls.add(invocation.start_byte)
+                if child.type == "mod_item":
+                    name = child.child_by_field_name("name")
+                    guards[name.start_point[0] + 1, reader.text(name)] = any(
+                        permissions.unix_cfg(cfg[1:-1]) is False for cfg in conditions
+                    )
+        if node.type == "mod_item" and node.parent.type not in {
+            "source_file",
+            "declaration_list",
+        }:
+            return None
+        if (
+            node.type == "macro_definition"
+            and reader.text(node.child_by_field_name("name")) == "doctest"
+        ):
+            return None
+        if node.type in {"attribute", "token_tree"}:
+            tokens = reader.cfg_key(node)
+            pairs = set(pairwise(tokens))
+            if ("path", "=") in pairs or ("include", "!") in pairs or "mod" in tokens:
+                return None
+        if node.type == "macro_invocation":
+            macro = reader.text(node.child_by_field_name("macro")).split("::")[-1]
+            if macro == "include":
+                return None
+            statement = (
+                node.parent if node.parent.type == "expression_statement" else node
+            )
+            # doc-comment's imported Markdown helper embeds documentation in
+            # a rustdoc test. Other item macros can emit module declarations.
+            if statement.parent.type in {"source_file", "declaration_list"} and not (
+                doc_comment_import and node.start_byte in doctest_calls
+            ):
+                return None
+        if node.type != "token_tree":
+            pending.extend(node.named_children)
+    return guards
+
+
+def _conditionally_loaded(module):
+    while module.parent is not None:
+        parent = module.parent
+        if any(
+            item.kind == "mod" and item.target is module and item.cfg
+            for item in parent.items.get(module.path[-1], ())
+        ):
+            return True
+        module = parent
+    return False
+
+
+def drop_non_unix_permission_reviews(findings, project, scope, errors):
+    """Drop only reviews whose every observed Cargo module path excludes Unix."""
+    from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
+
+    rule_ids = (permissions.READONLY_RULE, permissions.MODE_RULE)
+    if (
+        project is None
+        or not project.complete
+        or not project.all_targets_scanned
+        or not project.crates
+        or errors
+        or scope.get("kind")
+        not in ("repository_root", "repository_root_with_exclusions")
+        or scope.get("scan_path") != str(project.root)
+        or scope.get("changed_files_only")
+        or not set(scope.get("excluded_folders", ())).issubset(DEFAULT_EXCLUDE_FOLDERS)
+    ):
+        return findings
+    candidates = {
+        module.file
+        for row in findings
+        if row.get("rule_id") in rule_ids
+        for module in project.modules_of(row["file"])
+        if module.crate.package is not None and _conditionally_loaded(module)
+    }
+    if not candidates:
+        return findings
+    guards = {}
+    non_unix = set()
+    portable = set()
+    pending = [(crate.root, False) for crate in project.crates]
+    while pending:
+        module, excluded = pending.pop()
+        if module is None:
+            return findings
+        if module.file not in guards:
+            file_guards = _module_source_guards(project.source_tree(module.file))
+            if file_guards is None:
+                return findings
+            guards[module.file] = file_guards
+        if module.file in candidates:
+            (non_unix if excluded else portable).add(module.file)
+        for items in module.items.values():
+            for item in items:
+                if item.kind == "mod":
+                    key = (item.line, item.name)
+                    if key not in guards[module.file]:
+                        return findings
+                    pending.append((item.target, excluded or guards[module.file][key]))
+    files = {project.files[path] for path in non_unix - portable}
+    return [
+        row
+        for row in findings
+        if row.get("rule_id") not in rule_ids or row["file"] not in files
+    ]
 
 
 def _dedupe_findings(findings: list[dict]) -> list[dict]:
