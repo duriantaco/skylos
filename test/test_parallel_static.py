@@ -153,6 +153,47 @@ def _worker_waiting_for_progress(file_path, *_args, **_kwargs):
     return str(file_path), wait_for.exists()
 
 
+def _worker_security_cache_disabled(file_path, *_args, **_kwargs):
+    return str(file_path), ps.security_units.get() is None
+
+
+def test_nested_pool_drops_inherited_serial_security_cache(monkeypatch, tmp_path):
+    import multiprocessing
+    from functools import partial
+
+    start = "fork" if "fork" in multiprocessing.get_all_start_methods() else "spawn"
+    monkeypatch.setattr(
+        ps,
+        "ProcessPoolExecutor",
+        partial(ps.ProcessPoolExecutor, mp_context=multiprocessing.get_context(start)),
+    )
+    outer_file = tmp_path / "outer.py"
+    outer_file.write_text("value = 1\n")
+    inner_files = [tmp_path / "one.py", tmp_path / "two.py"]
+    previous = ps.SecurityUnitCache()
+    token = ps.security_units.set(previous)
+
+    def run_nested_pool(_done, _total, _file):
+        serial_cache = ps.security_units.get()
+        assert serial_cache is not None and serial_cache is not previous
+        outcomes = ps.run_proc_file_parallel(
+            inner_files,
+            {f: f.stem for f in inner_files},
+            jobs=2,
+            _worker_fn=_worker_security_cache_disabled,
+        )
+        assert outcomes == [True, True]
+        assert ps.security_units.get() is serial_cache
+
+    try:
+        ps.run_proc_file_parallel(
+            [outer_file], {outer_file: "outer"}, jobs=1, progress_callback=run_nested_pool
+        )
+        assert ps.security_units.get() is previous
+    finally:
+        ps.security_units.reset(token)
+
+
 def test_parallel_activity_counts_only_workers_that_entered_a_file(tmp_path):
     files = [
         tmp_path / name for name in ("quick.py", "busy.py", "three.py", "four.py")

@@ -7,14 +7,18 @@ ability to sanitize import names or command options.
 from __future__ import annotations
 
 import ast
+import copy
 from functools import lru_cache
 from pathlib import Path
 
 import tomllib
 
+from skylos.analysis.worker_cache import SecurityUnitCache, security_units
 from skylos.rules.quality._test_code import is_python_test_file
 
 from .danger_fs.path_provenance import (
+    _EVIDENCE_STEP_ANCHORS,
+    _SELECT_UNTRUSTED_CHAINS,
     _V,
     PARAMETER,
     UNTRUSTED,
@@ -36,14 +40,119 @@ _MODEL_BASES = frozenset(
     }
 )
 
+# Admission only limits reuse. Every unadmitted file is indexed normally.
+_MAX_CACHED_SCOPE_NODES = 2_500_000
+_MAX_CACHED_SOURCE_CHARS = 32_000_000
+_MAX_CACHED_FILES = 2048
+
 
 class SecurityProject(_Project):
     """Preserve model receiver identities at documented validation APIs."""
+
+    def _add_python(self, path, text):
+        cache = security_units.get()
+        if cache is None:
+            return super()._add_python(path, text)
+        if cache.root != self.root:
+            cache = SecurityUnitCache(self.root)
+            security_units.set(cache)
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return super()._add_python(path, text)
+        cached = cache.entries.get(resolved)
+        if cached is not None:
+            previous, unit = cached
+            # The normal loader read these exact contents in this pass. Package
+            # markers, including those above the scan root, can change separately.
+            if text == previous and unit.module_names == self._module_names(unit):
+                # Lexical scopes, ASTs and binding records are read-only after
+                # construction. A rebinding attempt can hit a recursion limit
+                # in one resolver; keep that memo local to its project.
+                unit = copy.copy(unit)
+                unit._rebinding = None
+                self._register_unit(unit)
+                return unit
+            del cache.entries[resolved]
+            cache.nodes -= len(unit.node_scope)
+            cache.chars -= len(previous)
+        unit = super()._add_python(path, text)
+        if (
+            unit is not None
+            and len(cache.entries) < _MAX_CACHED_FILES
+            and cache.nodes + len(unit.node_scope) <= _MAX_CACHED_SCOPE_NODES
+            and cache.chars + len(text) <= _MAX_CACHED_SOURCE_CHARS
+        ):
+            cache.entries[resolved] = (text, unit)
+            cache.nodes += len(unit.node_scope)
+            cache.chars += len(text)
+        return unit
 
     def _values(self, unit, scope, expr, depth):
         if isinstance(expr, ast.Constant) and expr.value is None:
             return frozenset()
         return super()._values(unit, scope, expr, depth)
+
+    def bind_argument(self, fn, site, name):
+        # Wide summaries can reference every formal. Index this call once
+        # instead of scanning its complete argument list for each name.
+        if (
+            _SELECT_UNTRUSTED_CHAINS.get() is None
+            or len(site.args) + len(site.keywords) <= 4
+            and len(fn.args.args) + len(fn.args.posonlyargs) + len(fn.args.kwonlyargs)
+            <= 4
+        ):
+            return super().bind_argument(fn, site, name)
+        cached = getattr(site, "_source_arguments", None)
+        if cached is None or cached[0] is not fn:
+            args = fn.args
+            positional = [*args.posonlyargs, *args.args]
+            defaults = {
+                p.arg: value
+                for p, value in zip(reversed(positional), reversed(args.defaults))
+            }
+            defaults.update(
+                (p.arg, value)
+                for p, value in zip(args.kwonlyargs, args.kw_defaults)
+                if value is not None
+            )
+            if site.skip_first:
+                positional = positional[1:]
+            keywords = {p.arg for p in [*positional, *args.kwonlyargs]}
+            passed, spread = {}, []
+            for i, value in enumerate(site.args):
+                if isinstance(value, ast.Starred):
+                    spread.append(value.value)
+                elif spread:
+                    spread.append(value)
+                elif i < len(positional):
+                    passed.setdefault(positional[i].arg, []).append(value)
+                elif args.vararg is not None:
+                    passed.setdefault(args.vararg.arg, []).append(value)
+            for keyword in site.keywords:
+                if keyword.arg is None:
+                    spread.append(keyword.value)
+                else:
+                    passed.setdefault(keyword.arg, []).append(keyword.value)
+                    if (
+                        args.kwarg is not None
+                        and keyword.arg not in keywords
+                        and keyword.arg != args.kwarg.arg
+                    ):
+                        passed.setdefault(args.kwarg.arg, []).append(keyword.value)
+            cached = site._source_arguments = (fn, passed, spread, defaults)
+        _, passed, spread, defaults = cached
+        actuals = passed.get(name, ())
+        if actuals or spread:
+            return [
+                (expr, site.unit, site.scope)
+                for collection in (actuals, spread)
+                for expr in collection
+            ]
+        info = self.function_info.get(id(fn))
+        if name in defaults and info is not None:
+            return [(defaults[name], info[0], info[1])]
+        return []
 
     def _param_values(self, unit, owner, bind, depth):
         values = super()._param_values(unit, owner, bind, depth)
@@ -651,6 +760,9 @@ class ProjectSources:
         self.project = SecurityProject.load(self.root)
         self.tracer = SourceTracer(self.project, "SKY-D357")
         self.command_tracer = SourceTracer(self.project, "SKY-D212")
+        self._test_path_prefixes = tuple(
+            unit.rel + ":" for unit in self.project.units if unit.is_test
+        )
         self._resolution_error = None
 
     def _evidence(self, resolve, file_path, call):
@@ -663,11 +775,26 @@ class ProjectSources:
                 self._resolution_error = str(error)
         return {"resolution_incomplete": self._resolution_error}
 
+    def _import_step_anchors(self, chain):
+        if chain[-1].startswith(self._test_path_prefixes):
+            first_test = next(
+                i for i, step in enumerate(chain) if step.startswith(self._test_path_prefixes)
+            )
+            return {0, first_test}
+        return ()
+
     def _production_chain(self, chain):
-        return not any(
-            unit.is_test and any(step.startswith(unit.rel + ":") for step in chain)
-            for unit in self.project.units
+        return not self._test_path_prefixes or not any(
+            step.startswith(self._test_path_prefixes) for step in chain
         )
+
+    def _select_import_chains(self, candidates, limit):
+        # Several branch targets can resolve to an unordered set of functions.
+        # A witness eligible for this sink must survive even if it arrives last.
+        return sorted(
+            candidates,
+            key=lambda chain: (not self._production_chain(chain), len(chain), chain),
+        )[:limit]
 
     def locate_call(self, file_path, call):
         unit = self.project.by_path.get(Path(file_path).resolve())
@@ -700,7 +827,13 @@ class ProjectSources:
         )
         if argument is None:
             return None
-        facts = self.tracer.trace(unit, unit.scope_of(argument), argument)
+        token = _SELECT_UNTRUSTED_CHAINS.set(self._select_import_chains)
+        anchor_token = _EVIDENCE_STEP_ANCHORS.set(self._import_step_anchors)
+        try:
+            facts = self.tracer.trace(unit, unit.scope_of(argument), argument)
+        finally:
+            _EVIDENCE_STEP_ANCHORS.reset(anchor_token)
+            _SELECT_UNTRUSTED_CHAINS.reset(token)
         chains = [
             chain for chain in facts.chains[UNTRUSTED] if self._production_chain(chain)
         ]

@@ -1,0 +1,921 @@
+{
+  "mixed": {
+    "freeze_sha256": "9a9acd6b91282867cc9d624ab4649403ee42d4673450d94c98236e967e970ebf",
+    "cases": [
+      {
+        "path": "reports/catalog.py",
+        "group": "sql",
+        "rules": [
+          "SKY-D211",
+          "SKY-D217"
+        ],
+        "positive": true,
+        "rationale": "The request query determines the identifier in ORDER BY.",
+        "sha256": "3e288510af875239916997207703570a6847e798cf287b8790fd8925b1949b01",
+        "source": "from flask import Blueprint, Response, g, request\n\nbp = Blueprint(\"catalog\", __name__)\n\n@bp.get(\"/catalog\")\ndef report():\n    cursor = g.db.cursor()\n    key = request.args.get(\"sort\", \"title\")\n    cursor.execute(f\"SELECT title FROM catalog ORDER BY {key}\")\n    return {\"rows\": cursor.fetchall()}\n"
+      },
+      {
+        "path": "reports/roster.py",
+        "group": "sql",
+        "rules": [
+          "SKY-D211",
+          "SKY-D217"
+        ],
+        "positive": false,
+        "rationale": "A request value occupies a bound LIKE parameter.",
+        "sha256": "7b83194ac26ff66323dac3d8142539c6f3276ee2abcdbd61e3228029b5ae5d9e",
+        "source": "from flask import Blueprint, Response, g, request\n\nbp = Blueprint(\"roster\", __name__)\n\n@bp.get(\"/roster\")\ndef report():\n    cursor = g.db.cursor()\n    name = request.args.get(\"name\", \"\")\n    cursor.execute(\"SELECT name FROM roster WHERE name LIKE ?\", (name + \"%\",))\n    return {\"rows\": cursor.fetchall()}\n"
+      },
+      {
+        "path": "reports/unit.py",
+        "group": "sql",
+        "rules": [
+          "SKY-D211",
+          "SKY-D217"
+        ],
+        "positive": true,
+        "rationale": "An untrusted value is substituted by str.format before execute.",
+        "sha256": "5bb2174e1cfe55dd5a43a40ad310ec012734ea650181408f8895fe9d257cba72",
+        "source": "from flask import Blueprint, Response, g, request\n\nbp = Blueprint(\"unit\", __name__)\n\n@bp.get(\"/unit\")\ndef report():\n    unit = request.args.get(\"unit\", \"\")\n    statement = \"SELECT name FROM offices WHERE unit = '{}'\".format(unit)\n    cursor = g.db.cursor()\n    cursor.execute(statement)\n    return {\"rows\": cursor.fetchall()}\n"
+      },
+      {
+        "path": "reports/edition.py",
+        "group": "sql",
+        "rules": [
+          "SKY-D211",
+          "SKY-D217"
+        ],
+        "positive": false,
+        "rationale": "Both possible table identifiers are locally fixed.",
+        "sha256": "84234a8f42cdc98a48b2848f591d4e84e1cef713632de6f787ccd8cc1c9c1206",
+        "source": "from flask import Blueprint, Response, g, request\n\nbp = Blueprint(\"edition\", __name__)\n\n@bp.get(\"/edition\")\ndef report():\n    table = \"books\" if request.args.get(\"edition\") == \"current\" else \"archive\"\n    cursor = g.db.cursor()\n    cursor.execute(f\"SELECT isbn FROM {table}\")\n    return {\"rows\": cursor.fetchall()}\n"
+      },
+      {
+        "path": "reports/shelf.py",
+        "group": "sql",
+        "rules": [
+          "SKY-D211",
+          "SKY-D217"
+        ],
+        "positive": true,
+        "rationale": "The request header flows into the SQL text through concatenation.",
+        "sha256": "61d2b1a80833475ab6f68b87bd0ed5405034b0a72368afc4a23fc11555a4748f",
+        "source": "from flask import Blueprint, Response, g, request\n\nbp = Blueprint(\"shelf\", __name__)\n\n@bp.get(\"/shelf\")\ndef report():\n    shelf = request.headers.get(\"X-Shelf\", \"\")\n    cursor = g.db.cursor()\n    statement = \"SELECT tag FROM inventory WHERE shelf = '\" + shelf + \"'\"\n    cursor.execute(statement)\n    return {\"rows\": cursor.fetchall()}\n"
+      },
+      {
+        "path": "reports/page.py",
+        "group": "sql",
+        "rules": [
+          "SKY-D211",
+          "SKY-D217"
+        ],
+        "positive": false,
+        "rationale": "The request count is converted to an ordinary integer before interpolation.",
+        "sha256": "95d58caddadf5f26d8d105ef1319c0beeb7a6d96d439f751c5e1f2932e38aeda",
+        "source": "from flask import Blueprint, Response, g, request\n\nbp = Blueprint(\"page\", __name__)\n\n@bp.get(\"/page\")\ndef report():\n    rows = min(int(request.args.get(\"rows\", \"5\")), 30)\n    cursor = g.db.cursor()\n    cursor.execute(f\"SELECT topic FROM help_topics LIMIT {rows}\")\n    return {\"rows\": cursor.fetchall()}\n"
+      },
+      {
+        "path": "reports/search.py",
+        "group": "sql",
+        "rules": [
+          "SKY-D211",
+          "SKY-D217"
+        ],
+        "positive": true,
+        "rationale": "A trusted parameter placeholder protects one filter but raw input supplies the order clause.",
+        "sha256": "862b361b0cfc0e07f9031c5bb54adbed083e13a908b2ba7142fb8f2836842a3c",
+        "source": "from flask import Blueprint, Response, g, request\n\nbp = Blueprint(\"search\", __name__)\n\n@bp.get(\"/search\")\ndef report():\n    cursor = g.db.cursor()\n    sort = request.args.get(\"sort\", \"name\")\n    code = request.args.get(\"area\", \"\")\n    cursor.execute(\"SELECT name FROM parks WHERE area = ? ORDER BY \" + sort, (code,))\n    return {\"rows\": cursor.fetchall()}\n"
+      },
+      {
+        "path": "reports/weekly.py",
+        "group": "sql",
+        "rules": [
+          "SKY-D211",
+          "SKY-D217"
+        ],
+        "positive": false,
+        "rationale": "The branch selects complete literal queries; the week remains parameterized.",
+        "sha256": "f4ea24741e5a71bd2f7cd6a295982e7138099aa2fb1224d0b173c81044101ea3",
+        "source": "from flask import Blueprint, Response, g, request\n\nbp = Blueprint(\"weekly\", __name__)\n\n@bp.get(\"/weekly\")\ndef report():\n    week = request.args.get(\"week\", \"\")\n    statement = \"SELECT count FROM visits WHERE week = ?\"\n    if request.args.get(\"view\") == \"category\":\n        statement = \"SELECT category FROM visits WHERE week = ?\"\n    cursor = g.db.cursor()\n    cursor.execute(statement, (week,))\n    return {\"rows\": cursor.fetchall()}\n"
+      },
+      {
+        "path": "reports/welcome.py",
+        "group": "html",
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": true,
+        "rationale": "A request value is placed in a text node of a text/html response.",
+        "sha256": "e3d1f1b917e3f488903ebc3abd614e9f4fd9219611e7379d95aa69b954993c2d",
+        "source": "from flask import Blueprint, Response, g, request\n\nbp = Blueprint(\"welcome\", __name__)\n\n@bp.get(\"/welcome\")\ndef report():\n    guest = request.args.get(\"guest\", \"reader\")\n    return Response(f\"<p>Welcome, {guest}</p>\", mimetype=\"text/html\")\n"
+      },
+      {
+        "path": "reports/receipt.py",
+        "group": "html",
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": false,
+        "rationale": "html.escape encodes the dynamic text node.",
+        "sha256": "eb20029f0470f3447aced4b1dfa53456422355c4a12dff9a377d48ac4a127d69",
+        "source": "from flask import Blueprint, Response, g, request\nfrom html import escape\n\nbp = Blueprint(\"receipt\", __name__)\n\n@bp.get(\"/receipt\")\ndef report():\n    number = request.args.get(\"number\", \"\")\n    return Response(\"<p>Receipt \" + escape(number) + \"</p>\", mimetype=\"text/html\")\n"
+      },
+      {
+        "path": "reports/card.py",
+        "group": "html",
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": true,
+        "rationale": "Markup takes an already formatted string containing request-derived text.",
+        "sha256": "62f286b149964fecc20344e142e697a88dcdeebb43044e975b1a6580c5ca3b05",
+        "source": "from flask import Blueprint, Response, g, request\nfrom markupsafe import Markup\n\nbp = Blueprint(\"card\", __name__)\n\n@bp.get(\"/card\")\ndef report():\n    caption = request.args.get(\"caption\", \"\")\n    return Markup(\"<figure>{}</figure>\".format(caption))\n"
+      },
+      {
+        "path": "reports/channel.py",
+        "group": "html",
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": false,
+        "rationale": "Markup.format escapes an ordinary (non-Markup) request value in a text node.",
+        "sha256": "f4b7add5cd939a812ac4e47f4e0a022233b9a9f1e88734a95accc2324ebfc503",
+        "source": "from flask import Blueprint, Response, g, request\nfrom markupsafe import Markup\n\nbp = Blueprint(\"channel\", __name__)\n\n@bp.get(\"/channel\")\ndef report():\n    channel = request.args.get(\"channel\", \"\")\n    return Markup(\"<section>{}</section>\").format(channel)\n"
+      },
+      {
+        "path": "reports/labels.py",
+        "group": "html",
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": true,
+        "rationale": "A raw cookie value is concatenated into Flask's default HTML response.",
+        "sha256": "7c985dfdb5a7b9da2855cef5a29a35ca0d3497ed4231dd523fb43ca7e6361972",
+        "source": "from flask import Blueprint, Response, g, request\n\nbp = Blueprint(\"labels\", __name__)\n\n@bp.get(\"/labels\")\ndef report():\n    region = request.cookies.get(\"region\", \"\")\n    return \"<h2>Events</h2><p>\" + region + \"</p>\"\n"
+      },
+      {
+        "path": "reports/snippet.py",
+        "group": "html",
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": false,
+        "rationale": "HTML-like characters are delivered with an explicit text/plain content type.",
+        "sha256": "80311095ffd74755485060cfc77401c97b212afabaf4183a8499ebc5fedf7f0c",
+        "source": "from flask import Blueprint, Response, g, request\n\nbp = Blueprint(\"snippet\", __name__)\n\n@bp.get(\"/snippet\")\ndef report():\n    snippet = request.args.get(\"text\", \"\")\n    return Response(f\"<example>{snippet}</example>\", content_type=\"text/plain; charset=utf-8\")\n"
+      },
+      {
+        "path": "reports/badge.py",
+        "group": "html",
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": true,
+        "rationale": "Only the title is escaped; the subtitle in the next text node is raw.",
+        "sha256": "baa13544d128080ff2844290f47f46164a61018b911e30e19368de7d7215f495",
+        "source": "from flask import Blueprint, Response, g, request\nfrom html import escape\n\nbp = Blueprint(\"badge\", __name__)\n\n@bp.get(\"/badge\")\ndef report():\n    title = escape(request.args.get(\"title\", \"\"))\n    caption = request.args.get(\"caption\", \"\")\n    return Response(f\"<h1>{title}</h1><p>{caption}</p>\", mimetype=\"text/html\")\n"
+      },
+      {
+        "path": "reports/poster.py",
+        "group": "html",
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": false,
+        "rationale": "Flask's autoescaped template substitutes its argument into a text node.",
+        "sha256": "187c46faa5663842a860ea0f10c56106f1b852d9616e43d5031a06eb3008d5cd",
+        "source": "from flask import Blueprint, Response, g, request\nfrom flask import render_template_string\n\nbp = Blueprint(\"poster\", __name__)\n\n@bp.get(\"/poster\")\ndef report():\n    label = request.args.get(\"label\", \"\")\n    return render_template_string(\"<h2>{{ label }}</h2>\", label=label)\n"
+      },
+      {
+        "path": "next/app/api/admin/digest/route.ts",
+        "group": "auth",
+        "rules": [
+          "SKY-D280"
+        ],
+        "positive": true,
+        "rationale": "An administrative digest is rebuilt before any caller identity is checked.",
+        "sha256": "944fa39dfbd1c7fc19d71743d1ca02d4d6bd04aa9098643c816d89409c54d645",
+        "source": "import { rebuildDigest } from \"@/reports/jobs\";\n\nexport async function POST() {\n  await rebuildDigest();\n  return Response.json({ accepted: true });\n}\n"
+      },
+      {
+        "path": "next/app/api/admin/reports/route.ts",
+        "group": "auth",
+        "rules": [
+          "SKY-D280"
+        ],
+        "positive": false,
+        "rationale": "getServerSession followed by an early return for every non-editor guards the mutation.",
+        "sha256": "4b0c86c48e621a5c5f742afde4df73b851bfeb4cfc1066ddbe4e4049a8186ea1",
+        "source": "import { getServerSession } from \"next-auth\";\nimport { authOptions } from \"@/identity/settings\";\nimport { publishReport } from \"@/reports/jobs\";\n\nexport async function POST(request: Request) {\n  const session = await getServerSession(authOptions);\n  if (session?.user?.role !== \"editor\") {\n    return new Response(\"Forbidden\", { status: 403 });\n  }\n  const revision = await request.text();\n  await publishReport(revision);\n  return Response.json({ published: true });\n}\n"
+      },
+      {
+        "path": "services/review.js",
+        "group": "auth",
+        "rules": [
+          "SKY-D280"
+        ],
+        "positive": true,
+        "rationale": "A router that can archive a review accepts requests without any authentication middleware.",
+        "sha256": "f9cb7399c8f56b365497ed4172c5b00dc18e6509736e836751af4fc0bd1bf36c",
+        "source": "import express from \"express\";\nimport { archiveReview } from \"./reviews.js\";\n\nexport const router = express.Router();\nrouter.post(\"/admin/reviews/:slug/archive\", async (req, res) => {\n  await archiveReview(req.params.slug);\n  res.sendStatus(204);\n});\n"
+      },
+      {
+        "path": "services/collection.js",
+        "group": "auth",
+        "rules": [
+          "SKY-D280"
+        ],
+        "positive": false,
+        "rationale": "Passport JWT authentication on the exact mutation route is required before its handler.",
+        "sha256": "d8e98b81f041725db0a7519c1e56d136c222a1db0aa601d9d58284f9001087cc",
+        "source": "import express from \"express\";\nimport passport from \"passport\";\nimport { updateCollection } from \"./collections.js\";\n\nexport const router = express.Router();\nrouter.patch(\"/account/collection\", passport.authenticate(\"jwt\", { session: false }), async (req, res) => {\n  await updateCollection(req.user.id, req.body);\n  res.sendStatus(204);\n});\n"
+      },
+      {
+        "path": "next/app/api/admin/allocations/route.js",
+        "group": "auth",
+        "rules": [
+          "SKY-D280"
+        ],
+        "positive": true,
+        "rationale": "A session is retrieved only to annotate logging; callers without a session still reach the mutation.",
+        "sha256": "01b7e679035bfb69bead8295e437e371c71bc6d9ea070d15437da512869642c2",
+        "source": "import { getServerSession } from \"next-auth\";\nimport { authOptions } from \"@/identity/settings\";\nimport { allocate } from \"@/reports/jobs\";\n\nexport async function POST(request) {\n  const session = await getServerSession(authOptions);\n  const entry = await request.json();\n  await allocate(entry, { actor: session?.user?.email || \"anonymous\" });\n  return Response.json({ accepted: true });\n}\n"
+      },
+      {
+        "path": "next/app/api/account/tag/route.js",
+        "group": "auth",
+        "rules": [
+          "SKY-D280"
+        ],
+        "positive": false,
+        "rationale": "The authenticated server session supplies the account ID and absence of an ID terminates the request.",
+        "sha256": "7a13ccb943efad32e2736116d0bdfbdab8fdea1911d9e5aa791c2195d58629c1",
+        "source": "import { auth } from \"@/auth\";\nimport { setTag } from \"@/account/preferences\";\n\nexport async function PUT(request) {\n  const session = await auth();\n  if (!session?.user?.id) return new Response(\"Please sign in\", { status: 401 });\n  await setTag(session.user.id, await request.text());\n  return new Response(null, { status: 204 });\n}\n"
+      },
+      {
+        "path": "services/displays.ts",
+        "group": "auth",
+        "rules": [
+          "SKY-D280"
+        ],
+        "positive": true,
+        "rationale": "The administrative clear action trusts an account identifier in the request body without authenticating.",
+        "sha256": "767b811312dff75eb6e513faec30a56b923ddc94a09b8c11af93e2205863c273",
+        "source": "import express from \"express\";\nimport { clearDisplay } from \"./schedule\";\n\nexport const router = express.Router();\nrouter.delete(\"/admin/display/:id\", async (req, res) => {\n  await clearDisplay(req.params.id, req.body.account);\n  res.sendStatus(204);\n});\n"
+      },
+      {
+        "path": "services/profile.ts",
+        "group": "auth",
+        "rules": [
+          "SKY-D280"
+        ],
+        "positive": false,
+        "rationale": "An established Passport session and req.user are required on every path to updateProfile.",
+        "sha256": "297d9aad71899fb99fbd69a6da309777fd14329a4592d2e8e1270024a87d4fbb",
+        "source": "import express from \"express\";\nimport { updateProfile } from \"./profiles\";\n\nexport const router = express.Router();\nrouter.put(\"/account/preferences\", async (req, res) => {\n  if (!req.isAuthenticated() || !req.user) {\n    return res.sendStatus(401);\n  }\n  await updateProfile(req.user.id, req.body);\n  return res.sendStatus(204);\n});\n"
+      },
+      {
+        "path": "next/app/api/webhooks/billing/route.ts",
+        "group": "hook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "Incoming billing events are committed directly from request JSON with no signature validation.",
+        "sha256": "6ec49b9ad6df08b9a31efe7384c34517b2eaec898efae755cb3dd83ab4bb8b65",
+        "source": "import { recordBillingEvent } from \"@/billing/events\";\n\nexport async function POST(request: Request) {\n  const event = await request.json();\n  await recordBillingEvent(event);\n  return new Response(null, { status: 204 });\n}\n"
+      },
+      {
+        "path": "next/app/api/webhooks/invoices/route.ts",
+        "group": "hook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Stripe constructEvent verifies the raw text, signature and configured endpoint secret before dispatch.",
+        "sha256": "75d30c7e61def0e1570f9d14ba3f363417dc61db07e68e342a8d6efc6fdab64c",
+        "source": "import Stripe from \"stripe\";\nimport { acceptInvoice } from \"@/billing/events\";\n\nconst stripe = new Stripe(process.env.STRIPE_API_KEY!);\nexport async function POST(request: Request) {\n  const bytes = await request.text();\n  const signature = request.headers.get(\"stripe-signature\");\n  if (!signature) return new Response(\"Missing signature\", { status: 400 });\n  try {\n    const event = stripe.webhooks.constructEvent(bytes, signature, process.env.STRIPE_ENDPOINT_SECRET!);\n    await acceptInvoice(event);\n    return new Response(null, { status: 204 });\n  } catch {\n    return new Response(\"Invalid event\", { status: 400 });\n  }\n}\n"
+      },
+      {
+        "path": "services/vendor.js",
+        "group": "hook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "The presence of an event ID supports tracing but supplies no authenticity proof.",
+        "sha256": "3443687fdac10ce25a5d143387aae1819be0a4d2524de946f788668c27ac9701",
+        "source": "import express from \"express\";\nimport { recordDelivery } from \"./events.js\";\n\nexport const router = express.Router();\nrouter.post(\"/webhooks/vendor\", express.json(), async (req, res) => {\n  const id = req.get(\"x-event-id\");\n  if (!id) return res.sendStatus(400);\n  await recordDelivery(id, req.body);\n  return res.sendStatus(204);\n});\n"
+      },
+      {
+        "path": "services/ledger.js",
+        "group": "hook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Compares a SHA-256 HMAC of the original bytes with the supplied signature before enqueueing.",
+        "sha256": "fd59f56df36f55024bd355724dd034058d5c0c896a7818fdfefbd5893275b859",
+        "source": "import express from \"express\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { enqueueLedger } from \"./events.js\";\n\nexport const router = express.Router();\nrouter.post(\"/webhooks/ledger\", express.raw({ type: \"application/json\" }), async (req, res) => {\n  const expected = createHmac(\"sha256\", process.env.LEDGER_SECRET).update(req.body).digest();\n  const received = Buffer.from(req.get(\"x-ledger-signature\") || \"\", \"hex\");\n  if (received.length !== expected.length || !timingSafeEqual(expected, received)) {\n    return res.sendStatus(401);\n  }\n  await enqueueLedger(JSON.parse(req.body.toString(\"utf8\")));\n  return res.sendStatus(204);\n});\n"
+      },
+      {
+        "path": "next/app/api/webhooks/catalogue/route.js",
+        "group": "hook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "The signature header must be present but its contents are never validated.",
+        "sha256": "5d4eebfd9aa03a1b7bc8ffa79a55f02dd067924a4ead8d52bf847eba9e2a212e",
+        "source": "import { updateCatalogue } from \"@/catalogue/events\";\n\nexport async function POST(request) {\n  const signature = request.headers.get(\"x-catalogue-signature\");\n  if (!signature) return new Response(\"Signature required\", { status: 401 });\n  await updateCatalogue(await request.json());\n  return new Response(null, { status: 204 });\n}\n"
+      },
+      {
+        "path": "next/app/api/webhooks/releases/route.js",
+        "group": "hook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "The Octokit webhook verifier must accept the original payload before it can reach delivery handling.",
+        "sha256": "1cde9e5131ad15dbd1ab5c5c40611bca2fa4beda417f0d3a7ae7bb2c53870b59",
+        "source": "import { Webhooks } from \"@octokit/webhooks\";\nimport { registerRelease } from \"@/releases/events\";\n\nconst hooks = new Webhooks({ secret: process.env.GITHUB_WEBHOOK_SECRET });\nexport async function POST(request) {\n  const body = await request.text();\n  const signature = request.headers.get(\"x-hub-signature-256\");\n  if (!signature || !(await hooks.verify(body, signature))) {\n    return new Response(\"Invalid signature\", { status: 401 });\n  }\n  await registerRelease(JSON.parse(body));\n  return new Response(null, { status: 204 });\n}\n"
+      },
+      {
+        "path": "services/build.ts",
+        "group": "hook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "A well-formed body is accepted as an authenticated build event.",
+        "sha256": "0fc5ba28e531d65be2147f6b9f5938b560a5c23a877999b1cca93b2cb27e4c60",
+        "source": "import express from \"express\";\nimport { trackBuild } from \"./builds\";\n\nexport const router = express.Router();\nrouter.post(\"/webhooks/build\", express.json(), async (req, res) => {\n  if (typeof req.body?.build !== \"string\") return res.sendStatus(400);\n  await trackBuild(req.body.build);\n  return res.sendStatus(204);\n});\n"
+      },
+      {
+        "path": "services/alerts.ts",
+        "group": "hook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Stripe authenticates the exact raw request bytes before the verified event is processed.",
+        "sha256": "769d9cdb7b382b57e46f955c0817776b43ddb8cb8b134299a602e1bcf095b8b5",
+        "source": "import express from \"express\";\nimport Stripe from \"stripe\";\nimport { saveAlert } from \"./alerts-store\";\n\nconst stripe = new Stripe(process.env.STRIPE_API_KEY!);\nexport const router = express.Router();\nrouter.post(\"/webhooks/alerts\", express.raw({ type: \"application/json\" }), async (req, res) => {\n  const signature = req.get(\"stripe-signature\");\n  if (!signature) return res.sendStatus(400);\n  const event = stripe.webhooks.constructEvent(req.body, signature, process.env.ALERT_ENDPOINT_SECRET!);\n  await saveAlert(event);\n  return res.sendStatus(204);\n});\n"
+      }
+    ]
+  },
+  "providers": {
+    "freeze_sha256": "5e17696ff2375a74f411c62d2652d4c49fd622cbb2c98231caa4ec0ad5ae2a4e",
+    "cases": [
+      {
+        "path": "routes/stripe/stripe-webhook-invoices.js",
+        "group": "stripe",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "The fallible Stripe verification returns the only event added to the process-local ledger.",
+        "sha256": "b94eb6d2249d77e1a725fef89ddc42db638576712d1597d177772452cd036e89",
+        "source": "import express from 'express';\nimport Stripe from 'stripe';\n\nconst stripe = new Stripe(process.env.STRIPE_API_KEY);\nconst router = express.Router();\nconst invoices = new Set();\n\nrouter.post('/webhooks/stripe/invoices', express.raw({type: 'application/json'}), (req, res) => {\n  try {\n    const event = stripe.webhooks.constructEvent(\n      req.body, req.header('Stripe-Signature'), process.env.STRIPE_INVOICE_SECRET\n    );\n    invoices.add(event.id);\n    return res.sendStatus(204);\n  } catch {\n    return res.sendStatus(400);\n  }\n});\n\nexport default router;\n"
+      },
+      {
+        "path": "app/api/webhooks/stripe/credits/route.ts",
+        "group": "stripe",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "Reading a signature header and parsing JSON does not authenticate this direct HTTP route.",
+        "sha256": "f2d2d48811abe17709ef9a2c7b9e21e2c6efc488f922ced2d6c2bf9b99579402",
+        "source": "import type Stripe from 'stripe';\n\nconst receivedCredits = new Set<string>();\n\nexport async function POST(request: Request) {\n  if (!request.headers.has('stripe-signature')) {\n    return new Response(null, { status: 400 });\n  }\n  const event: Stripe.Event = await request.json();\n  receivedCredits.add(event.id);\n  return new Response(null, { status: 202 });\n}\n"
+      },
+      {
+        "path": "app/api/webhooks/stripe/refunds/route.ts",
+        "group": "stripe",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "The awaited async construction must complete before the event is recorded.",
+        "sha256": "a9abece39fa109ec0a491fce1feab6fc3268693f5a35afa0fe54201f290fe31a",
+        "source": "import Stripe from 'stripe';\n\nconst billing = new Stripe(process.env.STRIPE_API_KEY!);\nconst refundEvents = new Set<string>();\n\nexport const POST = async (request: Request) => {\n  const raw = await request.text();\n  const sig = request.headers.get('stripe-signature');\n  if (!sig) return new Response(null, { status: 400 });\n  const message = await billing.webhooks.constructEventAsync(\n    raw, sig, process.env.STRIPE_REFUND_SECRET!\n  );\n  refundEvents.add(message.id);\n  return new Response(null, { status: 204 });\n};\n"
+      },
+      {
+        "path": "routes/stripe/stripe-webhook-balance.js",
+        "group": "stripe",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "The raw event is added to the local queue before the SDK can reject it.",
+        "sha256": "f8b4073ad5a55954f227337b54f738df43a1939088612278d4d97cdb572a0ebc",
+        "source": "import express from 'express';\nimport Stripe from 'stripe';\n\nconst client = new Stripe(process.env.STRIPE_API_KEY);\nconst queued = [];\nconst router = express.Router();\n\nrouter.post('/webhooks/stripe/balance', express.raw({type: 'application/json'}), function handle(req, res) {\n  const raw = req.body;\n  queued.push(JSON.parse(raw.toString()).id);\n  try {\n    client.webhooks.constructEvent(raw, req.get('stripe-signature'), process.env.BALANCE_WEBHOOK_SECRET);\n  } catch {\n    return res.sendStatus(400);\n  }\n  return res.sendStatus(202);\n});\n\nexport default router;\n"
+      },
+      {
+        "path": "app/api/webhooks/stripe/portal/route.js",
+        "group": "stripe",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "A same-module helper returns the event constructed with the endpoint secret; failure prevents the ledger update.",
+        "sha256": "ebc7d6a24066f4c64c292fde7d4256e186e625879048c993250f9f1a9b389cf9",
+        "source": "import Stripe from 'stripe';\n\nconst stripe = new Stripe(process.env.STRIPE_API_KEY);\nconst seen = new Set();\n\nfunction readDelivery(rawBody, suppliedSignature) {\n  return stripe.webhooks.constructEvent(rawBody, suppliedSignature, process.env.PORTAL_WEBHOOK_SECRET);\n}\n\nexport async function POST(request) {\n  const raw = await request.text();\n  const message = readDelivery(raw, request.headers.get('stripe-signature'));\n  seen.add(message.id);\n  return new Response(null, { status: 204 });\n}\n"
+      },
+      {
+        "path": "app/api/webhooks/stripe/checkout/route.ts",
+        "group": "stripe",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "An SDK exception falls back to the unverified payload and still updates the in-memory checkout count.",
+        "sha256": "126919df57346637a1b4339435eac7d92038b8b9f9a8dc35e511d3d209b79052",
+        "source": "import Stripe from 'stripe';\n\nconst stripe = new Stripe(process.env.STRIPE_API_KEY!);\nconst totals = new Map<string, number>();\n\nexport async function POST(request: Request) {\n  const raw = await request.text();\n  let event: Stripe.Event;\n  try {\n    event = stripe.webhooks.constructEvent(raw, request.headers.get('stripe-signature') ?? '', process.env.CHECKOUT_WEBHOOK_SECRET!);\n  } catch {\n    event = JSON.parse(raw);\n  }\n  totals.set(event.type, (totals.get(event.type) ?? 0) + 1);\n  return new Response(null, { status: 204 });\n}\n"
+      },
+      {
+        "path": "routes/github/github-webhook-push.js",
+        "group": "github",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "The callback accepts a payload only after the SDK resolves to true for its raw body.",
+        "sha256": "a0fa02c851f4b05fe8cd5d722e58acea3e76f5f07a4180e75b6f4d2f82b21641",
+        "source": "import express from 'express';\nimport { Webhooks } from '@octokit/webhooks';\n\nconst hooks = new Webhooks({secret: process.env.REPO_WEBHOOK_SECRET});\nconst router = express.Router();\nconst branches = new Set();\n\nrouter.post('/webhooks/github/push', express.text({ type: 'application/json' }), async (req, res) => {\n  const valid = await hooks.verify(req.body, req.header('x-hub-signature-256'));\n  if (!valid) return res.sendStatus(401);\n  branches.add(JSON.parse(req.body).ref);\n  return res.sendStatus(204);\n});\n\nexport default router;\n"
+      },
+      {
+        "path": "app/api/webhooks/github/issues/route.ts",
+        "group": "github",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "The SDK resolves false on an invalid signature, but the route records the issue irrespective of that result.",
+        "sha256": "ff34fc41edac3203f75c464ab03ff3222d640f15fdd36a0ffe6d1b2e0914fd7b",
+        "source": "import { Webhooks } from '@octokit/webhooks';\n\nconst hooks = new Webhooks({secret: process.env.ISSUE_WEBHOOK_SECRET!});\nconst issues = new Set<number>();\n\nexport async function POST(request: Request) {\n  const raw = await request.text();\n  const signature = request.headers.get('x-hub-signature-256');\n  if (!signature) return new Response(null, {status: 400});\n  await hooks.verify(raw, signature);\n  issues.add(JSON.parse(raw).issue.number);\n  return new Response(null, {status: 202});\n}\n"
+      },
+      {
+        "path": "routes/github/github-webhook-deployments.js",
+        "group": "github",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "The SDK dispatches to the registered handler only after verifying the incoming delivery.",
+        "sha256": "eef1bd96c080da9ee2dfac42fa13c2d074a14bccaff5da1ecf075de18c82e537",
+        "source": "import express from 'express';\nimport { Webhooks as GithubHooks } from '@octokit/webhooks';\n\nconst router = express.Router();\nconst deployments = [];\nconst intake = new GithubHooks({ secret: process.env.DEPLOY_WEBHOOK_SECRET });\nintake.on('deployment', ({payload}) => deployments.push(payload.deployment.id));\n\nrouter.post('/webhooks/github/deployments', express.text({type: 'application/json'}), async (req, res) => {\n  try {\n    await intake.verifyAndReceive({\n      name: req.get('x-github-event'), id: req.get('x-github-delivery'),\n      signature: req.get('x-hub-signature-256'), payload: req.body\n    });\n    return res.sendStatus(204);\n  } catch {\n    return res.sendStatus(400);\n  }\n});\n\nexport default router;\n"
+      },
+      {
+        "path": "routes/github/github-webhook-milestone.js",
+        "group": "github",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "Direct receive dispatches the unverified parsed body to the registered listener.",
+        "sha256": "99eece9b0275aa82e6e21bcad0eba6f301f1e37913d559cd5970e9ec0b012d7e",
+        "source": "import express from 'express';\nimport { Webhooks } from '@octokit/webhooks';\n\nconst router = express.Router();\nconst hooks = new Webhooks({secret: process.env.MILESTONE_WEBHOOK_SECRET});\nconst received = new Set();\nhooks.on('milestone', ({payload}) => received.add(payload.milestone.id));\n\nrouter.post('/webhooks/github/milestones', express.json(), async (req, res) => {\n  await hooks.receive({\n    name: req.get('x-github-event'),\n    id: req.get('x-github-delivery'),\n    payload: req.body\n  });\n  return res.sendStatus(204);\n});\n\nexport default router;\n"
+      },
+      {
+        "path": "app/api/webhooks/github/reviews/route.ts",
+        "group": "github",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Only the true branch of the awaited verifier records a review; the false branch exits separately.",
+        "sha256": "444d92143d4c42521ccee788117e16d4c4cc77947a0ab489d0b6b5c08f18b921",
+        "source": "import { Webhooks } from '@octokit/webhooks';\n\nconst reviewHooks = new Webhooks({secret: process.env.REVIEW_WEBHOOK_SECRET!});\nconst reviewIds = new Set<number>();\n\nexport async function POST(request: Request) {\n  const raw = await request.text();\n  const signature = request.headers.get('x-hub-signature-256') ?? '';\n  if (await reviewHooks.verify(raw, signature)) {\n    reviewIds.add(JSON.parse(raw).review.id);\n    return new Response(null, {status: 204});\n  }\n  return new Response(null, {status: 401});\n}\n"
+      },
+      {
+        "path": "app/api/webhooks/github/releases/route.js",
+        "group": "github",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "Payload processing continues when the allow-list header matches, with no authentication.",
+        "sha256": "e7511f0ba12ba3edb725694ae47424b9b2cd6140f091cc53003fb27f224bdc29",
+        "source": "import { Webhooks } from '@octokit/webhooks';\n\nconst releaseHooks = new Webhooks({secret: process.env.RELEASE_WEBHOOK_SECRET});\nconst tags = [];\nreleaseHooks.on('release', ({payload}) => tags.push(payload.release.tag_name));\n\nexport const POST = async (request) => {\n  if (request.headers.get('x-github-event') !== 'release') {\n    return new Response(null, {status: 400});\n  }\n  await releaseHooks.receive({\n    name: 'release', id: request.headers.get('x-github-delivery'),\n    payload: await request.json()\n  });\n  return new Response(null, {status: 204});\n};\n"
+      },
+      {
+        "path": "app/api/webhooks/svix/catalog/route.js",
+        "group": "svix",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "The verifier throws on invalid input and its authenticated result is the only update source.",
+        "sha256": "9e50f0dbc69b836d9825d2ff314265e93c879389c7b7838a2eeaad06a60d4b96",
+        "source": "import { Webhook } from 'svix';\n\nconst hook = new Webhook(process.env.CATALOG_SIGNING_SECRET);\nconst catalogTopics = new Set();\n\nexport async function POST(request) {\n  const body = await request.text();\n  try {\n    const verified = hook.verify(body, Object.fromEntries(request.headers));\n    catalogTopics.add(verified.type);\n    return new Response(null, {status: 204});\n  } catch {\n    return new Response(null, {status: 400});\n  }\n}\n"
+      },
+      {
+        "path": "routes/svix/svix-webhook-labels.js",
+        "group": "svix",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "The presence of the delivery ID is the only gate before recording label data.",
+        "sha256": "413df4671a2ec2a5b8dc08a93872b7db32558d65b421fa96347e66dc9d45dc27",
+        "source": "import express from 'express';\nimport { Webhook } from 'svix';\n\nconst router = express.Router();\nconst labels = new Set();\nexport const labelWebhook = new Webhook(process.env.LABEL_SIGNING_SECRET);\n\nrouter.post('/webhooks/svix/labels', express.json(), (req, res) => {\n  if (!req.get('svix-id')) return res.sendStatus(400);\n  labels.add(req.body.label);\n  return res.sendStatus(202);\n});\n\nexport default router;\n"
+      },
+      {
+        "path": "routes/svix/svix-webhook-notices.js",
+        "group": "svix",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "The synchronous SDK must verify the unmodified text and incoming headers before it can be parsed for indexing.",
+        "sha256": "f0c68137ef020efb332589ca0aeaf1f6dbbbb156dee8655a65e70af21157383d",
+        "source": "import express from 'express';\nimport { Webhook as SvixWebhook } from 'svix';\n\nconst incoming = new SvixWebhook(process.env.NOTICE_SIGNING_SECRET);\nconst notices = [];\nconst router = express.Router();\n\nrouter.post('/webhooks/svix/notices', express.text({type: 'application/json'}), function onNotice(req, res) {\n  incoming.verify(req.body, req.headers);\n  notices.push(JSON.parse(req.body).subject);\n  res.sendStatus(204);\n});\n\nexport default router;\n"
+      },
+      {
+        "path": "app/api/webhooks/svix/summaries/route.js",
+        "group": "svix",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "The handler records a summary after both the success and exception paths.",
+        "sha256": "49ec33d47e0e2d7aefe1c7133117b0c023de373021777f440d146eaed628dde5",
+        "source": "import { Webhook } from 'svix';\n\nconst webhook = new Webhook(process.env.SUMMARY_SIGNING_SECRET);\nconst summaries = [];\nlet failures = 0;\n\nexport async function POST(request) {\n  const body = await request.text();\n  try {\n    webhook.verify(body, Object.fromEntries(request.headers));\n  } catch {\n    failures += 1;\n  }\n  summaries.push(JSON.parse(body).summary);\n  return new Response(null, { status: 202 });\n}\n"
+      },
+      {
+        "path": "app/api/webhooks/svix/mentions/route.ts",
+        "group": "svix",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Verification errors terminate the HTTP route before its local processing step.",
+        "sha256": "9a6d17c898d271878e28f7764e4bb06ce24db4a98285c01d67b04e1ecdb30aca",
+        "source": "import { Webhook } from 'svix';\n\nconst mentions = new Set<string>();\n\nexport async function POST(request: Request) {\n  const body = await request.text();\n  const verifier = new Webhook(process.env.MENTION_SIGNING_SECRET!);\n  try {\n    verifier.verify(body, Object.fromEntries(request.headers.entries()));\n  } catch {\n    return new Response('invalid delivery', {status: 403});\n  }\n  mentions.add(JSON.parse(body).name);\n  return new Response(null, {status: 204});\n}\n"
+      },
+      {
+        "path": "app/api/webhooks/svix/digest/route.ts",
+        "group": "svix",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "The signed-payload branch is optional; an unsigned digest still updates the local record.",
+        "sha256": "2b9de0de6d27cb7e630bf9ebd08c7e5679a3272fcf278a18da2e4c8228c158cc",
+        "source": "import { Webhook } from 'svix';\n\nconst digestHook = new Webhook(process.env.DIGEST_SIGNING_SECRET!);\nconst digestIds = new Set<string>();\n\nexport const POST = async (request: Request) => {\n  const body = await request.text();\n  if (request.headers.has('svix-signature')) {\n    digestHook.verify(body, Object.fromEntries(request.headers.entries()));\n  }\n  digestIds.add(JSON.parse(body).id);\n  return new Response(null, {status: 202});\n};\n"
+      }
+    ]
+  },
+  "webhook_validation": {
+    "freeze_sha256": "4aee3f872377cecac3708b92fee8d0fdbe52b173b04e5157336a2764b736ff44",
+    "cases": [
+      {
+        "path": "oak/http/billing.js",
+        "group": "Stripe",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "An Express webhook feeds an unverified payment event into the ledger.",
+        "sha256": "d26b004573128ef18a43bda9bf3b320df39f60fd0fba8346691d275aaca7287c",
+        "source": "import express from 'express';\n\nexport function billingRoutes(ledger) {\n  const router = express.Router();\n  router.post('/webhooks/stripe', express.json(), (req, res) => {\n    const event = req.body;\n    if (event.type === 'invoice.paid') ledger.push(event.data.object.id);\n    res.sendStatus(204);\n  });\n  return router;\n}\n"
+      },
+      {
+        "path": "fern/app/api/payments/webhook/route.ts",
+        "group": "Stripe",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "The endpoint checks only the existence of a Stripe signature before using JSON.",
+        "sha256": "eb2e8231c2f346975fbb4739161b71b432ca37028039fe99f426173856a7ef92",
+        "source": "export const paid = new Set<string>();\n\nexport async function POST(request: Request) {\n  const signature = request.headers.get(\"stripe-signature\");\n  if (!signature) return new Response(null, { status: 400 });\n  const invoice = await request.json();\n  if (invoice.type === \"invoice.paid\") paid.add(invoice.data.object.id);\n  return new Response(null, { status: 204 });\n}\n"
+      },
+      {
+        "path": "ember/http/checkout.ts",
+        "group": "Stripe",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "The signed SDK event is constructed from raw body bytes and then consumed.",
+        "sha256": "d67d73bf64cc2ac7869f8be5a8d1dc91835ae17478436574d50d1d791490895f",
+        "source": "import express from \"express\";\nimport Stripe from \"stripe\";\n\nexport function checkoutHooks(stripe: Stripe, endpointSecret: string, events: string[]) {\n  const router = express.Router();\n  router.post(\"/stripe/webhook\", express.raw({ type: \"application/json\" }), (req, res) => {\n    const signature = req.header(\"stripe-signature\");\n    if (!signature) return res.sendStatus(400);\n    const event = stripe.webhooks.constructEvent(req.body, signature, endpointSecret);\n    events.push(event.id);\n    return res.sendStatus(204);\n  });\n  return router;\n}\n"
+      },
+      {
+        "path": "sage/app/api/stripe/webhook/route.ts",
+        "group": "Stripe",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Asynchronous SDK verification completes before the event type is read.",
+        "sha256": "46bbf914263eb2726cabcc94a6297b303eaddae51dc880f1c0166f8a75142ee3",
+        "source": "import Stripe from 'stripe';\nconst stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);\nexport async function POST(req: Request) {\n  const raw = await req.text();\n  const signature = req.headers.get('stripe-signature');\n  if (!signature) return new Response(null, { status: 400 });\n  const event = await stripe.webhooks.constructEventAsync(\n    raw, signature, process.env.STRIPE_ENDPOINT_SECRET!\n  );\n  return Response.json({ accepted: event.type });\n}\n"
+      },
+      {
+        "path": "ash/http/billingHelp.js",
+        "group": "Stripe",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "An informational GET route serves static instructions without handling events.",
+        "sha256": "4a7401bb35741ed43d8aff52eac885de92159ab1c26dd029dbc08088287a3ba5",
+        "source": "export function installBillingHelp(app) {\n  app.get('/webhooks/stripe/help', (_req, res) => {\n    res.json({ provider: 'Stripe', signatureHeader: 'stripe-signature' });\n  });\n}\n"
+      },
+      {
+        "path": "olive/http/changes.js",
+        "group": "Octokit",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "An Express GitHub receiver accepts a delivery ID and then stores the pull request number.",
+        "sha256": "fa12d7a13a4c5852985bd2e5e965c7cd04fb1041059afaccc54290f4dd8f227b",
+        "source": "export function attachChanges(app, received) {\n  app.post('/webhooks/github', (req, res) => {\n    const delivery = req.get('x-github-delivery');\n    if (!delivery) return res.sendStatus(400);\n    received.set(delivery, req.body.pull_request.number);\n    return res.sendStatus(202);\n  });\n}\n"
+      },
+      {
+        "path": "iris/app/api/github/events/route.ts",
+        "group": "Octokit",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "A GitHub event name selects a branch before the unsigned body is returned as accepted.",
+        "sha256": "034d4e94b2eaab6695316e7ab4b32c0134b94068d9ec9af3aa7adc8933c6eb95",
+        "source": "export async function POST(req: Request) {\n  const event = req.headers.get(\"x-github-event\");\n  if (event !== \"push\") return new Response(null, { status: 204 });\n  const update = await req.json();\n  return Response.json({ acceptedRef: update.ref });\n}\n"
+      },
+      {
+        "path": "spruce/http/deliveries.js",
+        "group": "Octokit",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Awaited SDK verification gates all in-memory changes and uses the same raw body.",
+        "sha256": "87f3a6790ab46564f77afb4992e6779b1ab34ae46975781c0ad4588261a8bf45",
+        "source": "import { Webhooks } from '@octokit/webhooks';\n\nexport function connect(router, webhookSecret, accepted) {\n  const webhooks = new Webhooks({ secret: webhookSecret });\n  router.post('/github/webhook', async (req, res) => {\n    const payload = req.body.toString('utf8');\n    const signature = req.get('x-hub-signature-256');\n    if (!signature || !(await webhooks.verify({ payload, signature }))) {\n      return res.sendStatus(401);\n    }\n    accepted.push(JSON.parse(payload).ref);\n    return res.sendStatus(204);\n  });\n}\n"
+      },
+      {
+        "path": "larch/app/api/github/webhook/route.ts",
+        "group": "Octokit",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Octokit verifyAndReceive authenticates the supplied raw delivery before dispatch.",
+        "sha256": "4999492bcdfac596394bc568e267f41a3908a571e6513f589d73d81118dd6f7f",
+        "source": "import { Webhooks } from \"@octokit/webhooks\";\nconst hooks = new Webhooks({ secret: process.env.GITHUB_WEBHOOK_SECRET! });\n\nexport async function POST(req: Request) {\n  const id = req.headers.get(\"x-github-delivery\");\n  const signature = req.headers.get(\"x-hub-signature-256\");\n  if (!id || !signature || req.headers.get(\"x-github-event\") !== \"push\") {\n    return new Response(null, { status: 400 });\n  }\n  await hooks.verifyAndReceive({\n    id, name: \"push\", signature, payload: await req.text()\n  });\n  return new Response(null, { status: 202 });\n}\n"
+      },
+      {
+        "path": "birch/ui/delivery.ts",
+        "group": "Octokit",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "A display helper formats an already stored GitHub delivery and has no inbound route.",
+        "sha256": "35286d5f71c50fe4736610629cfb9007f8b7d91538574bcc0e049dafe41ac388",
+        "source": "export function deliveryBadge(stored: { headers: Record<string, string> }) {\n  const name = stored.headers['x-github-event'];\n  const id = stored.headers['x-github-delivery'];\n  return 'GitHub webhook ' + name + ' (' + id + ')';\n}\n"
+      },
+      {
+        "path": "yew/app/api/svix/webhook/route.ts",
+        "group": "Svix",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "A Svix delivery ID identifies unsigned JSON accepted into an in-memory map.",
+        "sha256": "1be9a849969392a7b0b5e8743579b9093cb14e7a6fb1c56d8818752d56ae559a",
+        "source": "const members = new Map<string, string>();\nexport async function POST(request: Request) {\n  const id = request.headers.get('svix-id');\n  if (!id) return new Response(null, { status: 400 });\n  const event = await request.json();\n  if (event.type === 'member.created') members.set(id, event.data.name);\n  return new Response(null, { status: 202 });\n}\n"
+      },
+      {
+        "path": "willow/http/directory.js",
+        "group": "Svix",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "Checking signature header presence alone does not authenticate the submitted event.",
+        "sha256": "2807ff36a03041731d17e5801d02372512d3f5d353062323237e55561ffa7d3c",
+        "source": "export function wireDirectory(app, directory) {\n  app.post('/webhooks/directory', (req, res) => {\n    if (!req.header('svix-signature')) return res.sendStatus(400);\n    const member = req.body.data;\n    directory.set(member.id, member.email);\n    return res.sendStatus(204);\n  });\n}\n"
+      },
+      {
+        "path": "hazel/http/member.js",
+        "group": "Svix",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "The SDK verifies the raw body against its signed headers before processing.",
+        "sha256": "051d9ef63e04406b6d0eea2e044184ecde946038d68f59a56e69acaf809e9655",
+        "source": "import { Webhook } from 'svix';\nimport express from 'express';\n\nexport function attachMembers(router, secret, members) {\n  const webhook = new Webhook(secret);\n  router.post('/webhooks/svix', express.text({ type: 'application/json' }), (req, res) => {\n    const event = webhook.verify(req.body, req.headers);\n    members.set(event.data.id, event.data.email);\n    return res.sendStatus(204);\n  });\n}\n"
+      },
+      {
+        "path": "beech/app/api/identity/webhook/route.ts",
+        "group": "Svix",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "An aliased Svix SDK constructor authenticates the same body and headers used by the endpoint.",
+        "sha256": "5f64c9e868a8c9051cfeb78478aa58cff365663939bd8090aa233a52673f06af",
+        "source": "import { Webhook as SignedDelivery } from \"svix\";\n\nexport async function POST(request: Request) {\n  const signed = new SignedDelivery(process.env.IDENTITY_ENDPOINT_SECRET!);\n  const headers = Object.fromEntries(request.headers.entries());\n  const raw = await request.text();\n  signed.verify(raw, headers);\n  const event = JSON.parse(raw);\n  return Response.json({ received: event.type });\n}\n"
+      },
+      {
+        "path": "maple/http/responses.js",
+        "group": "Svix",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "An administrator-facing status route reports whether the deployment configured a signing secret.",
+        "sha256": "33257b6f643d7fdc50f3c81b5a4d6ddb105123993f134fba517675adb69916b8",
+        "source": "export function addStatus(app, config) {\n  app.get('/admin/svix/webhook/status', (_request, response) => {\n    response.json({\n      configured: Boolean(config.svixSecret),\n      signatureHeader: 'svix-signature',\n    });\n  });\n}\n"
+      }
+    ]
+  },
+  "receiver_validation": {
+    "freeze_sha256": "7ef89a72446c1202facdea688942d92f4b739b633a9cacfd93fbbd59d278ab99",
+    "cases": [
+      {
+        "path": "app/api/github/activity/route.ts",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "Next reads GitHub delivery and event data and accepts the delivery without verification.",
+        "sha256": "26b70d694d68617d4292b7fded1329a19dbfbd74d4fb3fe040333b3244acb6cd",
+        "source": "const repositoryEvents = new Map<number, string>();\n\nexport async function POST(request: Request) {\n  const topic = request.headers.get(\"x-github-event\");\n  if (!topic) return new Response(\"Missing event\", { status: 400 });\n  const payload = await request.json();\n  repositoryEvents.set(payload.repository.id, topic);\n  return new Response(null, { status: 204 });\n}\n"
+      },
+      {
+        "path": "app/api/github/webhook/route.ts",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Next validates a GitHub webhook using Octokit on the exact received text.",
+        "sha256": "5072e06f0b2c2b8671ed909c74fda3c49abf4fd44570629c50faad7cb34ad948",
+        "source": "import { Webhooks } from \"@octokit/webhooks\";\n\nconst github = new Webhooks({ secret: process.env.GITHUB_WEBHOOK_SECRET! });\nconst sizes = new Map<string, number>();\n\nexport async function POST(request: Request) {\n  const text = await request.text();\n  const signature = request.headers.get(\"x-hub-signature-256\");\n  if (!signature || !await github.verify(text, signature)) {\n    return new Response(\"Invalid signature\", { status: 401 });\n  }\n  const data = JSON.parse(text);\n  sizes.set(data.repository.full_name, data.repository.size);\n  return new Response(null, { status: 204 });\n}\n"
+      },
+      {
+        "path": "app/api/integrations/stripe/webhook/route.ts",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "Next Stripe receiver requires a signature header but never authenticates it.",
+        "sha256": "fe7cea41db99fbef04ed78954358d7a3c4bada1b0e7738a5a9b1c81b830cc42c",
+        "source": "import type { NextRequest } from \"next/server\";\n\nconst lastSeen = new Map<string, string>();\n\nexport async function POST(request: NextRequest) {\n  const signature = request.headers.get(\"stripe-signature\");\n  if (!signature) return new Response(\"Missing signature\", { status: 400 });\n  const event = await request.json();\n  lastSeen.set(event.type, event.id);\n  return Response.json({ received: true });\n}\n"
+      },
+      {
+        "path": "app/api/mail/incoming/route.ts",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Next validates the signed Svix envelope before reading its type.",
+        "sha256": "e0f61a4ba1c41c4f4c17f4fff775dcb31b765b55ab0e576bbe3b11324965dd90",
+        "source": "import { Webhook } from \"svix\";\n\nconst webhook = new Webhook(process.env.SVIX_SIGNING_SECRET!);\nconst topics = new Set<string>();\n\nexport async function POST(req: Request) {\n  const body = await req.text();\n  try {\n    const message = webhook.verify(body, {\n      \"svix-id\": req.headers.get(\"svix-id\") ?? \"\",\n      \"svix-timestamp\": req.headers.get(\"svix-timestamp\") ?? \"\",\n      \"svix-signature\": req.headers.get(\"svix-signature\") ?? \"\"\n    }) as { type: string };\n    topics.add(message.type);\n    return new Response(null, { status: 204 });\n  } catch {\n    return new Response(null, { status: 400 });\n  }\n}\n"
+      },
+      {
+        "path": "app/api/notify/webhook/route.ts",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "Next handles a Svix-format callback and records a delivery without verification.",
+        "sha256": "1365b2e17ad4ee0ca1472fbd8434ee7138f8bda58ca941b8f9df39807ccfba9b",
+        "source": "const receivedTypes = new Set<string>();\n\nexport async function POST(req: Request) {\n  const delivery = req.headers.get(\"svix-id\");\n  const submittedAt = req.headers.get(\"svix-timestamp\");\n  if (!delivery || !submittedAt) return new Response(null, { status: 400 });\n  const envelope = await req.json();\n  receivedTypes.add(envelope.type);\n  return Response.json({ accepted: delivery }, { status: 202 });\n}\n"
+      },
+      {
+        "path": "app/api/stripe/webhook-history/route.ts",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Next returns historical Stripe deliveries for an operator, with no POST receiver.",
+        "sha256": "489b470e9519ff270b6331450eedcfc4477bd1b2eb6ae4854867a0796a938839",
+        "source": "import { listRecent } from \"@/audit\";\nimport { staffSession } from \"@/auth\";\n\nexport async function GET(req: Request) {\n  const session = await staffSession(req);\n  if (!session) return new Response(null, { status: 401 });\n  return Response.json(await listRecent(\"stripe\"));\n}\n"
+      },
+      {
+        "path": "app/api/subscriptions/stripe/route.ts",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Next authenticates the raw request with the Stripe SDK before using its event.",
+        "sha256": "3bc3ec94691d9fc0812f549f39afaa0122c1cbdb15319d1a06c868a03d3c52bf",
+        "source": "import Stripe from \"stripe\";\n\nconst stripe = new Stripe(process.env.STRIPE_API_KEY!);\nconst totals = new Map<string, number>();\n\nexport async function POST(req: Request) {\n  const signature = req.headers.get(\"stripe-signature\");\n  if (!signature) return new Response(null, { status: 400 });\n  const raw = await req.text();\n  try {\n    const event = stripe.webhooks.constructEvent(raw, signature, process.env.STRIPE_WEBHOOK_SECRET!);\n    totals.set(event.type, (totals.get(event.type) || 0) + 1);\n    return new Response(null, { status: 204 });\n  } catch {\n    return new Response(null, { status: 400 });\n  }\n}\n"
+      },
+      {
+        "path": "app/api/webhook-settings/route.ts",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Next saves dashboard notification preferences, with no incoming provider events.",
+        "sha256": "8296751169f181d6ab28ab5bb0454bac48c40e6fc8fbd74d87b9b7ea2ec99767",
+        "source": "import { getSession } from \"@/auth\";\nimport { settings } from \"@/settings\";\n\nexport async function POST(req: Request) {\n  const session = await getSession(req);\n  if (!session) return new Response(null, { status: 401 });\n  const { enabled } = await req.json();\n  await settings.save(session.userId, { webhookNotifications: enabled === true });\n  return new Response(null, { status: 204 });\n}\n"
+      },
+      {
+        "path": "services/accounts/stripe.js",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Express dashboard query lists Stripe customers through an authenticated route, with no delivery processing.",
+        "sha256": "81935697394e203267c1bdc857bbbd47c0520b3fab78f5beceff20478da97924",
+        "source": "import express from 'express';\nimport Stripe from 'stripe';\nimport { requireStaff } from './auth.js';\n\nconst stripe = new Stripe(process.env.STRIPE_API_KEY);\nconst router = express.Router();\n\nrouter.post('/staff/stripe/customer-search', requireStaff, express.json(), async (req, res) => {\n  const page = await stripe.customers.list({ email: req.body.email, limit: 1 });\n  res.json(page.data.map(customer => customer.id));\n});\nexport default router;\n"
+      },
+      {
+        "path": "services/activity/github.js",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "Express checks that a GitHub signature is supplied and records a repository from an unverified delivery.",
+        "sha256": "5f5e466f2c1b044e9c12a9fd4a87df2c4328c10f1961a4eb03619b7a3ff71082",
+        "source": "import { Router, json } from 'express';\n\nconst events = Router();\nconst repos = new Set();\n\nevents.post('/incoming/github/webhook', json(), (req, res) => {\n  if (!req.get('x-hub-signature-256')) return res.sendStatus(400);\n  repos.add(req.body.repository.full_name);\n  return res.status(200).end();\n});\n\nexport default events;\n"
+      },
+      {
+        "path": "services/billing/hooks.js",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Express checks the raw Stripe event with the SDK before recording the authenticated event type.",
+        "sha256": "058a97d649a912735e01f6a22a2f668d8190d6865b6c33f31005f920fdcf40e0",
+        "source": "import Stripe from 'stripe';\nimport express from 'express';\n\nconst stripe = new Stripe(process.env.STRIPE_API_KEY);\nconst router = express.Router();\nconst topics = new Set();\n\nrouter.post('/webhooks/stripe', express.raw({ type: 'application/json' }), (req, res) => {\n  try {\n    const event = stripe.webhooks.constructEvent(\n      req.body,\n      req.get('stripe-signature'),\n      process.env.STRIPE_ENDPOINT_SECRET\n    );\n    topics.add(event.type);\n    return res.sendStatus(204);\n  } catch {\n    return res.sendStatus(400);\n  }\n});\nexport default router;\n"
+      },
+      {
+        "path": "services/git/callbacks.js",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Express validates the GitHub delivery with Octokit before recording its repository.",
+        "sha256": "a4bb50059a42086a4fc6e0b4d2bf8f3d7c7a4d5aa8edcb665eb384c1482dad72",
+        "source": "import express from 'express';\nimport { Webhooks } from '@octokit/webhooks';\n\nconst router = express.Router();\nconst webhooks = new Webhooks({ secret: process.env.GITHUB_WEBHOOK_SECRET });\nconst repos = new Set();\n\nrouter.post('/callbacks/github', express.text({ type: 'application/json' }), async (req, res) => {\n  const signature = req.get('x-hub-signature-256');\n  if (!signature || !(await webhooks.verify(req.body, signature))) {\n    return res.sendStatus(401);\n  }\n  repos.add(JSON.parse(req.body).repository.id);\n  return res.sendStatus(204);\n});\nexport default router;\n"
+      },
+      {
+        "path": "services/ledger/router.js",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "Express processes incoming Stripe event types without authenticity verification.",
+        "sha256": "700a41ec391e2e484bbb581c9858b5a7aaca674911cc2c971df15857074cbdc6",
+        "source": "import express from 'express';\n\nconst ledger = express.Router();\nconst received = new Map();\n\nledger.post('/hooks/stripe', express.json(), (req, res) => {\n  const event = req.body;\n  received.set(event.type, (received.get(event.type) || 0) + 1);\n  res.sendStatus(204);\n});\n\nexport default ledger;\n"
+      },
+      {
+        "path": "services/mail/deliveries.ts",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "rationale": "Express processes Svix deliveries after checking only the message identifier.",
+        "sha256": "eceec2243e17ce979652c5d0a3bf75b7412aa44a577f1573fc6aa1f1a93bade7",
+        "source": "import express from \"express\";\n\nconst router = express.Router();\nconst topics = new Map<string, string>();\n\nrouter.post(\"/webhooks/mail\", express.json(), (req, res) => {\n  const messageId = req.get(\"svix-id\");\n  if (!messageId) return res.sendStatus(400);\n  topics.set(messageId, req.body.type);\n  return res.sendStatus(202);\n});\n\nexport default router;\n"
+      },
+      {
+        "path": "services/monitor/integrations.js",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Express serves a read-only status endpoint for registered webhook integrations.",
+        "sha256": "81352528f128d2573fb6746210629a71667715c2b719ee0b833fe6249c999a69",
+        "source": "import express from 'express';\n\nconst router = express.Router();\nrouter.get('/webhooks/github/status', (_req, res) => {\n  res.json({ configured: Boolean(process.env.GITHUB_WEBHOOK_SECRET) });\n});\nexport default router;\n"
+      },
+      {
+        "path": "services/teams/github.ts",
+        "group": "webhook",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "rationale": "Express validates dashboard repository names without processing provider deliveries.",
+        "sha256": "5f714299f471fb443a4917965b8970f55bef07fed9fa130d84eb2c8580ab2596",
+        "source": "import express from \"express\";\nimport { memberOnly } from \"./sessions\";\n\nconst router = express.Router();\n\nrouter.post(\"/teams/github/repository-name\", memberOnly, express.json(), (req, res) => {\n  const fullName = String(req.body.repository ?? \"\").trim();\n  return res.json({ fullName, valid: fullName.split(\"/\").length === 2 });\n});\nexport default router;\n"
+      }
+    ]
+  }
+}

@@ -491,6 +491,7 @@ class TypeScriptCore:
         self.source: bytes = source_bytes
         self._project_root = project_root
         self.defs: list[Definition] = []
+        self._callable_sites: dict[int, Definition] = {}
         self.refs: list[tuple[str, str]] = []
         self.imports: list[dict[str, str | int]] = []
         self._namespace_reads = None
@@ -607,6 +608,10 @@ class TypeScriptCore:
         ts_only = self._run_batch("defs_ts_only", _DEFS_TS_ONLY_PATTERN)
         for k, v in ts_only.items():
             self._defs_captures.setdefault(k, []).extend(v)
+        # Captures within a group have no ordering guarantee. The analyzer
+        # assigns the unsuffixed report key to the first same-name declaration.
+        for sites in self._defs_captures.values():
+            sites.sort(key=lambda node: node.start_byte)
         self._refs_captures = self._run_batch("refs", _REFS_PATTERN)
         if self.lang is TS_LANG:
             ts_only_refs = self._run_batch("refs_ts_only", _REFS_TS_ONLY_PATTERN)
@@ -1058,6 +1063,8 @@ class TypeScriptCore:
             d.references = max(d.references, 1)
             d.framework_signals.append("route attachment export")
         self.defs.append(d)
+        if type_name in {"function", "method"}:
+            self._callable_sites[node.start_byte] = d
 
     def _is_route_attachment_function(self, name_node) -> bool:
         parameters, body = self._function_signature_and_body(name_node)
@@ -2178,53 +2185,43 @@ class TypeScriptCore:
 
     def _build_call_graph(self) -> None:
         self.call_pairs: list[tuple[str, str]] = []
-        c = self._defs_captures
-
-        for name_node in c.get("func_def", []):
-            caller_name = self._get_text(name_node)
-            func_node = name_node.parent
-            if func_node:
-                body = func_node.child_by_field_name("body")
-                if body:
-                    self._collect_calls_in_body(caller_name, body)
-
-        for name_node in c.get("var_def", []):
-            var_decl = name_node.parent
-            if var_decl:
-                value = var_decl.child_by_field_name("value")
-                if value and value.type == "arrow_function":
-                    caller_name = self._get_text(name_node)
-                    body = value.child_by_field_name("body")
-                    if body:
-                        self._collect_calls_in_body(caller_name, body)
-
-        for name_node in c.get("method_prop_def", []):
-            method_name = self._get_text(name_node)
-            class_name = self._find_containing_class(name_node)
-            if class_name:
-                caller_name = f"{class_name}.{method_name}"
-            else:
-                caller_name = method_name
-            method_node = name_node.parent
-            if method_node:
-                body = method_node.child_by_field_name("body")
-                if body:
-                    self._collect_calls_in_body(caller_name, body)
-
         name_to_def: dict[str, Definition] = {}
-        for d in self.defs:
-            name_to_def[d.name] = d
-            if d.simple_name not in name_to_def:
-                name_to_def[d.simple_name] = d
+        for definition in self.defs:
+            name_to_def[definition.name] = definition
+            name_to_def.setdefault(definition.simple_name, definition)
 
-        for caller, callee in self.call_pairs:
-            caller_def = name_to_def.get(caller)
-            callee_def = name_to_def.get(callee)
-            if caller_def and callee_def and caller_def is not callee_def:
-                caller_def.calls.add(callee_def.name)
-                callee_def.called_by.add(caller_def.name)
+        for tag in ("func_def", "var_def", "method_prop_def"):
+            for site in self._defs_captures.get(tag, ()):
+                owner = site.parent
+                if owner is None:
+                    continue
+                if tag == "var_def":
+                    owner = owner.child_by_field_name("value")
+                    if owner is None or owner.type != "arrow_function":
+                        continue
+                body = owner.child_by_field_name("body")
+                if body is None:
+                    continue
 
-    def _collect_calls_in_body(self, caller: str, body_node) -> None:
+                # The caller's declaration is known exactly, even when several
+                # callbacks have the same spelling and line. A skipped method
+                # still contributes its raw pair but owns no definition edge.
+                caller = self._callable_sites.get(site.start_byte)
+                name = self._get_text(site)
+                if tag == "method_prop_def":
+                    name = self._qualified_method_name(site, name)
+                for target_name in self._calls_in_body(body):
+                    self.call_pairs.append((name, target_name))
+                    callee = name_to_def.get(target_name)
+                    if (
+                        caller is not None
+                        and callee is not None
+                        and caller is not callee
+                    ):
+                        caller.calls.add(callee.name)
+                        callee.called_by.add(caller.name)
+
+    def _calls_in_body(self, body_node):
         stack = [body_node]
         while stack:
             node = stack.pop()
@@ -2232,7 +2229,7 @@ class TypeScriptCore:
                 func = node.child_by_field_name("function")
                 if func:
                     if func.type == "identifier":
-                        self.call_pairs.append((caller, self._get_text(func)))
+                        yield self._get_text(func)
                     elif func.type == "member_expression":
                         prop = func.child_by_field_name("property")
                         obj = func.child_by_field_name("object")
@@ -2240,9 +2237,7 @@ class TypeScriptCore:
                             if obj and self._get_text(obj) == "this":
                                 class_name = self._find_containing_class(node)
                                 if class_name:
-                                    self.call_pairs.append(
-                                        (caller, f"{class_name}.{self._get_text(prop)}")
-                                    )
-                            self.call_pairs.append((caller, self._get_text(prop)))
+                                    yield f"{class_name}.{self._get_text(prop)}"
+                            yield self._get_text(prop)
             for child in node.children:
                 stack.append(child)

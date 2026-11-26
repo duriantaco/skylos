@@ -221,6 +221,48 @@ def test_import_specifiers_are_not_counted_as_path_references(tmp_path):
     assert dict(edges) == {}
 
 
+@pytest.mark.parametrize("needs_python", [False, True])
+def test_direct_script_roots_avoid_redundant_python_proofs(
+    tmp_path, monkeypatch, needs_python
+):
+    from skylos.deadcode import python_project_sources
+
+    root = tmp_path.resolve()
+    _write_tree(
+        root,
+        {
+            "view/index.html": '<script src="client.js"></script>',
+            "view/client.js": "export const client = 1;",
+            "other.js": 'new Worker("./view/client.js");',
+            "assets.py": 'def filename():\n    return "generated.js"\n',
+            "render.py": (
+                "from assets import filename\n"
+                "page = f'<script src=\"{filename()}\"></script>'\n"
+                "print(page)\n"
+            ),
+            "generated.js": "export const generated = 1;",
+        },
+    )
+    calls = []
+    original = python_project_sources.ProjectSourceIndex
+
+    def track_index(root, files):
+        calls.append(set(files))
+        return original(root, files)
+
+    monkeypatch.setattr(python_project_sources, "ProjectSourceIndex", track_index)
+    client = str(root / "view/client.js")
+    targets = {client}
+    if needs_python:
+        targets.add(str(root / "generated.js"))
+    roots, edges = collect_ts_path_references(
+        root, {str(path) for path in root.rglob("*.js")}, targets
+    )
+    assert roots == targets
+    assert edges == {client: {str(root / "other.js")}}
+    assert calls == ([{root / "assets.py", root / "render.py"}] if needs_python else [])
+
+
 def test_unreferenced_classic_script_is_still_reported(tmp_path):
     result = _scan(
         tmp_path,
