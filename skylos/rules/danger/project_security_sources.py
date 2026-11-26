@@ -1,4 +1,4 @@
-"""Positive source evidence shared by the dynamic-import/argv checks only.
+"""Shared project graphs and positive source evidence for security checks.
 
 This reuses the bounded project graph without granting path sanitizers the
 ability to sanitize import names or command options.
@@ -7,18 +7,24 @@ ability to sanitize import names or command options.
 from __future__ import annotations
 
 import ast
+from functools import lru_cache
 from pathlib import Path
 
+import tomllib
+
+from skylos.rules.quality._test_code import is_python_test_file
+
 from .danger_fs.path_provenance import (
+    _V,
+    PARAMETER,
     UNTRUSTED,
     _Facts,
     _Project,
     _ResolutionLimit,
-    _Tracer,
-    _V,
     _Site,
-    PARAMETER,
     _step,
+    _Tracer,
+    _Unit,
 )
 
 _MODEL_BASES = frozenset(
@@ -182,6 +188,53 @@ class SecurityProject(_Project):
                         _V("inst", value.unit, value.node) for value in values
                     )
         return super()._defined_member(unit, cls, attr, instance, depth)
+
+
+def wheel_source_roots(root):
+    """Hatch source prefixes that participate in Python module resolution."""
+    path = root / "pyproject.toml"
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 131072:
+            return ()
+        config = tomllib.loads(path.read_text())
+        for key in ("tool", "hatch", "build", "targets", "wheel", "sources"):
+            if not isinstance(config, dict):
+                return ()
+            config = config.get(key)
+    except (OSError, ValueError):
+        return ()
+    if not isinstance(config, list) or not 1 <= len(config) <= 8:
+        return ()
+    if not all(isinstance(value, str) and value.isidentifier() for value in config):
+        return ()
+    return tuple(root / value for value in config)
+
+
+@lru_cache(maxsize=2)
+def security_project_from_snapshot(root, extra_roots, snapshot):
+    """Index an already parsed source snapshot, including its wheel module aliases."""
+    project = SecurityProject(root, True)
+    for path, tree in snapshot:
+        unit = _Unit(
+            path,
+            path.relative_to(root).as_posix(),
+            tree,
+            is_python_test_file(path, root),
+        )
+        project.units.append(unit)
+        project.by_path[path] = unit
+        unit.module_names = project._module_names(unit)
+        for base in extra_roots:
+            if path.is_relative_to(base):
+                parts = path.relative_to(base).with_suffix("").parts
+                if parts[-1] == "__init__":
+                    parts = parts[:-1]
+                if parts and all(part.isidentifier() for part in parts):
+                    unit.module_names.add(".".join(parts))
+        for name in unit.module_names:
+            project.modules.setdefault(name, []).append(unit)
+    project._index()
+    return project
 
 
 class SourceTracer(_Tracer):

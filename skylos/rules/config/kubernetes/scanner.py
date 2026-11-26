@@ -633,13 +633,15 @@ def scan_kubernetes(
     exclude_folders=None,
     scan_paths=None,
     required_rules=None,
+    project=None,
 ):
-    project = load_project(
-        root,
-        changed_files=changed_files,
-        scan_paths=scan_paths,
-        exclude_folders=exclude_folders,
-    )
+    if project is None:
+        project = load_project(
+            root,
+            changed_files=changed_files,
+            scan_paths=scan_paths,
+            exclude_folders=exclude_folders,
+        )
     evaluator = _Evaluator(project, ignore)
     for manifest in project.manifests:
         evaluator.document(manifest, manifest.data)

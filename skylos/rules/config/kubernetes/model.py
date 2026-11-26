@@ -298,6 +298,31 @@ def _manifest_hint(text):
     return False
 
 
+def _mapping_document(node, loader):
+    _validate_mapping_keys(node)
+    source = YamlSource(node, loader)
+    data = loader.construct_document(node)
+    _finite_values(data)
+    source.data = data
+    return source
+
+
+def embedded_mapping(text):
+    """Read one bounded literal configuration document with the manifest parser."""
+    if yaml is None or len(text.encode("utf-8")) > MAX_FILE_BYTES:
+        return None
+    loader = _ManifestLoader(text, MAX_DEPTH, MAX_NODES)
+    try:
+        node = loader.get_single_node()
+        if isinstance(node, MappingNode):
+            return _mapping_document(node, loader)
+    except (ValueError, TypeError, RecursionError, yaml.YAMLError):
+        return None
+    finally:
+        loader.dispose()
+    return None
+
+
 def load_project(root, *, changed_files=None, scan_paths=None, exclude_folders=None):
     project = Project()
     base, paths = _discover(
@@ -346,16 +371,13 @@ def load_project(root, *, changed_files=None, scan_paths=None, exclude_folders=N
                 node = loader.get_node()
                 if node is None:
                     continue
-                _validate_mapping_keys(node)
                 if not isinstance(node, MappingNode):
+                    _validate_mapping_keys(node)
                     if hinted is not False:
                         raise ValueError("Kubernetes YAML document must be a mapping")
                     continue
-                source = YamlSource(node, loader)
-                data = loader.construct_document(node)
-                _finite_values(data)
-                source.data = data
-                project.manifests.append(Manifest(path, data, source))
+                source = _mapping_document(node, loader)
+                project.manifests.append(Manifest(path, source.data, source))
                 project.coverage["documents_parsed"] += 1
             project.coverage["files_parsed"] += 1
         except (ValueError, TypeError, RecursionError, yaml.YAMLError) as error:

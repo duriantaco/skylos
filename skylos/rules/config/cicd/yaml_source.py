@@ -273,7 +273,9 @@ class YamlSource:
             return located[1]
         return located[2]
 
-    def scalar_lines_for_path(self, path: tuple[Any, ...]) -> tuple[int, int] | None:
+    def scalar_lines_for_path(
+        self, path: tuple[Any, ...], *, literal_block_only: bool = False
+    ) -> tuple[int, int] | None:
         """Return the one-based lines of a scalar written at the path itself.
 
         A value reached through an alias or a merge is written elsewhere, so
@@ -284,6 +286,11 @@ class YamlSource:
             return None
         node, _, _, fallback_line = located
         if fallback_line is not None or not isinstance(node, ScalarNode):
+            return None
+        if literal_block_only and (
+            node.style != "|"
+            or not self._lines[node.start_mark.line].startswith("|", node.start_mark.column)
+        ):
             return None
         first = node.start_mark.line
         last = node.end_mark.line

@@ -1500,6 +1500,15 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D385",
+        "Django view saves a debit from a previously checked balance",
+        "security",
+        "MEDIUM",
+        aliases=("race condition", "lost update"),
+        finding_type="review",
+        cwe=("CWE-362",),
+    ),
+    RuleCatalogEntry(
         "SKY-D510", "Prototype pollution", "security", "HIGH", finding_type="review"
     ),
     RuleCatalogEntry(
@@ -1843,6 +1852,23 @@ _RULES = (
         "Kubernetes sensitive host path mounted",
         "security",
         "HIGH",
+        finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D413",
+        "Envoy HTTP/1 listener accepts ambiguous message framing",
+        "security",
+        "MEDIUM",
+        aliases=("HTTP request smuggling",),
+        finding_type="review",
+        cwe=("CWE-444",),
+    ),
+    RuleCatalogEntry(
+        "SKY-D414",
+        "Terraform plan deletes an S3 bucket while retaining its DNS record",
+        "security",
+        "MEDIUM",
+        aliases=("dangling DNS", "subdomain takeover", "terraform-plan"),
         finding_type="review",
     ),
     RuleCatalogEntry(

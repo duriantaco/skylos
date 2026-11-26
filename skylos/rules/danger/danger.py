@@ -31,6 +31,7 @@ from .python_security_gaps import (
     scan as scan_python_security_gaps,
 )
 from .regex_dos import scan as scan_regex_backtracking
+from .django_balance_race import scan as scan_django_balance_race
 from skylos.rules.quality._test_code import is_python_test_file
 from .danger_fs.weak_path_defence import scan as scan_weak_path_defence
 from .weak_random_context import private_model_slug_evidence
@@ -670,6 +671,8 @@ def scan_file_with_tree(
     tree, file_path, findings, *, source: str | None = None, project_root=None
 ):
     """Run taint-flow scanners on an already-parsed AST (no re-read/re-parse)."""
+    if source is None or all(token in source for token in ("objects", "get", "save", "-")):
+        scan_django_balance_race(tree, file_path, findings, project_root=project_root)
     if (
         source is None
         or ("IntOpt" in source and "oslo" in source)
