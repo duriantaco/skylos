@@ -8,7 +8,7 @@ async def homepage(request):
     return PlainTextResponse("home")
 
 
-app.add_route("/", route=homepage, methods=["GET"])
+app.add_route("/", homepage, methods=["GET"])
 
 
 async def status_page(request):
