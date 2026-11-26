@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import nullcontext, redirect_stdout
+from contextlib import ExitStack, nullcontext, redirect_stdout
 from types import ModuleType
 from typing import Sequence
 
@@ -658,14 +658,18 @@ def run_scan_command(
     previous_diff = os.environ.get("SKYLOS_DIFF_BASE")
     _start_update_check()
     try:
-        with base_policy_context(
+        with ExitStack() as progress_stack, base_policy_context(
             cli_module._resolve_main_project_root(args.path), base
         ):
             if base and getattr(args, "gate", False):
                 args.danger = True
                 args.quality = True
             return _run_scan_command(
-                argv, cli_module=cli_module, parser=parser, args=args
+                argv,
+                cli_module=cli_module,
+                parser=parser,
+                args=args,
+                progress_stack=progress_stack,
             )
     except DiffBaseUnavailable as exc:
         cli_module._exit_diff_unavailable(args, str(exc))
@@ -893,7 +897,12 @@ def _record_baseline_rule_coverage(result, baseline, args):
 
 @scan_type_check_exit
 def _run_scan_command(
-    argv: Sequence[str], *, cli_module: ModuleType, parser, args
+    argv: Sequence[str],
+    *,
+    cli_module: ModuleType,
+    parser,
+    args,
+    progress_stack: ExitStack,
 ) -> None:
     """
     Run the main scan command after top-level CLI dispatch.
@@ -1050,6 +1059,20 @@ def _run_scan_command(
             "[muted]Analyzing locally; Cloud upload starts after the scan completes.[/muted]"
         )
 
+    from skylos.ui.scan_progress_output import scan_progress_output
+
+    human_report = (
+        not machine_output and getattr(args, "format", "rich") in {"rich", "pretty"}
+    )
+    scan_progress = progress_stack.enter_context(
+        scan_progress_output(
+            console,
+            mode=getattr(args, "progress", "auto"),
+            human=human_report,
+            stream=sys.stderr,
+            project_root=project_root,
+        )
+    )
     with redirect_stdout(sys.stderr) if gitlab_output else nullcontext():
         pre_analysis = _run_pre_analysis_steps(args, project_root, console)
     pytest_fixtures_ok = pre_analysis.pytest_fixtures_ok
@@ -1168,31 +1191,18 @@ def _run_scan_command(
         if quiet_analysis_output or not getattr(args, "verbose", False):
             analyzer_logger.setLevel(logging.WARNING)
         try:
-            if quiet_analysis_output:
-                with redirect_stdout(sys.stderr) if gitlab_output else nullcontext():
-                    result_json = run_main_analysis_with_notice()
-            else:
-                with Progress(
-                    SpinnerColumn(style="brand"),
-                    TextColumn("[brand]Skylos[/brand] {task.description}"),
-                    transient=True,
-                    console=console,
-                ) as progress:
-                    task = progress.add_task("analyzing..", total=None)
-
-                    def update_progress(current, total, file):
-                        progress.update(
-                            task,
-                            description=f"[{current}/{total}] {escape(file.name)}",
-                        )
-
-                    result_json = run_main_analysis_with_notice(update_progress)
+            with redirect_stdout(sys.stderr) if gitlab_output else nullcontext():
+                result_json = run_main_analysis_with_notice(scan_progress)
         finally:
             analyzer_logger.setLevel(analyzer_logger_level)
 
+        if scan_progress is not None:
+            scan_progress.reporting()
         result = json.loads(result_json)
         del result_json
         if getattr(args, "type_check", False):
+            if scan_progress is not None:
+                scan_progress.reporting("Running type checker")
             import os
             import sys
 
@@ -1209,6 +1219,8 @@ def _run_scan_command(
                 result, args, path=args.path[0], base_ref=type_base,
             )
             print(render_type_check(report), file=sys.stderr)
+            if scan_progress is not None:
+                scan_progress.reporting()
         if analysis_profile_summary is not None:
             result["profiling"] = analysis_profile_summary
 
@@ -1628,17 +1640,9 @@ def _run_scan_command(
                     raise RuntimeError("not a git repository")
                 prov_base = getattr(args, "provenance_base", None)
 
-                if machine_output:
-                    prov_report = analyze_provenance(git_root, base_ref=prov_base)
-                else:
-                    with Progress(
-                        SpinnerColumn(style="brand"),
-                        TextColumn("[brand]Skylos[/brand] {task.description}"),
-                        transient=True,
-                        console=console,
-                    ) as progress:
-                        progress.add_task("detecting AI provenance...", total=None)
-                        prov_report = analyze_provenance(git_root, base_ref=prov_base)
+                if scan_progress is not None:
+                    scan_progress.reporting("Checking Git provenance")
+                prov_report = analyze_provenance(git_root, base_ref=prov_base)
 
                 _finding_categories = [
                     "danger",
@@ -1697,6 +1701,8 @@ def _run_scan_command(
                 if args.verbose:
                     console.print(f"[warn]Provenance annotation failed: {e}[/warn]")
 
+        if scan_progress is not None:
+            scan_progress.reporting()
         from skylos.core.review_decisions import apply_trusted_review_decisions
 
         result = apply_trusted_review_decisions(
@@ -1770,6 +1776,8 @@ def _run_scan_command(
                 )
 
         if getattr(args, "ai_review", False):
+            if scan_progress is not None:
+                scan_progress.reporting("Reviewing findings")
             _run_ai_review(
                 result,
                 args,
@@ -1778,6 +1786,8 @@ def _run_scan_command(
                 machine_output=machine_output,
             )
         elif getattr(args, "verify_security", False):
+            if scan_progress is not None:
+                scan_progress.reporting("Verifying findings")
             _verify_security_findings(
                 result,
                 args,
@@ -1786,6 +1796,8 @@ def _run_scan_command(
                 machine_output=machine_output,
             )
 
+        if scan_progress is not None:
+            scan_progress.reporting()
         cli_module._attach_analysis_coverage(result, config, args)
         if isinstance(result.get("assessment"), dict):
             from skylos.reporting.assessment import compute_assessment
@@ -1858,6 +1870,8 @@ def _run_scan_command(
             display_payload = json_output_result
             if getattr(args, "json_ci", False):
                 display_payload = _build_ci_json_payload(json_output_result)
+
+        progress_stack.close()
 
         def upload_formatted_result(*, defer_exit=False):
             if not args.upload:

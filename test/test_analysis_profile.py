@@ -64,6 +64,87 @@ def test_profile_lists_scanner_function_calls():
     assert sys.getprofile() is None
 
 
+@pytest.mark.parametrize("with_sources", [True, False])
+def test_static_scan_reports_real_phase_boundaries(tmp_path, with_sources):
+    from skylos.analyzer import analyze
+
+    if with_sources:
+        (tmp_path / "routes.py").write_text(
+            "from django.urls import register_converter\n"
+        )
+        (tmp_path / "app.py").write_text("label = 'sample'\nprint(label)\n")
+
+    updates = []
+    analyze(
+        str(tmp_path),
+        grep_verify=False,
+        progress_callback=lambda done, total, path: updates.append(
+            (path.name, done, total)
+        ),
+    )
+
+    phases = [label for label, done, _ in updates if done == 0]
+    assert phases[:2] == ["PHASE: file discovery", "PHASE: scan preparation"]
+    assert phases[-1] == "PHASE: building report"
+    if with_sources:
+        def counts(phase):
+            return [
+                (done, total)
+                for label, done, total in updates
+                if label == f"PHASE: {phase}"
+            ]
+
+        assert phases.index("PHASE: file analysis") < phases.index(
+            "PHASE: combining file results"
+        )
+        one_pass = [(0, 2), (1, 2), (2, 2)]
+        assert counts("combining file results") == one_pass
+        assert counts("framework callbacks") == one_pass
+        assert counts("web framework routes") == one_pass
+        assert counts("Django path converters") == one_pass
+        assert counts("Reading Python modules") == one_pass * 2
+        first_parse_end = updates.index(("PHASE: Reading Python modules", 2, 2))
+        assert updates[first_parse_end + 1] == ("PHASE: Django converter indexing", 0, 1)
+        refs = counts("mark refs")
+        assert refs[0][0] == 0 < refs[-1][0] == refs[-1][1]
+    else:
+        assert "PHASE: configuration checks" in phases
+        assert "PHASE: file analysis" not in phases
+
+
+def test_profile_wrapper_forwards_active_module_while_it_is_read(tmp_path, monkeypatch):
+    from skylos.analyzer import analyze
+    from skylos.deadcode import python_ast
+
+    source = tmp_path / "app.py"
+    source.write_text("x = 1\n")
+    active = set()
+    seen = []
+    original = python_ast.load_python_module
+    phase = ""
+
+    def update(done, total, path):
+        nonlocal phase
+        if path.name.startswith("PHASE: "):
+            phase = path.name
+        if phase == "PHASE: Reading Python modules":
+            assert not active
+
+    def observe_parse(path, *args, **kwargs):
+        if phase == "PHASE: Reading Python modules":
+            assert active == {source}
+            seen.append(path)
+        return original(path, *args, **kwargs)
+
+    update.file_started = active.add
+    update.file_finished = active.remove
+    monkeypatch.setattr(python_ast, "load_python_module", observe_parse)
+    callback = profiling.AnalysisProfile().progress_callback(update)
+    analyze(str(tmp_path), grep_verify=False, progress_callback=callback)
+    assert not active
+    assert seen == [source]
+
+
 def test_scanner_exception_is_preserved_and_profile_is_partial():
     with pytest.raises(ValueError, match="scanner failed"):
         with profiling.profile_scan(True) as profile:

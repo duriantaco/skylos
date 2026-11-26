@@ -6352,7 +6352,7 @@ def create_invoice(order):
         (tmp_path / "app.py").write_text("def unused():\n    return 1\n")
         seen = []
 
-        def fake_grep_verify(self, *, use_project_cache=True):
+        def fake_grep_verify(self, *, use_project_cache=True, progress_callback=None):
             seen.append(use_project_cache)
             return 0
 

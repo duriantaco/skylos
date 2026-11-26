@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from skylos.analysis.progress import start_phase
 from skylos.deadcode.django_framework_liveness import find_django_targets
 from skylos.deadcode.django_setting_bindings import collect_setting_bindings
 from skylos.deadcode.django_template_liveness import _path_expression
@@ -1304,6 +1305,7 @@ def find_web_framework_targets(
     root: Path,
     *,
     exclude_folders: Iterable[str] | None = None,
+    progress_callback=None,
 ) -> list[tuple[Any, str]]:
     from skylos.deadcode.django_framework_liveness import _looks_like_settings
 
@@ -1316,6 +1318,7 @@ def find_web_framework_targets(
         _WebScanner(index, module, executed, callback_bindings).collect()
         for module in parsed
     ]
+    start_phase(progress_callback, "linking web framework registrations")
     scanners = {module.module: module for module in modules}
     has_framework_import = any(
         name.split(".", 1)[0] in {"django", "flask", "flask_login"} - index.shadowed

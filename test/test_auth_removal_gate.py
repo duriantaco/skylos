@@ -451,7 +451,7 @@ def test_public_scan_restores_diff_environment_between_calls(
     monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
     seen = []
 
-    def run(argv, *, cli_module, parser, args):
+    def run(argv, *, cli_module, parser, args, progress_stack):
         seen.append(os.environ.get("SKYLOS_DIFF_BASE"))
         if args.diff:
             os.environ["SKYLOS_DIFF_BASE"] = args.diff

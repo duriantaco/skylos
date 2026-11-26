@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from skylos.analysis.progress import counted_items, start_phase
 from skylos.deadcode.framework_liveness import (
     _DefinitionIndex,
     _bound_names,
@@ -382,16 +383,27 @@ def _project_may_register_converters(definitions, paths):
     return False
 
 
-def _scan_django_converters(definitions, files, root):
+def _scan_django_converters(definitions, files, root, progress_callback=None):
     """Collect converter identities from registrations whose owners execute."""
+    start_phase(progress_callback, "Django converter discovery")
     root, paths = _converter_scan_paths(definitions, files, root)
     if not paths or not _project_may_register_converters(definitions, paths):
         return frozenset(), []
-    parsed = parse_python_files(paths)
+    parsed = parse_python_files(
+        counted_items(paths, progress_callback, "Reading Python modules", len(paths), path_of=Path)
+    )
+    start_phase(progress_callback, "Django converter indexing")
     index = _DefinitionIndex(definitions, parsed, root)
     if "django" in index.shadowed:
         return frozenset(), []
-    registry = _ConverterRegistry(index, parsed)
+    registry = _ConverterRegistry(
+        index,
+        counted_items(
+            parsed, progress_callback, "Django path converters", len(parsed),
+            path_of=lambda module: module.path,
+        ),
+    )
+    start_phase(progress_callback, "Django converter registrations")
     for scanner in registry.scanners.values():
         scanner.collect()
     executed = _executed_definitions(index)
@@ -403,9 +415,9 @@ def _scan_django_converters(definitions, files, root):
     return frozenset(registry.registered), []
 
 
-def find_django_converter_classes(definitions, files, root):
+def find_django_converter_classes(definitions, files, root, *, progress_callback=None):
     """Return exact registered class and selected protocol-member identities."""
-    registered, _ = _scan_django_converters(definitions, files, root)
+    registered, _ = _scan_django_converters(definitions, files, root, progress_callback)
     return registered
 
 

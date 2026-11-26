@@ -109,8 +109,10 @@ def test_go_files_use_serial_path_to_keep_module_cache_effective(monkeypatch, tm
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
     calls = []
+    active = set()
 
     def fake_proc_file(file_path, mod, extra_visitors=None, full_scan=True, **kwargs):
+        assert active == {file_path}
         calls.append(str(file_path))
         return ("go-ok", str(file_path), mod)
 
@@ -121,10 +123,91 @@ def test_go_files_use_serial_path_to_keep_module_cache_effective(monkeypatch, tm
     files = [tmp_path / "a.go", tmp_path / "b.go"]
     modmap = {files[0]: "m", files[1]: "m"}
 
-    out = ps.run_proc_file_parallel(files, modmap, jobs=2)
+    def report_completion(done, total, path):
+        assert not active
+        assert calls == [str(file) for file in files[:done]]
+        assert total == len(files)
+        assert path == files[done - 1]
+
+    report_completion.file_started = active.add
+    report_completion.file_finished = active.remove
+    out = ps.run_proc_file_parallel(
+        files, modmap, jobs=2, progress_callback=report_completion
+    )
 
     assert out == [("go-ok", str(files[0]), "m"), ("go-ok", str(files[1]), "m")]
     assert calls == [str(files[0]), str(files[1])]
+
+
+def _worker_waiting_for_progress(file_path, *_args, **_kwargs):
+    import time
+
+    ready = file_path.parent / "busy-worker-started"
+    resume = file_path.parent / "resume-workers"
+    if file_path.name == "busy.py":
+        ready.touch()
+    wait_for = ready if file_path.name == "quick.py" else resume
+    until = time.monotonic() + 12
+    while not wait_for.exists() and time.monotonic() < until:
+        time.sleep(0.01)
+    return str(file_path), wait_for.exists()
+
+
+def test_parallel_activity_counts_only_workers_that_entered_a_file(tmp_path):
+    files = [
+        tmp_path / name for name in ("quick.py", "busy.py", "three.py", "four.py")
+    ]
+    providers = []
+
+    def on_progress(done, total, path):
+        if done == 1:
+            try:
+                assert path == files[0]
+                active = providers[-1]()
+                assert files[1] in active
+                assert files[0] not in active and files[-1] not in active
+            finally:
+                (tmp_path / "resume-workers").touch()
+
+    on_progress.parallel_activity = providers.append
+    result = ps.run_proc_file_parallel(
+        files,
+        {f: f.stem for f in files},
+        jobs=2,
+        progress_callback=on_progress,
+        _worker_fn=_worker_waiting_for_progress,
+    )
+    assert result == [True] * len(files)
+    assert providers[-1] is None
+
+
+def test_unavailable_shared_activity_keeps_parallel_completion_counts(monkeypatch, tmp_path):
+    import multiprocessing
+
+    def unavailable(*args):
+        raise OSError("shared memory unavailable")
+
+    monkeypatch.setattr(multiprocessing, "RawArray", unavailable)
+    monkeypatch.setattr(ps, "ProcessPoolExecutor", DummyExecutor)
+    monkeypatch.setattr(ps, "as_completed", fake_as_completed)
+    files = [tmp_path / "a.py", tmp_path / "b.py"]
+    completed = []
+    providers = []
+
+    def progress(done, total, file):
+        completed.append((done, total))
+
+    progress.parallel_activity = providers.append
+    result = ps.run_proc_file_parallel(
+        files,
+        {f: f.stem for f in files},
+        jobs=2,
+        progress_callback=progress,
+        _worker_fn=lambda file, *args, **kwargs: (str(file), file.stem),
+    )
+    assert result == ["a", "b"]
+    assert completed == [(1, 2), (2, 2)]
+    assert providers == []
 
 
 def test_mixed_files_keep_non_go_parallel_and_preserve_order(monkeypatch, tmp_path):
@@ -204,12 +287,18 @@ def test_worker_segfault_is_isolated_and_never_retried_in_parent(
     files.insert(3, tmp_path / "crash_me.py")
     modmap = {f: f.stem for f in files}
     progress = []
+    providers = []
+
+    def completed(done, total, path):
+        progress.append((done, total))
+
+    completed.parallel_activity = providers.append
 
     out = ps.run_proc_file_parallel(
         files,
         modmap,
         jobs=2,
-        progress_callback=lambda done, total, path: progress.append((done, total)),
+        progress_callback=completed,
         _worker_fn=_crashing_worker,
     )
 
@@ -221,6 +310,8 @@ def test_worker_segfault_is_isolated_and_never_retried_in_parent(
         else:
             assert result == ("ok", str(f), f.stem)
     assert progress[-1] == (len(files), len(files))
+    assert providers[-1] is None
+    assert all(provider() == () for provider in providers if provider is not None)
 
 
 def test_analyzer_reports_worker_crash_as_analysis_error(monkeypatch, tmp_path):
