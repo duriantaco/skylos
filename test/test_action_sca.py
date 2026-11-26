@@ -36,7 +36,7 @@ def _run_step(action, step_name, analysis, tmp_path):
                 with Path(os.environ["SKYLOS_TEST_CALLS"]).open("a") as stream:
                     stream.write(json.dumps(args) + "\\n")
                 print("{}")
-            elif args[:1] == ["-c"]:
+            elif args[:3] == ["-I", "-m", "skylos.cicd.scan_summary"]:
                 # The fixture report has no findings.
                 print(0)
             else:

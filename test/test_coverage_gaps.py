@@ -352,8 +352,26 @@ def test_summary_markdown_lists_the_gap():
     markdown = gatekeeper.build_summary_markdown(
         _result([_syntax_error()]), True, [], coverage_gaps=gaps
     )
+    assert markdown.index("1 of 3 source files") < markdown.index("| Category | Count |")
+    assert "`pkg/broken.py:3`" in markdown
+    assert "Result: ✅ PASSED" in markdown
     assert "### Incomplete Coverage" in markdown
     assert "`pkg/broken.py:3  syntax error: invalid syntax`" in markdown
+
+
+def test_diff_summary_counts_parse_errors_in_scope_and_bounds_examples():
+    from skylos.cicd.scan_summary import scan_coverage_notice
+
+    paths = ["src/first.rs", "src/`odd`name.rs", "src/third.rs", "src/fourth.rs"]
+    result = _result([_syntax_error(path) for path in paths], diff_scoped=True)
+    result["analysis_warnings"] = [dict(_syntax_error("old.rs"), outside_diff=True)]
+    notice = scan_coverage_notice(result)
+    assert "4 source files" in notice
+    assert "old.rs" not in notice
+    assert "fourth.rs" not in notice
+    assert "1 more" in notice
+    assert "`src/ˋoddˋname.rs:3`" in notice
+    assert notice.count("`") == 6
 
 
 def test_scan_exit_codes():

@@ -68,9 +68,12 @@ def _run(action, step_name, cwd, tmp_path, **env_overrides):
                     stream.write(json.dumps(
                         {"args": args, "policy_base": os.environ.get("SKYLOS_POLICY_BASE")}
                     ) + "\\n")
-                print("{}")
-            elif args[:1] == ["-c"]:
-                print(0)
+                print(os.environ.get("SKYLOS_TEST_REPORT", "{}"))
+            elif args[:3] == ["-I", "-m", "skylos.cicd.scan_summary"]:
+                sys.path.insert(0, os.environ["SKYLOS_TEST_ROOT"])
+                import runpy
+                sys.argv = args[2:]
+                runpy.run_module(args[2], run_name="__main__")
             else:
                 raise SystemExit("Unexpected Python invocation: " + repr(args))
             """
@@ -92,6 +95,7 @@ def _run(action, step_name, cwd, tmp_path, **env_overrides):
         "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
         "SKYLOS_TEST_PYTHON": sys.executable,
         "SKYLOS_TEST_STUB": str(stub),
+        "SKYLOS_TEST_ROOT": str(ACTION_PATH.parent),
         "SKYLOS_TEST_CALLS": str(calls),
         **env_overrides,
     }
@@ -139,6 +143,9 @@ def test_push_scans_the_whole_repository(action, tmp_path):
     calls, out, _ = _run(action, "Run Skylos Scan", work, tmp_path, GITHUB_EVENT_NAME="push")
     assert "--diff" not in calls[0]["args"]
     assert "diff_base" not in out
+    summary = (tmp_path / "summary").read_text()
+    assert "Scan coverage is incomplete" not in summary
+    assert "Found **0** listed findings" in summary
 
 
 def test_pull_request_without_common_history_falls_back_with_a_notice(action, tmp_path):
@@ -192,3 +199,28 @@ def test_upload_runs_with_a_token_or_oidc(action, tmp_path, env):
     calls, _, _ = _run(action, "Upload to Skylos Dashboard", tmp_path, tmp_path, **env)
     assert len(calls) == 1
     assert calls[0]["args"][-1] == "--upload"
+
+
+@pytest.mark.parametrize("listed", [0, 1])
+def test_scan_summary_distinguishes_findings_from_partial_file_coverage(action, tmp_path, listed):
+    report = {
+        "unused_functions": [
+            {"name": "retired", "file": "src/other.rs", "line": 1}
+        ] * listed,
+        "analysis_warnings": [{"kind": "experimental_language"}],
+        "analysis_errors": [
+            {"kind": "syntax_error", "file": "/checkout/src/read.rs", "line": 38},
+            {"kind": "syntax_error", "file": "/checkout/src/read.rs", "line": 40},
+        ],
+        "analysis_summary": {"total_files": 4, "comparison_scope": {"repository_root": "/checkout"}},
+    }
+    _, outputs, _ = _run(
+        action, "Run Skylos Scan", tmp_path, tmp_path,
+        GITHUB_EVENT_NAME="push", SKYLOS_TEST_REPORT=json.dumps(report),
+    )
+    assert outputs["findings_count"] == str(listed)
+    summary = (tmp_path / "summary").read_text()
+    assert "Scan coverage is incomplete" in summary
+    assert "1 of 4 source files" in summary
+    assert summary.count("`src/read.rs:38`") == 1
+    assert f"**{listed}** listed" in summary

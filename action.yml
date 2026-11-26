@@ -69,7 +69,7 @@ inputs:
 
 outputs:
   findings-count:
-    description: "Total number of findings"
+    description: "Number of listed source findings or reported container vulnerabilities"
     value: ${{ steps.scan.outputs.findings_count || steps.image_scan.outputs.findings_count }}
   gate-passed:
     description: "Whether the requested gate passed (true/false)"
@@ -294,16 +294,7 @@ runs:
           exit "$SCAN_STATUS"
         fi
 
-        # Count findings
-        COUNT=$(python -c "
-        import json, sys
-        data = json.load(open('$REPORT'))
-        count = sum(len(v) for v in data.values() if isinstance(v, list))
-        print(count)
-        ")
-        echo "findings_count=$COUNT" >> "$GITHUB_OUTPUT"
-        echo "### Skylos Scan Results" >> "$GITHUB_STEP_SUMMARY"
-        echo "Found **$COUNT** issue(s) in \`$SKYLOS_PATH\`" >> "$GITHUB_STEP_SUMMARY"
+        python -I -m skylos.cicd.scan_summary "$REPORT"
 
         if [ "$SCAN_STATUS" -eq 2 ]; then
           echo "::error::Skylos analysis was incomplete; refusing a clean result"

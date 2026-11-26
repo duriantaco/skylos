@@ -12,6 +12,8 @@ def test_rust_recovery_is_reported_as_incomplete(tmp_path):
     result = scan_rust_file(str(path), {}, _include_analysis_metadata=True)
     assert result[25]["kind"] == "syntax_error"
     assert result[25]["line"] == 2
+    assert "cargo check" in result[25]["suggestion"]
+    assert "Python" not in result[25]["suggestion"]
     assert result[6] == []
     report = json.loads(analyze(str(tmp_path), enable_quality=True))
     assert analysis_result_incomplete(report)

@@ -1763,6 +1763,7 @@ def _summary_status(passed, *, advisory, incomplete):
 def build_summary_markdown(
     results, passed, reasons, *, advisory=False, incomplete=False, coverage_gaps=()
 ):
+    from skylos.cicd.scan_summary import scan_coverage_notice
     from skylos.reporting.issue_summary import (
         gate_only_counts,
         issue_summary,
@@ -1783,9 +1784,11 @@ def build_summary_markdown(
         passed, advisory=advisory, incomplete=incomplete
     )
 
-    lines = [
-        "## Skylos Analysis Results",
-        "",
+    lines = ["## Skylos Analysis Results", ""]
+    coverage_notice = scan_coverage_notice(results)
+    if coverage_notice:
+        lines.extend([coverage_notice, ""])
+    lines += [
         "| Category | Count |",
         "|----------|-------|",
         *_build_summary_rows(
