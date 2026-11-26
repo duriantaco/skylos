@@ -16,9 +16,11 @@ from skylos.rules.config.cicd.gitlab_ci import scan_gitlab_ci, scan_gitlab_ci_fi
 from skylos.rules.config.container.dockerfile import scan_dockerfiles
 from skylos.rules.config.deployment.exposure import scan_deployment_exposure
 from skylos.rules.config.edge.docker_compose import scan_docker_compose
+from skylos.rules.config.edge.envoy import scan_envoy_http1
 from skylos.rules.config.edge.systemd import scan_systemd
 from skylos.rules.config.gpu.compatibility import scan_gpu_compatibility
 from skylos.rules.config.kubernetes import scan_kubernetes
+from skylos.rules.config.kubernetes.model import load_project as load_yaml_project
 from skylos.rules.config.terraform.scanner import scan_terraform
 
 
@@ -140,16 +142,21 @@ def scan_config_files(
             exclude_folders=exclude_folders,
         )
     )
+    yaml_project = load_yaml_project(
+        root,
+        changed_files=changed_files,
+        scan_paths=scan_paths,
+        exclude_folders=exclude_folders,
+    )
+    findings.extend(scan_envoy_http1(yaml_project.manifests, ignore=ignore))
     findings.extend(
         scan_kubernetes(
             root,
-            changed_files=changed_files,
+            project=yaml_project,
             ignore=ignore,
             analysis_errors=analysis_errors,
             required_rules=required_rules,
-            scan_paths=scan_paths,
             configuration_coverage=configuration_coverage,
-            exclude_folders=exclude_folders,
         )
     )
     findings.extend(

@@ -86,7 +86,7 @@ families:
 
   - id: infrastructure
     title: Deployment and infrastructure
-    prefixes: "`SKY-DEP`, `SKY-GPU`, `SKY-D330`–`SKY-D336`, `SKY-D342`, `SKY-D343`, `SKY-D400`–`SKY-D411`"
+    prefixes: "`SKY-DEP`, `SKY-GPU`, `SKY-D330`–`SKY-D336`, `SKY-D342`, `SKY-D343`, `SKY-D400`–`SKY-D411`, `SKY-D413`, `SKY-D414`"
     match:
       categories: [reliability]
       ids:
@@ -98,12 +98,16 @@ families:
         - "SKY-D40?"
         - SKY-D410
         - SKY-D411
+        - SKY-D413
+        - SKY-D414
     intro: |
       Rules for the files that describe how code is deployed: Kubernetes
       manifests, Docker Compose files, systemd units, Dockerfiles, Terraform
       and GPU release contracts. They read the declarations in the
       repository; Skylos does not contact a cluster or a cloud account.
-      They run with `--danger` or `-a`.
+      The source checks run with `--danger` or `-a`. The Envoy check
+      reads listener configuration. For the DNS cleanup check, pass a saved
+      plan to `skylos rules terraform-plan plan.json` before applying it.
 
   - id: ai-defects
     title: AI-code defects

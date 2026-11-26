@@ -33,6 +33,12 @@ def run_rules_command(argv, *, console_factory=Console) -> int:
     p_vulnhunter.add_argument("path", type=Path, help="File or directory to scan")
     p_vulnhunter.add_argument("--format", choices=["text", "json", "sarif"], default="text")
 
+    p_plan = rules_sub.add_parser(
+        "terraform-plan", help="Review a local Terraform plan for a retained S3 DNS record"
+    )
+    p_plan.add_argument("path", type=Path, help="Plan exported by terraform show -json")
+    p_plan.add_argument("--format", choices=["text", "json"], default="text")
+
     p_list = rules_sub.add_parser("list", help="List built-in rules")
     p_list.add_argument(
         "terms",
@@ -70,6 +76,10 @@ def run_rules_command(argv, *, console_factory=Console) -> int:
 
     rules_args = rules_parser.parse_args(argv)
 
+    if rules_args.rules_cmd == "terraform-plan":
+        from skylos.rules.config.terraform.plan_dns import run_plan
+
+        return run_plan(rules_args.path, rules_args.format)
     if rules_args.rules_cmd == "vulnhunter":
         from skylos.rules.vulnhunter_pack import run_pack
 

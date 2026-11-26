@@ -1,0 +1,114 @@
+id: SKY-D414
+title: Terraform plan deletes an S3 bucket while retaining its DNS record
+family: infrastructure
+severity: MEDIUM
+languages: [Terraform plan JSON]
+gate:
+  full: not_run
+  opt_in: "Run skylos rules terraform-plan plan.json before applying a saved plan."
+run_with: >-
+  Export the saved plan locally with `terraform show -json saved.tfplan > plan.json`.
+  The export can contain sensitive values. Pass the local file to
+  `skylos rules terraform-plan plan.json --format json`. The result identifies
+  the matching entries by JSON pointer.
+what_it_is: >-
+  The AWS provider plans to delete an S3 bucket while a Route 53 CNAME
+  continues to point to its endpoint. The record's fully qualified name
+  matches the bucket name.
+why_it_matters: >-
+  DNS can continue sending clients to S3 after the bucket is released.
+  Retire or retarget the record before the bucket name becomes available.
+how_skylos_decides:
+  - >-
+    Reads an explicitly supplied JSON plan with format version 1.x, a
+    complete plan marker and the resource changes. Matches the bucket's
+    recorded identity to the DNS name and S3 target. A planned bucket with
+    the same name can account for a replacement. When Terraform deletes a
+    shared-name bucket before recreating it, an unchanged CNAME also gets
+    a review for the interval between those actions.
+  - >-
+    A pending deletion of a previously replaced bucket is checked by its
+    own prior bucket name. S3 account-regional names remain reserved to the
+    account after deletion.
+  - >-
+    Returns 0 when the supported check completes without a match, 1 for a
+    finding and 2 when the input or a necessary value leaves the check
+    incomplete. The result describes the planned configuration. Actual DNS
+    visibility, bucket ownership after apply and resources managed elsewhere
+    require separate evidence.
+source_refs:
+  - path: skylos/rules/config/terraform/plan_dns.py
+    symbol: "def evaluate("
+verify:
+  mode: manual
+  reason: The examples use the dedicated terraform-plan command, which reads the plan directly.
+flagged_example:
+  language: json
+  scan_flags: []
+  filename: plan.json
+  code: |
+    {
+      "format_version": "1.2", "complete": true, "errored": false,
+      "resource_changes": [
+        {
+          "address": "aws_s3_bucket.archive", "mode": "managed",
+          "type": "aws_s3_bucket", "provider_name": "registry.terraform.io/hashicorp/aws",
+          "change": {
+            "actions": ["delete"],
+            "before": {"bucket": "archive.example.test"},
+            "after": null
+          }
+        },
+        {
+          "address": "aws_route53_record.archive", "mode": "managed",
+          "type": "aws_route53_record",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "change": {
+            "actions": ["no-op"],
+            "before": {
+              "type": "CNAME", "fqdn": "archive.example.test",
+              "records": ["archive.example.test.s3.amazonaws.com"]
+            },
+            "after": {
+              "type": "CNAME", "fqdn": "archive.example.test",
+              "records": ["archive.example.test.s3.amazonaws.com"]
+            }
+          }
+        }
+      ]
+    }
+not_flagged_example:
+  language: json
+  scan_flags: []
+  filename: plan.json
+  code: |
+    {
+      "format_version": "1.2", "complete": true, "errored": false,
+      "resource_changes": [
+        {
+          "address": "aws_route53_record.archive", "mode": "managed",
+          "type": "aws_route53_record",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "change": {
+            "actions": ["delete"],
+            "before": {
+              "type": "CNAME", "fqdn": "archive.example.test",
+              "records": ["archive.example.test.s3.amazonaws.com"]
+            },
+            "after": null
+          }
+        }
+      ]
+    }
+  why: The plan retires the CNAME while the bucket is still available.
+fix:
+  explanation: >-
+    Retire or retarget the DNS record first. Allow cached DNS answers to
+    expire before releasing the bucket. Generate a fresh plan for the bucket
+    deletion and review it again.
+false_alarms_and_suppression:
+  misfires:
+    - A separate deployment may already have changed the record or preserved ownership of the name. Verify the order of those changes.
+  suppress:
+    - text: The standalone command takes one plan per invocation. Callers decide how to handle its review exit status.
+related: [SKY-D402, SKY-D403]

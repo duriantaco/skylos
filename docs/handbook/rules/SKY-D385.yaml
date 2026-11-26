@@ -1,0 +1,98 @@
+id: SKY-D385
+title: Django view saves a debit from a previously checked balance
+family: security
+severity: MEDIUM
+languages: [Python]
+cwe: [CWE-362]
+gate:
+  full: counted
+what_it_is: >-
+  A Django view reads a model row, checks that a numeric field holds enough
+  units, subtracts the same amount in Python and saves the row. The finding
+  points to the save and identifies the earlier read and check.
+why_it_matters: >-
+  Two requests can both pass the check against the same balance. The second
+  save can overwrite the first debit, leaving too many units available.
+how_skylos_decides:
+  - >-
+    Reads the model, view and Django URL registration from the project's
+    Python sources. After a direct objects.get(), it recognizes an insufficient
+    balance check that exits, or a sufficient balance branch that contains the
+    debit. Either side of the comparison can hold the requested amount. Skylos
+    checks that the subtraction and save() operate on the same instance.
+  - >-
+    A transaction.atomic() block alone still allows this sequence at common
+    isolation levels. A conditional database update can check the balance and
+    debit it in the same statement.
+  - >-
+    Detection requires the model and URL registration to resolve inside the
+    bounded project snapshot. Redemptions implemented in raw SQL, background
+    jobs or an external service fall outside this check.
+  - >-
+    For a preview that saves and then unconditionally rolls back, Skylos
+    checks the default atomic block and Django's set_rollback(True) call.
+    It allows a direct exit or a simple HTTP response after the rollback.
+    Visible custom database routing, multiple configured databases, an
+    unresolved database setting, a different connection or a replaced
+    transaction helper keeps the finding visible. Deployment-specific
+    routing outside the analyzed sources requires review.
+source_refs:
+  - path: skylos/rules/danger/django_balance_race.py
+    symbol: "def _decrement("
+flagged_example:
+  language: python
+  filename: urls.py
+  code: |
+    from django.db import models
+    from django.http import HttpResponse
+    from django.urls import path
+    from django.views.decorators.http import require_POST
+
+    class Inventory(models.Model):
+        remaining = models.IntegerField()
+
+    @require_POST
+    def reserve(request, pk):
+        item = Inventory.objects.get(pk=pk)
+        if item.remaining < 1:
+            return HttpResponse(status=409)
+        item.remaining -= 1
+        item.save(update_fields=["remaining"])
+        return HttpResponse(status=204)
+
+    urlpatterns = [path("reserve/<int:pk>/", reserve)]
+  expect_line: 15
+not_flagged_example:
+  language: python
+  filename: urls.py
+  code: &conditional_update |
+    from django.db import models
+    from django.db.models import F
+    from django.http import HttpResponse
+    from django.urls import path
+    from django.views.decorators.http import require_POST
+
+    class Inventory(models.Model):
+        remaining = models.IntegerField()
+
+    @require_POST
+    def reserve(request, pk):
+        updated = Inventory.objects.filter(pk=pk, remaining__gte=1).update(
+            remaining=F("remaining") - 1
+        )
+        return HttpResponse(status=204 if updated else 409)
+
+    urlpatterns = [path("reserve/<int:pk>/", reserve)]
+  why: One database statement enforces the condition and applies the debit.
+fix:
+  explanation: Make the debit conditional on enough units remaining and handle a zero-row update.
+  filename: urls.py
+  language: python
+  code: *conditional_update
+false_alarms_and_suppression:
+  misfires:
+    - An external lock that serializes every writer for this row can make the operation safe.
+  suppress:
+    - check: config
+      text: A project can suppress this review with SKY-D385 in its Skylos ignore list.
+related: [SKY-Q404]

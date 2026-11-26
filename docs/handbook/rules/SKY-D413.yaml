@@ -1,0 +1,93 @@
+id: SKY-D413
+title: Envoy HTTP/1 listener accepts ambiguous message framing
+family: infrastructure
+severity: MEDIUM
+languages: [Envoy YAML]
+cwe: [CWE-444]
+gate:
+  full: counted
+what_it_is: >-
+  A downstream Envoy HTTP connection manager enables allow_chunked_length
+  on a listener that accepts HTTP/1. Envoy accepts requests containing both
+  transfer encoding and content length, and strips the content length.
+why_it_matters: >-
+  Another proxy on the same route may interpret the message differently.
+  Review the full route before allowing this compatibility setting.
+how_skylos_decides:
+  - >-
+    Reads Envoy v3 static listeners and their regular or default filter chains
+    from a YAML bootstrap. The typed filter must identify an HTTP connection
+    manager configured for HTTP/1 or automatic codec selection.
+  - >-
+    Reports the specific option when the YAML value is true. Live configuration
+    delivered by Envoy's control plane requires separate review.
+  - >-
+    Also checks a ConfigMap in the same YAML file as a Pod or Deployment
+    that uses it. The official Envoy container must select the mounted file
+    with a literal -c or --config-path argument. Skylos resolves directory
+    mounts and explicit key-to-path mappings, then points to the option
+    inside the ConfigMap's literal YAML block. Separate manifests, subPath
+    mounts, command-line overlays and rendered templates require review.
+source_refs:
+  - path: skylos/rules/config/edge/envoy.py
+    symbol: "def scan_envoy_http1("
+  - path: skylos/rules/config/edge/envoy_configmap.py
+    symbol: "def mounted_bootstraps("
+flagged_example:
+  language: yaml
+  filename: envoy.yaml
+  code: |
+    static_resources:
+      listeners:
+      - name: edge
+        address: {socket_address: {address: 127.0.0.1, port_value: 10000}}
+        filter_chains:
+        - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: edge
+              http_protocol_options:
+                allow_chunked_length: true
+              route_config: {name: local, virtual_hosts: []}
+              http_filters:
+              - name: envoy.filters.http.router
+                typed_config:
+                  '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  expect_line: 12
+not_flagged_example:
+  language: yaml
+  filename: envoy.yaml
+  code: &reject_conflicting_lengths |
+    static_resources:
+      listeners:
+      - name: edge
+        address: {socket_address: {address: 127.0.0.1, port_value: 10000}}
+        filter_chains:
+        - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: edge
+              http_protocol_options:
+                allow_chunked_length: false
+              route_config: {name: local, virtual_hosts: []}
+              http_filters:
+              - name: envoy.filters.http.router
+                typed_config:
+                  '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  why: The downstream HTTP/1 parser rejects the conflicting length headers.
+fix:
+  explanation: Use Envoy's default framing policy by removing the option or setting it to false.
+  filename: envoy.yaml
+  language: yaml
+  code: *reject_conflicting_lengths
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A private listener can intentionally accept a legacy client behind an
+      upstream component that enforces a single framing policy.
+  suppress:
+    - check: config
+      text: A project can suppress this review with SKY-D413 in its Skylos ignore list.
+related: [SKY-D359]

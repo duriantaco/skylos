@@ -2120,6 +2120,12 @@ def _apply_selected_rule_analysis_flags(args) -> None:
     if not selected_rules:
         return
 
+    if "SKY-D414" in selected_rules:
+        raise ConfigError(
+            "SKY-D414 requires a Terraform plan. "
+            "Run 'skylos rules terraform-plan PLAN.json' to evaluate it."
+        )
+
     from skylos.rules.catalog import get_rule_catalog
 
     categories_by_rule = {
