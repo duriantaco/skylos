@@ -191,6 +191,48 @@ def test_redundant_prelude_trait_import_is_reported_by_edition(
     assert ("TryInto" in _names(result, "unused_imports")) is reported
 
 
+@pytest.mark.parametrize(
+    "attribute, redundant",
+    [
+        ("#![no_std]", False),
+        ('#![cfg_attr(not(feature = "std"), no_std)]', False),
+        ("#![cfg_attr(unix, cfg_attr(debug_assertions, no_std))]", False),
+        ('#![cfg_attr(no_std, doc = "no_std")]', True),
+        ("", True),
+    ],
+)
+def test_alloc_trait_import_uses_the_crate_prelude(tmp_path, attribute, redundant):
+    result = _report(
+        tmp_path,
+        {
+            "src/lib.rs": f"{attribute}\nextern crate alloc;\nmod labels;",
+            "src/labels.rs": """
+            use alloc::string::ToString;
+            use alloc::borrow::ToOwned;
+            pub fn label(value: u8) -> alloc::string::String { value.to_string() }
+            """,
+        },
+    )
+    unused = _names(result, "unused_imports")
+    assert ("ToString" in unused) is redundant
+    assert "ToOwned" in unused
+
+
+def test_shared_source_keeps_traits_needed_by_a_no_std_target(tmp_path):
+    result = _report(
+        tmp_path,
+        {
+            "src/lib.rs": "#![no_std]\nextern crate alloc;\nmod labels;",
+            "src/main.rs": "extern crate alloc;\nmod labels;\nfn main() {}",
+            "src/labels.rs": """
+            use alloc::borrow::ToOwned;
+            pub fn label(value: &str) -> alloc::string::String { value.to_owned() }
+            """,
+        },
+    )
+    assert "ToOwned" not in _names(result, "unused_imports")
+
+
 # 2. Use trees, re-exports and aliases -------------------------------------
 
 

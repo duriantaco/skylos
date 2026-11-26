@@ -862,7 +862,7 @@ def _rust_test_lines(file_lines, abs_path=None) -> frozenset[int]:
     try:
         if abs_path and declared_test_module(abs_path):
             return frozenset(range(1, len(file_lines) + 2))
-        return test_line_numbers("".join(file_lines).encode("utf-8"))
+        return test_line_numbers("".join(file_lines).encode("utf-8"), abs_path)
     except Exception:  # noqa: BLE001 - no test scope is the safe default
         return frozenset()
 

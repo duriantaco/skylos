@@ -18,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .core import RUST_LANG, _get_parser
+from .syntax import parse_rust_source
 
 _TEST_ATTRIBUTES = frozenset({"test", "bench"})
 # Test-harness attributes from common crates whose name does not end in
@@ -153,12 +154,12 @@ def _walk(root, source, lines):
         stack.extend(children)
 
 
-def test_line_numbers(source: bytes) -> frozenset[int]:
+def test_line_numbers(source: bytes, file_path=None) -> frozenset[int]:
     """1-based lines inside test-only code. A file that does not parse
     cleanly has none, so nothing is excused on a guess."""
     if RUST_LANG is None or not source:
         return frozenset()
-    root = _get_parser(RUST_LANG).parse(source).root_node
+    root = parse_rust_source(_get_parser(RUST_LANG), source, file_path).root_node
     if root.has_error:
         return frozenset()
     lines: set[int] = set()
@@ -202,7 +203,7 @@ def declared_test_module(path) -> bool:
             source = candidate.read_bytes()
         except OSError:
             continue
-        root = parser.parse(source).root_node
+        root = parse_rust_source(parser, source, candidate).root_node
         if root.has_error:
             continue
         if _declares_test_module(root, source, name):

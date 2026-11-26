@@ -99,6 +99,7 @@ def scan_rust_file(
     enable_danger_rules: bool = True,
     enable_quality_rules: bool = True,
     _include_analysis_metadata: bool = False,
+    project_root=None,
 ) -> tuple:
     if config is None:
         config = {}
@@ -119,7 +120,7 @@ def scan_rust_file(
             analysis_error_payload(file_path, error, kind="source_read_error"),
         )
 
-    core = RustCore(str(path), source)
+    core = RustCore(str(path), source, project_root=project_root)
     core.scan()
 
     visitor = DummyVisitor(

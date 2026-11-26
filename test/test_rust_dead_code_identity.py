@@ -137,6 +137,56 @@ def test_self_recursion_compares_full_identity_and_keeps_sibling_methods(tmp_pat
     assert "Active.helper" in definitions["Active.process"].calls
 
 
+def test_bare_calls_from_methods_reach_their_module_function(tmp_path):
+    _write(
+        tmp_path / "src" / "lib.rs",
+        """
+        pub mod codec;
+        pub mod other {
+            pub fn import_only() {}
+            pub fn from_glob() {}
+        }
+        """,
+    )
+    path = _write(
+        tmp_path / "src" / "codec.rs",
+        """
+        pub struct Codec;
+        impl Codec {
+            pub fn encode(&self) { encode::<u8>(); }
+            pub fn from_glob(&self) {
+                use crate::other::*;
+                from_glob();
+            }
+            pub fn import_only(&self) {
+                use crate::other::import_only;
+                import_only();
+            }
+            pub fn callback(&self, callback: fn()) { callback(); }
+        }
+        impl std::fmt::Display for Codec {
+            fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                fmt()
+            }
+        }
+        fn fmt() -> std::fmt::Result { Ok(()) }
+        fn encode<T>() {}
+        fn from_glob() {}
+        fn import_only() {}
+        fn callback() {}
+        """,
+    )
+    definitions = _definitions(path)
+    assert "codec.encode" in definitions["codec.Codec.encode"].calls
+    assert "codec.fmt" in definitions["codec.Codec.fmt"].calls
+    assert "codec.from_glob" not in definitions["codec.Codec.from_glob"].calls
+    assert "codec.import_only" not in definitions["codec.Codec.import_only"].calls
+    assert "codec.callback" not in definitions["codec.Codec.callback"].calls
+    result = json.loads(analyze(str(tmp_path), conf=RUST_OPT_IN, grep_verify=False))
+    assert not result["analysis_errors"]
+    assert _unused(result) == {"codec.import_only", "codec.callback", "codec.from_glob"}
+
+
 def test_unknown_receiver_does_not_pick_first_same_named_method(tmp_path):
     path = _write(
         tmp_path / "src" / "main.rs",

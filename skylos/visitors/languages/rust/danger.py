@@ -17,6 +17,7 @@ from ._security_bindings import (
     use_bindings,
 )
 from .core import RUST_LANG, _get_parser, _is_test_path
+from .syntax import parse_rust_source
 from .web_model import (
     GLOB_EXPORTS,
     HTML_ESCAPERS,
@@ -213,7 +214,9 @@ def _declared_test_only(file_path):
         try:
             if owner != path and owner.is_file():
                 source = owner.read_bytes()
-                root = _get_parser(RUST_LANG).parse(source).root_node
+                root = parse_rust_source(
+                    _get_parser(RUST_LANG), source, owner
+                ).root_node
                 if root.has_error:
                     return False
                 declarations.extend(_test_module_declarations(root, source, name))

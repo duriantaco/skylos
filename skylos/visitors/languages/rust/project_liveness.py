@@ -249,6 +249,8 @@ _STD_MACROS = frozenset(
 # Complete member lists of common standard traits. An import of one of them
 # is reportable only when none of these names is reached in its scope.
 _STD_TRAIT_MEMBERS = {
+    "std::string::ToString": {"to_string"},
+    "std::borrow::ToOwned": {"Owned", "to_owned", "clone_into"},
     "std::io::Write": {
         "write",
         "write_vectored",
@@ -567,8 +569,14 @@ def _import_reportable(definition, items, project):
         edition = (
             project.edition_by_file.get(item.file) if project is not None else None
         )
+        # These allocation traits are absent from the core prelude. One source
+        # file may belong to both std and no_std Cargo targets.
+        if joined in {"std::string::ToString", "std::borrow::ToOwned"} and any(
+            use.module.crate.may_use_core_prelude for use in uses
+        ):
+            minimum = None
         if minimum is not None and _edition_at_least(edition, minimum):
-            return True  # Redundant: the edition's prelude already has it.
+            return True
         return _members_unreached(
             definition,
             _STD_TRAIT_MEMBERS.get(joined),

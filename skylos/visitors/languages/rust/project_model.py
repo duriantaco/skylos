@@ -29,6 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
 from skylos.core.safe_cache_io import read_project_text_no_symlink
 
 from .core import RUST_LANG, _get_parser
+from .syntax import parse_rust_source
 
 _MAX_FILES = 20_000
 _MAX_FILE_BYTES = 2_000_000
@@ -72,7 +73,15 @@ class Package:
 
 
 class Crate:
-    __slots__ = ("harness", "kind", "name", "package", "root", "root_file")
+    __slots__ = (
+        "harness",
+        "kind",
+        "may_use_core_prelude",
+        "name",
+        "package",
+        "root",
+        "root_file",
+    )
 
     def __init__(self, package, kind, name, root_file, harness=True):
         self.package = package
@@ -81,6 +90,7 @@ class Crate:
         self.root_file = root_file
         self.root = None
         self.harness = harness
+        self.may_use_core_prelude = False
 
     @property
     def key(self):
@@ -172,6 +182,26 @@ class PathRef:
         self.segments = segments
         self.owner = owner
         self.local = local
+
+
+def _may_apply_no_std(nodes):
+    """Look at attribute names, including the attributes after a cfg_attr predicate."""
+    tokens = [n for n in nodes if n.type not in {"line_comment", "block_comment"}]
+    if len(tokens) == 1:
+        return tokens[0].type == "identifier" and tokens[0].text == b"no_std"
+    if (
+        len(tokens) != 2
+        or tokens[0].text != b"cfg_attr"
+        or tokens[1].type != "token_tree"
+    ):
+        return False
+    groups = [[]]
+    for child in tokens[1].children[1:-1]:
+        if child.type == ",":
+            groups.append([])
+        else:
+            groups[-1].append(child)
+    return any(_may_apply_no_std(group) for group in groups[1:])
 
 
 def _allowed_lints(attribute_texts):
@@ -431,7 +461,9 @@ class RustProject:
                     self.complete = False
                     self._sources[path] = None
                 else:
-                    tree = _get_parser(RUST_LANG).parse(data)
+                    tree = parse_rust_source(
+                        _get_parser(RUST_LANG), data, path, self.root
+                    )
                     self._sources[path] = (data, tree.root_node)
         return self._sources[path]
 
@@ -449,6 +481,14 @@ class RustProject:
             return None
         self._visited.add(key)
         data, root = parsed
+        if parent is None:
+            crate.may_use_core_prelude = any(
+                _may_apply_no_std(attr.children)
+                for child in root.named_children
+                if child.type == "inner_attribute_item"
+                for attr in child.named_children
+                if attr.type == "attribute"
+            )
         inner = [
             self._text(data, child)
             for child in root.children

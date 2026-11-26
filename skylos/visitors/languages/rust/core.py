@@ -12,6 +12,8 @@ except ImportError:
 
 from skylos.visitors.base import Definition
 
+from .syntax import parse_rust_source
+
 try:
     RUST_LANG: Language | None = (
         Language(tsrust.language()) if tsrust is not None else None
@@ -430,7 +432,9 @@ def _module_namespace_for_path(file_path: str | Path) -> str:
 
 
 class RustCore:
-    def __init__(self, file_path: str, source_bytes: bytes) -> None:
+    def __init__(
+        self, file_path: str, source_bytes: bytes, *, project_root=None
+    ) -> None:
         self.file_path: str = file_path
         self.source: bytes = source_bytes
         self.defs: list[Definition] = []
@@ -463,6 +467,7 @@ class RustCore:
         self._value_pattern_names: dict[int, frozenset[str]] = {}
         self._value_binding_bytes: dict[int, frozenset[int]] = {}
         self._block_value_bindings: dict[int, dict[str, int]] = {}
+        self._block_item_names: dict[int, set[str]] = {}
         self._parameter_value_bindings: dict[int, frozenset[str]] = {}
         self._local_trait_imports = None
         self._semantic_import_uses = None
@@ -472,7 +477,9 @@ class RustCore:
 
         if self.lang:
             self.parser = _get_parser(self.lang)
-            self.tree = self.parser.parse(source_bytes)
+            self.tree = parse_rust_source(
+                self.parser, source_bytes, file_path, project_root
+            )
             self.root_node = self.tree.root_node
         else:
             self.tree = None
@@ -2541,10 +2548,13 @@ class RustCore:
         if callee.type == "identifier":
             if self._is_local_value_reference(callee):
                 return
+            name = self._node_name_text(callee)
+            target = self._module_function_from_method(callee, name, current_callable)
             self._add_ref(
-                self._node_name_text(callee),
+                target or name,
                 callee.start_byte,
                 current_callable=current_callable,
+                preserve_qualified=target is not None,
             )
             return
         if callee.type == "scoped_identifier":
@@ -2584,6 +2594,55 @@ class RustCore:
                 current_callable=current_callable,
                 preserve_qualified=True,
             )
+
+    def _block_items(self, block) -> set[str]:
+        if block.id not in self._block_item_names:
+            names = set()
+            for item in block.named_children:
+                if item.type == "use_declaration":
+                    names.update(
+                        local.removeprefix("r#")
+                        for local, _ in self._extract_use_bindings(item)
+                    )
+                    if any(
+                        node.type == "use_wildcard" for node in self._iter_nodes(item)
+                    ):
+                        names.add("*")
+                elif item.type in {
+                    "function_item",
+                    "const_item",
+                    "static_item",
+                    "struct_item",
+                }:
+                    name = self._node_name_text(item.child_by_field_name("name"))
+                    names.add(name.removeprefix("r#"))
+            self._block_item_names[block.id] = names
+        return self._block_item_names[block.id]
+
+    def _module_function_from_method(self, callee, name, current_callable):
+        """A bare call in an impl or trait can name a function in its module."""
+        namespace, owner = self._callable_context.get(current_callable, ("", None))
+        if not owner or not namespace:
+            return None
+        target = f"{namespace}.{name}"
+        function = self._callable_nodes.get(target)
+        if function is None:
+            return None
+        module = function.parent
+        if module.type != "source_file" and (
+            module.type != "declaration_list" or module.parent.type != "mod_item"
+        ):
+            return None
+        scope = callee.parent
+        while scope is not None and scope != module:
+            if scope.type == "block":
+                items = self._block_items(scope)
+                if "*" in items or name.removeprefix("r#") in items:
+                    return None
+            elif scope.type in {"mod_item", "source_file"}:
+                return None
+            scope = scope.parent
+        return target if scope is not None else None
 
     def _is_definition_name(self, node) -> bool:
         parent = node.parent
