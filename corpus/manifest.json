@@ -191,7 +191,7 @@
     },
     {
       "id": "django-urlpatterns",
-      "path": "fixtures/django_urlpatterns.py",
+      "path": "fixtures/django_urlpatterns",
       "description": "Django URL patterns should keep view functions alive.",
       "source": {
         "repo": "https://github.com/django/django",
@@ -311,7 +311,7 @@
     },
     {
       "id": "django-class-based-view",
-      "path": "fixtures/django_cbv.py",
+      "path": "fixtures/django_cbv",
       "description": "Django class-based views should not be treated as dead framework classes.",
       "source": {
         "repo": "https://github.com/django/django",
@@ -686,7 +686,7 @@
     },
     {
       "id": "django-management-command",
-      "path": "fixtures/django_management_command.py",
+      "path": "fixtures/django_management_command",
       "description": "Django management command handlers are framework entrypoints.",
       "source": {
         "repo": "https://github.com/django/django",
@@ -714,7 +714,7 @@
     },
     {
       "id": "django-signal-receiver",
-      "path": "fixtures/django_signal_receiver.py",
+      "path": "fixtures/django_signal_receiver",
       "description": "Django signal receivers should not be reported as dead code.",
       "source": {
         "repo": "https://github.com/django/django",
@@ -931,7 +931,7 @@
     },
     {
       "id": "django-appconfig-ready",
-      "path": "fixtures/django_appconfig.py",
+      "path": "fixtures/django_appconfig",
       "description": "Django AppConfig classes and ready hooks are framework lifecycle entrypoints.",
       "source": {
         "repo": "https://github.com/django/django",

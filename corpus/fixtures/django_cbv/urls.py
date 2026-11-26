@@ -1,4 +1,5 @@
 from django.http import HttpResponse
+from django.urls import path
 from django.views import View
 
 
@@ -18,3 +19,6 @@ class PageRenderer:
 
 
 PageRenderer()
+
+
+urlpatterns = [path("", HomeView.as_view())]
