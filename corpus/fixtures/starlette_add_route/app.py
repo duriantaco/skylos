@@ -1,13 +1,14 @@
 from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
 
 app = Starlette()
 
 
 async def homepage(request):
-    return None
+    return PlainTextResponse("home")
 
 
-app.add_route("/", endpoint=homepage, methods=["GET"])
+app.add_route("/", route=homepage, methods=["GET"])
 
 
 async def status_page(request):
