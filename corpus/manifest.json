@@ -311,7 +311,7 @@
     },
     {
       "id": "django-class-based-view",
-      "path": "fixtures/django_cbv.py",
+      "path": "fixtures/django_cbv",
       "description": "Django class-based views should not be treated as dead framework classes.",
       "source": {
         "repo": "https://github.com/django/django",
