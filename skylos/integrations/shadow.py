@@ -82,7 +82,7 @@ class UnsupportedShadowReport(ValueError):
     """Raised when an incumbent report is not a supported JSON shape."""
 
 
-def load_json_report(path: str | Path) -> Any:
+def read_report_text(path: str | Path) -> str:
     report_path = Path(path)
     from skylos.core.safe_cache_io import read_text_no_symlink
 
@@ -96,10 +96,15 @@ def load_json_report(path: str | Path) -> Any:
             f"Report must be a regular, non-symlink UTF-8 file no larger than "
             f"{MAX_EXTERNAL_REPORT_BYTES // (1024 * 1024)} MiB: {report_path}"
         )
+    return text
+
+
+def load_json_report(path: str | Path) -> Any:
+    text = read_report_text(path)
     try:
         return json.loads(text)
     except (json.JSONDecodeError, RecursionError) as exc:
-        raise ValueError(f"Invalid JSON in {report_path}: {exc}") from exc
+        raise ValueError(f"Invalid JSON in {path}: {exc}") from exc
 
 
 def normalize_external_report(data: Any) -> dict[str, Any]:
