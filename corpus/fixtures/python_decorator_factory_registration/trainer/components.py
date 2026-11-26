@@ -32,7 +32,7 @@ def unused_labelled():
     return 3
 
 
-@gin.timed()
+@functools.lru_cache()
 def unused_empty_call():
     return 4
 
