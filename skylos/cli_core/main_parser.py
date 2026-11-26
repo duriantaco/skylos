@@ -235,6 +235,16 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
     )
     parser.add_argument("--output", "-o", type=str, help="Write output to file")
     parser.add_argument(
+        "--progress",
+        choices=("auto", "plain", "off"),
+        default="auto",
+        help=(
+            "Show live scan stages in a terminal and periodic stderr updates for "
+            "redirected human reports. Use plain for stderr updates with any "
+            "format, or off to disable progress."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",

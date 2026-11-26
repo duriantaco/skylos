@@ -34,6 +34,7 @@ from skylos.deadcode.django_converter_liveness import (
     find_django_converter_method_targets,
 )
 from skylos.analysis.ast_cache import releases_python_ast_cache
+from skylos.analysis.progress import counted_items, start_phase
 from skylos.constants import AUTO_CALLED
 from skylos.deadcode.python_ast import ParsedPythonFile, parse_python_files
 from skylos.deadcode.provider_method_liveness import find_provider_method_targets
@@ -131,6 +132,7 @@ def apply_dead_code_liveness(
     exclude_folders: Iterable[str] | None = None,
     module_names: dict[str, str] | None = None,
     django_converter_classes: frozenset[tuple[str, str]] | None = None,
+    progress_callback=None,
 ) -> LivenessReport:
 
     report = LivenessReport()
@@ -139,7 +141,12 @@ def apply_dead_code_liveness(
 
     root = Path(project_root).resolve()
     py_files = _python_files(root, files)
-    parsed_files = parse_python_files(py_files)
+    parsed_files = parse_python_files(
+        counted_items(
+            py_files, progress_callback, "Reading Python modules", len(py_files), path_of=Path
+        )
+    )
+    start_phase(progress_callback, "property and protocol liveness")
     classify_property_descriptors(definitions, parsed_files, module_names)
     docs_text = _read_public_docs(root)
 
@@ -165,10 +172,13 @@ def apply_dead_code_liveness(
     for target in find_class_protocol_members(definitions, parsed_files):
         _mark(target, "protocol_override", report)
     _rescue_registration_methods(classes, class_methods, report)
+    start_phase(progress_callback, "framework entry points")
     for target, reason in find_framework_entrypoint_targets(
-        definitions, parsed_files, root, exclude_folders=exclude_folders
+        definitions, parsed_files, root, exclude_folders=exclude_folders,
+        progress_callback=progress_callback,
     ):
         _mark(target, reason, report)
+    start_phase(progress_callback, "framework hooks and signals")
     for target, reason in find_robot_framework_targets(
         definitions, parsed_files, root, exclude_folders=exclude_folders
     ):
@@ -185,12 +195,13 @@ def apply_dead_code_liveness(
         _mark(target, reason, report)
     if django_converter_classes is None:
         django_converter_classes = find_django_converter_classes(
-            definitions, py_files, root
+            definitions, py_files, root, progress_callback=progress_callback
         )
     for target, reason in find_django_converter_method_targets(
         definitions, django_converter_classes
     ):
         _mark(target, reason, report)
+    start_phase(progress_callback, "dynamic registrations")
     for target in find_literal_plugin_registry_targets(definitions, parsed_files):
         _mark(target, "literal_plugin_registry", report)
     for target in find_nested_dict_getattr_targets(definitions, parsed_files):
@@ -211,6 +222,7 @@ def apply_dead_code_liveness(
         _mark(target, "registered_by_decorator", report)
     for target in find_patched_instance_methods(definitions, parsed_files):
         _mark(target, "patched_into_external_module", report)
+    start_phase(progress_callback, "public API and dispatch")
     for target, reason in find_declared_public_api_targets(
         definitions, parsed_files, root, module_names
     ):

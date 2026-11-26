@@ -10,6 +10,8 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, TextIO
 
+from skylos.analysis.progress import forward_activity
+
 
 class AnalysisProfile:
     """Parent-process scanner costs and elapsed progress phases for one call."""
@@ -52,7 +54,7 @@ class AnalysisProfile:
             if callback is not None:
                 callback(current, total, file)
 
-        return progress
+        return forward_activity(callback, progress)
 
     def _finish_phase(self, now: float) -> None:
         row = self._phases.setdefault(

@@ -321,7 +321,8 @@ class TestParameterOwnerName:
 
 
 class TestGrepVerifyFindings:
-    def test_finds_usage_in_another_file(self, tmp_path):
+    @pytest.mark.parametrize("parallel", [False, True])
+    def test_finds_usage_in_another_file(self, tmp_path, parallel):
         (tmp_path / "lib.py").write_text("def helper():\n    return 42\n")
         (tmp_path / "main.py").write_text("from lib import helper\nhelper()\n")
 
@@ -336,7 +337,19 @@ class TestGrepVerifyFindings:
                 "confidence": 80,
             }
         ]
-        verdicts = grep_verify_findings(findings, str(tmp_path))
+        updates = []
+        verdicts = grep_verify_findings(
+            findings,
+            str(tmp_path),
+            parallel=parallel,
+            progress_callback=lambda done, total, phase: updates.append(
+                (done, total, phase.name)
+            ),
+        )
+        assert updates == [
+            (0, 1, "PHASE: candidate verification"),
+            (1, 1, "PHASE: candidate verification"),
+        ]
         assert "lib.helper" in verdicts
         assert verdicts["lib.helper"].alive
 
@@ -2512,15 +2525,18 @@ class TestBatchedGrepVerify:
             results.incomplete_requests.add(requests[0])
             return results
 
+        verified_counts = []
         with patch(
             "skylos.core.grep_verify.execute_grep_batch",
             side_effect=incomplete_negative_results,
         ):
             verdicts = grep_verify_findings(
-                [finding], str(tmp_path), cache=cache, time_budget=1.0
+                [finding], str(tmp_path), cache=cache, time_budget=1.0,
+                progress_callback=lambda done, total, phase: verified_counts.append(done),
             )
 
         assert verdicts == {}
+        assert verified_counts and max(verified_counts) == 0
         assert verdicts.complete is False
         assert verdicts.incomplete_reason == "verification_incomplete"
         assert cache.size == 0

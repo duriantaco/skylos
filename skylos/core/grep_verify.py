@@ -642,6 +642,14 @@ def _execute_pending_findings(
     return verdicts, verified, "verification_incomplete" if unverified else None
 
 
+_VERIFICATION_PHASE = Path("PHASE: candidate verification")
+
+
+def _report_verified(callback, count, total):
+    if callback is not None and total:
+        callback(count, total, _VERIFICATION_PHASE)
+
+
 def _grep_verify_findings_batched(
     findings: list[dict],
     project_root: str,
@@ -649,6 +657,7 @@ def _grep_verify_findings_batched(
     cache: Any,
     start_time: float,
     evidence_filter: GrepEvidenceFilter | None = None,
+    progress_callback=None,
 ) -> GrepVerificationResult:
     eligible_findings = [
         finding for finding in findings if _finding_verdict_key(finding)
@@ -660,6 +669,8 @@ def _grep_verify_findings_batched(
     verified_count = 0
     incomplete_reason: str | None = None
     partial_reason: str | None = None
+    candidate_count = len(eligible_findings)
+    _report_verified(progress_callback, 0, candidate_count)
 
     for finding in eligible_findings:
         if time.monotonic() >= deadline:
@@ -689,6 +700,7 @@ def _grep_verify_findings_batched(
         else:
             verified.add(full_name)
             verified_count += 1
+            _report_verified(progress_callback, verified_count, candidate_count)
         if len(pending) < _GREP_FINDING_BATCH_SIZE:
             continue
         if time.monotonic() >= deadline:
@@ -700,6 +712,8 @@ def _grep_verify_findings_batched(
         verdicts.update(batch_verdicts)
         verified.update(batch_verified)
         verified_count += len(batch_verified)
+        if batch_verified:
+            _report_verified(progress_callback, verified_count, candidate_count)
         pending.clear()
         if batch_reason == "budget_exhausted":
             incomplete_reason = batch_reason
@@ -718,13 +732,14 @@ def _grep_verify_findings_batched(
             verdicts.update(batch_verdicts)
             verified.update(batch_verified)
             verified_count += len(batch_verified)
+            if batch_verified:
+                _report_verified(progress_callback, verified_count, candidate_count)
             if batch_reason == "budget_exhausted":
                 incomplete_reason = batch_reason
             else:
                 partial_reason = partial_reason or batch_reason
     incomplete_reason = incomplete_reason or partial_reason
 
-    candidate_count = len(eligible_findings)
     if incomplete_reason is None and verified_count != candidate_count:
         incomplete_reason = "verification_incomplete"
 
@@ -821,6 +836,7 @@ def _grep_verify_findings_parallel(
     time_budget: float,
     max_workers: int,
     start_time: float,
+    progress_callback=None,
 ) -> GrepVerificationResult:
     eligible_findings = [
         finding for finding in findings if _finding_verdict_key(finding)
@@ -832,6 +848,8 @@ def _grep_verify_findings_parallel(
     pending: set[_FindingFuture] = set()
     findings_iter = iter(eligible_findings)
     verified_count = 0
+    candidate_count = len(eligible_findings)
+    _report_verified(progress_callback, 0, candidate_count)
     verified: set[str] = set()
     incomplete_reason: str | None = None
 
@@ -855,6 +873,8 @@ def _grep_verify_findings_parallel(
                 done, verdicts, deadline, verified
             )
             verified_count += newly_verified
+            if newly_verified:
+                _report_verified(progress_callback, verified_count, candidate_count)
             if incomplete_reason:
                 break
             for _ in done:
@@ -866,7 +886,6 @@ def _grep_verify_findings_parallel(
             future.cancel()
         executor.shutdown(wait=True, cancel_futures=True)
 
-    candidate_count = len(eligible_findings)
     if incomplete_reason is None and verified_count != candidate_count:
         incomplete_reason = (
             "budget_exhausted"
@@ -892,6 +911,7 @@ def grep_verify_findings(
     max_workers: int = _DEFAULT_GREP_WORKERS,
     cache: Any = None,
     evidence_filter: GrepEvidenceFilter | None = None,
+    progress_callback=None,
 ) -> GrepVerificationResult:
     cache_binder = getattr(type(cache), "bind_repository", None)
     if callable(cache_binder):
@@ -900,7 +920,8 @@ def grep_verify_findings(
     if not parallel:
         try:
             return _grep_verify_findings_batched(
-                findings, project_root, time_budget, cache, start_time, evidence_filter
+                findings, project_root, time_budget, cache, start_time, evidence_filter,
+                progress_callback,
             )
         except _GrepExecutionIncomplete:
             return GrepVerificationResult(
@@ -925,7 +946,7 @@ def grep_verify_findings(
             return _filter_evidence(finding, raw_search_fn(finding), evidence_filter)
 
     return _grep_verify_findings_parallel(
-        findings, search_fn, time_budget, max_workers, start_time
+        findings, search_fn, time_budget, max_workers, start_time, progress_callback
     )
 
 

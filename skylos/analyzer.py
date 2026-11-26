@@ -122,6 +122,7 @@ from skylos.rules.quality.clones import (
     without_test_only_groups,
 )
 from skylos.analysis.penalties import apply_penalties
+from skylos.analysis.progress import counted_items, start_phase
 from skylos.analysis.file_worker import process_file
 
 from skylos.scale.parallel_static import (
@@ -3158,7 +3159,7 @@ class Skylos:
             if reason in defn.why_unused:
                 defn.why_unused.remove(reason)
 
-    def _grep_verify(self, *, use_project_cache: bool = True):
+    def _grep_verify(self, *, use_project_cache: bool = True, progress_callback=None):
         """Post-pass: use grep strategies to rescue false-positive dead code."""
         from skylos.core.grep_cache import GrepCache
         from skylos.core.grep_verify import grep_verify_findings
@@ -3230,8 +3231,10 @@ class Skylos:
                     project_root,
                     cache=grep_cache,
                     time_budget=grep_budget,
+                    progress_callback=progress_callback,
                     **filter_kwargs,
                 )
+            start_phase(progress_callback, "applying verification results")
         finally:
             if use_project_cache:
                 grep_cache.save(grep_root)
@@ -3290,7 +3293,7 @@ class Skylos:
             logger.info(f"Grep verify: rescued {rescued} findings from dead code")
         return rescued
 
-    def _apply_dead_code_liveness(self, files):
+    def _apply_dead_code_liveness(self, files, progress_callback=None):
         try:
             from skylos.deadcode.liveness import apply_dead_code_liveness
 
@@ -3306,6 +3309,7 @@ class Skylos:
                 django_converter_classes=getattr(
                     self, "_global_django_path_converter_classes", None
                 ),
+                progress_callback=progress_callback,
             )
             self._dead_code_liveness_report = report
             if report.rescued:
@@ -3333,10 +3337,6 @@ class Skylos:
                 logger.error(traceback.format_exc())
 
     def _mark_refs(self, progress_callback=None, *, scan_root=None):
-        total_refs = len(self.refs)
-        if progress_callback:
-            progress_callback(0, total_refs or 1, Path("PHASE: mark refs"))
-
         import_to_original = {}
         file_families = {}
         family_candidates = {}
@@ -3526,13 +3526,16 @@ class Skylos:
                     matches.append(definition)
             return matches
 
-        total_refs = len(self.refs)
         tick_every = int(os.getenv("SKYLOS_MARKREFS_TICK", str(MARKREFS_TICK_DEFAULT)))
         rust_project = getattr(self, "_rust_project", None)
 
-        for i, (ref, ref_file) in enumerate(self.refs, 1):
-            if progress_callback and (i == 1 or i % tick_every == 0 or i == total_refs):
-                progress_callback(i, total_refs or 1, Path("PHASE: mark refs"))
+        for ref, ref_file in counted_items(
+            self.refs,
+            progress_callback,
+            "mark refs",
+            len(self.refs),
+            interval=max(1, tick_every),
+        ):
             ref_family = _source_family(ref_file)
 
             if ref_family == "dart" and str(ref_file) in getattr(
@@ -3862,6 +3865,7 @@ class Skylos:
                         d.references += 1
                     continue
 
+        start_phase(progress_callback, "implicit references")
         from skylos.analysis.implicit_refs import pattern_tracker as global_tracker
 
         global_tracker.apply_class_member_strings(self.defs)
@@ -4646,6 +4650,7 @@ class Skylos:
         self._sca_coverage = None
         self._supply_chain_summary = None
 
+        start_phase(progress_callback, "file discovery")
         raw_first = Path(
             path[0] if isinstance(path, (list, tuple)) else path
         ).expanduser()
@@ -4747,6 +4752,7 @@ class Skylos:
                 generated_keep_paths,
                 changed_files=changed_source_paths,
             )
+        start_phase(progress_callback, "scan preparation")
         verification_surface_root = _verification_surface_root(
             path,
             root,
@@ -4829,6 +4835,7 @@ class Skylos:
         secret_checked_files: set[str] = set()
 
         if not files:
+            start_phase(progress_callback, "configuration checks")
             if enable_danger:
                 logger.info(
                     f"No application source files in {path}; running configuration checks"
@@ -5213,6 +5220,7 @@ class Skylos:
                         expected_checks=self._ai_verification_expectations,
                     )
                 )
+            start_phase(progress_callback, "building report")
             from skylos.reporting.assessment import compute_assessment
             from skylos.reporting.finding_types import (
                 annotate_finding_types,
@@ -5396,6 +5404,7 @@ class Skylos:
         )
 
         try:
+            start_phase(progress_callback, "file analysis", total=len(files))
             outs = run_proc_file_parallel(
                 files,
                 modmap,
@@ -5427,7 +5436,10 @@ class Skylos:
                     )
                 )
 
-            for file, out in zip(files, outs):
+            for file, out in counted_items(
+                zip(files, outs), progress_callback, "combining file results", len(files),
+                path_of=lambda item: item[0],
+            ):
                 if isinstance(out, WorkerCrash):
                     analysis_errors.append(
                         _analysis_error_payload(
@@ -5743,6 +5755,7 @@ class Skylos:
                             logger.debug("Secret scan failed for file", exc_info=True)
 
             if enable_secrets and _secrets_scan_ctx is not None:
+                start_phase(progress_callback, "configuration secrets")
                 scanned = set(secret_scanned_files)
                 all_secrets.extend(
                     _scan_secret_config_candidates(
@@ -5820,6 +5833,7 @@ class Skylos:
                     }
                 )
 
+        start_phase(progress_callback, "project changes")
         git_context = GitContext.from_path(root)
         # Diff-based signals also read uncommitted work during a full scan.
         # Keep those files separate: they must not narrow the full scan's
@@ -5951,6 +5965,7 @@ class Skylos:
 
         self.pattern_trackers = pattern_trackers
 
+        start_phase(progress_callback, "framework analysis")
         _suppress_django_admin_stubs(empty_files, file_contexts, root)
 
         self._global_abc_classes = set()
@@ -5960,8 +5975,9 @@ class Skylos:
         self._global_protocol_implementers = {}
         self._global_protocol_method_names = {}
         self._global_django_path_converter_classes = find_django_converter_classes(
-            self.defs, files, root
+            self.defs, files, root, progress_callback=progress_callback
         )
+        start_phase(progress_callback, "framework analysis")
         self._global_dependency_alias_names = set()
 
         from skylos.deadcode.fastapi_evidence import reconcile_fastapi_evidence
@@ -6066,6 +6082,7 @@ class Skylos:
                 apply_penalties(self, definition, test_flags, framework_flags, cfg)
 
         if enable_danger:
+            start_phase(progress_callback, "configuration checks")
             try:
                 from skylos.rules.config import scan_config_files
 
@@ -6956,6 +6973,7 @@ class Skylos:
                 )
             )
 
+        start_phase(progress_callback, "project imports")
         from skylos.visitors.languages.typescript.resolve import MonorepoResolver
 
         monorepo_resolver = MonorepoResolver(str(self._project_root))
@@ -7259,8 +7277,7 @@ class Skylos:
                         continue
                 _mark_evidence_ref(defn, "top_level_execution")
 
-        if progress_callback:
-            progress_callback(0, 1, Path("PHASE: mark refs"))
+        start_phase(progress_callback, "reference indexing")
         self._rust_project = None
         if any(str(file).endswith(_RUST_SOURCE_EXTS) for file in files):
             from skylos.visitors.languages.rust.project_model import build_project
@@ -7312,7 +7329,7 @@ class Skylos:
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: dead-code liveness"))
-        self._apply_dead_code_liveness(files)
+        self._apply_dead_code_liveness(files, progress_callback=progress_callback)
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: hierarchy refs"))
@@ -7401,7 +7418,7 @@ class Skylos:
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: grep verify"))
             grep_verify_report["rescued_count"] = self._grep_verify(
-                use_project_cache=grep_cache
+                use_project_cache=grep_cache, progress_callback=progress_callback
             )
             if grep_verify_report.get("complete") is False:
                 analysis_errors.append(
@@ -7412,6 +7429,7 @@ class Skylos:
                     )
                 )
 
+        start_phase(progress_callback, "unused files and exports")
         dead_ts_files = self._find_dead_ts_files(
             files, exclude_folders, workspace_inventory=workspace_inventory
         )
@@ -7554,6 +7572,7 @@ class Skylos:
                 "SKY-U008",
                 **member_filter,
             )
+        start_phase(progress_callback, "building report")
         result = self._build_result(
             files,
             thr,

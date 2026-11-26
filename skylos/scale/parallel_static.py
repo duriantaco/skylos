@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 import signal
 
+from skylos.analysis.progress import active_file, forward_activity
 from skylos.scale.safe_spawn import no_cwd_imports_in_children
 
 
@@ -25,6 +26,35 @@ class WorkerCrash:
         return f"WorkerCrash({self.file!r})"
 
 
+def _active_paths(flags, files):
+    # One byte per submission, set only by its worker. Search the copy in C,
+    # so a redraw loops over active files rather than every queued file.
+    if flags is None:
+        return ()
+    snapshot = bytes(flags)
+    paths = []
+    index = snapshot.find(b"\x01")
+    while index >= 0:
+        paths.append(Path(files[index]))
+        index = snapshot.find(b"\x01", index + 1)
+    return tuple(paths)
+
+
+def _init_observed_worker(flags, worker_fn):
+    global _worker_activity_flags, _observed_worker_fn
+    _ignore_sigint()
+    _worker_activity_flags = flags
+    _observed_worker_fn = worker_fn
+
+
+def _run_observed_worker(*args, _activity_index, **kwargs):
+    _worker_activity_flags[_activity_index] = 1
+    try:
+        return _observed_worker_fn(*args, **kwargs)
+    finally:
+        _worker_activity_flags[_activity_index] = 0
+
+
 def _run_pool(files, modmap, changed_files, jobs, worker_fn, proc_kwargs, progress):
     """Run files in a fresh process pool.
 
@@ -44,9 +74,26 @@ def _run_pool_in_safe_env(
 ):
     results = {}
     broken = []
-    ex = ProcessPoolExecutor(max_workers=jobs, initializer=_ignore_sigint)
+    activity_hook = getattr(progress, "parallel_activity", None)
+    flags = None
+    pool_options = {"initializer": _ignore_sigint}
+    if activity_hook is not None:
+        try:
+            from multiprocessing import RawArray
+
+            flags = RawArray("B", len(files))
+        except (ImportError, MemoryError, OSError, RuntimeError, ValueError):
+            logger.debug("Worker activity unavailable", exc_info=True)
+        else:
+            pool_options.update(
+                initializer=_init_observed_worker, initargs=(flags, worker_fn)
+            )
+            worker_fn = _run_observed_worker
+    ex = ProcessPoolExecutor(max_workers=jobs, **pool_options)
     interrupted = False
     try:
+        if flags is not None:
+            activity_hook(lambda: _active_paths(flags, files))
         _drain_pool(
             ex,
             files,
@@ -57,6 +104,7 @@ def _run_pool_in_safe_env(
             progress,
             results,
             broken,
+            flags,
         )
     except KeyboardInterrupt:
         # Ctrl-C: drop queued files and stop the workers now. Leaving the
@@ -65,8 +113,15 @@ def _run_pool_in_safe_env(
         _abort_pool(ex)
         raise
     finally:
-        if not interrupted:
-            ex.shutdown(wait=True)
+        try:
+            if flags is not None:
+                # A native crash bypasses the worker's finally. Retire this
+                # snapshot before retrying any of its files in another pool.
+                flags = None
+                activity_hook(None)
+        finally:
+            if not interrupted:
+                ex.shutdown(wait=True)
 
     order = {id(f): i for i, f in enumerate(files)}
     broken.sort(key=lambda f: order.get(id(f), 0))
@@ -100,13 +155,16 @@ def _abort_pool(ex):
 
 
 def _drain_pool(
-    ex, files, modmap, changed_files, worker_fn, proc_kwargs, progress, results, broken
+    ex, files, modmap, changed_files, worker_fn, proc_kwargs, progress, results, broken,
+    activity_flags=None,
 ):
     fut_to_file = {}
-    for f in files:
+    for index, f in enumerate(files):
         full_scan = changed_files is None or str(f) in changed_files
         try:
             credential_kwargs = {}
+            if activity_flags is not None:
+                credential_kwargs["_activity_index"] = index
             credential_sources = proc_kwargs.get("credential_source_locations")
             if credential_sources is not None:
                 credential_kwargs["credential_source_locations"] = (
@@ -146,7 +204,8 @@ def _drain_pool(
                 file_str,
                 exc_info=True,
             )
-            out = _retry_in_parent(f, modmap, changed_files, proc_kwargs)
+            with active_file(progress, f):
+                out = _retry_in_parent(f, modmap, changed_files, proc_kwargs)
         results[file_str] = out
         progress(f)
 
@@ -294,6 +353,7 @@ def run_proc_file_parallel(
         if progress_callback:
             progress_callback(done, total, f)
 
+    forward_activity(progress_callback, _progress)
     results, suspects = _run_pool(
         files, modmap, changed_files, jobs, worker_fn, proc_kwargs, _progress
     )
@@ -364,6 +424,7 @@ def _run_mixed_files_with_serial_go(
         if progress_callback:
             progress_callback(completed, total or 1, file_path)
 
+    forward_activity(progress_callback, child_progress)
     results = {}
     if other_files:
         other_outs = run_proc_file_parallel(
@@ -430,9 +491,6 @@ def _run_proc_files_serial(
         str(Path(file).absolute()) for file in files if str(file).endswith(".go")
     )
     for i, f in enumerate(files, 1):
-        if progress_callback:
-            progress_callback(i, total or 1, f)
-
         from skylos.analyzer import proc_file
 
         full_scan = changed_files is None or str(f) in changed_files
@@ -446,20 +504,23 @@ def _run_proc_files_serial(
                 str(Path(project_root).absolute()),
                 admitted_go_files,
             )
-        out = proc_file(
-            f,
-            modmap[f],
-            extra_visitors=extra_visitors,
-            full_scan=full_scan,
-            collect_clone_fragments=collect_clone_fragments,
-            clone_cfg=clone_cfg,
-            collect_architecture_metrics=collect_architecture_metrics,
-            enable_quality_rules=enable_quality_rules,
-            enable_danger_rules=enable_danger_rules,
-            config_file=config_file,
-            project_root=project_root,
-            **credential_kwargs,
-        )
+        with active_file(progress_callback, f):
+            out = proc_file(
+                f,
+                modmap[f],
+                extra_visitors=extra_visitors,
+                full_scan=full_scan,
+                collect_clone_fragments=collect_clone_fragments,
+                clone_cfg=clone_cfg,
+                collect_architecture_metrics=collect_architecture_metrics,
+                enable_quality_rules=enable_quality_rules,
+                enable_danger_rules=enable_danger_rules,
+                config_file=config_file,
+                project_root=project_root,
+                **credential_kwargs,
+            )
         outs.append(out)
+        if progress_callback:
+            progress_callback(i, total, f)
 
     return outs

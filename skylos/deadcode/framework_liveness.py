@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import ast
 from collections import defaultdict
+from operator import attrgetter
 from pathlib import Path
 from typing import Any, Iterable
 
+from skylos.analysis.progress import counted_items, start_phase
 from skylos.deadcode.python_ast import ParsedPythonFile
 
 
@@ -25,6 +27,7 @@ def find_framework_entrypoint_targets(
     root: Path,
     *,
     exclude_folders=None,
+    progress_callback=None,
 ) -> list[tuple[Any, str]]:
     """Return definitions used by proven imports, without executing target code."""
     parsed = []
@@ -39,18 +42,28 @@ def find_framework_entrypoint_targets(
         parsed.append(module)
     index = _DefinitionIndex(definitions, parsed, root)
     found: dict[tuple[int, str], tuple[Any, str]] = {}
-    for module in parsed:
+    for module in counted_items(
+        parsed, progress_callback, "framework callbacks", len(parsed),
+        path_of=attrgetter("path"),
+    ):
         scanner = _FrameworkScanner(module, index)
         for definition, reason in scanner.collect():
             found[(id(definition), reason)] = (definition, reason)
     from skylos.deadcode.web_framework_liveness import find_web_framework_targets
 
+    routes = counted_items(
+        parsed, progress_callback, "web framework routes", len(parsed),
+        path_of=attrgetter("path"),
+    )
     for definition, reason in find_web_framework_targets(
-        index, parsed, root, exclude_folders=exclude_folders
+        index, routes, root,
+        exclude_folders=exclude_folders,
+        progress_callback=progress_callback,
     ):
         found[(id(definition), reason)] = (definition, reason)
     from skylos.deadcode.ros_launch_liveness import find_ros_launch_targets
 
+    start_phase(progress_callback, "ROS launch registrations")
     for definition, reason in find_ros_launch_targets(index, parsed, root):
         found[(id(definition), reason)] = (definition, reason)
     return list(found.values())

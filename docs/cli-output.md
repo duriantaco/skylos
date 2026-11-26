@@ -9,6 +9,26 @@ it opens an interactive screen instead of printing a report.
 Choose a human format for review or JSON for a stable structured record of
 findings, assessment and analysis limitations.
 
+## Watching a scan
+
+`skylos .` and `skylos . --format pretty` show two progress rows in an
+interactive terminal. The first tracks four stages from discovery through
+report preparation. The second shows the operation being performed. During
+file analysis it names an active file relative to the scan root and shows the
+number of active workers when several files are running. A path labeled
+`Completed` is the most recent file to finish.
+
+Cross-file checks can show the module being examined or a count of resolved
+references or verified candidates. Once a counted phase has enough completions
+to measure its pace, `phase ETA` estimates the time remaining in that phase.
+During a long wait the display shows how long it has been since a completion.
+Operations without a measurable total show their name and elapsed phase time.
+
+When a human report is redirected, long scans print a status line to stderr
+about every ten seconds. To follow a machine-readable scan in CI, use
+`skylos . --format json --progress plain > findings.json`. Use
+`--progress off` to disable both progress displays.
+
 ## Choosing an Output Mode
 
 | Need | Command | Best For |
