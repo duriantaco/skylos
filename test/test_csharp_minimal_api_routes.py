@@ -105,6 +105,23 @@ def test_route_groups_and_injected_lambda_services(tmp_path):
     assert ssrf_sites(tmp_path) == [("Handlers/Endpoints.cs", 6)]
 
 
+def test_delegate_cast_preserves_the_registered_lambda(tmp_path):
+    write_files(
+        tmp_path,
+        {
+            "Web.csproj": WEB_PROJECT,
+            "Program.cs": """using System;
+var app = WebApplication.Create(args);
+app.MapGet("/lookup", (System.Func<string, HttpClient, Task<string>>)(
+    (string url, HttpClient client) => client.GetStringAsync(url)));
+app.MapGet("/fixed", (Func<HttpClient, Task<string>>)(
+    (HttpClient client) => client.GetStringAsync("https://example.org/health")));
+""",
+        },
+    )
+    assert ssrf_sites(tmp_path) == [("Program.cs", 4)]
+
+
 @pytest.mark.parametrize(
     "handler",
     [

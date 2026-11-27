@@ -15,7 +15,12 @@ from skylos.core.safe_cache_io import read_project_text_no_symlink
 from . import core
 from ._lex import _METHOD_RE, _argument_spans, mask_comments_and_strings
 from .bindings import _USING, ReferenceContext
-from .routes import MAP_CALL_RE, declared_framework_homonyms, endpoint_receiver_offsets
+from .routes import (
+    MAP_CALL_RE,
+    declared_framework_homonyms,
+    declared_versioning_overrides,
+    endpoint_receiver_offsets,
+)
 
 _MAX_BYTES = 4_000_000
 _NAME = r"@?[A-Za-z_]\w*"
@@ -59,12 +64,23 @@ def _conditional_ranges(masked):
         yield start, len(masked)
 
 
-def _registrations(masked, shadowed_types, global_usings=()):
+def _registrations(
+    masked,
+    shadowed_types,
+    global_usings=(),
+    *,
+    versioning_package=False,
+    versioning_overrides=frozenset(),
+):
     lambdas = []
     groups = []
     contexts = None
     enabled = endpoint_receiver_offsets(
-        masked, shadowed_types=shadowed_types, global_usings=global_usings
+        masked,
+        shadowed_types=shadowed_types,
+        global_usings=global_usings,
+        versioning_package=versioning_package,
+        versioning_overrides=versioning_overrides,
     )
     conditional = tuple(_conditional_ranges(masked))
     for match in MAP_CALL_RE.finditer(masked):
@@ -117,8 +133,28 @@ def _registrations(masked, shadowed_types, global_usings=()):
     return tuple(lambdas), groups
 
 
+def _static_imports(context, global_usings):
+    return set(context["static_usings"]) | {
+        name for _, static, name in global_usings if static
+    }
+
+
+def _competing_static_imports(groups, global_usings):
+    checks = defaultdict(set)
+    for spelling, context in groups:
+        if "." in spelling:
+            continue
+        owners = _static_imports(context, global_usings)
+        if len(owners) > 1:
+            for owner in owners:
+                checks[owner].add(spelling)
+    return checks
+
+
 class _Declarations:
-    def __init__(self):
+    def __init__(self, static_checks):
+        self.static_checks = static_checks
+        self.absent_static_members = set()
         self.types = defaultdict(list)
         self.methods = defaultdict(list)
         self.locals = defaultdict(list)
@@ -127,8 +163,15 @@ class _Declarations:
 
     def add(self, path, masked, wanted):
         ranges = core._type_ranges(masked, core._namespace_ranges(masked))
-        for _, _, owner, partial in ranges:
+        for lo, hi, owner, partial in ranges:
             self.types[owner].append((path, partial))
+            if not partial:
+                # A closed local type with no instance of this identifier cannot
+                # supply the handler, including as a field or delegate property.
+                for name in self.static_checks.get(owner, ()):
+                    identifier = re.compile(rf"\b{re.escape(name)}\b")
+                    if not identifier.search(masked, lo, hi):
+                        self.absent_static_members.add((owner, name))
         for decl in core._TYPE_RE.finditer(masked):
             if "file" in decl["mods"].split():
                 self.file_types.add((path, decl["name"]))
@@ -164,14 +207,16 @@ class _Declarations:
                     return (
                         (path, local[0][0]) if len(local) == 1 and local[0][1] else None
                     )
-            static_usings = context["static_usings"] + [
-                name for alias, static, name in global_usings if static
-            ]
-            owners = (
-                [enclosing]
-                if enclosing and (enclosing, method) in self.methods
-                else static_usings
-            )
+            if enclosing and (enclosing, method) in self.methods:
+                owners = [enclosing]
+            else:
+                # External and partial types can still provide another target.
+                owners = {
+                    name
+                    for name in _static_imports(context, global_usings)
+                    if len(self.types.get(name, ())) != 1
+                    or (name, method) not in self.absent_static_members
+                }
         else:
             owners = self._resolve_types(owner, absolute, context, global_usings)
         owners = set(owners)
@@ -251,7 +296,7 @@ def local_route_facts(masked: str) -> RouteFileFacts:
     lambdas, groups = _registrations(masked, frozenset())
     offsets = set()
     if groups:
-        declarations = _Declarations()
+        declarations = _Declarations(_competing_static_imports(groups, ()))
         declarations.add(
             "", masked, {target.rsplit(".", 1)[-1] for target, _ in groups}
         )
@@ -262,8 +307,69 @@ def local_route_facts(masked: str) -> RouteFileFacts:
     return RouteFileFacts(lambdas=lambdas, method_offsets=frozenset(offsets))
 
 
-def _compile_usings(root, project, *, sdk_required=True):
-    """Read namespace imports only for projects with ordinary SDK compile items."""
+@dataclass(frozen=True)
+class _ProjectInputs:
+    usings: frozenset = frozenset()
+    cross_file: bool = True
+    default_sources_present: bool = True
+    versioning: bool | None = False  # None means a package override prevents proof.
+
+    def merge(self, other):
+        versioning = (
+            None
+            if self.versioning is None or other.versioning is None
+            else self.versioning or other.versioning
+        )
+        return _ProjectInputs(
+            self.usings | other.usings,
+            self.cross_file and other.cross_file,
+            self.default_sources_present and other.default_sources_present,
+            versioning,
+        )
+
+
+def _versioning_reference(project):
+    """Check direct NuGet compile assets; conditions and removals cannot prove a reference."""
+    package = "asp.versioning.http"
+    available = False
+    for group in project:
+        if group.tag.rsplit("}", 1)[-1] != "ItemGroup":
+            continue
+        for item in group:
+            if item.tag.rsplit("}", 1)[-1] != "PackageReference":
+                continue
+            if any(
+                item.get(attr, "").lower() == package for attr in ("Remove", "Update")
+            ):
+                return None
+            if (
+                item.get("Include", "").lower() != package
+                or "Condition" in group.attrib
+                or "Condition" in item.attrib
+            ):
+                continue
+            assets = {
+                child.tag.rsplit("}", 1)[-1]: (child.text or "") for child in item
+            }
+            assets.update(item.attrib)
+            include = {
+                part.strip().lower()
+                for part in assets.get("IncludeAssets", "all").split(";")
+            }
+            exclude = {
+                part.strip().lower()
+                for part in assets.get("ExcludeAssets", "").split(";")
+            }
+            available |= (
+                bool(include & {"compile", "all"})
+                and not bool(exclude & {"compile", "all"})
+                and "$" not in assets.get("ExcludeAssets", "")
+            )
+    return available
+
+
+def _compile_inputs(root, project, *, sdk_required=True):
+    """Bound the facts we can use from a project without running MSBuild."""
     text = read_project_text_no_symlink(root, project, max_bytes=512_000)
     if not text or re.search(r"<!\s*(?:DOCTYPE|ENTITY)\b", text, re.IGNORECASE):
         return None
@@ -283,6 +389,8 @@ def _compile_usings(root, project, *, sdk_required=True):
         return None
 
     usings = set()
+    cross_file = True
+    default_sources = True
     stack = [(xml, False)]
     while stack:
         node, conditional = stack.pop()
@@ -292,13 +400,15 @@ def _compile_usings(root, project, *, sdk_required=True):
             "Update" not in node.attrib
             or {"Include", "Remove", "Exclude"} & node.attrib.keys()
         ):
-            return None
+            # Linked inputs may introduce another declaration. An additive include
+            # still leaves the ordinary source files and their global usings present.
+            cross_file = False
+            if "Include" not in node.attrib or "Remove" in node.attrib:
+                default_sources = False
         if (
             name in {"EnableDefaultCompileItems", "EnableDefaultItems"}
             and (node.text or "").strip().lower() != "true"
-        ):
-            return None
-        if name in {
+        ) or name in {
             "DefaultItemExcludes",
             "DefaultItemExcludesInProjectFolder",
             "DefaultExcludesInProjectFolder",
@@ -306,7 +416,7 @@ def _compile_usings(root, project, *, sdk_required=True):
             "BaseIntermediateOutputPath",
             "Import",
         }:
-            return None
+            cross_file = default_sources = False
         if name == "Using":
             target = node.get("Include", "")
             if (
@@ -318,7 +428,9 @@ def _compile_usings(root, project, *, sdk_required=True):
                 return None
             usings.add((None, False, target))
         stack.extend((child, conditional) for child in node)
-    return frozenset(usings)
+    return _ProjectInputs(
+        frozenset(usings), cross_file, default_sources, _versioning_reference(xml)
+    )
 
 
 def build_route_handler_index(files, root) -> dict[str, RouteFileFacts]:
@@ -326,13 +438,13 @@ def build_route_handler_index(files, root) -> dict[str, RouteFileFacts]:
     root = Path(root).absolute()
 
     @cache
-    def directory_usings(directory, name):
+    def directory_inputs(directory, name):
         build_file = directory / name
         if build_file.is_file() or build_file.is_symlink():
-            return _compile_usings(root, build_file, sdk_required=False)
+            return _compile_inputs(root, build_file, sdk_required=False)
         if directory == root:
-            return frozenset()
-        return directory_usings(directory.parent, name)
+            return _ProjectInputs()
+        return directory_inputs(directory.parent, name)
 
     @cache
     def owner(directory):
@@ -346,13 +458,13 @@ def build_route_handler_index(files, root) -> dict[str, RouteFileFacts]:
             return owner(directory.parent) if directory != root else None
         if len(projects) != 1:
             return None
-        usings = _compile_usings(root, projects[0])
+        inputs = _compile_inputs(root, projects[0])
         for name in ("Directory.Build.props", "Directory.Build.targets"):
-            inherited = directory_usings(directory, name)
-            if inherited is None or usings is None:
+            inherited = directory_inputs(directory, name)
+            if inherited is None or inputs is None:
                 return None
-            usings = usings | inherited
-        return projects[0], usings
+            inputs = inputs.merge(inherited)
+        return projects[0], inputs
 
     projects = defaultdict(list)
     for file in files:
@@ -365,14 +477,15 @@ def build_route_handler_index(files, root) -> dict[str, RouteFileFacts]:
             if not any(part.lower() in {"obj", "bin"} for part in parts):
                 projects[project].append(path)
     result = {}
-    for (_, usings), paths in projects.items():
-        result.update(_project_facts(root, paths, usings))
+    for (_, inputs), paths in projects.items():
+        result.update(_project_facts(root, paths, inputs))
     return result
 
 
-def _project_facts(root, paths, project_usings):
+def _project_facts(root, paths, inputs):
     registrations = {}
-    global_usings = set(project_usings)
+    versioning_overrides = set()
+    global_usings = set(inputs.usings)
     shadowed_types = set()
     for path in paths:
         source = read_project_text_no_symlink(
@@ -381,19 +494,27 @@ def _project_facts(root, paths, project_usings):
         if source is None:
             return {}
         has_map = MAP_CALL_RE.search(source)
+        check_versioning = inputs.versioning and (
+            "NewVersionedApi" in source or "HasApiVersion" in source
+        )
         if (
             not has_map
+            and not check_versioning
             and not _FRAMEWORK_TYPES.search(source)
             and not re.search(r"\bglobal\s+using\b", source)
         ):
             continue
         masked = mask_comments_and_strings(source)
+        if check_versioning:
+            versioning_overrides.update(declared_versioning_overrides(masked))
         if _FRAMEWORK_TYPES.search(masked):
             shadowed_types.update(declared_framework_homonyms(masked))
         conditional = tuple(_conditional_ranges(masked))
         for match in _USING.finditer(masked):
-            if match.group().lstrip().startswith("global") and not any(
-                a <= match.start("name") < b for a, b in conditional
+            if (
+                inputs.default_sources_present
+                and match.group().lstrip().startswith("global")
+                and not any(a <= match.start("name") < b for a, b in conditional)
             ):
                 global_usings.add(
                     (
@@ -412,14 +533,31 @@ def _project_facts(root, paths, project_usings):
     for path, (digest, masked) in registrations.items():
         digests[path] = digest
         lambdas[path], references = _registrations(
-            masked, frozenset(shadowed_types), global_usings
+            masked,
+            frozenset(shadowed_types),
+            global_usings,
+            versioning_package=bool(inputs.versioning),
+            versioning_overrides=frozenset(versioning_overrides),
         )
         for spelling, context in references:
             groups.append((path, spelling, context))
             wanted.add(spelling.rsplit(".", 1)[-1])
     offsets = defaultdict(set)
-    if wanted:
-        declarations = _Declarations()
+    static_checks = _competing_static_imports(
+        ((spelling, context) for _, spelling, context in groups), global_usings
+    )
+    if groups and not inputs.cross_file:
+        # Types supplied by linked/custom compile items can collide. Resolve
+        # registrations within their own file and keep that file's lexical context.
+        local = {file: _Declarations(static_checks) for file, _, _ in groups}
+        for file, declarations in local.items():
+            declarations.add(file, registrations[file][1], wanted)
+        for file, spelling, context in groups:
+            hit = local[file].resolve(file, spelling, context, global_usings)
+            if hit:
+                offsets[file].add(hit[1])
+    elif wanted:
+        declarations = _Declarations(static_checks)
         for path in paths:
             file = str(path)
             if file in registrations:

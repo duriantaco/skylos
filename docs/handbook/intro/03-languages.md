@@ -42,8 +42,10 @@ Terraform files have their own rules.
   inline handlers and uniquely identified static handlers in another file
   of the same SDK project. Scan the project directory so Skylos sees the
   registration and the handler. The reported line is the call that uses
-  request data, such as an HTTP client call. Custom build inputs and
-  ambiguous overloads limit cross-file matching.
+  request data, such as an HTTP client call. Versioned route groups are
+  supported when the project references `Asp.Versioning.Http` directly.
+  Ambiguous overloads, conditional registrations and custom build inputs
+  limit matching.
 - **C++** dead code reports only unused file-local functions.
 - **Dart** needs `pip install "skylos[dart]"`, which compiles a parser and so
   needs a C compiler. Without it, `.dart` files are listed as not analysed.

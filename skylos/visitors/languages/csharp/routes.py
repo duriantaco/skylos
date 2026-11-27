@@ -15,11 +15,19 @@ _TYPES = {
     "Microsoft.AspNetCore.Builder.WebApplication": "endpoint",
     "Microsoft.AspNetCore.Builder.WebApplicationBuilder": "builder",
     "Microsoft.AspNetCore.Routing.IEndpointRouteBuilder": "endpoint",
-    "Microsoft.AspNetCore.Routing.RouteGroupBuilder": "endpoint",
+    "Microsoft.AspNetCore.Routing.RouteGroupBuilder": "group",
 }
 _SIMPLE_TYPES = {name.rsplit(".", 1)[1]: name for name in _TYPES}
 _APPLICATION = "Microsoft.AspNetCore.Builder.WebApplication"
 _FACTORIES = {"CreateBuilder", "CreateSlimBuilder", "CreateEmptyBuilder"}
+_ENDPOINT_KINDS = {"endpoint", "group", "versioned"}
+_VERSIONING_METHOD = re.compile(
+    r"(?<![.\w])(?P<name>NewVersionedApi|HasApiVersion)\s*(?:<[^;{}()]+>)?\s*\("
+)
+_EXTENSION_RECEIVER = re.compile(r"\s*(?:\[[^]\n]*\]\s*)*this\b")
+_EXTENSION_BLOCK = re.compile(
+    r"\bextension\s*(?:<[^;{}()]+>)?\s*\([^;{}()]+\)\s*(?:where\s+[^;{}]+)?\{"
+)
 _TOKEN = re.compile(r"[A-Za-z_]\w*|::|=>|==|!=|>=|<=|\S")
 
 
@@ -36,6 +44,24 @@ def _bracket_pairs(words: list[str]) -> dict[int, int]:
                 pairs[i] = opening
                 pairs[opening] = i
     return pairs
+
+
+def declared_versioning_overrides(masked: str) -> set[str]:
+    """Both classic extension methods and C# 14 extension blocks can override the package."""
+    matches = list(_VERSIONING_METHOD.finditer(masked))
+    if not matches:
+        return set()
+    overrides = {
+        match["name"]
+        for match in matches
+        if _EXTENSION_RECEIVER.match(masked, match.end())
+    }
+    for block in _EXTENSION_BLOCK.finditer(masked):
+        end = core.matching_brace(masked, block.end() - 1)
+        overrides.update(
+            match["name"] for match in matches if block.end() <= match.start() < end
+        )
+    return overrides
 
 
 def declared_framework_homonyms(masked: str, *, include_file_local=False) -> set[str]:
@@ -60,7 +86,21 @@ def _parents(name: str):
 
 
 class _ReceiverBindings:
-    def __init__(self, masked: str, shadowed_types: frozenset[str], global_usings):
+    def __init__(
+        self,
+        masked: str,
+        shadowed_types: frozenset[str],
+        global_usings,
+        versioning_package,
+        versioning_overrides,
+    ):
+        self.versioning = (
+            {"NewVersionedApi", "HasApiVersion"}
+            - versioning_overrides
+            - declared_versioning_overrides(masked)
+            if versioning_package
+            else set()
+        )
         self.tokens = list(_TOKEN.finditer(masked))
         self.words = [token.group() for token in self.tokens]
         self.pairs = _bracket_pairs(self.words)
@@ -178,11 +218,24 @@ class _ReceiverBindings:
         for method, empty in reversed(operations):
             if kind == "factory" and method in _FACTORIES:
                 kind = "builder"
-            elif (kind, method) in (
-                ("factory", "Create"),
-                ("endpoint", "MapGroup"),
-            ) or (kind == "builder" and method == "Build" and empty):
+            elif (kind, method) == ("factory", "Create") or (
+                kind == "builder" and method == "Build" and empty
+            ):
                 kind = "endpoint"
+            elif kind in _ENDPOINT_KINDS and method == "MapGroup":
+                kind = "group"
+            elif (
+                kind == "endpoint"
+                and method == "NewVersionedApi"
+                and method in self.versioning
+            ):
+                kind = "versioned"
+            elif (
+                kind in {"group", "versioned"}
+                and method == "HasApiVersion"
+                and method in self.versioning
+            ):
+                continue  # This convention returns the original builder.
             else:
                 return None
         return kind
@@ -232,12 +285,20 @@ def endpoint_receiver_offsets(
     *,
     shadowed_types: frozenset[str] = frozenset(),
     global_usings=(),
+    versioning_package: bool = False,
+    versioning_overrides: frozenset[str] = frozenset(),
 ) -> set[int]:
     """Return the dot offsets of registrations on known endpoint builders."""
     calls = {match.start() for match in MAP_CALL_RE.finditer(masked_source)}
     if not calls:
         return set()
-    receivers = _ReceiverBindings(masked_source, shadowed_types, global_usings)
+    receivers = _ReceiverBindings(
+        masked_source,
+        shadowed_types,
+        global_usings,
+        versioning_package,
+        versioning_overrides,
+    )
     proven = set()
     blocks = []
     for i, token in enumerate(receivers.tokens):
@@ -250,7 +311,8 @@ def endpoint_receiver_offsets(
             receivers.assign(i, blocks)
         elif (
             token.start() in calls
-            and receivers.expression_kind(i - 1, standalone=not blocks) == "endpoint"
+            and receivers.expression_kind(i - 1, standalone=not blocks)
+            in _ENDPOINT_KINDS
         ):
             proven.add(token.start())
     return proven

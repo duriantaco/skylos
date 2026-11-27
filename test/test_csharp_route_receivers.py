@@ -183,3 +183,50 @@ def test_only_file_local_framework_homonyms_stay_in_their_own_file():
     assert declared_framework_homonyms("namespace Other; class WebApplication {}") == {
         "Other.WebApplication"
     }
+
+
+def test_versioning_keeps_proven_eshop_group_and_requires_real_package():
+    source = """
+        static class Catalog {
+            public static void Map(this IEndpointRouteBuilder app) {
+                var api = app.NewVersionedApi("Catalog");
+                var both = api.MapGroup("/items").HasApiVersion(1, 0).HasApiVersion(2, 0);
+                var v1 = api.MapGroup("/items").HasApiVersion(1, 0);
+                both.MapGet("/", Read);
+                v1.MapPost("/", Write);
+            }
+        }
+    """
+    assert registrations(source, versioning_package=True) == [6, 7]
+    assert registrations("using Asp.Versioning;\n" + source) == []
+    assert (
+        registrations(
+            source, versioning_package=True, versioning_overrides={"NewVersionedApi"}
+        )
+        == []
+    )
+    assert (
+        registrations(
+            source.replace("this IEndpointRouteBuilder app", "this Table app"),
+            versioning_package=True,
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "local",
+    [
+        "static class Other { public static Table HasApiVersion(this RouteGroupBuilder e, int major) => new(); }",
+        "static class Other { extension(RouteGroupBuilder e) { public Table HasApiVersion(int major) => new(); } }",
+    ],
+)
+def test_custom_versioning_extensions_do_not_create_route_proof(local):
+    source = """
+        var app = WebApplication.Create();
+        var real = app.MapGroup("/items");
+        var local = real.HasApiVersion(1);
+        real.MapGet("/", Read);
+        local.MapGet("/", Read);
+    """
+    assert registrations(source + local, versioning_package=True) == [4]

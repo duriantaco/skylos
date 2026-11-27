@@ -766,6 +766,17 @@ def _scope_span(masked: str, match: re.Match[str]) -> tuple[int, int] | None:
 def _lambda_scope(
     source: str, masked: str, start: int, end: int, classes: list[_ClassInfo]
 ) -> _Scope | None:
+    # A delegate cast can wrap the entire lambda, e.g. (Func<string>)(() => value).
+    cast = re.match(
+        r"\s*\(\s*(?:(?:global::)?System\.)?(?:Func|Action)\s*(?:<[\w.,?<>\[\]:\s]+>)?\s*\)\s*(?=\()",
+        masked[start:end],
+    )
+    if cast:
+        opening = start + cast.end()
+        close = _matching_paren(masked, opening)
+        if close == -1 or close >= end or masked[close + 1 : end].strip():
+            return None
+        start, end = opening + 1, close
     text = masked[start:end]
     arrow = _top_level_arrow(text)
     if arrow < 0:
