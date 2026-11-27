@@ -42,6 +42,39 @@ Terraform files have their own rules.
 - **Dart** needs `pip install "skylos[dart]"`, which compiles a parser and so
   needs a C compiler. Without it, `.dart` files are listed as not analysed.
 
+## Checking Rust security
+
+Run `skylos . --danger` from the crate or workspace root. Rust security
+checks use the default confidence setting. To review a finding, start at the
+reported line and trace the value back to where it came from.
+
+- **Database queries (SKY-D211).** Check whether request text becomes part
+  of an executed SQL statement. Skylos follows supported calls in rusqlite,
+  SQLx, mysql and mysql_async. In SQLx, building a query or dropping its
+  future leaves it unexecuted. For a PostgreSQL name lookup, keep the SQL
+  fixed and pass the name with `.bind(name)`.
+
+```rust
+let rows = sqlx::query("SELECT id FROM users WHERE name = $1")
+    .bind(name)
+    .fetch_all(pool)
+    .await?;
+```
+
+- **Credentials in HTTP requests (SKY-D356 and SKY-D391).** Check the
+  destination and where the credential goes. Sending a bearer token over
+  plain HTTP exposes it in transit. Putting an exposed `SecretString` in a
+  URL can also expose it in logs, even over HTTPS. For a bearer token, use
+  HTTPS and the request's `.bearer_auth(...)` method.
+- **Session cookies (SKY-D252).** Check that the outgoing session cookie
+  has its `Secure` flag set. Skylos recognizes selected session cookie
+  names and issuing APIs. If your application uses a custom name for its
+  session, check the code that sends it.
+
+Coverage depends on the crate and call path. Custom wrappers, macro-generated
+code and calls across crates can hide how a value is used. The Rust checks
+also leave unsafe pointer lifetimes and pointer validity unmeasured.
+
 ## Swift
 
 Swift support is new. It reports unused `private` and `fileprivate`
