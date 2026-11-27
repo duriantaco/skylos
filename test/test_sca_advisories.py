@@ -229,6 +229,128 @@ def test_no_matches_does_not_fetch_advisories(monkeypatch):
     assert result.receipt["advisory_details"]["requested_count"] == 0
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(
+    "name,old,fixed,rustsec,ghsa,kind",
+    [
+        (
+            "spin",
+            "0.9.7",
+            "0.9.8",
+            "RUSTSEC-2023-0031",
+            "GHSA-2qv5-7mw5-j3cg",
+            "unsound",
+        ),
+        ("bytes", "1.11.0", "1.11.1", "RUSTSEC-2026-0007", "GHSA-434x-w66g-qw3r", None),
+    ],
+)
+def test_rustsec_aliased_records_keep_classification_and_fix(
+    monkeypatch, reverse, name, old, fixed, rustsec, ghsa, kind
+):
+    docs = {}
+    for own, alias in [(rustsec, ghsa), (ghsa, rustsec)]:
+        affected = {
+            "package": {"ecosystem": "crates.io", "name": name},
+            "ranges": [
+                {"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": fixed}]}
+            ],
+        }
+        if own == rustsec and kind:
+            affected["database_specific"] = {"informational": kind}
+        docs[own] = {"id": own, "aliases": [alias], "affected": [affected]}
+    matches = [{"id": rustsec}, {"id": ghsa}]
+    if reverse:
+        matches.reverse()
+    deps = [dict(dependency(v, name), ecosystem="crates.io") for v in [old, fixed]]
+    result = scan(monkeypatch, Transport([{"vulns": matches}, {}], docs), deps)
+    assert result.receipt["complete"] is True
+    [finding] = result
+    assert finding["rule_id"] == f"SKY-SCA-{ghsa}"
+    assert finding["metadata"].get("advisory_informational") == kind
+    assert finding["metadata"]["fixed_version"] == fixed
+    assert finding["metadata"]["package_version"] == old
+    assert "low_risk_context" not in finding
+
+
+def test_merged_rustsec_notice_cannot_demote_conventional_vulnerability():
+    dep = dict(dependency(), ecosystem="crates.io")
+
+    def finding(own_id, aliases, severity, **extra):
+        return sca._make_finding(
+            dep,
+            {
+                "vuln_id": own_id,
+                "aliases": aliases,
+                "summary": "fixture",
+                "severity": severity,
+                "advisory_status": "complete",
+                **extra,
+            },
+        )
+
+    notice = finding(
+        "RUSTSEC-2020-0001", ["GHSA-test-alias"], "HIGH", informational="notice"
+    )
+    alias = finding(
+        "GHSA-test-alias", ["RUSTSEC-2020-0001", "CVE-2020-11111"], "MEDIUM"
+    )
+    separate = finding("RUSTSEC-2020-0002", [], "HIGH")
+    report = sca._merge_alias_findings([alias, notice, separate])
+    assert len(report) == 2
+    assert report[0]["metadata"]["advisory_informational"] == "notice"
+    assert "low_risk_context" not in report[0]
+    assert report[1] is separate
+    # A shared CVE can bridge independent upstream rows. Conflicting RustSec
+    # records cannot establish a single notice classification for this group.
+    separate["metadata"]["aliases"] = ["CVE-2020-11111"]
+    [merged] = sca._merge_alias_findings([separate, notice, alias])
+    assert "advisory_informational" not in merged["metadata"]
+    assert "low_risk_context" not in merged
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("vuln_id", ...),
+        ("vuln_id", None),
+        ("vuln_id", 3),
+        ("aliases", ...),
+        ("aliases", None),
+        ("aliases", 3),
+        ("aliases", ["RUSTSEC-2020-0001", {"invalid": True}]),
+        ("advisory_status", "unavailable"),
+        ("advisory_status", None),
+    ],
+)
+def test_incomplete_alias_evidence_cannot_classify_merged_notice(field, value):
+    dep = dict(dependency(), ecosystem="crates.io")
+    original = {
+        "vuln_id": "RUSTSEC-2020-0001",
+        "aliases": ["GHSA-test-alias"],
+        "summary": "test",
+        "advisory_status": "complete",
+    }
+    notice = sca._make_finding(
+        dep, {**original, "informational": "notice", "severity": "HIGH"}
+    )
+    alias = sca._make_finding(
+        dep,
+        {
+            **original,
+            "vuln_id": "GHSA-test-alias",
+            "aliases": ["RUSTSEC-2020-0001"],
+            "severity": "LOW",
+        },
+    )
+    if value is ...:
+        alias["metadata"].pop(field)
+    else:
+        alias["metadata"][field] = value
+    [finding] = sca._merge_alias_findings([alias, notice])
+    assert "advisory_informational" not in finding["metadata"]
+    assert "low_risk_context" not in finding
+
+
 @pytest.mark.parametrize(
     "result_item",
     [None, {"vulns": None}, {"vulns": {}}, {"vulns": [None]}, {"vulns": [{"id": ""}]}],

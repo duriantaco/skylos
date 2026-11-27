@@ -185,6 +185,8 @@ def build_analysis_result(
             }
         }
     hidden = experimental_hidden_counts(analyzer.defs, thr)
+    if getattr(analyzer, "_rust_variants_below_threshold", False):
+        hidden.setdefault("rust", 1)
     if hidden:
         # Never silent: say that experimental-language candidates exist below
         # the threshold and how to list them.

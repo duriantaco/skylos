@@ -38,6 +38,12 @@ def _build_compare_parser() -> argparse.ArgumentParser:
         help="Incumbent SARIF, Sonar issues JSON, or normalized findings JSON",
     )
     parser.add_argument(
+        "--against-format",
+        choices=("auto", "cargo"),
+        default="auto",
+        help="Select cargo for Cargo's newline-delimited JSON message stream",
+    )
+    parser.add_argument(
         "--skylos-results",
         help="Reuse an existing Skylos JSON report instead of scanning path",
     )
@@ -145,7 +151,12 @@ def _build_compare_report(args: argparse.Namespace) -> dict:
         normalize_external_report,
     )
 
-    external = normalize_external_report(load_json_report(args.against))
+    if args.against_format == "cargo":
+        from skylos.integrations.cargo_diagnostics import load_cargo_report
+
+        external = load_cargo_report(args.against)
+    else:
+        external = normalize_external_report(load_json_report(args.against))
     _apply_external_revision(external, args.external_revision)
     skylos_result = _load_skylos_result(args, load_json_report)
     _apply_skylos_revision(skylos_result, args.skylos_revision)

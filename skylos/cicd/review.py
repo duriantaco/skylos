@@ -34,8 +34,8 @@ from skylos.cicd.risk_passport import (
     build_risk_passport,
     format_risk_passport_markdown,
 )
+from skylos.cicd.scan_summary import PARTIAL_SCAN_NOTICE, scan_coverage_notice
 from skylos.core.file_discovery import find_git_root
-from skylos.core.gate_incomplete import incomplete_analysis_reasons
 from skylos.core.git_safety import (
     read_only_git_command,
     read_only_git_environment,
@@ -193,7 +193,7 @@ def run_pr_review(
         identity=identity,
         left_unused=left_unused,
         summary_inputs=summary_inputs,
-        partial_report=_has_coverage_gaps(results),
+        coverage_notice=scan_coverage_notice(results),
     )
 
     console.print(
@@ -204,14 +204,6 @@ def run_pr_review(
 
 _LEFT_UNUSED_SCOPE = "dependency_impact"
 _MAX_LEFT_UNUSED_ROWS = 20
-
-
-def _has_coverage_gaps(results: dict) -> bool:
-    summary = results.get("analysis_summary")
-    coverage = summary.get("analysis_coverage") if isinstance(summary, dict) else None
-    if isinstance(coverage, dict) and coverage.get("status") in ("partial", "incomplete"):
-        return True
-    return bool(incomplete_analysis_reasons(results))
 
 
 def _left_unused_rows(
@@ -1684,6 +1676,8 @@ def _review_only_lines(groups: dict[tuple[str, str], list[dict]]) -> list[str]:
         )
         if rule == "SKY-D206":
             reason = "Project-wide loader verification was incomplete"
+        elif kind == "unix_permissions":
+            reason = "Review the intended Unix file permissions"
         examples = []
         for row in rows[:3]:
             location = f"{os.path.basename(row['file'])}:{row['line']}"
@@ -1709,7 +1703,7 @@ def _post_summary_comment(
     identity: _TokenIdentity | None = None,
     left_unused: list[tuple[str, str]] | None = None,
     summary_inputs: SummaryInputs | None = None,
-    partial_report: bool = False,
+    coverage_notice: str = "",
 ) -> _CommentOutcome:
     left_unused = left_unused or []
     existing_comments, list_error = _gh_list(
@@ -1761,6 +1755,7 @@ def _post_summary_comment(
             "\n".join(lines), previous, list_error, pr_number, repo
         )
     changed_now = len(diff_findings)
+    partial_report = bool(coverage_notice)
     if summary_inputs is not None:
         partial_report = partial_report or summary_inputs.gate_result == "incomplete"
         if partial_report and summary_inputs.gate_result == "success":
@@ -1787,7 +1782,7 @@ def _post_summary_comment(
         if verdict:
             head.extend([verdict, ""])
     if partial_report:
-        head.extend(["**Scan coverage is incomplete.** Finding counts are provisional.", ""])
+        head.extend([coverage_notice or PARTIAL_SCAN_NOTICE, ""])
     elif changed_now == 0 and previous_max > 0:
         head.extend(
             [

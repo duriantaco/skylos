@@ -69,21 +69,47 @@ class RustReachabilityReport:
         )
 
 
+def _covered_crate_roots(root, scope, project):
+    """With CLI exclusions, only prove cycles in fully observed Cargo targets."""
+    from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
+
+    if (
+        project is None
+        or not project.complete
+        or scope.get("kind") != "repository_root_with_exclusions"
+        or scope.get("changed_files_only")
+        or scope.get("scan_path") != str(root)
+        or not set(scope.get("excluded_folders", ())).issubset(DEFAULT_EXCLUDE_FOLDERS)
+    ):
+        return set()
+    from .effective_visibility import complete_target_set
+
+    if not complete_target_set(project):
+        return set()
+    roots = {crate.root_file for crate in project.crates}
+    return {
+        path
+        for path in roots
+        if (owners := project.modules_of(path))
+        and all(module is module.crate.root for module in owners)
+    }
+
+
 def analyze_rust_reachability(
-    definitions, project_root, analysis_scope, analysis_errors
+    definitions, project_root, analysis_scope, analysis_errors, *, project=None
 ):
     report = RustReachabilityReport()
-    if (
-        analysis_errors
-        or not project_root
-        or not isinstance(analysis_scope, dict)
-        or not analysis_scope.get("complete_repository")
-    ):
+    if analysis_errors or not project_root or not isinstance(analysis_scope, dict):
         return report
     try:
         root = Path(project_root).resolve()
     except (OSError, RuntimeError, ValueError):
         return report
+    covered = None
+    if not analysis_scope.get("complete_repository"):
+        covered = _covered_crate_roots(root, analysis_scope, project)
+        if not covered:
+            return report
     candidates = {}
     digests = {}
     for key, definition in definitions.items():
@@ -94,8 +120,11 @@ def analyze_rust_reachability(
             path = Path(definition.filename)
             if path.suffix != ".rs" or path.is_symlink():
                 continue
-            file = str(path.resolve())
-            path.resolve().relative_to(root)
+            resolved = path.resolve()
+            resolved.relative_to(root)
+            if covered is not None and resolved not in covered:
+                continue
+            file = str(resolved)
             if file not in digests:
                 digests[file] = sha256(path.read_bytes()).hexdigest()
         except (OSError, RuntimeError, ValueError):

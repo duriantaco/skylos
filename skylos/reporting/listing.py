@@ -274,8 +274,31 @@ def is_nonblocking_review(finding):
 
 
 def is_gate_exempt_review(finding):
-    """A review item that stays reported but does not fail gates: a symlink
-    directory-entry question or a sink with no proven untrusted source."""
+    """Review evidence that stays in the report without failing a gate."""
+    if isinstance(finding, Mapping) and finding.get("rule_id") in ("SKY-D415", "SKY-D416"):
+        item = finding.get("review_item")
+        metadata = finding.get("metadata")
+        evidence = metadata.get("security_evidence") if isinstance(metadata, Mapping) else None
+        if not isinstance(evidence, Mapping) or evidence.get("evidence_kind") != "rust_std_unix_permissions":
+            return False
+        argument = evidence.get("argument")
+        api = evidence.get("api")
+        if finding["rule_id"] == "SKY-D415":
+            valid_call = api == "std::fs::Permissions::set_readonly" and argument == "false"
+        else:
+            valid_call = isinstance(argument, str) and bool(argument) and api in (
+                "std::os::unix::fs::PermissionsExt::from_mode",
+                "std::os::unix::fs::PermissionsExt::set_mode",
+                "std::os::unix::fs::OpenOptionsExt::mode",
+                "std::os::unix::fs::DirBuilderExt::mode",
+            )
+        return (
+            valid_call
+            and finding.get("severity") == "MEDIUM"
+            and isinstance(item, Mapping)
+            and item.get("kind") == "unix_permissions"
+            and item.get("blocking") is False
+        )
     return is_nonblocking_review(finding) or is_unproven_source_review(finding)
 
 

@@ -478,7 +478,12 @@ def _scan_php_file(file, cfg, *, enable_danger_rules: bool, **_options):
 
 
 def _scan_rust_file(
-    file, cfg, *, enable_danger_rules: bool, enable_quality_rules: bool, **_options
+    file,
+    cfg,
+    *,
+    enable_danger_rules: bool,
+    enable_quality_rules: bool,
+    project_root=None,
 ):
     return scan_rust_file(
         file,
@@ -486,6 +491,7 @@ def _scan_rust_file(
         enable_danger_rules=enable_danger_rules,
         enable_quality_rules=enable_quality_rules,
         _include_analysis_metadata=True,
+        project_root=project_root,
     )
 
 
@@ -691,7 +697,7 @@ def scan_non_python_file(
                 if scanner is _scan_go_file and go_scan_scope is not None
                 else {}
             )
-            if scanner is _scan_typescript_like_file:
+            if scanner in (_scan_typescript_like_file, _scan_rust_file):
                 scope_options["project_root"] = project_root
             out = scanner(
                 file,

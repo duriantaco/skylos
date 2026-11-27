@@ -377,6 +377,43 @@ and are left out of the default listing like development-only dependencies;
 JSON, `--all-advice` and gates still count them. `unsound` advisories stay
 listed.
 
+When OSV returns both GitHub and RustSec records for the same advisory, Skylos
+merges the aliases into one finding. A directly aliased RustSec record can
+supply its informational classification. A conventional vulnerability record
+in the group keeps the finding visible.
+
+#### Optional Rust CI checks
+
+To compare the lockfile against a pinned RustSec advisory database, install
+the upstream cargo-audit release in trusted CI and point `RUSTSEC_DB` at a
+verified local snapshot. The following command reads the lockfile offline.
+It skips the separate registry check for yanked crate versions.
+[cargo-audit](https://rustsec.org/usage.html)
+
+```sh
+cargo audit --no-fetch --no-yanked --db "$RUSTSEC_DB" --file Cargo.lock --json
+```
+
+With cargo-audit 0.23.0 and RustSec snapshot
+`c9f6c91a44dbad9d71742329e9df061279f9c4be`, both scanners found
+`RUSTSEC-2026-0007` on `bytes 1.11.0` and cleared it on `1.11.1`. On
+`spin 0.9.7`, cargo-audit reported `RUSTSEC-2023-0031` as an `unsound`
+warning and exited successfully under its default policy. Skylos listed
+the same advisory with that classification. Both cleared it on `0.9.8`.
+[bytes advisory](https://rustsec.org/advisories/RUSTSEC-2026-0007.html) ·
+[spin advisory](https://rustsec.org/advisories/RUSTSEC-2023-0031.html)
+
+For an organization’s own dependency bans, run cargo-deny in trusted Cargo
+CI with a reviewed policy and pre-cached dependencies. For example,
+`[bans]` with `deny = ["local-policy-check"]` also flags a local path dependency
+of that name. Set `CARGO_DENY_POLICY` to the trusted policy file. The command
+uses the locked dependency graph offline.
+[cargo-deny bans](https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html)
+
+```sh
+cargo deny --frozen --config "$CARGO_DENY_POLICY" check bans
+```
+
 ### Composer
 
 `composer.lock` `packages` are runtime packages and `packages-dev` are

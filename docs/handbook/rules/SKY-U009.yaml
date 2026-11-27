@@ -1,0 +1,70 @@
+id: SKY-U009
+title: Unused private Rust enum variant
+family: dead-code
+severity: LOW
+languages:
+- Rust
+gate:
+  full: counted
+  note: A listed variant counts toward max_dead_code, which is unlimited by default.
+run_with: '`skylos . --confidence 40`'
+what_it_is: A private enum in a Cargo binary has a variant with no identifier occurrence outside its declaration. Skylos has resolved a qualified reference to one of its siblings.
+why_it_matters: An obsolete variant can make a removed application state appear supported. Its discriminant can still affect data layout or persisted values.
+flagged_example:
+  language: rust
+  expect_file: src/main.rs
+  expect_line: 3
+  scan_flags: [--confidence=40]
+  files:
+  - filename: src/main.rs
+    code: |
+      enum Mode {
+          Ready,
+          Retired,
+      }
+      fn main() { std::hint::black_box(Mode::Ready); }
+  - &manifest
+    filename: Cargo.toml
+    language: toml
+    code: |
+      [package]
+      name = "demo"
+      version = "0.1.0"
+      edition = "2021"
+not_flagged_example:
+  language: rust
+  scan_flags: [--confidence=40]
+  files:
+  - filename: src/main.rs
+    code: |
+      enum Mode { Ready, Retired }
+      fn main() { std::hint::black_box((Mode::Ready, Mode::Retired)); }
+  - *manifest
+  why: The tuple constructs both variants.
+how_skylos_decides:
+- Requires a repository-root scan with every declared Cargo target and module covered. Macros, derives, conditional compilation or missing modules prevent the proof.
+- Resolves qualified variant paths. Checks only private enums in binary targets with at least one observed sibling. FFI and unsafe code in the candidate crate prevent the check.
+- Scans Rust identifiers throughout the observed targets. Imports, patterns and same-spelled identifiers keep the candidate. Reports the declaration in unused_variables at the Rust experimental confidence cap of 40.
+source_refs:
+- path: skylos/visitors/languages/rust/unused_variants.py
+  symbol: def find_unused_variants(
+- path: test/test_rust_unused_variants.py
+  symbol: def test_private_binary_enum_reports_only_unmentioned_variants(
+fix:
+  explanation: Remove the variant after verifying that the discriminant values and external format stay compatible.
+  language: rust
+  filename: src/main.rs
+  scan_flags: [--confidence=40]
+  code: |
+    enum Mode { Ready }
+    fn main() { std::hint::black_box(Mode::Ready); }
+false_alarms_and_suppression:
+  misfires:
+  - An identifier with no source references can still document a reserved wire or disk value.
+  suppress:
+  - check: config
+    text: Set `[tool.skylos] ignore = ["SKY-U009"]` to disable the rule project-wide.
+related:
+- SKY-U003
+- SKY-U004
+- SKY-U007

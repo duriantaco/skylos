@@ -1,0 +1,61 @@
+id: SKY-D416
+title: Non-octal Unix permission mode literal
+family: security
+severity: MEDIUM
+languages: [Rust]
+cwe: [CWE-732]
+gate:
+  full: listed
+  note: The advisory stays visible and does not fail the security gate.
+what_it_is: >-
+  A standard Unix filesystem extension takes a permission mode written as a
+  decimal or hexadecimal integer. Decimal `644` and octal `0o644` select
+  different permission bits.
+why_it_matters: >-
+  An unintended mode can grant access to the wrong accounts or deny access
+  the application needs.
+how_skylos_decides:
+  - >-
+    Checks PermissionsExt::from_mode and set_mode, OpenOptionsExt::mode and
+    DirBuilderExt::mode when the standard filesystem type and Unix extension
+    trait are identified. It resolves explicit imports and aliases.
+  - >-
+    Looks for a literal value greater than seven. Octal, binary, constants
+    and computed masks are outside this check. Confirm the intended bits
+    before changing the spelling.
+source_refs:
+  - path: skylos/visitors/languages/rust/danger.py
+    symbol: 'def permission_call('
+  - path: skylos/visitors/languages/rust/permissions.py
+    symbol: 'def ambiguous_mode_literal('
+flagged_example:
+  language: rust
+  filename: src/lib.rs
+  code: |
+    #[cfg(unix)]
+    fn make_mode() -> std::fs::Permissions {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::Permissions::from_mode(644)
+    }
+  expect_line: 4
+not_flagged_example:
+  language: rust
+  filename: src/lib.rs
+  code: &octal_mode |
+    #[cfg(unix)]
+    fn make_mode() -> std::fs::Permissions {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::Permissions::from_mode(0o644)
+    }
+  why: The literal expresses the owner, group and other permission bits in octal.
+fix:
+  explanation: Identify the intended access and write that mode in octal or use named permission flags.
+  filename: src/lib.rs
+  language: rust
+  code: *octal_mode
+false_alarms_and_suppression:
+  misfires:
+    - The author may intentionally use a hexadecimal or decimal literal for a verified bitmask.
+  suppress:
+    - text: Add a Skylos ignore comment to the call after confirming the intended mode.
+related: [SKY-D415, SKY-L020]

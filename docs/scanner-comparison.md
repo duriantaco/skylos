@@ -116,6 +116,27 @@ promoted to blocking. See Sonar's
 
 ## Supported Incumbent Reports
 
+To compare Rust compiler diagnostics, capture Cargo's JSON message stream
+in a trusted workspace and save it outside the repository.
+
+```bash
+cargo check --workspace --all-targets --message-format=json > /tmp/cargo-check.jsonl
+skylos compare . --against /tmp/cargo-check.jsonl --against-format cargo --confidence 40
+```
+
+Skylos reads the saved report locally. It maps rustc's `dead_code`,
+`dead_code_pub_in_binary`, `unused_imports`, and `unused_variables` diagnostics
+to dead code. If the stream also contains diagnostics about clearing read-only
+permissions on Unix or using a non-octal Unix permission mode, those map to
+security. Other emitted lint codes map to quality. Skylos preserves the lint
+ID and its producer. Repeated copies of the same diagnostic at the same
+location in the same package count once. Different rules can overlap on one line.
+
+A successful run covers the targets, features, platform, and lint settings
+selected for that build. A failed build or a missing final `build-finished`
+event leaves the comparison incomplete. Supply the Git revision separately
+with `--external-revision`, using the commit recorded by the CI build.
+
 - SARIF 2.1-style reports. Skylos supports direct or indexed rules and
   artifacts, source regions, rule/result severity, fingerprints, invocation
   success, and version-control provenance. Producer-specific extensions may

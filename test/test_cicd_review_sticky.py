@@ -307,18 +307,31 @@ def test_incomplete_scan_keeps_findings_provisional_until_recovery(prior_count):
 
 
 def test_partial_artifact_overrides_legacy_job_success():
-    results = {"analysis_summary": {"analysis_coverage": {"status": "partial"}}}
-    assert review._has_coverage_gaps(results)
-    assert review._has_coverage_gaps({"analysis_errors": [{"file": "a.py"}]})
+    results = {
+        "analysis_summary": {
+            "analysis_coverage": {
+                "status": "partial",
+                "unchecked_file_count": 3,
+                "source_file_count": 12,
+                "unchecked_files": [
+                    {"kind": "syntax_error", "file": "src/read.rs", "line": 81},
+                ],
+            }
+        }
+    }
+    assert review.scan_coverage_notice(results)
+    assert review.scan_coverage_notice({"analysis_errors": [{"file": "a.py"}]})
     gh = FakeGitHub()
     with patch("skylos.cicd.review.subprocess.run", side_effect=gh):
         _post_summary_comment(
             [], [], 7, "acme/app",
-            partial_report=review._has_coverage_gaps(results),
+            coverage_notice=review.scan_coverage_notice(results),
             summary_inputs=SummaryInputs(gate_result="success"),
         )
     body = gh.issue_comments[0]["body"]
     assert "**Gate:** analysis incomplete" in body
+    assert "3 of 12 source files" in body
+    assert "`src/read.rs:81`" in body
     assert "Finding counts are provisional" in body
 
 

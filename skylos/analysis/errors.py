@@ -87,9 +87,20 @@ def analysis_error_payload(
         ),
     }
     if is_syntax_error:
-        payload["suggestion"] = (
-            "Fix the reported syntax, or use a Python runtime that supports the "
-            "project's syntax; official container images provide matching "
-            "-pythonX.Y tags."
-        )
+        if str(file).lower().endswith((".py", ".pyi", ".pyw")):
+            payload["suggestion"] = (
+                "Fix the reported syntax, or use a Python runtime that supports "
+                "the project's syntax; official container images provide matching "
+                "-pythonX.Y tags."
+            )
+        elif str(file).lower().endswith(".rs"):
+            payload["suggestion"] = (
+                "Check this location with cargo check for the affected target. "
+                "If the crate compiles, report the syntax Skylos could not parse."
+            )
+        else:
+            payload["suggestion"] = (
+                "Check this location with the project's compiler or parser. "
+                "If it accepts the file, report the syntax Skylos could not parse."
+            )
     return payload

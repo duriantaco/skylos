@@ -111,6 +111,12 @@ upload scans, or request OIDC tokens. Default-branch upload jobs pull policy,
 include SCA, and use `--gate` to apply the configured Cloud thresholds. Mark the
 PR check as required in branch protection to enforce it before merge.
 
+The GitHub Actions scan summary and PR comment flag partial coverage even when
+Skylos lists zero findings. They show how many source files could not be fully
+checked and up to three parse-error locations when available. The source
+action’s `findings-count` output counts the findings listed in the scan report.
+Coverage warnings appear separately.
+
 ## JSON upload outcomes
 
 With `--upload --format json` or `json-ci`, the CLI prints one JSON document

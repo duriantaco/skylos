@@ -956,6 +956,8 @@ reader writing into a persistence file that is also sensitive
 target that could name one of these (for example `~/.ssh/authorized_ke*`) is
 D339, and redundant `//`, `/./` and `..` segments do not hide one.
 
+Rust Unix permissions reviews (`--danger`) remain visible in full and diff scans and are exempt from the security gate. `SKY-D415` reports a literal `false` passed to `std::fs::Permissions::set_readonly`, including permission values obtained from standard filesystem metadata. On Unix this sets the owner, group and other write bits in memory. Applying them to a file requires a separate operation. `SKY-D416` reports decimal and hexadecimal permission mode literals greater than seven on identified standard Unix extension APIs: `PermissionsExt::from_mode` and `set_mode`, `OpenOptionsExt::mode`, and `DirBuilderExt::mode`. The analyzer tracks imports and local bindings and skips recognized Windows-only code. Named flags, octal and binary literals, and computed masks remain outside the mode check.
+
 Rust security findings (`--danger`) come from a bounded, flow-sensitive
 analysis of one file at a time: locals, branches, `match`, `if let`, loops,
 closures, `format!`-family macros (also inside other macros such as `json!`)
@@ -3289,6 +3291,16 @@ types-only wildcard export publishes its module's declarations
 Findings are in `unused_variables` with `type: "namespace_member"`;
 `analysis_summary.namespace_member_analysis` records the
 `internal_module_namespaces` scope, checked namespaces and abstentions.
+
+SKY-U009 reports a private Rust enum variant in a Cargo binary when the scanner
+resolves a qualified use of a sibling variant and finds no other occurrence of
+the candidate's identifier in the observed targets. Patterns, import aliases
+and same-spelled names keep the variant. The check requires a complete scan
+of the Cargo targets and abstains on macros, conditional compilation and
+unobserved modules. FFI or unsafe code in the candidate crate also prevents
+reporting. Results carry `type: "enum_variant"` in `unused_variables` and
+appear with `--confidence 40`. Review discriminant values before removing
+a variant.
 
 ### Framework entrypoints
 

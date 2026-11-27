@@ -1,6 +1,9 @@
 """Closed private cycles must not become roots merely by referring to each other."""
 
 import json
+import subprocess
+import sys
+from pathlib import Path
 from textwrap import dedent
 
 import pytest
@@ -21,6 +24,62 @@ def scan(tmp_path, grep_verify):
     )
     assert not result.get("analysis_errors")
     return {item["full_name"] for item in result.get("unused_functions", [])}
+
+
+@pytest.mark.parametrize("scenario", ["closed", "excluded_module", "custom_exclusions"])
+def test_cli_only_proves_cycles_in_covered_crates(tmp_path, scenario):
+    crate = tmp_path / "app"
+    extra = ""
+    options = []
+    if scenario == "excluded_module":
+        extra = '#[path = "../vendor/callbacks.rs"] mod callbacks;'
+        callback = crate / "vendor" / "callbacks.rs"
+        callback.parent.mkdir(parents=True)
+        callback.write_text("pub fn entry() { super::alpha(); }\n")
+        main_body = "callbacks::entry();"
+    else:
+        main_body = ""
+    if scenario == "custom_exclusions":
+        options = ["--exclude", "plugins"]
+    project(
+        crate,
+        {
+            "main.rs": f"""
+        {extra}
+        fn alpha() {{ beta(); }}
+        fn beta() {{ alpha(); }}
+        fn main() {{ {main_body} }}
+    """
+        },
+    )
+    (crate / "Cargo.toml").write_text(
+        '[package]\nname="cycle-check"\nversion="0.1.0"\nedition="2021"\n'
+    )
+    output = tmp_path / "result.json"
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "skylos.cli",
+            str(crate),
+            "--confidence",
+            "40",
+            "--format",
+            "json",
+            "--no-upload",
+            "-o",
+            str(output),
+            *options,
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    result = json.loads(output.read_text())
+    assert not result.get("analysis_errors")
+    unused = {row["name"] for row in result["unused_functions"]}
+    assert unused == ({"alpha", "beta"} if scenario == "closed" else set())
 
 
 @pytest.mark.parametrize("grep_verify", [False, True])

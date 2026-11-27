@@ -52,7 +52,7 @@ class _Closure:
             if source is None:
                 raise _Unavailable
             data = source.encode("utf-8")
-            core = RustCore(str(path), data)
+            core = RustCore(str(path), data, project_root=self.root)
             if core.root_node is None or core.root_node.has_error:
                 raise _Unavailable
             self.sources[path] = data
@@ -201,7 +201,7 @@ def apply_project_trait_imports(
                 return
             if not closure.external_modules:
                 continue
-            core = RustCore(str(crate_root), expanded)
+            core = RustCore(str(crate_root), expanded, project_root=root)
             core.collect_scope_members = False
             core.scan()
             local = core._local_trait_imports

@@ -109,19 +109,17 @@ def test_checked_in_ground_truth_builds_blind_plan_without_duplicate_arms():
     plan = build_plan(MANIFEST_PATH)
 
     assert plan["network_used"] is False
-    assert plan["case_count"] == 151
-    assert plan["request_count"] == 157
-    assert plan["ground_truth_count"] == 769
-    assert plan["decision_count"] == 809
+    assert plan["case_count"] == 152
+    assert plan["request_count"] == 158
+    assert plan["ground_truth_count"] == 772
+    assert plan["decision_count"] == 812
     assert plan["neutralization_status_counts"] == {
         "applied": 6,
         "skipped": 30,
-        "not_applicable": 115,
+        "not_applicable": 116,
     }
-    # The source review corrected two unloaded JS files and an unreachable
-    # Python backend from used to unused; the 769-label denominator is intact.
-    assert plan["unused_count"] == 300
-    assert plan["used_count"] == 469
+    assert plan["unused_count"] == 301
+    assert plan["used_count"] == 471
     assert plan["model"] == "jev-1.13.0"
     assert plan["endpoint"] == JEV_ENDPOINT
 
@@ -246,6 +244,18 @@ def test_dynamic_dispatch_challenge_builds_single_blind_request():
     assert len(batches) == 1
     assert "handler_a" in json.dumps(batches[0].payload)
     assert "dynamic-dispatch-second-opinion" not in json.dumps(batches[0].payload)
+
+
+def test_rust_included_callback_plan_contains_the_source_of_the_call():
+    (batch,) = prepare_batches(MANIFEST_PATH, {"rust-included-callback"})
+    assert batch.arm == "original"
+    assert {question.symbol for question in batch.questions} == {
+        "main",
+        "on_event",
+        "old_handler",
+    }
+    paths = {item["path"] for item in batch.payload["state"]["repository_files"]}
+    assert {"src/main.rs", "src/routes.inc"} <= paths
 
 
 def test_request_does_not_send_ground_truth_or_manifest_description():

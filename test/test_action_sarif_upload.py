@@ -41,7 +41,7 @@ def _run_scan_step(action, tmp_path, upload_sarif):
                 with Path(os.environ["SKYLOS_TEST_CALLS"]).open("a") as stream:
                     stream.write(json.dumps(args) + "\\n")
                 print("{}")
-            elif args[:1] == ["-c"]:
+            elif args[:3] == ["-I", "-m", "skylos.cicd.scan_summary"]:
                 print(0)
             else:
                 raise SystemExit("Unexpected Python invocation: " + repr(args))
