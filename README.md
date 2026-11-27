@@ -291,7 +291,8 @@ expected answers and tool calls, use `skylos agent test`. See
   Linux, macOS and Windows; elsewhere `skylos doctor` prints the build command.
 - PostgreSQL needs `pip install "skylos[postgres]"`. Use `--quality --danger`
   and set the database dialect in the SQL folder or use a Prisma migration lock.
-  These checks are report-only.
+  These checks are report-only. See the [PostgreSQL benchmark](benchmarks/postgresql/README.md)
+  for comparison results and measured limits.
 - Dart needs `pip install "skylos[dart]"`.
 - Rust dead-code checks are experimental. Use `skylos . --confidence 40` to
   see candidates such as unused private functions and enum variants.
