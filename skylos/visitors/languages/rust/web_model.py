@@ -159,12 +159,6 @@ NON_TEXT_TYPES = frozenset(
 
 HTTP_CLIENT_TYPES = frozenset(
     {
-        "reqwest::Client",
-        "reqwest::ClientBuilder",
-        "reqwest::blocking::Client",
-        "reqwest::blocking::ClientBuilder",
-        "reqwest_middleware::ClientWithMiddleware",
-        "reqwest_middleware::ClientBuilder",
         "awc::Client",
         "awc::ClientBuilder",
         "ureq::Agent",
@@ -195,8 +189,6 @@ HTTP_VERBS = {
 }
 # Functions that send a request, and the index of their URL argument.
 HTTP_FUNCTIONS = {
-    "reqwest::get": 0,
-    "reqwest::blocking::get": 0,
     **{
         f"ureq::{verb}": 0 for verb in ("get", "post", "put", "patch", "delete", "head")
     },

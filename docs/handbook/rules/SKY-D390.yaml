@@ -1,0 +1,55 @@
+id: SKY-D390
+title: Request controls initial allocation capacity
+family: security
+severity: HIGH
+languages: [Rust]
+cwe: [CWE-789]
+gate:
+  full: counted
+
+what_it_is: >-
+  A Rust request supplies a buffer capacity. The rule covers initial allocations and reservations on a new integer vector.
+why_it_matters: >-
+  A sufficiently large request value can exhaust the memory available to a service.
+
+flagged_example:
+  language: rust
+  filename: src/lib.rs
+  expect_line: 3
+  code: |
+    use axum::extract::Path;
+    pub fn scratch(Path(size): Path<usize>) {
+        let _buf = String::with_capacity(size);
+    }
+
+not_flagged_example:
+  language: rust
+  filename: src/lib.rs
+  code: |
+    use axum::extract::Path;
+    pub fn scratch(Path(size): Path<usize>) {
+        let _buf = String::with_capacity(size.min(4096));
+    }
+  why: >-
+    The capacity is limited to 4096 bytes.
+
+how_skylos_decides:
+  - >-
+    Skylos looks for a destructured usize request extractor and a direct capacity call at the start of a function, including simple aliases of the size.
+  - >-
+    It skips earlier checks and unknown control flow.
+source_refs:
+  - path: skylos/visitors/languages/rust/request_patterns.py
+    symbol: 'def unchecked_capacity('
+fix:
+  explanation: >-
+    Choose a maximum based on the request budget and enforce it before allocation.
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      An application may enforce the size limit in middleware that runs before the handler.
+  suppress:
+    - text: >-
+        Record the reason on the reported line with `// skylos: ignore[SKY-D390]`.
+      check: inline
+related: [SKY-D389]

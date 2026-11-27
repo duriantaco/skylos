@@ -1,0 +1,59 @@
+id: SKY-D389
+title: Request text inserted into a regular expression
+family: security
+severity: MEDIUM
+languages: [Rust]
+cwe: [CWE-74]
+gate:
+  full: counted
+
+what_it_is: >-
+  Unescaped request text is placed between fixed parts of a regular expression. The input can change the pattern.
+why_it_matters: >-
+  Input with regex syntax can change which strings an application accepts.
+
+flagged_example:
+  language: rust
+  filename: src/lib.rs
+  expect_line: 5
+  code: |
+    use axum::extract::Path;
+    use regex::Regex;
+    pub fn matcher(Path(value): Path<String>) {
+        let p = format!("^user/{value}$");
+        let _ = Regex::new(&p);
+    }
+
+not_flagged_example:
+  language: rust
+  filename: src/lib.rs
+  code: |
+    use axum::extract::Path;
+    use regex::Regex;
+    pub fn matcher(Path(value): Path<String>) {
+        let literal = regex::escape(&value);
+        let _ = Regex::new(&format!("^user/{literal}$"));
+    }
+  why: >-
+    The extractor value is escaped before interpolation.
+
+how_skylos_decides:
+  - >-
+    Skylos checks supported request string extractors, simple format! placeholders between literal fragments, and a resolved regex constructor.
+  - >-
+    Supplying a complete search pattern has separate semantics.
+source_refs:
+  - path: skylos/visitors/languages/rust/request_patterns.py
+    symbol: 'REGEX ='
+fix:
+  explanation: >-
+    Use regex::escape before inserting a value intended to match literal text.
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Search or policy features that deliberately accept regex fragments may need this behavior.
+  suppress:
+    - text: >-
+        Record the reason on the reported line with `// skylos: ignore[SKY-D389]`.
+      check: inline
+related: [SKY-D379]

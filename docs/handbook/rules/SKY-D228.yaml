@@ -216,8 +216,9 @@ how_skylos_decides:
     `HttpRequest`/`Request` (`uri()`, `query_string()`, `headers()`, ...).
     `html_escape`, `htmlescape`, `v_htmlescape`, `askama_escape`,
     `ammonia::clean` and URL encoding (`form_urlencoded::byte_serialize`,
-    `utf8_percent_encode`, `urlencoding::encode`) clear the value. Not
-    reported in test code.
+    `utf8_percent_encode`, `urlencoding::encode`) clear the value. Rendering
+    the byte count from a known string's `len()` is safe in HTML text.
+    Test code is excluded.
 
 source_refs:
   - path: skylos/visitors/languages/rust/danger.py

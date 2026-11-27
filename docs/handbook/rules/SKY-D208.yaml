@@ -7,7 +7,7 @@ severity_note: >-
   SHA-1 hash over data whose names do not look like a credential, identity
   or certificate stays MEDIUM but is marked low-risk and left out of the
   terminal list.
-languages: [Python, TypeScript/JavaScript, Go, Java]
+languages: [Python, TypeScript/JavaScript, Go, Java, Rust]
 gate:
   full: counted
   note: >-
@@ -111,6 +111,8 @@ more_examples:
         (and `crypto/md5` for SKY-D207). `sha256.Sum256` is not one of them.
 
 how_skylos_decides:
+  - >-
+    In Rust the input must be exposed SecretString contents or its bytes. Skylos resolves SHA-1 digest calls from sha1 or OpenSSL.
   - >-
     Runs with `--danger`. In Python it finds calls to `hashlib.sha1()`,
     including import aliases such as `from hashlib import sha1`, and

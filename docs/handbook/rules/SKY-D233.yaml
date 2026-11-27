@@ -11,7 +11,7 @@ severity_note: >-
   read. TypeScript/JavaScript `node-serialize`-style loaders are CRITICAL
   with request data and HIGH otherwise; js-yaml 3 `load` of request data is
   HIGH.
-languages: [Python, Java, Kotlin, C#, TypeScript/JavaScript]
+languages: [Python, Java, Kotlin, C#, TypeScript/JavaScript, Rust]
 gate:
   full: critical_blocks
   note: >-
@@ -23,12 +23,12 @@ what_it_is: >-
   can name any class or function to call while they load, so loading them
   runs code. SKY-D233 reports such loaders beyond `pickle` (which has its own
   rules): `marshal`, `shelve`, `jsonpickle` and `dill` in Python, and their
-  equivalents in Java, Kotlin and C#.
+  equivalents in Java, Kotlin and C#. Rust also checks for unbounded JSON input decoded into a growable vector.
 
 why_it_matters: >-
   If an attacker can change the data, for example a cookie, an upload or a
   cache entry, a crafted payload runs a command on the server the moment it
-  is loaded. No other bug is needed.
+  is loaded. The Rust finding concerns memory exhaustion when an application accepts an unbounded sequence.
 
 flagged_example:
   language: python
@@ -122,6 +122,12 @@ more_examples:
         choose which class is created.
 
 how_skylos_decides:
+  - >-
+    In Rust this is a MEDIUM resource-use finding. Skylos checks when
+    `serde_json::from_reader` reads a `Vec` from a TCP stream, or when
+    `from_slice` or `from_str` parses a buffer immediately after an unlimited
+    `read_to_end` or `read_to_string`.
+    A bounded reader such as `stream.take(limit)` stays quiet.
   - >-
     In Python, resolves each call's name through imports and aliases and
     matches it against a fixed table: `marshal.load()`, `marshal.loads()`,

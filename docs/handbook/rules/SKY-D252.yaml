@@ -5,7 +5,7 @@ severity: MEDIUM
 severity_note: >-
   Python, TypeScript/JavaScript and Go findings are MEDIUM, as in the
   catalog. Java findings are reported as HIGH.
-languages: [Python, TypeScript/JavaScript, Java, Go]
+languages: [Python, TypeScript/JavaScript, Java, Go, Rust]
 gate:
   full: counted
   note: Java findings are HIGH, so they also count toward `max_high`.
@@ -181,7 +181,33 @@ more_examples:
         Both flags are written as `true` in the `http.Cookie` literal, which
         is what the Go check requires.
 
+  - flagged:
+      language: rust
+      filename: src/session.rs
+      expect_line: 3
+      code: |
+        use cookie::{Cookie, CookieJar};
+        pub fn issue(jar: &mut CookieJar, token: String) {
+            jar.add(Cookie::new("session_id", token));
+        }
+    not_flagged:
+      language: rust
+      filename: src/session.rs
+      code: |
+        use cookie::{Cookie, CookieJar};
+        pub fn issue(jar: &mut CookieJar, token: String) {
+            jar.add(Cookie::build(("session_id", token)).secure(true).build());
+        }
+      why: The session cookie requires HTTPS.
+
 how_skylos_decides:
+  - >-
+    In Rust, checks the Secure flag when a recognized cookie jar receives
+    a cookie with a session or token name such as `session_id` or `access_token`.
+    It follows cookie builders and `set_secure` on local bindings. It also
+    checks directly returned axum-extra jars and cookies on Actix response
+    builders finalized in the same call chain.
+    Removal cookies, preference cookies and unknown flags stay quiet.
   - >-
     Runs with `--danger`. Each language has its own check.
   - >-
@@ -214,6 +240,8 @@ how_skylos_decides:
     SKY-D252.
 
 source_refs:
+  - path: skylos/visitors/languages/rust/cookies.py
+    symbol: "def method("
   - path: skylos/rules/danger/danger_web/cookie_flags.py
     symbol: "def cookie_option_states"
   - path: skylos/rules/danger/danger_web/cookie_flags.py

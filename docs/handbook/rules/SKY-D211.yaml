@@ -8,7 +8,7 @@ severity_note: >-
   parameters is HIGH ("Likely unparameterized SQL execution"). In Go, Java,
   Kotlin and C#, a query string-built from values with no proven outside
   source is HIGH.
-languages: [Python, TypeScript/JavaScript, Java, Kotlin, Go, C#, PHP, Ruby]
+languages: [Python, TypeScript/JavaScript, Java, Kotlin, Go, C#, PHP, Ruby, Rust]
 gate:
   full: critical_blocks
 cwe: [CWE-89]
@@ -71,6 +71,31 @@ not_flagged_example:
     numbers as safe, and the user's values travel separately as bound
     parameters.
 
+more_examples:
+  - flagged:
+      language: rust
+      filename: src/lookup.rs
+      expect_line: 6
+      code: |
+        use axum::extract::Path;
+        use rusqlite::Connection;
+
+        pub fn lookup(Path(name): Path<String>, db: &Connection) -> rusqlite::Result<i64> {
+            let query = format!("SELECT id FROM users WHERE name = '{name}'");
+            db.query_row(&query, [], |row| row.get(0))
+        }
+    not_flagged:
+      language: rust
+      filename: src/lookup.rs
+      code: |
+        use axum::extract::Path;
+        use rusqlite::Connection;
+
+        pub fn lookup(Path(name): Path<String>, db: &Connection) -> rusqlite::Result<i64> {
+            db.query_row("SELECT id FROM users WHERE name = ?1", [name], |row| row.get(0))
+        }
+      why: The SQL text is fixed. SQLite binds the name to `?1` as a value.
+
 how_skylos_decides:
   - >-
     Finds database calls: `.execute()`, `.executemany()` and
@@ -114,8 +139,30 @@ how_skylos_decides:
     `execute()` or `prepareStatement()` in Java, `fmt.Sprintf` in Go,
     command text in C#. Go findings come from the Go engine as SKY-G211 and
     are reported as SKY-D211.
+  - >-
+    In Rust, Skylos follows request text and the text of a reqwest HTTP
+    response into a SQL statement. It recognizes destructured string
+    extractors, Actix's `HttpRequest::query_string()`, string concatenation
+    and simple `format!` interpolation in the same function.
+  - >-
+    For rusqlite, mysql and mysql_async, Skylos checks recognized connection
+    methods. It also tracks prepared statements until execution and rusqlite
+    row iterators until consumption. For SQLx, it follows dynamic queries,
+    raw SQL and `QueryBuilder::push` through execution. Bound placeholders
+    and `push_bind` keep data separate from the SQL text.
+  - >-
+    An async query needs a visible poll, such as `.await`, and a SQLx
+    `fetch` stream needs a consumer. SQL prepared and discarded in a local
+    variable stays quiet. Calls inside closures or nested async blocks and
+    database wrappers outside the source file can require separate analysis.
 
 source_refs:
+  - path: skylos/visitors/languages/rust/danger.py
+    symbol: "def sql_result"
+    note: Emits the Rust finding at execution.
+  - path: skylos/visitors/languages/rust/sql.py
+    symbol: "def sqlx_execution"
+    note: Tracks SQLx futures and streams before execution.
   - path: skylos/rules/danger/danger_sql/registered_sql.py
     symbol: "def registered_sql_structure"
     note: proves source-owned registration and exact worker dispatch.

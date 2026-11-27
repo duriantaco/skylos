@@ -2,6 +2,9 @@
 
 This benchmark suite measures deterministic Skylos security-analysis behavior against labeled fixtures.
 
+The [Rust security benchmark](rust_coverage/README.md) records labeled detection
+and noise results, published fixture comparisons, and scans of 23 pinned repositories.
+
 The [registered SQLite worker replay](real_repo_scores/2026-11-25-registered-sql/README.md)
 records same-commit PyLoad source context, an independent blind pair, and
 security-wide regression comparisons on two pinned scanner baselines.

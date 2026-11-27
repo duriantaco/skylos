@@ -7495,6 +7495,37 @@ class Skylos:
         analysis_errors, outside_diff_warnings = _split_outside_diff_analysis_errors(
             analysis_errors, changed_files
         )
+        if (
+            enable_danger
+            and self._rust_project is not None
+            and "SKY-D216" not in project_ignore
+        ):
+            from skylos.visitors.languages.rust.project_security import (
+                sibling_http_findings,
+            )
+
+            selected = {
+                str(file)
+                for _, _, _, file, _, cfg in file_contexts
+                if str(file).endswith(".rs") and "SKY-D216" not in cfg.get("ignore", ())
+            }
+            existing = {
+                (row.get("file"), row.get("line"))
+                for row in all_dangers
+                if row.get("rule_id") == "SKY-D216"
+            }
+            _extend_unsuppressed_danger_findings(
+                (
+                    row
+                    for row in sibling_http_findings(self._rust_project, selected)
+                    if (row["file"], row["line"]) not in existing
+                ),
+                project_ignore=project_ignore,
+                per_file_ignore_lines=per_file_ignore_lines,
+                per_file_ignore_rules=per_file_ignore_rules,
+                all_dangers=all_dangers,
+                all_suppressed=all_suppressed,
+            )
         if enable_danger and all_dangers:
             if self._rust_project is not None:
                 from skylos.visitors.languages.rust.danger import drop_non_unix_permission_reviews

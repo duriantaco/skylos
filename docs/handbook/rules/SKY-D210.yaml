@@ -141,6 +141,26 @@ more_examples:
         This is a test helper: the file imports `testing` and takes a
         `testing.TB`. The Go engine treats such files like tests and does not
         report `InsecureSkipVerify` there.
+  - flagged:
+      language: rust
+      filename: src/client.rs
+      expect_line: 4
+      code: |
+        use curl::easy::Easy;
+
+        pub fn configure(client: &mut Easy) -> Result<(), curl::Error> {
+            client.ssl_verify_peer(false)
+        }
+    not_flagged:
+      language: rust
+      filename: src/client.rs
+      code: |
+        use curl::easy::Easy;
+
+        pub fn configure(client: &mut Easy) -> Result<(), curl::Error> {
+            client.ssl_verify_peer(true)
+        }
+      why: The curl client checks the server's certificate chain.
 
 how_skylos_decides:
   - >-
@@ -174,9 +194,19 @@ how_skylos_decides:
     helpers that import `testing` and take a `testing.TB`, `*testing.T`, `B`,
     `F` or `M`. `_test.go` files are not scanned by the Go engine.
   - >-
-    In Rust it reports `danger_accept_invalid_certs(true)` and
-    `danger_accept_invalid_hostnames(true)` (reqwest, native-tls), openssl
-    `set_verify(SslVerifyMode::NONE)`, and an `impl ServerCertVerifier` from
+    In Rust it checks reqwest and native-tls builders for
+    `danger_accept_invalid_certs(true)` and `danger_accept_invalid_hostnames(true)`,
+    including reqwest's newer `tls_danger_accept_invalid_*` names. On curl
+    `Easy` and `Easy2` handles, `ssl_verify_peer(false)` disables certificate
+    chain checks and `ssl_verify_host(false)` disables hostname checks. The
+    scanner recognizes literals, local Boolean branches and direct same-file calls
+    with a disabling argument. It also reports when a supported filesystem or
+    standard-input check can disable verification. The message distinguishes
+    a possible setting from one known to disable the check. An opaque
+    configuration switch or unrelated receiver stays quiet.
+  - >-
+    It also detects openssl `set_verify(SslVerifyMode::NONE)` and an
+    `impl ServerCertVerifier` from
     rustls whose `verify_server_cert` does nothing but return
     `Ok(ServerCertVerified::assertion())`, however it is installed
     (`with_custom_certificate_verifier`, `set_certificate_verifier`). A
@@ -207,6 +237,8 @@ source_refs:
     symbol: "def certificate_verifier(self, node, state)"
   - path: skylos/visitors/languages/rust/danger.py
     symbol: "def tls_off(self, node, message, state)"
+  - path: skylos/visitors/languages/rust/tls.py
+    symbol: "def setting(kind, method)"
 
 fix:
   explanation: >-

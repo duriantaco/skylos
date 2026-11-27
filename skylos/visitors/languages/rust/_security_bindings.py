@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .sensitive import PasswordWrite
 
 
 @dataclass(frozen=True)
@@ -13,6 +17,8 @@ class Value:
     api: str | None = None
     guarded_api: tuple[frozenset[tuple[str, ...]], str] | None = None
     literal: str | None = None
+    network_read_statement: int | None = None
+    interpolated_request_pattern: bool = False
     canonical: bool = False
     contained: bool = False
     shell: bool = False
@@ -24,6 +30,18 @@ class Value:
     # For a URL string: the part that chooses the host. ``None`` means the
     # whole value; a value without sources means a literal fixed the host.
     host: Value | None = None
+    # A local async helper can send several requests and return a separate
+    # value. Its sends take effect when a caller actually polls its future.
+    pending_http: tuple[tuple[str, Value], ...] = ()
+    awaited: Value | None = None
+    local_function: int | None = None
+    # A verified password write records only bind positions and secret exposure.
+    password_write: PasswordWrite | None = None
+    # QueryBuilder::reset restores exactly the SQL passed to its constructor.
+    sql_initial_sources: frozenset[str] = frozenset()
+    cookie_secure: bool | None = None
+    http_transport: str | None = None
+    secret_in_url: bool = False
 
     @property
     def real_sources(self):
@@ -42,6 +60,7 @@ class Value:
 
 SYMBOLIC = "param#"
 REQUEST = "request:"
+REQUEST_TEXT = "rust_request_string"
 UNKNOWN = Value()
 
 
@@ -50,6 +69,8 @@ def joined(values):
     if not values:
         return UNKNOWN
     first = values[0]
+    if len(values) == 1:
+        return first
     items = first.items if all(v.items == first.items for v in values) else ()
     if not items and any(v.items for v in values):
         items = (
@@ -61,6 +82,10 @@ def joined(values):
     sourced = [v.cleared for v in values if v.sources]
     return Value(
         sources=frozenset().union(*(v.sources for v in values)),
+        password_write=first.password_write
+        if all(v.password_write == first.password_write for v in values)
+        else None,
+        sql_initial_sources=frozenset().union(*(v.sql_initial_sources for v in values)),
         return_sources=frozenset().union(*(v.return_sources for v in values)),
         cleared=frozenset.intersection(*sourced) if sourced else frozenset(),
         host=joined([v.host for v in values])
@@ -71,14 +96,68 @@ def joined(values):
         guarded_api=first.guarded_api
         if all(v.guarded_api == first.guarded_api for v in values)
         else None,
+        local_function=first.local_function
+        if all(v.local_function == first.local_function for v in values)
+        else None,
+        pending_http=tuple(
+            dict.fromkeys(effect for v in values for effect in v.pending_http)
+        )
+        if any(v.pending_http for v in values)
+        else (),
+        cookie_secure=first.cookie_secure
+        if all(v.cookie_secure == first.cookie_secure for v in values)
+        else None,
+        http_transport=first.http_transport
+        if all(v.http_transport == first.http_transport for v in values)
+        else None,
+        secret_in_url=all(v.secret_in_url for v in values),
+        awaited=joined(v.awaited for v in values)
+        if all(v.awaited is not None for v in values)
+        else None,
         literal=first.literal
         if all(v.literal == first.literal for v in values)
         else None,
+        network_read_statement=first.network_read_statement
+        if all(v.network_read_statement == first.network_read_statement for v in values)
+        else None,
+        interpolated_request_pattern=all(
+            v.interpolated_request_pattern for v in values
+        ),
         canonical=all(v.canonical for v in values),
         contained=all(v.contained for v in values),
         shell=any(v.shell for v in values),
         shell_switch=any(v.shell_switch for v in values),
         items=items,
+    )
+
+
+def bind_http_return(template, function_key, arguments):
+    """Replace formal destination parameters in a helper's returned HTTP value."""
+    prefix = f"{SYMBOLIC}{function_key}#"
+    sources = []
+    for label in template.sources:
+        if label.startswith(prefix):
+            index = int(label[len(prefix) :])
+            if index < len(arguments):
+                value = arguments[index]
+                sources.append(value.host if value.host is not None else value)
+        elif not label.startswith("parameter:"):
+            sources.append(Value(sources=frozenset({label})))
+    bound = joined(sources)
+    return replace(
+        template,
+        sources=bound.sources,
+        cleared=template.cleared | bound.cleared,
+        host=bind_http_return(template.host, function_key, arguments)
+        if template.host is not None
+        else None,
+        pending_http=tuple(
+            (via, bind_http_return(value, function_key, arguments))
+            for via, value in template.pending_http
+        ),
+        awaited=bind_http_return(template.awaited, function_key, arguments)
+        if template.awaited is not None
+        else None,
     )
 
 
@@ -92,6 +171,7 @@ KNOWN_CRATES = frozenset(
         "axum",
         "axum_extra",
         "actix_web",
+        "cookie",
         "awc",
         "rocket",
         "hyper",
@@ -116,12 +196,46 @@ KNOWN_CRATES = frozenset(
         "askama_escape",
         "ammonia",
         "rustls",
+        "rusqlite",
+        "sqlx",
+        "mysql",
+        "mysql_async",
+        "futures",
+        "futures_util",
+        "tokio_stream",
         "tokio_rustls",
         "native_tls",
+        "curl",
         "tokio_native_tls",
         "openssl",
+        "regex",
+        "fancy_regex",
+        "jsonwebtoken",
+        "secrecy",
+        "serde_json",
+        "log",
+        "tracing",
+        "md5",
+        "digest",
+        "aes_gcm",
+        "aead",
+        "cbc",
+        "des",
+        "cipher",
+        "sha1",
     }
 )
+
+
+class _ValueScope(dict):
+    """Value bindings can coexist with a crate or import in Rust's type namespace."""
+
+    def __init__(self, frame):
+        super().__init__(frame)
+        self.type_names = dict(frame.type_names) if isinstance(frame, _ValueScope) else {}
+
+    def copy(self):
+        return _ValueScope(self)
 
 
 class State:
@@ -130,7 +244,7 @@ class State:
         self.conditions = conditions
 
     def copy(self):
-        return State([dict(frame) for frame in self.frames], self.conditions)
+        return State([frame.copy() for frame in self.frames], self.conditions)
 
     def get(self, name):
         for frame in reversed(self.frames):
@@ -144,6 +258,8 @@ class State:
                 return value
         if name in KNOWN_CRATES:
             return Value(api=name)
+        if name == "Vec":
+            return Value(api="std::vec::Vec")
         if name == "String":
             return Value(api="std::string::String")
         if name == "Box":
@@ -155,6 +271,26 @@ class State:
     def bind(self, name, value):
         self.frames[-1][name] = value
 
+    def bind_value(self, name, value):
+        # Cookie APIs are resolved from qualified type paths. A same-name let
+        # binding or function parameter changes only the value namespace.
+        original = self.path_root(name)
+        api = original.guarded_api[1] if original.guarded_api else original.api
+        if api and api.partition("::")[0] in {"cookie", "actix_web", "axum_extra"}:
+            frame = self.frames[-1]
+            if not isinstance(frame, _ValueScope):
+                frame = self.frames[-1] = _ValueScope(frame)
+            frame.type_names[name] = original
+        self.bind(name, value)
+
+    def path_root(self, name):
+        for frame in reversed(self.frames):
+            if name in frame:
+                if isinstance(frame, _ValueScope) and name in frame.type_names:
+                    return frame.type_names[name]
+                return frame[name]
+        return self.get(name)
+
     def assign(self, name, value):
         for frame in reversed(self.frames):
             if name in frame:
@@ -165,8 +301,28 @@ class State:
     def resolve(self, path):
         if path.startswith(("::std::", "::tokio::", "::async_std::")):
             return path[2:]
+        if path.startswith(
+            (
+                "::reqwest::",
+                "::reqwest_middleware::",
+                "::native_tls::",
+                "::curl::",
+                "::rusqlite::",
+                "::sqlx::",
+                "::mysql::",
+                "::mysql_async::",
+            )
+        ):
+            root = path.split("::", 2)[1]
+            if not any(root in frame for frame in self.frames):
+                return path[2:]
         parts = path.split("::")
-        base = self.get(parts[0]).api
+        root = self.path_root(parts[0]) if len(parts) > 1 else self.get(parts[0])
+        if root.guarded_api:
+            guards, guarded_api = root.guarded_api
+            base = guarded_api if guards <= self.conditions else None
+        else:
+            base = root.api
         return "::".join([base, *parts[1:]]) if base else None
 
     def merge(self, branches):
