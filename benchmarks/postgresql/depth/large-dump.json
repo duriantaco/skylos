@@ -1,0 +1,32 @@
+{
+  "purpose": "Independent parser-only holdout, frozen after the Pagila size-limit result and before the revised implementation was run. The complete unedited source has eight literal PostgreSQL text COPY sections with exact terminators; 7,797 bytes lie outside the data rows. Expected coverage is checked. No defect labels were assigned.",
+  "rules": [
+    "SKY-Q503",
+    "SKY-Q504",
+    "SKY-Q505",
+    "SKY-Q506",
+    "SKY-Q507",
+    "SKY-Q508",
+    "SKY-Q509",
+    "SKY-Q510"
+  ],
+  "sources": [
+    {
+      "name": "lego.sql",
+      "repo": "neondatabase/postgres-sample-dbs",
+      "commit": "b54cb67534bf20775803b181b7a1c6f573422161",
+      "path": "lego.sql",
+      "sha256": "3d89b1f0f0bd3d3e41512bc36ec6ff96f5abe18154be53f4a56daefedc6fe7ac",
+      "blob_sha1": "4e5e8c2a6aaf42250ab21661e9594f8ec5ef9163"
+    }
+  ],
+  "cases": [
+    {
+      "name": "neon/lego.sql",
+      "dialect": "postgresql",
+      "source": "lego.sql",
+      "coverage": "checked"
+    }
+  ],
+  "labels": []
+}

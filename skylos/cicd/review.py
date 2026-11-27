@@ -1680,6 +1680,10 @@ def _review_only_lines(groups: dict[tuple[str, str], list[dict]]) -> list[str]:
             reason = "Review the intended Unix file permissions"
         elif kind == "postgresql_search_path":
             reason = "Review the routine's PostgreSQL search path"
+        elif kind == "postgresql_public_grant":
+            reason = "Review the privileges granted to every PostgreSQL role"
+        elif kind == "postgresql_login_bypassrls":
+            reason = "Review the login role's row-level security permissions"
         examples = []
         for row in rows[:3]:
             location = f"{os.path.basename(row['file'])}:{row['line']}"

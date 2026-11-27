@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
+from array import array
 from bisect import bisect_right
+from collections import defaultdict
 from dataclasses import dataclass
 
 try:
@@ -10,6 +13,14 @@ try:
     from pglast.parser import ParseError
 except ImportError:
     ast = None
+else:
+    from .postgresql_migrations import scan_migrations
+    from .postgresql_privileges import check_privileges
+    from .postgresql_queries import check_query_node
+
+
+# PostgreSQL boolean settings accept unambiguous prefixes. "o" is ambiguous.
+_TRUE_GUC_VALUES = frozenset({"1", "on", "y", "ye", "yes", "t", "tr", "tru", "true"})
 
 
 @dataclass(frozen=True)
@@ -119,8 +130,8 @@ def _definer_option(stmt):
 def _scan_statement(stmt, report, null_equals_enabled):
     pending = [(stmt, None, None)]
     definitions = {}
-    used = set()
-    has_effect = set()
+    dependencies = defaultdict(set)
+    roots = {None}  # The outer statement always consumes its inputs.
     while pending:
         node, scope, owner = pending.pop()
         if isinstance(node, tuple):
@@ -128,15 +139,16 @@ def _scan_statement(stmt, report, null_equals_enabled):
             continue
         if not isinstance(node, ast.Node):
             continue
+        check_query_node(node, report)
         if isinstance(node, ast.RangeVar) and scope and not node.schemaname:
             referenced = scope.resolve(node.relname)
             if referenced is not None and referenced != owner:
-                used.add(referenced)
+                dependencies[owner].add(referenced)
         if owner is not None and isinstance(
             node, (ast.FuncCall, ast.LockingClause, ast.IntoClause)
         ):
             # Function volatility and user-defined side effects need a database catalog.
-            has_effect.add(owner)
+            roots.add(owner)
         if isinstance(node, (ast.CreateFunctionStmt, ast.AlterFunctionStmt)):
             option = _definer_option(node)
             if option:
@@ -160,6 +172,10 @@ def _scan_statement(stmt, report, null_equals_enabled):
                 )
                 if isinstance(cte.ctequery, ast.SelectStmt):
                     definitions[cte.location] = cte.ctename
+                else:
+                    roots.add(
+                        cte.location
+                    )  # A data-modifying CTE can run even if unread.
                 pending.append((cte.ctequery, body_scope, cte.location))
             scope = full_scope
         for field in node:
@@ -170,6 +186,11 @@ def _scan_statement(stmt, report, null_equals_enabled):
             ):
                 # DML always targets an actual relation, even when a CTE shares its name.
                 continue
+            if (field == "lockedRels" and isinstance(node, ast.LockingClause)) or (
+                field == "rel" and isinstance(node, ast.IntoClause)
+            ):
+                # Lock targets name FROM aliases. INTO names a destination table.
+                continue
             value = getattr(node, field)
             if isinstance(value, (ast.Node, tuple)):
                 pending.append((value, scope, owner))
@@ -179,13 +200,20 @@ def _scan_statement(stmt, report, null_equals_enabled):
                 or (field == "condition" and isinstance(node, ast.MergeWhenClause))
             ):
                 _check_filter(value, report, null_equals_enabled)
+    live = set(roots)
+    pending = list(roots)
+    while pending:
+        for dependency in dependencies.get(pending.pop(), ()):
+            if dependency not in live:
+                live.add(dependency)
+                pending.append(dependency)
     for location, name in definitions.items():
-        if location not in used and location not in has_effect:
+        if location not in live:
             report(
                 location,
                 "SKY-Q503",
                 "LOW",
-                f"Read-only CTE '{name}' is never referenced.",
+                f"Read-only CTE '{name}' does not feed the statement or a potentially effectful CTE.",
             )
 
 
@@ -195,23 +223,17 @@ def scan_postgresql(source: str, filename: str) -> tuple[list[dict], str | None]
         return [], "PostgreSQL parser unavailable. Install skylos[postgres]."
     if "\x00" in source:
         return [], "PostgreSQL source contains a NUL character."
-    try:
-        source_bytes = len(source.encode("utf-8"))
-    except UnicodeEncodeError:
-        return [], "PostgreSQL source is not valid UTF-8."
-    if source_bytes > 4_000_000:
-        return [], "PostgreSQL file exceeds the 4 MB parse limit."
-    from .postgresql_script import PsqlScriptError, parse_sessions
+    from .postgresql_script import PsqlScriptError, parse_script
 
     try:
-        sessions = parse_sessions(source)
+        source, sessions = parse_script(source)
     except PsqlScriptError as exc:
         return [], str(exc)
     except (ParseError, RecursionError) as exc:
         return [], f"PostgreSQL parse error: {exc}"
 
     # pglast's Python AST translates PostgreSQL byte positions to character offsets.
-    newlines = [i for i, char in enumerate(source) if char == "\n"]
+    newlines = array("I", (m.end() - 1 for m in re.finditer(r"\r\n?|\n", source)))
     findings = []
 
     def report(offset, rule_id, severity, message):
@@ -226,25 +248,32 @@ def scan_postgresql(source: str, filename: str) -> tuple[list[dict], str | None]
         )
 
     for session_offset, statements in sessions:
+        scan_migrations(statements, report)
         may_rewrite_null_equals = False
         for raw in statements:
             stmt = raw.stmt
             if (
                 isinstance(stmt, ast.VariableSetStmt)
-                and stmt.name == "transform_null_equals"
+                and stmt.name
+                and stmt.name.lower() == "transform_null_equals"
             ):
                 args = stmt.args or ()
-                value = args[0].val if args else None
+                value = (
+                    args[0].val
+                    if len(args) == 1 and isinstance(args[0], ast.A_Const)
+                    else None
+                )
                 # A transaction rollback or savepoint can restore a previous setting.
                 # Stay conservative once the script enables nonstandard NULL equality.
                 may_rewrite_null_equals |= (
                     stmt.kind == enums.VariableSetKind.VAR_SET_CURRENT
                     or (
                         isinstance(value, ast.String)
-                        and value.sval.lower() in {"on", "yes", "true", "1"}
+                        and value.sval.lower() in _TRUE_GUC_VALUES
                     )
                     or (isinstance(value, ast.Integer) and value.ival == 1)
                 )
+            check_privileges(stmt, report)
             _scan_statement(stmt, report, may_rewrite_null_equals)
     findings.sort(key=lambda finding: (finding["line"], finding["rule_id"]))
     return findings, None

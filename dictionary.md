@@ -3516,7 +3516,8 @@ Run `skylos . --quality --danger` with the `postgres` extra. Set
 Prisma migration lock in the scanned migrations tree. SQL files with uncertain
 dialects or parse errors appear in `analysis_summary.sql_analysis`.
 
-- `SKY-Q503` flags an unreferenced read-only SELECT common table expression.
+- `SKY-Q503` flags a read-only SELECT common table expression unused by the statement
+  or by a potentially effectful CTE. It follows references through CTE chains.
   A data-changing CTE can still execute when its output is unread.
 - `SKY-Q504` flags ordinary equality or inequality against a literal NULL
   in supported PostgreSQL filters. Use IS NULL or IS NOT NULL.
@@ -3527,5 +3528,15 @@ dialects or parse errors appear in `analysis_summary.sql_analysis`.
   fixed local search path. It also checks an ALTER that explicitly selects
   SECURITY DEFINER and removes the path in the same statement. Verify the
   effective role and schema permissions before changing a routine.
+
+- `SKY-Q506` flags a concurrent index build or drop within an explicit transaction.
+- `SKY-Q507` flags a concurrent index drop that names several indexes or uses CASCADE.
+- `SKY-Q508` flags an explicit foreign key with unequal column counts.
+- `SKY-Q509` flags a CASE arm shadowed by a preceding arm.
+- `SKY-Q510` flags COUNT of a CASE returning a non-null literal for every branch and ELSE.
+- `SKY-D418` flags schema CREATE privileges granted to PUBLIC.
+- `SKY-D419` flags a role configured to log in and bypass row-level security.
+- `SKY-D420` flags table or column write privileges granted to PUBLIC.
+  The PUBLIC grant checks also cover default privileges on future objects.
 
 These are advisory findings for review.

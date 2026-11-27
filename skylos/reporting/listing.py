@@ -237,8 +237,16 @@ def is_unproven_source_review(finding):
     return False
 
 
-POSTGRESQL_QUALITY_ADVISORIES = frozenset({"SKY-Q503", "SKY-Q504", "SKY-Q505"})
-POSTGRESQL_SEARCH_PATH_RULE = "SKY-D417"
+POSTGRESQL_QUALITY_ADVISORIES = frozenset({
+    "SKY-Q503", "SKY-Q504", "SKY-Q505", "SKY-Q506", "SKY-Q507",
+    "SKY-Q508", "SKY-Q509", "SKY-Q510",
+})
+POSTGRESQL_SECURITY_REVIEWS = {
+    "SKY-D417": "postgresql_search_path",
+    "SKY-D418": "postgresql_public_grant",
+    "SKY-D419": "postgresql_login_bypassrls",
+    "SKY-D420": "postgresql_public_grant",
+}
 
 NONBLOCKING_REVIEW_RULES = frozenset({"SKY-D324", "SKY-D325"})
 
@@ -278,14 +286,17 @@ def is_nonblocking_review(finding):
 
 def is_gate_exempt_review(finding):
     """Review evidence that stays in the report without failing a gate."""
-    if isinstance(finding, Mapping) and finding.get("rule_id") == POSTGRESQL_SEARCH_PATH_RULE:
+    if not isinstance(finding, Mapping) or not isinstance(finding.get("rule_id"), str):
+        return False
+    rule_id = finding["rule_id"]
+    if rule_id in POSTGRESQL_SECURITY_REVIEWS:
         item = finding.get("review_item")
         return (
             isinstance(item, Mapping)
-            and item.get("kind") == "postgresql_search_path"
+            and item.get("kind") == POSTGRESQL_SECURITY_REVIEWS[rule_id]
             and item.get("blocking") is False
         )
-    if isinstance(finding, Mapping) and finding.get("rule_id") in ("SKY-D415", "SKY-D416"):
+    if rule_id in ("SKY-D415", "SKY-D416"):
         item = finding.get("review_item")
         metadata = finding.get("metadata")
         evidence = metadata.get("security_evidence") if isinstance(metadata, Mapping) else None

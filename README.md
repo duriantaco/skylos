@@ -284,15 +284,17 @@ expected answers and tool calls, use `skylos agent test`. See
 | Kotlin | Partial | Partial | No |
 | Swift | Partial | No | No |
 | Shell | No | Partial | No |
-| PostgreSQL SQL files | Unused SELECT CTEs | Partial | Partial |
+| PostgreSQL SQL files | Unused CTE chains and unreachable CASE arms | Routine search paths, grants, login roles | Query filters, counts, index migrations and foreign keys |
 
 - Python has the deepest coverage.
 - Go needs the native `skylos-go` engine. It ships in the PyPI wheels for
   Linux, macOS and Windows; elsewhere `skylos doctor` prints the build command.
 - PostgreSQL needs `pip install "skylos[postgres]"`. Use `--quality --danger`
   and set the database dialect in the SQL folder or use a Prisma migration lock.
-  Skylos reports unused read-only CTEs, two NULL filter mistakes, and privileged
-  functions or procedures that inherit a search path. All four checks are advisory.
+  Eight query and migration checks cover unused CTE chains, unreachable CASE arms,
+  NULL filters, conditional counts, concurrent indexes and foreign keys. Four
+  security checks review privileged routines, PUBLIC grants and login roles.
+  Skylos can also read plain-text dump scripts. All 12 checks are advisory.
   See the [PostgreSQL guide](docs/handbook/intro/03-languages.md#checking-postgresql-scripts)
   for setup and the [benchmark](benchmarks/postgresql/README.md) for measured coverage.
 - Dart needs `pip install "skylos[dart]"`.

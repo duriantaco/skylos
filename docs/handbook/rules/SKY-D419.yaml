@@ -1,0 +1,63 @@
+id: SKY-D419
+title: PostgreSQL login role bypasses row-level security
+family: security
+severity: MEDIUM
+languages: [PostgreSQL]
+gate:
+  full: listed
+  note: This PostgreSQL finding is report-only.
+
+what_it_is: >-
+  One role declaration enables login together with BYPASSRLS. CREATE USER supplies
+  LOGIN by default.
+why_it_matters: >-
+  An account with both attributes can log in and bypass row-level policies on
+  relations it can access. Other object privileges still apply.
+how_skylos_decides:
+  - >-
+    Skylos checks CREATE ROLE, CREATE USER and ALTER ROLE or USER.
+  - >-
+    An ALTER must set both attributes in the same statement, because earlier
+    settings are unknown.
+source_refs:
+  - path: skylos/visitors/languages/postgresql_privileges.py
+    symbol: 'def check_privileges('
+
+flagged_example:
+  language: sql
+  files:
+    - filename: migration.sql
+      code: |
+        CREATE USER reporting BYPASSRLS;
+    - &config
+      filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.sql]
+        dialect = "postgresql"
+  expect_file: migration.sql
+  expect_line: 1
+not_flagged_example:
+  language: sql
+  files:
+    - filename: migration.sql
+      code: &fixed |
+        CREATE USER reporting NOBYPASSRLS;
+    - *config
+  why: >-
+    Decide whether this account should be subject to the same row-level policies
+    as ordinary application users.
+fix:
+  explanation: >-
+    Decide whether this account should be subject to the same row-level policies
+    as ordinary application users.
+  filename: migration.sql
+  language: sql
+  code: *fixed
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A maintenance or backup account may intentionally bypass row-level security.
+  suppress:
+    - text: Review the statement in the context of its migration.
+related: [SKY-D420]

@@ -6,7 +6,9 @@ from pathlib import Path
 
 import tomllib
 
-from skylos.core.safe_cache_io import read_project_text_no_symlink
+from skylos.core.safe_cache_io import read_project_text_no_symlink, strip_utf8_bom
+
+POSTGRES_DUMP_BYTE_LIMIT = 16_000_000
 
 _ALIASES = {"postgres": "postgresql", "sqlserver": "tsql", "mssql": "tsql"}
 
@@ -61,17 +63,17 @@ def analyze_sql_file(file, cfg, project_root):
         return [], {**coverage, "status": "unsupported_dialect"}
 
     source = read_project_text_no_symlink(
-        root, path, max_bytes=4_000_000, encoding="utf-8-sig"
+        root, path, max_bytes=POSTGRES_DUMP_BYTE_LIMIT, encoding="utf-8", newline=""
     )
     if source is None:
         return [], {
             **coverage,
             "status": "unparsed",
-            "reason": "Unreadable UTF-8 SQL or file exceeds 4 MB.",
+            "reason": "Unreadable UTF-8 SQL or file exceeds the 16 MB input limit.",
         }
     from skylos.visitors.languages.postgresql import scan_postgresql
 
-    rows, error = scan_postgresql(source, str(file))
+    rows, error = scan_postgresql(strip_utf8_bom(source), str(file))
     if error:
         return [], {**coverage, "status": "unparsed", "reason": error}
     return rows, {**coverage, "status": "checked"}

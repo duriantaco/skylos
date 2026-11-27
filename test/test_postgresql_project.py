@@ -105,3 +105,45 @@ def test_sql_gaps_are_visible_without_masking_other_file_failures():
         {"file": "app.py", "kind": "syntax_error", "message": "Invalid Python"}
     ]
     assert analysis_coverage(report).blocking
+
+
+@pytest.mark.parametrize("quality,danger", [(True, False), (False, True), (True, True)])
+def test_deeper_postgresql_rules_use_the_requested_section(tmp_path, quality, danger):
+    pytest.importorskip("pglast")
+    write(tmp_path / "skylos.toml", '[sql]\ndialect = "postgresql"\n')
+    source = write(
+        tmp_path / "migration.sql",
+        """BEGIN;
+CREATE INDEX CONCURRENTLY by_id ON items (id);
+COMMIT;
+DROP INDEX CONCURRENTLY left_idx, right_idx;
+ALTER TABLE items ADD FOREIGN KEY (id, version) REFERENCES inventory (id);
+SELECT CASE WHEN TRUE THEN 1 WHEN id = 2 THEN 2 END FROM items;
+SELECT count(CASE WHEN enabled THEN 1 ELSE 0 END) FROM items;
+GRANT CREATE ON SCHEMA app TO PUBLIC;
+CREATE USER maintenance BYPASSRLS;
+ALTER DEFAULT PRIVILEGES GRANT UPDATE ON TABLES TO PUBLIC;
+""",
+    )
+    report = json.loads(
+        analyze(str(tmp_path), enable_quality=quality, enable_danger=danger)
+    )
+
+    def sql_rows(key):
+        return [row for row in report.get(key, []) if Path(row["file"]) == source]
+
+    assert [(r["rule_id"], r["line"]) for r in sql_rows("quality")] == (
+        [
+            ("SKY-Q506", 2),
+            ("SKY-Q507", 4),
+            ("SKY-Q508", 5),
+            ("SKY-Q509", 6),
+            ("SKY-Q510", 7),
+        ]
+        if quality
+        else []
+    )
+    assert [(r["rule_id"], r["line"]) for r in sql_rows("danger")] == (
+        [("SKY-D418", 8), ("SKY-D419", 9), ("SKY-D420", 10)] if danger else []
+    )
+    assert all(row["review_item"]["blocking"] is False for row in sql_rows("danger"))

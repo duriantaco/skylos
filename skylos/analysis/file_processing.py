@@ -587,6 +587,7 @@ def _scan_config_only_file(_file, cfg, **_options):
 
 def _scan_sql_file(file, cfg, *, enable_quality_rules, enable_danger_rules, project_root=None):
     from skylos.analysis.sql_files import analyze_sql_file
+    from skylos.reporting.listing import POSTGRESQL_SECURITY_REVIEWS
 
     result = _scan_config_only_file(file, cfg)
     if not (enable_quality_rules or enable_danger_rules):
@@ -597,9 +598,9 @@ def _scan_sql_file(file, cfg, *, enable_quality_rules, enable_danger_rules, proj
         rule_id = finding["rule_id"]
         if rule_id in cfg.get("ignore", ()):
             continue
-        if rule_id == "SKY-D417":
+        if rule_id in POSTGRESQL_SECURITY_REVIEWS:
             if enable_danger_rules:
-                finding["review_item"] = {"kind": "postgresql_search_path", "blocking": False}
+                finding["review_item"] = {"kind": POSTGRESQL_SECURITY_REVIEWS[rule_id], "blocking": False}
                 result[7].append(finding)
         elif enable_quality_rules:
             result[6].append(finding)

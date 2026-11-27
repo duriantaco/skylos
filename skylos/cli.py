@@ -891,12 +891,12 @@ LOCAL_PRECOMMIT_ADVISORY_QUALITY_RULE_IDS = {"SKY-Q802", "SKY-Q803"}
 def _precommit_blocks_finding(finding: dict) -> bool:
     from skylos.reporting.listing import (
         POSTGRESQL_QUALITY_ADVISORIES,
-        POSTGRESQL_SEARCH_PATH_RULE,
+        POSTGRESQL_SECURITY_REVIEWS,
     )
 
     category = str(finding.get("category", "")).lower()
     rule_id = str(finding.get("rule_id", ""))
-    if category == "security" and rule_id == POSTGRESQL_SEARCH_PATH_RULE:
+    if category == "security" and rule_id in POSTGRESQL_SECURITY_REVIEWS:
         return False
     if category != "quality":
         return True

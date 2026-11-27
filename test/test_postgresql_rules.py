@@ -110,3 +110,23 @@ SELECT 1 WHERE x = NULL;"""
 def test_definer_scopes(option, flag):
     sql = f"CREATE FUNCTION f() RETURNS integer\n{option}\nLANGUAGE sql AS 'SELECT 1';"
     assert check(sql) == ([("SKY-D417", 2)] if flag else [])
+
+
+@requires_parser
+@pytest.mark.parametrize(
+    "value", ["t", "tr", "'tRu'", "TRUE", "y", "'Ye'", "YES", "on", "1"]
+)
+def test_true_guc_prefixes_only_suppress_null_equality(value):
+    sql = f"""SET "Transform_Null_Equals" TO {value};
+SELECT id FROM t WHERE id = NULL;
+SELECT id FROM t WHERE id <> NULL;"""
+    assert check(sql) == [("SKY-Q504", 3)]
+
+
+@requires_parser
+@pytest.mark.parametrize(
+    "value", ["o", "'O'", "false", "of", "n", "0", "'truth'", "'on', 'off'"]
+)
+def test_false_ambiguous_and_invalid_guc_values_preserve_null_review(value):
+    sql = f"SET transform_null_equals TO {value};\nSELECT 1 FROM t WHERE id = NULL;"
+    assert check(sql) == [("SKY-Q504", 2)]

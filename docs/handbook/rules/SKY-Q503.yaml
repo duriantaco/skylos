@@ -5,7 +5,7 @@ severity: LOW
 languages: [PostgreSQL]
 gate:
   full: listed
-  note: This initial PostgreSQL check is report-only.
+  note: This PostgreSQL check is report-only.
 
 what_it_is: >-
   A WITH clause names a read-only query whose result the statement never
@@ -20,12 +20,16 @@ how_skylos_decides:
     `dialect = "postgresql"` under `[tool.skylos.sql]` in pyproject.toml
     for the folder containing the queries.
   - >-
-    Skylos parses the statement and checks references to names introduced
-    by WITH. A data-changing CTE can perform writes even when its result
-    goes unread.
+    Skylos follows references between CTEs and starts from the outer statement.
+    If only an unused CTE reads another CTE, both are reported. Nested WITH
+    scopes and recursive references are tracked separately.
+  - >-
+    A data-changing CTE can write rows even when its result goes unread.
+    Skylos also keeps CTEs containing function calls or row locks and the
+    CTEs they read.
 source_refs:
   - path: skylos/visitors/languages/postgresql.py
-    symbol: 'def scan_postgresql('
+    symbol: 'def _scan_statement('
 
 flagged_example:
   language: sql

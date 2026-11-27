@@ -1,0 +1,66 @@
+id: SKY-Q508
+title: Mismatched PostgreSQL foreign key column counts
+family: quality
+severity: MEDIUM
+languages: [PostgreSQL]
+gate:
+  full: listed
+  note: This PostgreSQL finding is report-only.
+
+what_it_is: >-
+  A foreign key lists a different number of columns on each side of REFERENCES.
+  PostgreSQL needs a target column for each referencing column.
+why_it_matters: >-
+  The migration cannot install the intended constraint, leaving later changes in
+  the migration unapplied.
+how_skylos_decides:
+  - >-
+    Skylos compares explicit column lists in CREATE TABLE and ALTER TABLE.
+  - >-
+    An inline column REFERENCES has one local column. An omitted target list
+    depends on the referenced primary key.
+source_refs:
+  - path: skylos/visitors/languages/postgresql_migrations.py
+    symbol: 'def scan_migrations('
+
+flagged_example:
+  language: sql
+  files:
+    - filename: migration.sql
+      code: |
+        ALTER TABLE orders ADD FOREIGN KEY (tenant_id, owner_id)
+          REFERENCES owners(id);
+    - &config
+      filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.sql]
+        dialect = "postgresql"
+  expect_file: migration.sql
+  expect_line: 1
+not_flagged_example:
+  language: sql
+  files:
+    - filename: migration.sql
+      code: &fixed |
+        ALTER TABLE orders ADD FOREIGN KEY (tenant_id, owner_id)
+          REFERENCES owners(tenant_id, id);
+    - *config
+  why: >-
+    Match each referencing column with its intended referenced column, in order.
+    Confirm the target has an eligible key.
+fix:
+  explanation: >-
+    Match each referencing column with its intended referenced column, in order.
+    Confirm the target has an eligible key.
+  filename: migration.sql
+  language: sql
+  code: *fixed
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Equal counts leave type compatibility and the existence of a matching unique
+      key for PostgreSQL to verify.
+  suppress:
+    - text: Review the statement in the context of its migration.
+related: [SKY-Q506]

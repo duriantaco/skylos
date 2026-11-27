@@ -1,0 +1,66 @@
+id: SKY-Q510
+title: PostgreSQL COUNT includes every CASE result
+family: quality
+severity: MEDIUM
+languages: [PostgreSQL]
+gate:
+  full: listed
+  note: This PostgreSQL check is report-only.
+
+what_it_is: >-
+  A CASE expression inside COUNT has a non-null value for every outcome. The
+  built-in aggregate counts every row admitted to it, including rows for
+  which the condition is false.
+why_it_matters: >-
+  A report intended to count paid orders can return the total number of
+  orders. Both numbers can look reasonable on a small sample.
+how_skylos_decides:
+  - >-
+    With --quality, Skylos looks for count or pg_catalog.count taking a
+    single CASE. Every THEN and the explicit ELSE must be a non-null literal
+    from the same family (integer, decimal, string or boolean).
+  - >-
+    Window and filtered counts can still have this issue. An absent ELSE,
+    nullable or computed results, DISTINCT and ordered counts are outside
+    this rule.
+source_refs:
+  - path: skylos/visitors/languages/postgresql_queries.py
+    symbol: 'def _check_count('
+
+flagged_example:
+  language: sql
+  files:
+    - filename: orders.sql
+      code: |
+        SELECT
+          COUNT(CASE WHEN paid THEN 1 ELSE 0 END) AS paid_orders
+        FROM orders;
+    - &config
+      filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.sql]
+        dialect = "postgresql"
+  expect_file: orders.sql
+  expect_line: 2
+not_flagged_example:
+  language: sql
+  files:
+    - filename: orders.sql
+      code: &filtered_count |
+        SELECT COUNT(*) FILTER (WHERE paid) AS paid_orders
+        FROM orders;
+    - *config
+  why: The filter admits only paid orders to the count.
+fix:
+  explanation: Put the condition in FILTER when only matching rows should count.
+  filename: orders.sql
+  language: sql
+  code: *filtered_count
+false_alarms_and_suppression:
+  misfires:
+    - An unqualified count may resolve to a user-defined overload.
+    - A query may intentionally count every row.
+  suppress:
+    - text: Check which aggregate is selected and what the report should count.
+related: [SKY-Q509]

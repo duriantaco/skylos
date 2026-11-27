@@ -1,5 +1,9 @@
 # PostgreSQL benchmark
 
+The [migration, query and script benchmark](depth/README.md) covers eight additional
+rules, CTE chains and text dumps. It compares the CLI with Squawk on shared
+transaction checks and includes pinned PostgreSQL, DuckDB and Pagila source.
+
 The [coverage expansion benchmark](expanded/README.md) compares the original
 CLI with the added checks on new labeled cases and replays the original source
 holdout.

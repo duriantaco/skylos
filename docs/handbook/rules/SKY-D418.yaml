@@ -1,0 +1,63 @@
+id: SKY-D418
+title: PostgreSQL schema creation privilege granted to PUBLIC
+family: security
+severity: MEDIUM
+languages: [PostgreSQL]
+gate:
+  full: listed
+  note: This PostgreSQL finding is report-only.
+
+what_it_is: >-
+  A GRANT gives every role permission to create objects in one or more schemas. An
+  ALTER DEFAULT PRIVILEGES grant can apply the same permission to future schemas.
+why_it_matters: >-
+  Other roles may resolve names through a schema where anyone can create objects.
+  The effective exposure depends on schema usage and the search paths in use.
+how_skylos_decides:
+  - >-
+    Skylos checks explicit CREATE and ALL grants on schemas to the PUBLIC grantee.
+  - >-
+    Grants to a named role, USAGE alone and revocations are outside this review.
+source_refs:
+  - path: skylos/visitors/languages/postgresql_privileges.py
+    symbol: 'def check_privileges('
+
+flagged_example:
+  language: sql
+  files:
+    - filename: migration.sql
+      code: |
+        GRANT CREATE ON SCHEMA app TO PUBLIC;
+    - &config
+      filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.sql]
+        dialect = "postgresql"
+  expect_file: migration.sql
+  expect_line: 1
+not_flagged_example:
+  language: sql
+  files:
+    - filename: migration.sql
+      code: &fixed |
+        GRANT CREATE ON SCHEMA app TO app_owners;
+    - *config
+  why: >-
+    Grant schema creation to the roles that manage its objects and review existing
+    grants separately.
+fix:
+  explanation: >-
+    Grant schema creation to the roles that manage its objects and review existing
+    grants separately.
+  filename: migration.sql
+  language: sql
+  code: *fixed
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A shared workspace schema may intentionally permit every role to create
+      objects.
+  suppress:
+    - text: Review the statement in the context of its migration.
+related: [SKY-D417]

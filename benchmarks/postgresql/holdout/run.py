@@ -13,6 +13,9 @@ HERE = Path(__file__).resolve().parent
 RULES = {"SKY-Q503", "SKY-Q504"}
 # Accept only the committed ground truths before following any paths they contain.
 FROZEN_MANIFESTS = {
+    "5f51c0d3645dda98350747b8c98176cee7e1b2872ed61dcf978ba401335c6b9f",
+    "db6553bf22084a499d2e6fc0bae10c5bacd56ea3f612cba3f955ee6717d94101",
+    "6051f42723ddc13c039332bbe81fce6589bae59e54ba307ac65ef01fa25c536e",
     "a04c1e0542837b8f1c2eee00e89c5d23870c4c85acd7db3acb2128d096b8f11f",
     "909f533442e0ef758652f600b1287a514a0cab50b2ead25fb1f43c383b52773f",
     "b7e2474e1442575b959605ad369c7f59192601b9b5dd432b595cec1045281942",
@@ -110,7 +113,12 @@ def score(manifest, report, project):
         "unexpected_labeled_results": unexpected,
         "unscored_labels": unscored,
         "findings_outside_labels": [
-            f for i, f in enumerate(findings) if i not in matched
+            f
+            for i, f in enumerate(findings)
+            if i not in matched and statuses[f[0]] == "checked"
+        ],
+        "findings_on_unchecked_files": [
+            f for f in findings if statuses[f[0]] != "checked"
         ],
         "coverage_counts": {
             s: sum(value == s for value in statuses.values())
@@ -123,9 +131,12 @@ def score(manifest, report, project):
 
 def compare_sqlfluff(manifest, project, executable):
     """Compare the two matching rules on the exact PostgreSQL files with labeled sites."""
-    names = {label["name"] for label in manifest["labels"]}
+    labels = [label for label in manifest["labels"] if label["rule"] in RULES]
+    names = {label["name"] for label in labels}
     selected = {
         **manifest,
+        "rules": sorted(RULES),
+        "labels": labels,
         "cases": [c for c in manifest["cases"] if c["name"] in names],
     }
     paths = [str(project / name) for name in sorted(names)]
@@ -191,9 +202,70 @@ def compare_sqlfluff(manifest, project, executable):
     return {"tool": version, **score(selected, report, project)}
 
 
+def compare_squawk(manifest, project, executable):
+    """Score Squawk's concurrent-index transaction rule at the same source lines."""
+    labels = [label for label in manifest["labels"] if label["rule"] == "SKY-Q506"]
+    names = {label["name"] for label in labels}
+    selected = {
+        **manifest,
+        "rules": ["SKY-Q506"],
+        "labels": labels,
+        "cases": [case for case in manifest["cases"] if case["name"] in names],
+    }
+    coverage = []
+    findings = []
+    # A clean temporary directory keeps repository or user migration settings out.
+    config = project.parent / "squawk.toml"
+    config.write_text("")
+    for name in sorted(names):
+        path = project / name
+        result = subprocess.run(
+            [
+                executable,
+                "--config",
+                str(config),
+                "--reporter",
+                "json",
+                "--pg-version",
+                "18.0",
+                "--no-assume-in-transaction",
+                "--stdin-filepath",
+                str(path),
+            ],
+            input=path.read_text(),
+            cwd=project.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode not in (0, 1):
+            raise RuntimeError(f"Squawk exited {result.returncode}: {result.stderr}")
+        rows = json.loads(result.stdout)
+        unparsed = any(row["rule_name"] == "syntax-error" for row in rows)
+        coverage.append(
+            {"file": str(path), "status": "unparsed" if unparsed else "checked"}
+        )
+        for row in rows:
+            if row["rule_name"] == "ban-concurrent-index-creation-in-transaction":
+                # Squawk's JSON reporter numbers lines starting at zero.
+                findings.append(
+                    {"file": str(path), "rule_id": "SKY-Q506", "line": row["line"] + 1}
+                )
+    report = {
+        "analysis_summary": {"sql_analysis": {"files": coverage}},
+        "quality": findings,
+    }
+    version = subprocess.check_output([executable, "--version"], text=True).strip()
+    return {"tool": version, **score(selected, report, project)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skylos", default="skylos")
+    parser.add_argument(
+        "--squawk",
+        help="Compare labeled concurrent-index transaction cases with Squawk",
+    )
     parser.add_argument("--manifest", type=Path, default=HERE / "manifest.json")
     parser.add_argument(
         "--danger",
@@ -216,8 +288,12 @@ def main():
     if digest not in FROZEN_MANIFESTS:
         parser.error("The PostgreSQL benchmark manifest differs from the frozen labels")
     manifest = json.loads(source)
-    if args.sqlfluff and set(manifest.get("rules", RULES)) != RULES:
-        parser.error("The SQLFluff comparison supports the Q503/Q504 source holdout")
+    if args.sqlfluff and not any(l["rule"] in RULES for l in manifest["labels"]):
+        parser.error("The SQLFluff comparison needs a labeled Q503 or Q504 site")
+    if args.squawk and not any(
+        label["rule"] == "SKY-Q506" for label in manifest["labels"]
+    ):
+        parser.error("The Squawk comparison needs a labeled Q506 site")
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp).resolve() / "sources"
         materialize(manifest, project, args.cache)
@@ -243,6 +319,8 @@ def main():
             command, cwd=tmp, env={**os.environ, "SKYLOS_JOBS": "1"}, check=True
         )
         results = score(manifest, json.loads(output.read_text()), project)
+        if args.squawk:
+            results["squawk"] = compare_squawk(manifest, project, args.squawk)
         if args.sqlfluff:
             results["sqlfluff"] = compare_sqlfluff(manifest, project, args.sqlfluff)
     results = {"manifest_sha256": digest, **results}

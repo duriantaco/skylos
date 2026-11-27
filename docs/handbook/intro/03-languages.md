@@ -19,7 +19,7 @@ languages that rule covers.
 | C++ | `.cpp .cc .cxx`, headers for references | Partial | No | No | tree-sitter |
 | Kotlin | `.kt .kts` | Partial | Partial | No | Skylos's own lexer |
 | Swift | `.swift` | Partial | No | No | tree-sitter |
-| PostgreSQL | `.sql` | Unused SELECT CTEs with `--quality` | Partial | Partial | PostgreSQL parser via `skylos[postgres]` |
+| PostgreSQL | `.sql` | Unused CTE chains and unreachable CASE arms | Grants, login roles, routine search paths | Query logic and migration DDL | PostgreSQL parser via `skylos[postgres]` |
 | Shell | `.sh .bash .zsh .ksh .bats` | No | Partial | No | Skylos's own reader |
 
 Secrets are checked in the supported source extensions listed in the secrets guide (except Drupal's `.module`-style
@@ -71,10 +71,18 @@ section also records parse failures and missing parser installations.
 
 | Flag | Finding | Example to review |
 | --- | --- | --- |
-| `--quality` | SKY-Q503 | An unused read-only SELECT CTE |
+| `--quality` | SKY-Q503 | An unused read-only SELECT CTE or a chain feeding only unused CTEs |
 | `--quality` | SKY-Q504 | `WHERE deleted_at = NULL` |
 | `--quality` | SKY-Q505 | `WHERE status NOT IN ('closed', NULL)` |
+| `--quality` | SKY-Q506 | Creating or dropping a concurrent index inside an explicit transaction |
+| `--quality` | SKY-Q507 | A concurrent index drop with multiple index names or CASCADE |
+| `--quality` | SKY-Q508 | An explicit foreign key with different column counts on each side |
+| `--quality` | SKY-Q509 | An unreachable CASE arm |
+| `--quality` | SKY-Q510 | COUNT of a CASE whose branches and ELSE all return non-null literals |
 | `--danger` | SKY-D417 | A SECURITY DEFINER function or procedure without a fixed local search path |
+| `--danger` | SKY-D418 | A schema CREATE grant to PUBLIC |
+| `--danger` | SKY-D419 | A login role configured with BYPASSRLS |
+| `--danger` | SKY-D420 | A table write grant to PUBLIC, including default privileges |
 
 If the query should keep orders with a known status other than 'closed',
 use `WHERE status <> 'closed'`. To also keep orders whose status is missing,
@@ -83,11 +91,16 @@ original `NOT IN` filter keeps neither group.
 
 Skylos can read a script that switches databases with a literal `\c dbname`
 or `\connect dbname` on its own line between complete statements. It
-parses each SQL session locally. Files with client-side includes, conditionals
-or inline COPY data are reported as unchecked. Look at each file's `status`
+parses each SQL session locally. It reads text COPY input through a line
+containing only `\.`, paired dump guards (`\restrict` and `\unrestrict`),
+and standalone `\d`, `\d+`, `\dt` and `\dt+` commands with simple names.
+COPY rows are data. Includes, conditionals, CSV or binary COPY input and
+incomplete blocks leave the file unchecked. A text dump can be up to
+16,000,000 bytes provided the SQL remaining after COPY data is removed fits
+the 4,000,000-byte parser limit. Look at each file's `status`
 in the SQL analysis summary. An `unparsed` entry also gives a `reason`.
 
-All four findings are advisory, including in strict mode. A strict coverage
+All twelve findings are advisory, including in strict mode. A strict coverage
 gate can still fail when a file could not be checked. Schema permissions,
 unused database objects and SQL assembled by application code are outside the
 scope of these standalone SQL checks.

@@ -5,6 +5,7 @@ from skylos.cicd.review import _flatten_findings, _review_only_lines
 from skylos.cli import _apply_precommit_gate_policy
 from skylos.core.gatekeeper import check_gate
 from skylos.reporting.github_annotations import _github_annotation_items
+from skylos.reporting.listing import is_gate_exempt_review
 
 
 def _rows():
@@ -66,3 +67,52 @@ def test_custom_rule_with_colliding_advisory_id_still_blocks():
     result = _rows()
     result["custom_rules"] = [dict(result["quality"][0])]
     assert not check_gate(result, {"gate": {"max_quality": 0}})[0]
+
+
+def test_deeper_postgresql_reviews_do_not_exempt_unrelated_rules(tmp_path):
+    quality_rules = [f"SKY-Q{i}" for i in range(506, 511)]
+    location = {"file": "db/change.sql", "line": 2, "severity": "MEDIUM"}
+    kinds = {
+        "SKY-D418": "postgresql_public_grant",
+        "SKY-D419": "postgresql_login_bypassrls",
+        "SKY-D420": "postgresql_public_grant",
+    }
+    report = {
+        "danger": [
+            dict(location, rule_id=rule, review_item={"kind": kind, "blocking": False})
+            for rule, kind in kinds.items()
+        ],
+        "quality": [dict(location, rule_id=rule) for rule in quality_rules],
+    }
+    config = {"gate": {"max_quality": 0, "rules": quality_rules}}
+    for strict in (False, True):
+        assert check_gate(report, config, strict=strict)[0]
+    seen = _flatten_findings(report)
+    assert {
+        r["rule_id"]: r["_review_only_kind"] for r in seen if r.get("_review_only_kind")
+    } == kinds
+    findings = normalize_findings(
+        report, tmp_path, include_dead_code=False, use_debt_baseline=False
+    )
+    assert _apply_precommit_gate_policy(
+        [f for f in findings if f["category"] != "debt"]
+    ) == ([], 8)
+    report["danger"].append(
+        dict(
+            location,
+            rule_id="SKY-D211",
+            severity="HIGH",
+            review_item={"kind": "postgresql_public_grant", "blocking": False},
+        )
+    )
+    assert not check_gate(report, config, strict=True)[0]
+
+
+@pytest.mark.parametrize("value", [[], {}, None])
+def test_malformed_rule_ids_cannot_exempt_a_finding(value):
+    assert not is_gate_exempt_review(
+        {
+            "rule_id": value,
+            "review_item": {"kind": "postgresql_public_grant", "blocking": False},
+        }
+    )
