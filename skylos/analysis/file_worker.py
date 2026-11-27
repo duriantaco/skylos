@@ -632,6 +632,7 @@ def process_file(
     project_root: str | Path | None = None,
     credential_source_locations: tuple | list = (),
     go_scan_scope: tuple | None = None,
+    csharp_route_facts=None,
     visitor_class: type = Visitor,
     test_aware_visitor_class: type = TestAwareVisitor,
     framework_aware_visitor_class: type = FrameworkAwareVisitor,
@@ -663,4 +664,5 @@ def process_file(
         enable_danger_rules=enable_danger_rules,
         project_root=project_root,
         go_scan_scope=go_scan_scope,
+        csharp_route_facts=csharp_route_facts,
     )

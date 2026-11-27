@@ -5,6 +5,15 @@ from dataclasses import dataclass
 from typing import Iterator
 
 
+_METHOD_RE = re.compile(
+    r"(?m)(?:^|(?<=[;{}]))\s*(?P<attrs>(?:\[[^\]\n]+\]\s*)*)"
+    r"(?P<mods>(?:(?:public|private|protected|internal|static|async|virtual|override|sealed|abstract|extern|partial|unsafe|new)\s+)*)"
+    r"(?P<rtype>(?:[A-Za-z_][\w.<>\[\],?]*\s+)+)"
+    r"(?P<name>[A-Za-z_]\w*)\s*(?:<[^;{}()]+>)?\s*"
+    r"\((?P<params>(?:[^;{}()]|\([^;{}()]*\))*)\)\s*"
+    r"(?:where\s+[^{=>]+)?(?P<opener>\{|=>)"
+)
+
 _PLAIN_TOKEN_RE = re.compile(
     r"""
     //[^\n]*
@@ -144,3 +153,20 @@ def mask_comments_and_strings(source: str) -> str:
 
 def _mask_token(match: _TokenMatch) -> str:
     return "".join("\n" if char == "\n" else " " for char in match.group())
+
+
+def _argument_spans(masked: str, start: int, end: int) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    begin = start
+    for index in range(start, end):
+        char = masked[index]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            spans.append((begin, index))
+            begin = index + 1
+    spans.append((begin, end))
+    return spans

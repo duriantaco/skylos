@@ -527,13 +527,15 @@ def _scan_dart_file(file, cfg, *, enable_danger_rules: bool, **_options):
 
 
 def _scan_csharp_file(
-    file, cfg, *, enable_quality_rules: bool, enable_danger_rules: bool
+    file, cfg, *, enable_quality_rules: bool, enable_danger_rules: bool,
+    csharp_route_facts=None,
 ):
     return scan_csharp_file(
         file,
         cfg,
         enable_quality_rules=enable_quality_rules,
         enable_danger_rules=enable_danger_rules,
+        route_facts=csharp_route_facts,
     )
 
 
@@ -688,6 +690,7 @@ def scan_non_python_file(
     enable_danger_rules: bool = True,
     project_root=None,
     go_scan_scope=None,
+    csharp_route_facts=None,
 ):
     file_name = str(file)
     for suffixes, scanner in NON_PYTHON_SCANNERS:
@@ -697,6 +700,8 @@ def scan_non_python_file(
                 if scanner is _scan_go_file and go_scan_scope is not None
                 else {}
             )
+            if scanner is _scan_csharp_file:
+                scope_options["csharp_route_facts"] = csharp_route_facts
             if scanner in (_scan_typescript_like_file, _scan_rust_file):
                 scope_options["project_root"] = project_root
             out = scanner(

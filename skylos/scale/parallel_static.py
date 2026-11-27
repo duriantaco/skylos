@@ -158,6 +158,28 @@ def _abort_pool(ex):
             logger.debug("could not join a static worker", exc_info=True)
 
 
+def _csharp_route_facts(files, project_root, enable_danger):
+    if not enable_danger or project_root is None:
+        return {}
+    csharp_files = [f for f in files if str(f).endswith(".cs")]
+    if not csharp_files:
+        return {}
+    from skylos.visitors.languages.csharp.route_project import build_route_handler_index
+
+    return build_route_handler_index(csharp_files, project_root)
+
+
+def _file_security_options(file, credential_sources, csharp_routes):
+    options = {}
+    if credential_sources is not None:
+        options["credential_source_locations"] = credential_sources.get(
+            str(Path(file).absolute()), ()
+        )
+    if csharp_routes and str(file) in csharp_routes:
+        options["csharp_route_facts"] = csharp_routes[str(file)]
+    return options
+
+
 def _drain_pool(
     ex, files, modmap, changed_files, worker_fn, proc_kwargs, progress, results, broken,
     activity_flags=None,
@@ -166,14 +188,13 @@ def _drain_pool(
     for index, f in enumerate(files):
         full_scan = changed_files is None or str(f) in changed_files
         try:
-            credential_kwargs = {}
+            file_options = _file_security_options(
+                f,
+                proc_kwargs.get("credential_source_locations"),
+                proc_kwargs.get("csharp_routes"),
+            )
             if activity_flags is not None:
-                credential_kwargs["_activity_index"] = index
-            credential_sources = proc_kwargs.get("credential_source_locations")
-            if credential_sources is not None:
-                credential_kwargs["credential_source_locations"] = (
-                    credential_sources.get(str(Path(f).absolute()), ())
-                )
+                file_options["_activity_index"] = index
             fut = ex.submit(
                 worker_fn,
                 f,
@@ -187,7 +208,7 @@ def _drain_pool(
                 proc_kwargs["enable_danger_rules"],
                 proc_kwargs["config_file"],
                 proc_kwargs["project_root"],
-                **credential_kwargs,
+                **file_options,
             )
         except BrokenProcessPool:
             broken.append(f)
@@ -220,11 +241,13 @@ def _retry_in_parent(f, modmap, changed_files, proc_kwargs):
 
         full_scan = changed_files is None or str(f) in changed_files
         kwargs = dict(proc_kwargs)
-        credential_sources = kwargs.pop("credential_source_locations", None)
-        if credential_sources is not None:
-            kwargs["credential_source_locations"] = credential_sources.get(
-                str(Path(f).absolute()), ()
+        kwargs.update(
+            _file_security_options(
+                f,
+                kwargs.pop("credential_source_locations", None),
+                kwargs.pop("csharp_routes", None),
             )
+        )
         return proc_file(f, modmap[f], full_scan=full_scan, **kwargs)
     except Exception:
         logger.error("Parent-process static retry failed for %s", str(f), exc_info=True)
@@ -244,6 +267,7 @@ def _worker(
     config_file=None,
     project_root=None,
     credential_source_locations=(),
+    csharp_route_facts=None,
 ):
     import multiprocessing
 
@@ -267,6 +291,7 @@ def _worker(
         config_file=config_file,
         project_root=project_root,
         credential_source_locations=credential_source_locations,
+        csharp_route_facts=csharp_route_facts,
     )
     return str(file_path), out
 
@@ -350,6 +375,7 @@ def run_proc_file_parallel(
         "config_file": config_file,
         "project_root": project_root,
         "credential_source_locations": credential_source_locations,
+        "csharp_routes": _csharp_route_facts(files, project_root, enable_danger_rules),
     }
     worker_fn = _worker_fn or _worker
     total = len(files)
@@ -494,6 +520,7 @@ def _run_proc_files_serial(
     credential_source_locations=None,
 ):
     outs = []
+    csharp_routes = _csharp_route_facts(files, project_root, enable_danger_rules)
     total = len(files)
     admitted_go_files = tuple(
         str(Path(file).absolute()) for file in files if str(file).endswith(".go")
@@ -502,13 +529,11 @@ def _run_proc_files_serial(
         from skylos.analyzer import proc_file
 
         full_scan = changed_files is None or str(f) in changed_files
-        credential_kwargs = {}
-        if credential_source_locations is not None:
-            credential_kwargs["credential_source_locations"] = (
-                credential_source_locations.get(str(Path(f).absolute()), ())
-            )
+        file_options = _file_security_options(
+            f, credential_source_locations, csharp_routes
+        )
         if str(f).endswith(".go") and project_root is not None:
-            credential_kwargs["go_scan_scope"] = (
+            file_options["go_scan_scope"] = (
                 str(Path(project_root).absolute()),
                 admitted_go_files,
             )
@@ -525,7 +550,7 @@ def _run_proc_files_serial(
                 enable_danger_rules=enable_danger_rules,
                 config_file=config_file,
                 project_root=project_root,
-                **credential_kwargs,
+                **file_options,
             )
         outs.append(out)
         if progress_callback:

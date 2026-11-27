@@ -38,6 +38,12 @@ Terraform files have their own rules.
   `--confidence 40` or lower.
 - **Kotlin** dead code reports only `private` declarations and unused
   imports; every non-private declaration counts as used.
+- **C#** security checks follow ASP.NET Core Minimal API registrations to
+  inline handlers and uniquely identified static handlers in another file
+  of the same SDK project. Scan the project directory so Skylos sees the
+  registration and the handler. The reported line is the call that uses
+  request data, such as an HTTP client call. Custom build inputs and
+  ambiguous overloads limit cross-file matching.
 - **C++** dead code reports only unused file-local functions.
 - **Dart** needs `pip install "skylos[dart]"`, which compiles a parser and so
   needs a C compiler. Without it, `.dart` files are listed as not analysed.

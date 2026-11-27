@@ -44,6 +44,7 @@ def scan_csharp_file(
     *,
     enable_quality_rules: bool = True,
     enable_danger_rules: bool = True,
+    route_facts=None,
 ) -> tuple:
     if config is None:
         config = {}
@@ -63,7 +64,11 @@ def scan_csharp_file(
     defs, refs, raw_imports = scan_symbols(
         str(path), source, reference_context=visitor.csharp_reference_context
     )
-    findings = scan_danger(str(path), source) if enable_danger_rules else []
+    findings = (
+        scan_danger(str(path), source, route_facts=route_facts)
+        if enable_danger_rules
+        else []
+    )
     quality_findings = scan_quality(str(path), source) if enable_quality_rules else []
 
     return (

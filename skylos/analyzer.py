@@ -7839,6 +7839,7 @@ def proc_file(
     project_root=None,
     credential_source_locations=(),
     go_scan_scope=None,
+    csharp_route_facts=None,
 ) -> tuple | None:
     return process_file(
         file_or_args,
@@ -7854,6 +7855,7 @@ def proc_file(
         project_root=project_root,
         credential_source_locations=credential_source_locations,
         go_scan_scope=go_scan_scope,
+        csharp_route_facts=csharp_route_facts,
         visitor_class=Visitor,
         test_aware_visitor_class=TestAwareVisitor,
         framework_aware_visitor_class=FrameworkAwareVisitor,
