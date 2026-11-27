@@ -289,7 +289,14 @@ expected answers and tool calls, use `skylos agent test`. See
 - Go needs the native `skylos-go` engine. It ships in the PyPI wheels for
   Linux, macOS and Windows; elsewhere `skylos doctor` prints the build command.
 - Dart needs `pip install "skylos[dart]"`.
-- Rust dead code is hidden by default; `--confidence 40` shows it.
+- Rust dead-code checks are experimental. Use `skylos . --confidence 40` to
+  see candidates such as unused private functions and enum variants.
+- Rust security checks (`--danger`) include disabled TLS verification, unsafe
+  Unix file permissions, and server-side request forgery (SSRF). For `reqwest`,
+  Skylos checks whether incoming data can choose the host of a request that
+  gets sent. It can miss SSRF that depends on DNS or on code inside a dependency.
+- Rust quality checks (`--quality`) include unreachable statements and duplicate
+  branch bodies.
 
 Full matrix and per-language limits:
 [language support](https://docs.skylos.dev/language-support).
