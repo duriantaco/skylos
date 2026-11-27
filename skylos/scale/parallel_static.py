@@ -5,6 +5,7 @@ from pathlib import Path
 import signal
 
 from skylos.analysis.progress import active_file, forward_activity
+from skylos.analysis.worker_cache import SecurityUnitCache, security_units
 from skylos.scale.safe_spawn import no_cwd_imports_in_children
 
 
@@ -130,6 +131,9 @@ def _run_pool_in_safe_env(
 
 def _ignore_sigint():
     """Workers leave Ctrl-C to the parent, which stops them without tracebacks."""
+    # A fork can inherit an enclosing serial scan's cache. Holding a separate
+    # project index in every pool worker exceeds the large-scan memory budget.
+    security_units.set(None)
     try:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     except (OSError, ValueError):
@@ -296,21 +300,25 @@ def run_proc_file_parallel(
         jobs = 1
 
     if jobs <= 1:
-        return _run_proc_files_serial(
-            files,
-            modmap,
-            extra_visitors=extra_visitors,
-            progress_callback=progress_callback,
-            changed_files=changed_files,
-            collect_clone_fragments=collect_clone_fragments,
-            clone_cfg=clone_cfg,
-            collect_architecture_metrics=collect_architecture_metrics,
-            enable_quality_rules=enable_quality_rules,
-            enable_danger_rules=enable_danger_rules,
-            config_file=config_file,
-            project_root=project_root,
-            credential_source_locations=credential_source_locations,
-        )
+        token = security_units.set(SecurityUnitCache())
+        try:
+            return _run_proc_files_serial(
+                files,
+                modmap,
+                extra_visitors=extra_visitors,
+                progress_callback=progress_callback,
+                changed_files=changed_files,
+                collect_clone_fragments=collect_clone_fragments,
+                clone_cfg=clone_cfg,
+                collect_architecture_metrics=collect_architecture_metrics,
+                enable_quality_rules=enable_quality_rules,
+                enable_danger_rules=enable_danger_rules,
+                config_file=config_file,
+                project_root=project_root,
+                credential_source_locations=credential_source_locations,
+            )
+        finally:
+            security_units.reset(token)
 
     if any(str(f).endswith(".go") for f in files):
         return _run_mixed_files_with_serial_go(

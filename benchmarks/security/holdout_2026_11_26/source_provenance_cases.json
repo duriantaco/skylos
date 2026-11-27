@@ -1,0 +1,166 @@
+{
+  "request_workflows": {
+    "cases": [
+      {
+        "path": "ui_text.py",
+        "group": "SKY-D357",
+        "positive": false,
+        "rationale": "One fixed import. This module also reads the incoming text used by its callers.",
+        "rules": [
+          "SKY-D357"
+        ],
+        "sha256": "377581cfbb0d247bc5b928f7614b7da5a5a92c0e647a69fc6a8c79eb76444da3",
+        "source": "from flask import request\nfrom importlib import import_module\ndef supplied_text():\n    return request.args[\"category\"]\ndef default_formatter():\n    return import_module(\"palette.formatters.default\")\n"
+      },
+      {
+        "path": "channels.py",
+        "group": "SKY-D357",
+        "positive": true,
+        "rationale": "Incoming HTTP text returned by a project helper controls dynamic module choice.",
+        "rules": [
+          "SKY-D357"
+        ],
+        "sha256": "502180cfa438a3b74aae8c2ef83c1309f4096e687a29470692d3f49c63c1fffc",
+        "source": "from flask import Flask\nfrom importlib import import_module as load_view\nfrom ui_text import supplied_text\napp = Flask(__name__)\n@app.route(\"/channel\")\ndef channel():\n    return load_view(supplied_text()).__name__\n"
+      },
+      {
+        "path": "fixed_catalog.py",
+        "group": "SKY-D357",
+        "positive": false,
+        "rationale": "A request selects between two literal module choices.",
+        "rules": [
+          "SKY-D357"
+        ],
+        "sha256": "23af42c75100927b01feb89449a013420e77210f05f0d3b480ad6f8b9494a6f2",
+        "source": "from importlib import import_module\nfrom ui_text import supplied_text\ndef load_catalog():\n    choice = \"palette.fr\" if supplied_text() == \"fr\" else \"palette.en\"\n    return import_module(choice)\n"
+      },
+      {
+        "path": "reports.py",
+        "group": "SKY-D212",
+        "positive": true,
+        "rationale": "Options supplied by the request are split and appended without an option terminator before a process call.",
+        "rules": [
+          "SKY-D212"
+        ],
+        "sha256": "43875d3be9ad661fda84ef35b0138f99b6d8b347b0420c2bf8a02dd70c0b482c",
+        "source": "from flask import Flask\nfrom ui_text import supplied_text\nimport subprocess, shlex\nservice=Flask(__name__)\ndef report_action(words):\n    return subprocess.run(words)\n@service.route(\"/report\")\ndef report():\n    words=[\"inert-label-printer\"]\n    words.extend(shlex.split(supplied_text()))\n    return report_action(words)\n"
+      },
+      {
+        "path": "summaries.py",
+        "group": "SKY-D212",
+        "positive": false,
+        "rationale": "All split terms reach the process after a fixed option terminator.",
+        "rules": [
+          "SKY-D212"
+        ],
+        "sha256": "d4a92fe772809dac9dafb6b9b207dde80312529dc5174a617c2abcc5a16d114e",
+        "source": "from flask import Flask\nfrom ui_text import supplied_text\nimport subprocess, shlex\napp = Flask(__name__)\n@app.route(\"/summary\")\ndef summary():\n    words = [\"inert-label-printer\", \"--\"]\n    words.extend(shlex.split(supplied_text()))\n    return subprocess.run(words)\n"
+      },
+      {
+        "path": "headings.py",
+        "group": "SKY-D212",
+        "positive": false,
+        "rationale": "Only fixed local text is split into process arguments.",
+        "rules": [
+          "SKY-D212"
+        ],
+        "sha256": "ba422be8a29e272018973a6035a5eacfe4a8a573bbffca9802664b717f193799",
+        "source": "import subprocess\nfrom shlex import split\ndef heading():\n    args = [\"inert-label-printer\"]\n    args.extend(split(\"muted title\"))\n    return subprocess.run(args)\n"
+      },
+      {
+        "path": "style.py",
+        "group": "SKY-D357",
+        "positive": true,
+        "rationale": "An imported alias receives the string read from the inbound request.",
+        "rules": [
+          "SKY-D357"
+        ],
+        "sha256": "0b8289e60573ff30d9c6bf09fea933b6ec7a699c15aac16eb112fad8cb7cd408",
+        "source": "from flask import Flask, request\nimport importlib\napplication = Flask(__name__)\n@application.route(\"/style\")\ndef pick_style():\n    return importlib.import_module(name=request.args[\"style\"]).__name__\n"
+      }
+    ],
+    "freeze_sha256": "6036c0b957eeee2f617ff8f3e8034894a65e1ff88bf4752d633008cb51510188"
+  },
+  "adapter_workflows": {
+    "cases": [
+      {
+        "path": "source_data.py",
+        "group": "SKY-D357",
+        "positive": false,
+        "rationale": "Remote label reader; dynamic module usage in this file only uses a literal.",
+        "rules": [
+          "SKY-D357"
+        ],
+        "sha256": "ebc32f6e5865b7ee5a6a383c69d0b4ca4650e25269ada7618df837e068004e58",
+        "source": "from urllib.request import urlopen\nimport importlib\ndef feed_title():\n    return urlopen(\"https://example.invalid/catalog-label\").read().decode()\ndef shipped_driver():\n    return importlib.import_module(\"catalog.builtin\")\n"
+      },
+      {
+        "path": "loader.py",
+        "group": "SKY-D357",
+        "positive": true,
+        "rationale": "Either a fixed label or metadata from a remote feed can reach this module loader.",
+        "rules": [
+          "SKY-D357"
+        ],
+        "sha256": "0c850148e591520f85bd9e9c8c037f19c2f54e130b68aa706b09d5583808ac98",
+        "source": "import importlib\nfrom source_data import feed_title\ndef fallback():\n    return \"catalog.builtin\"\ndef choose_adapter(remote):\n    if remote:\n        label = feed_title\n    else:\n        label = fallback\n    return importlib.import_module(label()).__name__\n"
+      },
+      {
+        "path": "local_adapter.py",
+        "group": "SKY-D357",
+        "positive": false,
+        "rationale": "An arbitrary string can affect logging, while the dynamic load always receives a literal.",
+        "rules": [
+          "SKY-D357"
+        ],
+        "sha256": "a54e9e450319085ea4479a5d1128c60f975a8a2542b320e103106beac2334337",
+        "source": "from importlib import import_module\nfrom source_data import feed_title\ndef open_local():\n    note = feed_title()\n    return note, import_module(\"catalog.builtin\")\n"
+      },
+      {
+        "path": "tasks.py",
+        "group": "SKY-D212",
+        "positive": true,
+        "rationale": "Remote feed text becomes multiple unguarded arguments of a process via a helper call.",
+        "rules": [
+          "SKY-D212"
+        ],
+        "sha256": "c88ad2f92546e714e540f5804d0248e6dcaf91646ed60f24702b8b888d78ba28",
+        "source": "import subprocess, shlex\nfrom source_data import feed_title\ndef launch(arguments):\n    return subprocess.Popen(arguments)\ndef annotate():\n    arguments = [\"inert-label-printer\"]\n    arguments.extend(shlex.split(feed_title()))\n    return launch(arguments)\n"
+      },
+      {
+        "path": "diffs.py",
+        "group": "SKY-D212",
+        "positive": false,
+        "rationale": "One argument containing the entire label is placed after an option terminator.",
+        "rules": [
+          "SKY-D212"
+        ],
+        "sha256": "d9997359e7638e41424fc6f21bf8b116135ca5ea5b73bd3cf094832a00929390",
+        "source": "import subprocess, shlex\nfrom source_data import feed_title\ndef compare():\n    title = feed_title()\n    words = [\"inert-label-printer\", \"--\"]\n    words.append(title)\n    return subprocess.run(words)\n"
+      },
+      {
+        "path": "remote_driver.py",
+        "group": "SKY-D357",
+        "positive": true,
+        "rationale": "The remote feed value supplies the keyword argument to a project wrapper for dynamic import.",
+        "rules": [
+          "SKY-D357"
+        ],
+        "sha256": "5707fab940f0193cdbf53aa9882f9717f6cb79ace37d5d09b340b106a134a412",
+        "source": "from importlib import import_module\nfrom source_data import feed_title\ndef driver(module):\n    return import_module(name=module)\ndef select_driver():\n    return driver(feed_title())\n"
+      },
+      {
+        "path": "tasks_v2.py",
+        "group": "SKY-D212",
+        "positive": true,
+        "rationale": "Two callers share a job runner; one passes remote input following unguarded argument splitting.",
+        "rules": [
+          "SKY-D212"
+        ],
+        "sha256": "6fc83906e3d26dcf34264dfcd36c9a9b1a374ff8d100cdde9f3dec8e802261e9",
+        "source": "from source_data import feed_title\nimport shlex, subprocess\ndef submit(arguments):\n    return subprocess.run(arguments)\ndef sample():\n    return submit([\"inert-label-printer\",\"--\",\"example\"])\ndef batch():\n    params = [\"inert-label-printer\"]\n    params.extend(shlex.split(feed_title()))\n    return submit(params)\n"
+      }
+    ],
+    "freeze_sha256": "b536330964ae0994ca9870e92d02fbc3708db67d5b7d0a70845bc3f07489794c"
+  }
+}

@@ -1279,21 +1279,15 @@ def collect_ts_path_references(
     index = _FileIndex(root, js_files)
     names = _target_names(targets)
 
-    reference_files = list(_iter_reference_files(root_path, js_files, exclude_folders))
-    python_files = [
-        path for path in reference_files if path.suffix.lower() in _PYTHON_SUFFIXES
-    ]
-    if python_files:
-        from skylos.deadcode.python_browser_effects import project_script_entry_files
-        from skylos.deadcode.python_project_sources import ProjectSourceIndex
-
-        project_index = ProjectSourceIndex(root_path, python_files)
-        roots.update(
-            str(path)
-            for path in project_script_entry_files(project_index)
-            if str(path) in targets
-        )
+    # Direct script tags often account for all entrypoints in Python projects.
+    # Preserve discovery's file cap and check these cheap proofs first.
+    reference_files = sorted(
+        _iter_reference_files(root_path, js_files, exclude_folders),
+        key=lambda path: path.suffix.lower() not in _TEMPLATE_SUFFIXES,
+    )
     for file_path in reference_files:
+        if roots == targets:
+            break
         source = read_text_no_symlink(
             file_path,
             max_bytes=_MAX_REFERENCE_FILE_BYTES,
@@ -1312,6 +1306,23 @@ def collect_ts_path_references(
                 )
                 if target is not None:
                     roots.add(target)
+
+    # Rendered Python HTML can add roots, but never JS-to-JS edges. Interpret
+    # the project only if a target still lacks a root after the direct loads.
+    if roots != targets:
+        python_files = [
+            path for path in reference_files if path.suffix.lower() in _PYTHON_SUFFIXES
+        ]
+        if python_files:
+            from skylos.deadcode.python_browser_effects import project_script_entry_files
+            from skylos.deadcode.python_project_sources import ProjectSourceIndex
+
+            project_index = ProjectSourceIndex(root_path, python_files)
+            roots.update(
+                str(path)
+                for path in project_script_entry_files(project_index)
+                if str(path) in targets
+            )
 
     for js_file in sorted(js_files):
         source = read_text_no_symlink(

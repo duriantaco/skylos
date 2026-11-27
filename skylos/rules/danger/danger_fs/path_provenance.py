@@ -113,6 +113,10 @@ _MAX_CHAINS = 4
 # origin is enough: chains merged into one fact set share every later step
 # and proof, so a same-origin duplicate cannot carry a different verdict.
 _CHAIN_POLICY = ContextVar("path_provenance_chain_policy", default=(_MAX_CHAINS, False))
+# A sink that filters evidence after tracing can prioritize qualifying witnesses
+# before the per-kind limit. Ordinary path analysis keeps its existing policy.
+_SELECT_UNTRUSTED_CHAINS = ContextVar("select_untrusted_chains", default=None)
+_EVIDENCE_STEP_ANCHORS = ContextVar("evidence_step_anchors", default=None)
 _MAX_STEPS = 32
 _MAX_CALLER_DEPTH = 32
 _MAX_SITES = 512
@@ -538,8 +542,19 @@ def _origin_kept(chains, chain):
     return bool(chain) and any(existing[:1] == chain[:1] for existing in chains)
 
 
-def _extend(chain, step):
+def _extend(chain, step, kind=None):
     if len(chain) >= _MAX_STEPS:
+        if kind in (UNTRUSTED, PARAMETER):
+            anchors = _EVIDENCE_STEP_ANCHORS.get()
+            if anchors is not None:
+                # Keep the real origin, the new endpoint and all steps the
+                # active evidence rule needs to recognize this particular path.
+                keep = anchors(chain)
+                if keep:
+                    drop = len(chain) - 1
+                    while drop in keep:
+                        drop -= 1
+                    return (*chain[:drop], *chain[drop + 1 :], step)
         return (*chain[: _MAX_STEPS - 1], step)
     return (*chain, step)
 
@@ -550,6 +565,29 @@ def _with_hidden_callers(facts, escapes, step):
     for escape in dict.fromkeys(escapes):
         facts.add(_Facts.leaf(UNKNOWN, escape).then(step))
     return facts
+
+
+class _ParameterChains:
+    """A source summary's independent witness slots for each formal parameter."""
+
+    def __init__(self):
+        self.groups = {}
+
+    def __iter__(self):
+        for paths in self.groups.values():
+            yield from paths
+
+    def __bool__(self):
+        return bool(self.groups)
+
+    def add(self, paths, select, limit):
+        for path in paths:
+            name = path[0]
+            current = self.groups.get(name)
+            if current is None:
+                self.groups[name] = [path]
+            elif path not in current:
+                self.groups[name] = select([*current, path], limit)
 
 
 class _Facts:
@@ -570,6 +608,25 @@ class _Facts:
         max_chains, distinct_origins = _CHAIN_POLICY.get()
         for kind in self.KINDS:
             mine = self.chains[kind]
+            if kind == PARAMETER and other.chains[kind]:
+                select = _SELECT_UNTRUSTED_CHAINS.get()
+                if select is not None:
+                    # Only this call's actual arguments can tell which formal
+                    # supplies an untrusted value. Keep bounded paths per formal.
+                    if not isinstance(mine, _ParameterChains):
+                        groups = _ParameterChains()
+                        groups.add(mine, select, max_chains)
+                        self.chains[kind] = mine = groups
+                    mine.add(other.chains[kind], select, max_chains)
+                    continue
+            if kind == UNTRUSTED and other.chains[kind]:
+                select = _SELECT_UNTRUSTED_CHAINS.get()
+                if select is not None:
+                    if not mine and len(other.chains[kind]) == 1:
+                        mine.extend(other.chains[kind])
+                    else:
+                        mine[:] = select(set(mine).union(other.chains[kind]), max_chains)
+                    continue
             for chain in other.chains[kind]:
                 if distinct_origins and _origin_kept(mine, chain):
                     continue
@@ -582,7 +639,7 @@ class _Facts:
     def then(self, step):
         facts = _Facts()
         for kind in self.KINDS:
-            facts.chains[kind] = [_extend(chain, step) for chain in self.chains[kind]]
+            facts.chains[kind] = [_extend(chain, step, kind) for chain in self.chains[kind]]
         return facts
 
     def moved(self, source, target, step):
@@ -1330,9 +1387,13 @@ class _Project:
             self.complete = False
             self.skipped.append((self._rel(path), text, INCOMPLETE, "is too deeply nested to index"))
             return
-        self.units.append(unit)
-        self.by_path[resolved] = unit
         unit.module_names = self._module_names(unit)
+        self._register_unit(unit)
+        return unit
+
+    def _register_unit(self, unit):
+        self.units.append(unit)
+        self.by_path[unit.path] = unit
         for name in unit.module_names:
             self.modules.setdefault(name, []).append(unit)
 
@@ -5331,8 +5392,10 @@ class _Tracer:
         site = _Site(unit, scope, call, [*prebound, *call.args], [*prebound_keywords, *call.keywords], value.bound, "call")
         tails = {}
         for chain in summary.chains[PARAMETER]:
-            tails.setdefault(chain[0], chain[1:])
-        for name, tail in tails.items():
+            routes = tails.setdefault(chain[0], [])
+            if not routes or _SELECT_UNTRUSTED_CHAINS.get() is not None:
+                routes.append(chain[1:])
+        for name, routes in tails.items():
             step = _step(unit, call, f"call `{_describe(call)}` binds `{name}`")
             passed = _Facts()
             for expr, expr_unit, expr_scope in self.project.bind_argument(fn, site, name):
@@ -5341,9 +5404,11 @@ class _Tracer:
                 passed = _Facts.leaf(SAFE, step)
             else:
                 passed = passed.then(step)
-            for item in tail:
-                passed = passed.then(item)
-            facts.add(passed)
+            for tail in routes:
+                result = passed
+                for item in tail:
+                    result = result.then(item)
+                facts.add(result)
         if self.filename_proofs and self._filename_body(info[0], fn) is not None:
             # The body match alone is not a runtime safety proof. Retain the
             # original facts and describe the unverified assumption on this

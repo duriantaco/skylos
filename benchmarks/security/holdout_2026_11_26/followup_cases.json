@@ -1,0 +1,338 @@
+{
+  "protocol_discovery": {
+    "freeze_sha256": "a38e35d52e901e53a7d8ea4b897b298a286bde9d489b58564f7f7a7bda9941ad",
+    "cases": [
+      {
+        "path": "api_a.js",
+        "group": "unsigned",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "sha256": "db39f39681fcf75da19f285e409d48fa31a139f76cfe4d275d89c8de7b89d7f7",
+        "source": "import express from 'express';\nexport const app = express();\napp.post('/integrations/github/webhook', express.json(), (req, res) => {\n  const kind = req.header('x-github-event');\n  res.locals.delivery = { kind, repository: req.body.repository };\n  return res.sendStatus(202);\n});\n"
+      },
+      {
+        "path": "api_b.ts",
+        "group": "verified",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "sha256": "38b4e8eb90c25b93ab5a6781088b80f4d41950e24dc0778d0ce2fd806ac6e627",
+        "source": "import { Webhook } from 'svix';\nexport async function POST(req: Request) {\n  const verifier = new Webhook(process.env.SVIX_WEBHOOK_SECRET!);\n  try {\n    const event = verifier.verify(await req.text(), {\n      'svix-id': req.headers.get('svix-id') || '',\n      'svix-timestamp': req.headers.get('svix-timestamp') || '',\n      'svix-signature': req.headers.get('svix-signature') || ''\n    });\n    return Response.json({ received: Boolean(event) });\n  } catch {\n    return new Response('Rejected', { status: 400 });\n  }\n}\n"
+      },
+      {
+        "path": "api_c.ts",
+        "group": "unsigned",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "sha256": "7cf5222eda2dcb1c3c4abce6699649dd6f6ec08b8b4d668ff87e7275270d411c",
+        "source": "import { Hono } from 'hono';\nexport const router = new Hono();\nrouter.post('/webhooks/stripe', async c => {\n  const event = await c.req.json();\n  return c.json({ accepted: event.type }, 202);\n});\n"
+      },
+      {
+        "path": "api_d.js",
+        "group": "verified",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "sha256": "cc84076598148b60fac9f3560df8eb3095a585c2bd6b922b9235ea2822625949",
+        "source": "import express from 'express';\nimport Stripe from 'stripe';\nexport const app = express();\nconst stripe = new Stripe(process.env.STRIPE_API_KEY);\napp.post('/billing/webhook', express.raw({ type: 'application/json' }), (req, res) => {\n  try {\n    const event = stripe.webhooks.constructEvent(req.body, req.get('stripe-signature'), process.env.STRIPE_WEBHOOK_SECRET);\n    return res.json({ received: event.type });\n  } catch {\n    return res.sendStatus(400);\n  }\n});\n"
+      },
+      {
+        "path": "api_e.js",
+        "group": "control",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "sha256": "20ee992a67e6cf16c453769839b6855e5be594d298beda008fee08d715ac2c7e",
+        "source": "import express from 'express';\nexport const router = express.Router();\nrouter.post('/tools/github/webhook-preview', express.json(), (req, res) => {\n  const title = String(req.body.title || '');\n  return res.json({ preview: title.trim() });\n});\n"
+      },
+      {
+        "path": "api_f.ts",
+        "group": "unsigned",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "sha256": "dd0640ac9bd54f99f35cd19de9e28453292aca784f7082ea7b3c66ea248f1887",
+        "source": "export async function POST(request: Request) {\n  const messageId = request.headers.get('svix-id');\n  const event = await request.json();\n  return Response.json({ accepted: messageId, eventType: event.type }, { status: 202 });\n}\n"
+      },
+      {
+        "path": "api_g.js",
+        "group": "verified",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "sha256": "77d99d1ea8e4bd74ae5a337d103ec3e93eae965b9fc917159ce465d4c1647e7f",
+        "source": "import express from 'express';\nimport { Webhooks } from '@octokit/webhooks';\nexport const router = express.Router();\nconst verifier = new Webhooks({ secret: process.env.GITHUB_WEBHOOK_SECRET });\nrouter.post('/integrations/github/webhook', express.text({ type: 'application/json' }), async (req, res) => {\n  const ok = await verifier.verify(req.body, req.get('x-hub-signature-256') || '');\n  if (!ok) return res.sendStatus(401);\n  const event = JSON.parse(req.body);\n  return res.json({ repository: event.repository.name });\n});\n"
+      },
+      {
+        "path": "api_h.ts",
+        "group": "unsigned",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "sha256": "a2f0af55b4c218e319e8eabb2f7eaae1fdbd58748ff3c8396fd64961625f0014",
+        "source": "import express from 'express';\nexport const callbacks = express.Router();\ncallbacks.post('/v1/events/svix', express.json(), (req, res) => {\n  const id = req.header('svix-id');\n  res.locals.event = { id, body: req.body };\n  return res.sendStatus(204);\n});\n"
+      },
+      {
+        "path": "api_i.ts",
+        "group": "control",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "sha256": "0cb4352755bfbab956be590fb9b11af15d169830111dde4ffbddf25703182d1c",
+        "source": "import { Hono } from 'hono';\nexport const app = new Hono();\napp.get('/help/stripe/webhooks', c => {\n  return c.json({ guide: 'Billing event setup' });\n});\n"
+      },
+      {
+        "path": "api_j.ts",
+        "group": "unsigned",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "sha256": "dd970bf49e06fdf3676224caccc67b1a89d890625047ed82f17f4c2cba5ba8b9",
+        "source": "export async function POST(req: Request) {\n  const delivery = req.headers.get('x-github-delivery');\n  const kind = req.headers.get('x-github-event');\n  const body = await req.json();\n  return Response.json({ delivery, kind, action: body.action }, { status: 202 });\n}\n"
+      },
+      {
+        "path": "api_k.ts",
+        "group": "verified",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "sha256": "c370625a847be10ce58e0a9c9ba7bdc9aedbe51cf152a78057a337b5eb82a136",
+        "source": "import { Hono } from 'hono';\nimport { Webhooks } from '@octokit/webhooks';\nexport const app = new Hono();\nconst verifier = new Webhooks({ secret: process.env.GITHUB_WEBHOOK_SECRET! });\napp.post('/hooks/github', async ctx => {\n  const text = await ctx.req.text();\n  if (!(await verifier.verify(text, ctx.req.header('x-hub-signature-256') || ''))) {\n    return ctx.text('Rejected', 401);\n  }\n  const data = JSON.parse(text);\n  return ctx.json({ action: data.action });\n});\n"
+      },
+      {
+        "path": "api_l.js",
+        "group": "unsigned",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": true,
+        "sha256": "cb8ffd9d1957568b93cdd0f176d4f0e342289b682ff878aca042a5058938c0dd",
+        "source": "import express from 'express';\nexport const router = express.Router();\nfunction receive(req, res) {\n  const event = req.body;\n  res.locals.billingEvent = { id: event.id, type: event.type };\n  return res.sendStatus(202);\n}\nrouter.post('/stripe/webhooks/billing', express.json(), receive);\n"
+      },
+      {
+        "path": "api_m.ts",
+        "group": "verified",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "sha256": "33aeb4d95841f2bb78759f2842acdd1bc591ccc0e727a3ff333893a0fa185fee",
+        "source": "import Stripe from 'stripe';\nconst payments = new Stripe(process.env.STRIPE_API_KEY!);\nexport async function POST(request: Request) {\n  const body = await request.text();\n  try {\n    const event = payments.webhooks.constructEvent(body, request.headers.get('stripe-signature') || '', process.env.STRIPE_WEBHOOK_SECRET!);\n    return Response.json({ processed: event.id });\n  } catch {\n    return new Response('Rejected', { status: 400 });\n  }\n}\n"
+      },
+      {
+        "path": "api_n.js",
+        "group": "control",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "sha256": "b18a0285941f0ce7d8c24a0c060c8e528a3351ff02c4c9faa2356d2c11510728",
+        "source": "import express from 'express';\nexport const router = express.Router();\nrouter.post('/tools/webhook-url', express.json(), (req, res) => {\n  try {\n    const value = new URL(req.body.url);\n    return res.json({ scheme: value.protocol });\n  } catch {\n    return res.sendStatus(422);\n  }\n});\n"
+      },
+      {
+        "path": "api_o.js",
+        "group": "verified",
+        "rules": [
+          "SKY-D282"
+        ],
+        "positive": false,
+        "sha256": "3a4ae06fc0aa36147746fb6d44e3838f8e5237fdcfcb23ba0ebbd16a334bc457",
+        "source": "import { Webhook } from 'svix';\nimport express from 'express';\nconst verifier = new Webhook(process.env.SVIX_WEBHOOK_SECRET);\nexport const router = express.Router();\nrouter.post('/webhooks/svix', express.text({ type: 'application/json' }), (req, res) => {\n  try {\n    const event = verifier.verify(req.body, req.headers);\n    return res.json({ received: !!event });\n  } catch {\n    return res.sendStatus(400);\n  }\n});\n"
+      }
+    ]
+  },
+  "provider_routes": {
+    "freeze_sha256": "e000877f05e99e384920d609186fe20ed1bff81a4c0b29cab70ad6098d08e14d",
+    "cases": [
+      {
+        "path": "src/invoices.js",
+        "group": "missing",
+        "positive": true,
+        "rationale": "Stripe invoice deliveries are accepted into the in-memory ledger.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "4140e15b96e8704a1a959ccbc7c5a8fb93d12a603044608f0a3db5943f86db5d",
+        "source": "import express from \"express\";\n\nexport const app = express();\nconst invoices = [];\napp.post(\"/webhooks/stripe\", express.json(), (req, res) => {\n  invoices.push(req.body.id);\n  return res.sendStatus(204);\n});\n"
+      },
+      {
+        "path": "src/accounts.ts",
+        "group": "missing",
+        "positive": true,
+        "rationale": "The identity webhook receiver stores the delivered event without authenticating the delivery.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "aaeef800862fb681bbd9d1252eba10662ae248b5d57d7a042aa22fde217e9f7d",
+        "source": "import { Router, json } from \"express\";\n\nexport const router = Router();\nconst accountEvents: string[] = [];\nrouter.post(\"/webhooks/clerk\", json(), (req, res) => {\n  accountEvents.push(req.body.type);\n  res.status(200).end();\n});\n"
+      },
+      {
+        "path": "src/repos.js",
+        "group": "missing",
+        "positive": true,
+        "rationale": "The GitHub webhook receives and records repository deliveries.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "f6058af8f1997efff8ce9eeb0c552c08e9f0a2a326a88bfb701138a4380f584c",
+        "source": "import express from \"express\";\n\nexport const service = express();\nconst names = [];\nservice.post(\"/github/webhook\", express.json(), function (request, response) {\n  names.push(request.body.repository.full_name);\n  response.sendStatus(202);\n});\n"
+      },
+      {
+        "path": "app/api/webhooks/stripe/route.ts",
+        "group": "missing",
+        "positive": true,
+        "rationale": "The Next.js App Router handler records an incoming Stripe event.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "4218267b31fa4ce8b100fd7a44fc699a80235fc8cb39ed241b568b384e40c89c",
+        "source": "const paid = new Set<string>();\n\nexport async function POST(request: Request) {\n  const event = await request.json();\n  paid.add(event.id);\n  return new Response(null, { status: 204 });\n}\n"
+      },
+      {
+        "path": "src/checks.ts",
+        "group": "missing",
+        "positive": true,
+        "rationale": "The GitHub webhook stores the incoming delivery identifier.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "a17accd6015eb0469f65bd1afadd958aff30b57c0c061d4d9e7e8da5f285bf6e",
+        "source": "import express from \"express\";\n\nconst router = express.Router();\nconst completed = new Set<string>();\nrouter.post(\"/hooks/github\", express.json(), (req, res) => {\n  const delivery = req.get(\"x-github-delivery\");\n  if (delivery) completed.add(delivery);\n  return res.status(202).end();\n});\nexport default router;\n"
+      },
+      {
+        "path": "src/charges.js",
+        "group": "missing",
+        "positive": true,
+        "rationale": "The billing webhook accepts the decoded event and stores its type.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "dd514bfae04f31f7b6f45e074325f74f042c272aa04336fc517f54ed3599fa4a",
+        "source": "import express from \"express\";\n\nconst app = express();\nconst types = new Set();\napp.post(\"/billing/stripe/webhook\", express.raw({ type: \"application/json\" }), (req, res) => {\n  const delivery = JSON.parse(req.body.toString(\"utf8\"));\n  types.add(delivery.type);\n  res.sendStatus(200);\n});\nexport default app;\n"
+      },
+      {
+        "path": "src/edge-delivery.js",
+        "group": "missing",
+        "positive": true,
+        "rationale": "The Fetch worker accepts and stores Svix event identifiers on its webhook POST route.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "ab1b3b29bdae0dd5800bf3ae9675a2e6b295f30c226a2e71f2d736a9421b1e5e",
+        "source": "const seen = new Set();\n\nexport default {\n  async fetch(request) {\n    const path = new URL(request.url).pathname;\n    if (request.method !== \"POST\" || path !== \"/webhooks/svix\") {\n      return new Response(null, { status: 404 });\n    }\n    const event = await request.json();\n    seen.add(event.id);\n    return new Response(null, { status: 202 });\n  }\n};\n"
+      },
+      {
+        "path": "src/mail-events.ts",
+        "group": "missing",
+        "positive": true,
+        "rationale": "An email provider webhook records delivery events.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "9af862024ca29edea33d8f038747ca9ba709b7ab111592796052bc39929774a8",
+        "source": "import express from \"express\";\n\nexport const app = express();\nconst events: string[] = [];\napp.post(\"/webhooks/resend\", express.json(), (req, res) => {\n  events.push(req.body.type);\n  res.status(204).end();\n});\n"
+      },
+      {
+        "path": "src/payments.ts",
+        "group": "verified",
+        "positive": false,
+        "rationale": "Stripe authenticates the exact raw body with the configured signing secret before receipt is recorded.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "b9817554e16825b56d2433fcdb8029cdadbefbadec3cb51c3efd8cde1bb138f7",
+        "source": "import express from \"express\";\nimport Stripe from \"stripe\";\n\nconst stripe = new Stripe(process.env.STRIPE_API_KEY!);\nexport const app = express();\nconst received: string[] = [];\napp.post(\"/webhooks/stripe\", express.raw({ type: \"application/json\" }), (req, res) => {\n  try {\n    const event = stripe.webhooks.constructEvent(req.body, req.get(\"stripe-signature\")!, process.env.STRIPE_WEBHOOK_SECRET!);\n    received.push(event.id);\n    res.sendStatus(204);\n  } catch {\n    res.sendStatus(400);\n  }\n});\n"
+      },
+      {
+        "path": "src/audit.js",
+        "group": "verified",
+        "positive": false,
+        "rationale": "The Svix verifier checks the string body and delivery headers with a server-configured secret.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "b59350516a06cf50feb22ae90ffff2634d3ceb90c65e1d7d7afeb2fe18373d68",
+        "source": "import express from \"express\";\nimport { Webhook } from \"svix\";\n\nconst webhook = new Webhook(process.env.SVIX_SECRET);\nconst entries = [];\nexport const app = express();\napp.post(\"/webhooks/svix\", express.text({ type: \"application/json\" }), (req, res) => {\n  try {\n    const entry = webhook.verify(req.body, req.headers);\n    entries.push(entry.type);\n    return res.sendStatus(200);\n  } catch {\n    return res.sendStatus(400);\n  }\n});\n"
+      },
+      {
+        "path": "src/issues.js",
+        "group": "verified",
+        "positive": false,
+        "rationale": "Octokit checks the raw request and signature before the delivery enters local storage.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "0b053e84eb60186e49ae0316e3fb44bfa7e5776741385ef6469188e5c715fd10",
+        "source": "import express from \"express\";\nimport { Webhooks } from \"@octokit/webhooks\";\n\nconst webhooks = new Webhooks({ secret: process.env.GITHUB_WEBHOOK_SECRET });\nconst types = [];\nexport const app = express();\napp.post(\"/webhooks/github\", express.text({ type: \"application/json\" }), async (req, res) => {\n  const signature = req.get(\"x-hub-signature-256\");\n  if (!signature || !(await webhooks.verify(req.body, signature))) {\n    return res.sendStatus(401);\n  }\n  const event = JSON.parse(req.body);\n  types.push(event.action);\n  return res.sendStatus(204);\n});\n"
+      },
+      {
+        "path": "app/api/webhooks/clerk/route.js",
+        "group": "verified",
+        "positive": false,
+        "rationale": "The Next.js App Router receiver verifies Clerk's signed Svix delivery against the request text and headers.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "c55972a90ad5c1e5a70f62e32febddd050a517bc29fd06a44ada685949a803b8",
+        "source": "import { Webhook } from \"svix\";\n\nconst webhook = new Webhook(process.env.CLERK_WEBHOOK_SECRET);\nconst updates = [];\nexport async function POST(request) {\n  const raw = await request.text();\n  try {\n    const message = webhook.verify(raw, Object.fromEntries(request.headers));\n    updates.push(message.type);\n    return new Response(null, { status: 202 });\n  } catch {\n    return new Response(null, { status: 400 });\n  }\n}\n"
+      },
+      {
+        "path": "src/settlements.js",
+        "group": "verified",
+        "positive": false,
+        "rationale": "The router calls Stripe's signed event constructor before using the event and returns on a verification error.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "83abda835091699cccbd5cf3bfcc561ab592b44409427ac8df37758c412c1a97",
+        "source": "import express from \"express\";\nimport Stripe from \"stripe\";\n\nconst router = express.Router();\nconst stripe = new Stripe(process.env.STRIPE_API_KEY);\nconst settled = [];\nrouter.post(\"/billing/webhooks/stripe\", express.raw({ type: \"application/json\" }), (req, res) => {\n  let event;\n  try {\n    event = stripe.webhooks.constructEvent(req.body, req.headers[\"stripe-signature\"], process.env.STRIPE_ENDPOINT_SECRET);\n  } catch {\n    return res.status(400).end();\n  }\n  settled.push(event.id);\n  return res.status(204).end();\n});\nexport default router;\n"
+      },
+      {
+        "path": "src/delivery-status.js",
+        "group": "nonreceiver",
+        "positive": false,
+        "rationale": "Read-only status is returned to a dashboard with no incoming provider delivery.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "c422772842902049fd35defec658669cd6d469de3df7ce74a67211f3e1cdf03c",
+        "source": "import express from \"express\";\n\nexport const router = express.Router();\nrouter.get(\"/webhooks/github/status\", (req, res) => {\n  return res.json({ configured: Boolean(process.env.GITHUB_WEBHOOK_SECRET) });\n});\n"
+      },
+      {
+        "path": "src/preferences.ts",
+        "group": "nonreceiver",
+        "positive": false,
+        "rationale": "This webhook settings form accepts a user's display preference, with no provider event semantics.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "643720346049939541f0e6c36944405f519e9e6fb13b172319a5dbb35133ff7c",
+        "source": "import express from \"express\";\n\nconst router = express.Router();\nconst settings = new Map<string, string>();\nrouter.post(\"/settings/webhook-preferences\", express.json(), (req, res) => {\n  settings.set(\"display\", req.body.display);\n  return res.sendStatus(204);\n});\nexport default router;\n"
+      },
+      {
+        "path": "src/support.js",
+        "group": "nonreceiver",
+        "positive": false,
+        "rationale": "The application records text from its support form.",
+        "rules": [
+          "SKY-D282"
+        ],
+        "sha256": "c72f284539da75cb2b75cca5ad8bc67ffbee81a763c2a59180b973e35a2b7cf2",
+        "source": "import express from \"express\";\n\nexport const app = express();\nconst messages = [];\napp.post(\"/support/feedback\", express.json(), (req, res) => {\n  messages.push(req.body.message);\n  res.sendStatus(201);\n});\n"
+      }
+    ]
+  }
+}

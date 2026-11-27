@@ -1,7 +1,12 @@
 import ast
+import os
 
-from skylos.rules.danger.python_security_gaps import scan
+import pytest
+
+from skylos.analysis.worker_cache import SecurityUnitCache, security_units
+from skylos.rules.danger.danger_fs import path_provenance
 from skylos.rules.danger.project_security_sources import ProjectSources
+from skylos.rules.danger.python_security_gaps import scan
 
 
 def project(tmp_path, remote=True, annotation="str", override="", model_defs=""):
@@ -92,3 +97,128 @@ def test_same_position_different_ast_is_not_source_grounding(tmp_path):
         .value
     )
     assert ProjectSources(tmp_path).import_evidence(path, other) is None
+
+
+@pytest.fixture
+def worker_units():
+    token = security_units.set(SecurityUnitCache())
+    try:
+        yield
+    finally:
+        security_units.reset(token)
+
+
+def test_project_unit_reuse_keeps_resolution_failures_private(
+    tmp_path, worker_units, monkeypatch
+):
+    path = tmp_path / "module.py"
+    path.write_text("value = 'fixed'\n")
+    first = ProjectSources(tmp_path)
+    second = ProjectSources(tmp_path)
+    first_unit = first.project.by_path[path]
+    second_unit = second.project.by_path[path]
+    assert first_unit.tree is second_unit.tree
+    assert first_unit.module.binds is second_unit.module.binds
+
+    def stop(*args):
+        raise RecursionError
+
+    with monkeypatch.context() as patch:
+        patch.setattr(path_provenance, "module_rebinding", stop)
+        assert first_unit.rebinding()[0]
+    assert not second_unit.rebinding()[0]
+    assert first_unit.rebinding()[0]
+
+    monkeypatch.setattr(path_provenance, "_MAX_RESOLUTION_WORK", 1)
+    first.project._charge_resolution()
+    with pytest.raises(path_provenance._ResolutionLimit):
+        first.project._charge_resolution()
+    second.project._charge_resolution()
+    assert first.project._resolution_work == 2
+    assert second.project._resolution_work == 1
+
+
+def test_project_unit_reuse_reads_changed_source_and_inventory(tmp_path, worker_units):
+    root = tmp_path / "src"
+    root.mkdir()
+    path = root / "module.py"
+    path.write_text("value = 'first'\n")
+    metadata = path.stat()
+    first = ProjectSources(root).project.by_path[path]
+    path.write_text("value = 'other'\n")
+    os.utime(path, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
+    changed = ProjectSources(root).project.by_path[path]
+    assert changed.tree.body[0].value.value == "other"
+    assert changed.tree is not first.tree
+
+    (tmp_path / "__init__.py").touch()
+    (root / "__init__.py").touch()
+    packaged = ProjectSources(root).project.by_path[path]
+    assert tmp_path.name + ".src.module" in packaged.module_names
+    assert packaged.module_names != first.module_names
+    outside = tmp_path / "elsewhere.py"
+    path.rename(outside)
+    path.symlink_to(outside)
+    assert path not in ProjectSources(root).project.by_path
+
+
+@pytest.mark.parametrize(
+    "limit",
+    ["_MAX_CACHED_FILES", "_MAX_CACHED_SCOPE_NODES", "_MAX_CACHED_SOURCE_CHARS"],
+)
+def test_project_index_cache_budget_keeps_uncached_sources_in_graph(
+    tmp_path, worker_units, monkeypatch, limit
+):
+    from skylos.rules.danger import project_security_sources
+
+    monkeypatch.setattr(project_security_sources, limit, 0)
+    path = tmp_path / "providers.py"
+    path.write_text("def provider(): return 42\n")
+    first = ProjectSources(tmp_path).project
+    second = ProjectSources(tmp_path).project
+    assert first.by_path[path].tree is not second.by_path[path].tree
+    assert first.function_info and second.function_info
+    assert not security_units.get().entries
+
+
+def test_serial_worker_reuses_index_and_follows_changed_cross_file_source(
+    tmp_path, monkeypatch
+):
+    from skylos.scale.parallel_static import run_proc_file_parallel
+
+    path = tmp_path / "loader.py"
+    path.write_text(
+        "import importlib\ndef load(name):\n    return importlib.import_module(name)\n"
+    )
+    caller = tmp_path / "entry.py"
+    caller.write_text(
+        "from urllib.request import urlopen\n"
+        "from loader import load\n"
+        "load(urlopen('https://example.org').read().decode())\n"
+    )
+    indexed = []
+    original = path_provenance._Unit._index
+
+    def track(unit):
+        indexed.append(unit.path)
+        return original(unit)
+
+    def update(done, total, completed):
+        if done == 1:
+            caller.write_text("from loader import load\nload('fixed.module')\n")
+
+    monkeypatch.setattr(path_provenance._Unit, "_index", track)
+    results = run_proc_file_parallel(
+        [path, path],
+        {path: "loader"},
+        jobs=1,
+        progress_callback=update,
+        project_root=tmp_path,
+    )
+    positives = [
+        [f for f in result[7] if f["rule_id"] == "SKY-D357"] for result in results
+    ]
+    assert [len(group) for group in positives] == [1, 0]
+    assert indexed.count(path) == 1
+    assert indexed.count(caller) == 2
+    assert security_units.get() is None
