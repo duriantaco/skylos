@@ -284,10 +284,14 @@ expected answers and tool calls, use `skylos agent test`. See
 | Kotlin | Partial | Partial | No |
 | Swift | Partial | No | No |
 | Shell | No | Partial | No |
+| PostgreSQL SQL files | Unused SELECT CTEs | Partial | Partial |
 
 - Python has the deepest coverage.
 - Go needs the native `skylos-go` engine. It ships in the PyPI wheels for
   Linux, macOS and Windows; elsewhere `skylos doctor` prints the build command.
+- PostgreSQL needs `pip install "skylos[postgres]"`. Use `--quality --danger`
+  and set the database dialect in the SQL folder or use a Prisma migration lock.
+  These checks are report-only.
 - Dart needs `pip install "skylos[dart]"`.
 - Rust dead-code checks are experimental. Use `skylos . --confidence 40` to
   see candidates such as unused private functions and enum variants.

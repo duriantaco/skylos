@@ -247,7 +247,11 @@ def _is_advisory_quality_finding(finding):
 
 def _gate_quality_findings(quality, *, explicit_rules=(), use_listing_policy=False):
     from skylos.reporting.finding_types import get_finding_type
-    from skylos.reporting.listing import is_listed, listing_decision
+    from skylos.reporting.listing import (
+        POSTGRESQL_QUALITY_ADVISORIES,
+        is_listed,
+        listing_decision,
+    )
 
     def included(finding):
         rule = (
@@ -255,6 +259,8 @@ def _gate_quality_findings(quality, *, explicit_rules=(), use_listing_policy=Fal
             if isinstance(finding, dict)
             else ""
         )
+        if rule in POSTGRESQL_QUALITY_ADVISORIES:
+            return False
         if rule in explicit_rules:
             return True
         if use_listing_policy or listing_decision(finding) is not None:

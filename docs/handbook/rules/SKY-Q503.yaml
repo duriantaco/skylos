@@ -1,0 +1,66 @@
+id: SKY-Q503
+title: Unused read-only PostgreSQL CTE
+family: quality
+severity: LOW
+languages: [PostgreSQL]
+gate:
+  full: listed
+  note: This initial PostgreSQL check is report-only.
+
+what_it_is: >-
+  A WITH clause names a read-only query whose result the statement never
+  uses. The name introduces a common table expression (CTE).
+why_it_matters: >-
+  An unused CTE can survive a rewrite and make a query harder to follow.
+  If the author intended that CTE to filter the result, the statement may
+  return the wrong rows.
+how_skylos_decides:
+  - >-
+    Install the postgres extra and run `skylos . --quality`. Set
+    `dialect = "postgresql"` under `[tool.skylos.sql]` in pyproject.toml
+    for the folder containing the queries.
+  - >-
+    Skylos parses the statement and checks references to names introduced
+    by WITH. A data-changing CTE can perform writes even when its result
+    goes unread.
+source_refs:
+  - path: skylos/visitors/languages/postgresql.py
+    symbol: 'def scan_postgresql('
+
+flagged_example:
+  language: sql
+  files:
+    - filename: query.sql
+      code: |
+        WITH open_orders AS (SELECT id FROM orders WHERE status = 'open')
+        SELECT id FROM orders;
+    - &config
+      filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.sql]
+        dialect = "postgresql"
+  expect_file: query.sql
+  expect_line: 1
+not_flagged_example:
+  language: sql
+  files:
+    - filename: query.sql
+      code: &use_cte |
+        WITH open_orders AS (SELECT id FROM orders WHERE status = 'open')
+        SELECT id FROM open_orders;
+    - *config
+  why: The final query reads open_orders.
+fix:
+  explanation: >-
+    Read from the CTE if its rows are needed. Remove its definition if the
+    final query already reads the intended rows.
+  filename: query.sql
+  language: sql
+  code: *use_cte
+false_alarms_and_suppression:
+  misfires:
+    - A query template may add another reference before it reaches PostgreSQL.
+  suppress:
+    - text: Review the final SQL when a template adds references.
+related: [SKY-Q504]

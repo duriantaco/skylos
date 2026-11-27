@@ -237,6 +237,9 @@ def is_unproven_source_review(finding):
     return False
 
 
+POSTGRESQL_QUALITY_ADVISORIES = frozenset({"SKY-Q503", "SKY-Q504"})
+POSTGRESQL_SEARCH_PATH_RULE = "SKY-D417"
+
 NONBLOCKING_REVIEW_RULES = frozenset({"SKY-D324", "SKY-D325"})
 
 
@@ -275,6 +278,13 @@ def is_nonblocking_review(finding):
 
 def is_gate_exempt_review(finding):
     """Review evidence that stays in the report without failing a gate."""
+    if isinstance(finding, Mapping) and finding.get("rule_id") == POSTGRESQL_SEARCH_PATH_RULE:
+        item = finding.get("review_item")
+        return (
+            isinstance(item, Mapping)
+            and item.get("kind") == "postgresql_search_path"
+            and item.get("blocking") is False
+        )
     if isinstance(finding, Mapping) and finding.get("rule_id") in ("SKY-D415", "SKY-D416"):
         item = finding.get("review_item")
         metadata = finding.get("metadata")

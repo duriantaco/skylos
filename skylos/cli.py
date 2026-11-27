@@ -889,13 +889,20 @@ LOCAL_PRECOMMIT_ADVISORY_QUALITY_RULE_IDS = {"SKY-Q802", "SKY-Q803"}
 
 
 def _precommit_blocks_finding(finding: dict) -> bool:
+    from skylos.reporting.listing import (
+        POSTGRESQL_QUALITY_ADVISORIES,
+        POSTGRESQL_SEARCH_PATH_RULE,
+    )
+
     category = str(finding.get("category", "")).lower()
-    if category in {"security", "secrets"}:
-        return True
+    rule_id = str(finding.get("rule_id", ""))
+    if category == "security" and rule_id == POSTGRESQL_SEARCH_PATH_RULE:
+        return False
     if category != "quality":
         return True
 
-    rule_id = str(finding.get("rule_id", ""))
+    if rule_id in POSTGRESQL_QUALITY_ADVISORIES:
+        return False
     if (
         rule_id in LOCAL_PRECOMMIT_ADVISORY_QUALITY_RULE_IDS
         and finding.get("advisory") is True
@@ -5345,8 +5352,8 @@ def main() -> None:
                 if suppressed_local_findings and agent_args.format != "json":
                     console.print(
                         "[dim]Local pre-commit suppressed "
-                        f"{suppressed_local_findings} non-blocking quality finding(s); "
-                        "full quality enforcement still runs in CI.[/dim]"
+                        f"{suppressed_local_findings} non-blocking quality finding(s) or "
+                        "security review(s). See the full scan for details.[/dim]"
                     )
                 console.print(
                     "[good]No staged security, reliability, secrets, quality, or AI-defect issues[/good]"

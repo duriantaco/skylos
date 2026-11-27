@@ -7,6 +7,8 @@ brings it back.
 
 from __future__ import annotations
 
+from collections import Counter
+
 _GENERATED_REASON_NOUNS = {
     "django_migration": ("Django migration", "Django migrations"),
     "vendored_static_lib": ("web-root library file", "web-root library files"),
@@ -21,6 +23,11 @@ def scope_note_lines(result: dict) -> list[str]:
     if not isinstance(summary, dict):
         return []
     lines = []
+    sql = summary.get("sql_analysis") or {}
+    if sql.get("unchecked_files"):
+        counts = Counter(row["status"] for row in sql.get("files", []) if row["status"] != "checked")
+        reasons = ", ".join(f"{count} {status.replace('_', ' ')}" for status, count in sorted(counts.items()))
+        lines.append(f"SQL coverage: {sql['checked_files']} checked, {sql['unchecked_files']} unchecked ({reasons}).")
     generated = _generated_note(summary.get("generated_files"))
     if generated:
         lines.append(generated)

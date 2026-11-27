@@ -585,6 +585,27 @@ def _scan_config_only_file(_file, cfg, **_options):
     )
 
 
+def _scan_sql_file(file, cfg, *, enable_quality_rules, enable_danger_rules, project_root=None):
+    from skylos.analysis.sql_files import analyze_sql_file
+
+    result = _scan_config_only_file(file, cfg)
+    if not (enable_quality_rules or enable_danger_rules):
+        return result
+    findings, coverage = analyze_sql_file(file, cfg, project_root)
+    result[5].sql_coverage = coverage
+    for finding in findings:
+        rule_id = finding["rule_id"]
+        if rule_id in cfg.get("ignore", ()):
+            continue
+        if rule_id == "SKY-D417":
+            if enable_danger_rules:
+                finding["review_item"] = {"kind": "postgresql_search_path", "blocking": False}
+                result[7].append(finding)
+        elif enable_quality_rules:
+            result[6].append(finding)
+    return result
+
+
 NON_PYTHON_SCANNERS = (
     (TS_JS_SOURCE_EXTS, _scan_typescript_like_file),
     ((".go",), _scan_go_file),
@@ -598,6 +619,7 @@ NON_PYTHON_SCANNERS = (
     ((".cs",), _scan_csharp_file),
     (KOTLIN_SOURCE_EXTS, _scan_kotlin_file),
     (SHELL_SOURCE_EXTS, _scan_shell_file),
+    ((".sql",), _scan_sql_file),
     (SECRET_CONFIG_SUFFIXES, _scan_config_only_file),
 )
 
@@ -693,6 +715,8 @@ def scan_non_python_file(
     csharp_route_facts=None,
 ):
     file_name = str(file)
+    if Path(file).suffix.lower() == ".sql":
+        file_name = file_name.lower()
     for suffixes, scanner in NON_PYTHON_SCANNERS:
         if file_name.endswith(suffixes):
             scope_options = (
@@ -702,7 +726,7 @@ def scan_non_python_file(
             )
             if scanner is _scan_csharp_file:
                 scope_options["csharp_route_facts"] = csharp_route_facts
-            if scanner in (_scan_typescript_like_file, _scan_rust_file):
+            if scanner in (_scan_typescript_like_file, _scan_rust_file, _scan_sql_file):
                 scope_options["project_root"] = project_root
             out = scanner(
                 file,

@@ -1,0 +1,68 @@
+id: SKY-D417
+title: PostgreSQL SECURITY DEFINER function inherits its search path
+family: security
+severity: MEDIUM
+languages: [PostgreSQL]
+gate:
+  full: listed
+  note: This initial PostgreSQL check is report-only.
+
+what_it_is: >-
+  A function declared SECURITY DEFINER runs with its owner's privileges.
+  Without a fixed search_path on the function, unqualified object names
+  can resolve according to the caller's session settings.
+why_it_matters: >-
+  An unqualified name can resolve to the wrong object when an untrusted
+  user can create objects in a schema searched first. The function then
+  accesses that object with the owner's privileges.
+how_skylos_decides:
+  - >-
+    Install the postgres extra and run `skylos . --danger`. Set
+    `dialect = "postgresql"` under `[tool.skylos.sql]` in pyproject.toml
+    for the folder containing the function.
+  - >-
+    Skylos checks the SQL that declares the function for SECURITY DEFINER
+    and a fixed search_path. Review the effective role and schema grants
+    in the database to judge the impact.
+source_refs:
+  - path: skylos/visitors/languages/postgresql.py
+    symbol: 'def scan_postgresql('
+
+flagged_example:
+  language: sql
+  files:
+    - filename: function.sql
+      code: |
+        CREATE FUNCTION order_count() RETURNS bigint SECURITY DEFINER
+        LANGUAGE sql AS $$ SELECT count(*) FROM orders $$;
+    - &config
+      filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.sql]
+        dialect = "postgresql"
+  expect_file: function.sql
+  expect_line: 1
+not_flagged_example:
+  language: sql
+  files:
+    - filename: function.sql
+      code: &safe_path |
+        CREATE FUNCTION order_count() RETURNS bigint SECURITY DEFINER
+        SET search_path = pg_catalog, pg_temp
+        LANGUAGE sql AS $$ SELECT count(*) FROM app.orders $$;
+    - *config
+  why: The function pins its path and uses the qualified name of its application table.
+fix:
+  explanation: >-
+    Qualify application objects and pin the path to trusted schemas, with
+    pg_temp last. Confirm that only trusted roles can write to those schemas.
+  filename: function.sql
+  language: sql
+  code: *safe_path
+false_alarms_and_suppression:
+  misfires:
+    - A later migration can set the function's path with ALTER FUNCTION.
+  suppress:
+    - text: Inspect the effective function settings and grants before accepting this finding.
+related: [SKY-Q504]

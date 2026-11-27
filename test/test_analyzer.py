@@ -401,6 +401,7 @@ class TestSkylos:
                 ".kt",
                 ".kts",
                 *SHELL_SOURCE_EXTS,
+                ".sql",
             },
             exclude_folders=None,
         )

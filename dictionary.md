@@ -3508,3 +3508,20 @@ commit only. A pack's rules only add findings; one with a `SKY-*` ID does not
 replace or hide the built-in finding. Packs that are symlinks, over 1 MB,
 invalid YAML, use YAML aliases or have no `rules` list are skipped and named
 in a scan warning.
+
+## Standalone PostgreSQL reviews
+
+Run `skylos . --quality --danger` with the `postgres` extra. Set
+`[tool.skylos.sql] dialect = "postgresql"` in pyproject.toml or use a
+Prisma migration lock in the scanned migrations tree. SQL files with uncertain
+dialects or parse errors appear in `analysis_summary.sql_analysis`.
+
+- `SKY-Q503` flags an unreferenced read-only SELECT common table expression.
+  A data-changing CTE can still execute when its output is unread.
+- `SKY-Q504` flags ordinary equality or inequality against a literal NULL
+  in supported PostgreSQL filters. Use IS NULL or IS NOT NULL.
+- `SKY-D417` flags a SECURITY DEFINER function definition without a fixed
+  function-local search path. Verify the database privileges and intended
+  object names before changing a function.
+
+These are advisory findings for review.

@@ -1,0 +1,64 @@
+id: SKY-Q504
+title: PostgreSQL filter compares a value to NULL
+family: quality
+severity: MEDIUM
+languages: [PostgreSQL]
+gate:
+  full: listed
+  note: This initial PostgreSQL check is report-only.
+
+what_it_is: >-
+  A filter compares an expression to NULL with an ordinary equality or
+  inequality operator. Under standard PostgreSQL settings the comparison
+  evaluates to unknown, even when the expression holds NULL.
+why_it_matters: >-
+  WHERE keeps rows only when its condition is true. A query intended to
+  find active accounts can quietly return zero rows.
+how_skylos_decides:
+  - >-
+    Install the postgres extra and run `skylos . --quality`. Set
+    `dialect = "postgresql"` under `[tool.skylos.sql]` in pyproject.toml
+    for the folder containing the queries.
+  - >-
+    Skylos looks for a literal NULL operand on either side of an equality
+    or inequality comparison in a filter. Assigning NULL to a column
+    has a different meaning.
+source_refs:
+  - path: skylos/visitors/languages/postgresql.py
+    symbol: 'def scan_postgresql('
+
+flagged_example:
+  language: sql
+  files:
+    - filename: query.sql
+      code: |
+        SELECT id FROM accounts
+        WHERE deleted_at = NULL;
+    - &config
+      filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.sql]
+        dialect = "postgresql"
+  expect_file: query.sql
+  expect_line: 2
+not_flagged_example:
+  language: sql
+  files:
+    - filename: query.sql
+      code: &null_test |
+        SELECT id FROM accounts
+        WHERE deleted_at IS NULL;
+    - *config
+  why: IS NULL selects rows whose deletion timestamp is missing.
+fix:
+  explanation: Use IS NULL to find missing values and IS NOT NULL to find present values.
+  filename: query.sql
+  language: sql
+  code: *null_test
+false_alarms_and_suppression:
+  misfires:
+    - A database configured with transform_null_equals can rewrite equality to IS NULL.
+  suppress:
+    - text: Use an explicit null test to make the query portable across PostgreSQL settings.
+related: [SKY-Q503]

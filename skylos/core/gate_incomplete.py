@@ -177,6 +177,10 @@ def incomplete_analysis_reasons(results) -> list[IncompleteReason]:
     if analysis_errors:
         reasons.append(_analysis_errors_reason(analysis_errors))
 
+    sql_gaps = _sql_file_gaps(summary)
+    if sql_gaps:
+        reasons.append(_unchecked_files_reason(sql_gaps, None))
+
     languages = _incomplete_languages(summary.get("incomplete_languages"))
     if languages:
         reasons.append(_languages_reason(languages, summary.get("language_engines")))
@@ -247,11 +251,14 @@ def analysis_coverage(results, *, strict=False, require_complete=False):
         language_reason = None
 
     source_count = _non_negative_int(summary.get("total_files"))
+    sql_gaps = _sql_file_gaps(summary)
     unchecked_count = _unchecked_file_count(file_gaps, language_gaps)
     if source_count is not None:
         unchecked_count = min(unchecked_count, source_count)
+    # Unchecked SQL cannot dilute the existing coverage gate for other languages.
+    measured_scope = max(0, source_count - len(sql_gaps)) if source_count is not None else None
     most_unchecked = bool(unchecked_count) and (
-        not source_count or unchecked_count * 2 > source_count
+        not measured_scope or unchecked_count * 2 > measured_scope
     )
 
     source_gaps = []
@@ -284,6 +291,12 @@ def analysis_coverage(results, *, strict=False, require_complete=False):
     if sca_reason is not None:
         blocking.append(sca_reason)
 
+    if sql_gaps:
+        gaps.append(_unchecked_files_reason(sql_gaps, source_count))
+        file_gaps.extend(sql_gaps)
+        unchecked_count = _unchecked_file_count(file_gaps, language_gaps)
+        if source_count is not None:
+            unchecked_count = min(unchecked_count, source_count)
     if (strict or require_complete) and gaps:
         blocking.extend(gaps)
         gaps = []
@@ -366,6 +379,22 @@ def _languages_block_diff(results, errors):
 
 def _non_negative_int(value):
     return value if type(value) is int and value >= 0 else None
+
+
+def _sql_file_gaps(summary):
+    coverage = summary.get("sql_analysis")
+    if not isinstance(coverage, dict) or not isinstance(coverage.get("files"), list):
+        return []
+    return [
+        {
+            "file": row["file"],
+            "kind": "sql_" + row["status"],
+            "message": row.get("reason") or row["status"].replace("_", " "),
+        }
+        for row in coverage["files"]
+        if isinstance(row, dict) and isinstance(row.get("file"), str)
+        and row.get("status") in ("unknown_dialect", "conflicting_dialect", "unsupported_dialect", "unparsed")
+    ]
 
 
 def _unchecked_file_count(file_gaps, language_gaps):

@@ -40,6 +40,7 @@ _LANGUAGES = {
     ".rb": "Ruby",
     ".swift": "Swift",
     ".dart": "Dart",
+    ".sql": "SQL",
 }
 
 
@@ -137,6 +138,13 @@ def _coverage(result, scanned_checks):
         reasons.append("kubernetes_policy_coverage_incomplete")
         incomplete_checks.append("security")
         limited_checks.append("security")
+    sql = summary.get("sql_analysis")
+    if isinstance(sql, Mapping) and sql.get("unchecked_files"):
+        sql_checks = [check for check in ("quality", "security") if check in scanned_checks]
+        if sql_checks:
+            reasons.append("sql_dialect_or_parser_incomplete")
+            incomplete_checks.extend(sql_checks)
+            limited_checks.extend(sql_checks)
     ruby = summary.get("ruby_security_coverage")
     if (
         "security" in scanned_checks

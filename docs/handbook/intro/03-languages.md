@@ -19,9 +19,10 @@ languages that rule covers.
 | C++ | `.cpp .cc .cxx`, headers for references | Partial | No | No | tree-sitter |
 | Kotlin | `.kt .kts` | Partial | Partial | No | Skylos's own lexer |
 | Swift | `.swift` | Partial | No | No | tree-sitter |
+| PostgreSQL | `.sql` | Unused SELECT CTEs with `--quality` | Partial | Partial | PostgreSQL parser via `skylos[postgres]` |
 | Shell | `.sh .bash .zsh .ksh .bats` | No | Partial | No | Skylos's own reader |
 
-Secrets are checked in these source files (except Drupal's `.module`-style
+Secrets are checked in the supported source extensions listed in the secrets guide (except Drupal's `.module`-style
 PHP files) and in configuration,
 `.env`, Dockerfile, Terraform, HTML and key files (see "Secret detection").
 CI workflows, agent settings, Docker Compose, systemd, Kubernetes and
@@ -49,6 +50,30 @@ Terraform files have their own rules.
 - **C++** dead code reports only unused file-local functions.
 - **Dart** needs `pip install "skylos[dart]"`, which compiles a parser and so
   needs a C compiler. Without it, `.dart` files are listed as not analysed.
+
+## Checking PostgreSQL scripts
+
+Install `pip install "skylos[postgres]"` and run
+`skylos . --quality --danger --format json` from the project root. For a
+PostgreSQL folder, set the following in its `skylos.toml`:
+
+```toml
+[sql]
+dialect = "postgresql"
+```
+
+In `pyproject.toml`, use `[tool.skylos.sql]`. A Prisma
+`migrations/migration_lock.toml` can also establish the provider for that
+directory and its children. Give each database's folder its own setting
+in a mixed repository. An unknown dialect, an unsupported dialect or
+conflicting settings appear in `analysis_summary.sql_analysis`. This
+section also records parse failures and missing parser installations.
+
+The initial reviews cover an unused read-only common table expression,
+an ordinary comparison against NULL in a filter, and a privileged function
+that inherits its search path. The checks operate on parsed SQL files.
+Database contents, schema permissions and dynamically built SQL are outside
+their scope. Findings are report-only.
 
 ## Checking Rust security
 
