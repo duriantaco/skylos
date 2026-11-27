@@ -2,7 +2,7 @@ id: SKY-D251
 title: Password or token written to logs
 family: security
 severity: HIGH
-languages: [Python, TypeScript/JavaScript]
+languages: [Python, TypeScript/JavaScript, Rust]
 gate:
   full: counted
 cwe: [CWE-532]
@@ -93,6 +93,8 @@ more_examples:
         `length`, not in a secret word.
 
 how_skylos_decides:
+  - >-
+    In Rust, Skylos follows an exposed secrecy::SecretString into a recognized log or tracing macro. It checks simple formatted arguments and tracing fields. The wrapped value and its length stay quiet.
   - >-
     Runs with `--danger`. Python and TypeScript/JavaScript use different
     checks.

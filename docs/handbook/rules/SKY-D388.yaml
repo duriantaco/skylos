@@ -1,0 +1,55 @@
+id: SKY-D388
+title: Symmetric key embedded in source
+family: security
+severity: HIGH
+languages: [Rust]
+cwe: [CWE-321]
+gate:
+  full: counted
+
+what_it_is: >-
+  A jsonwebtoken HMAC signing key comes from a source literal. The rule also checks AES-GCM initializers that receive a fixed, repeated-byte key.
+why_it_matters: >-
+  Anyone who obtains a shared signing key may be able to issue tokens that the application trusts.
+
+flagged_example:
+  language: rust
+  filename: src/lib.rs
+  expect_line: 3
+  code: |
+    use jsonwebtoken::EncodingKey;
+    pub fn init() {
+        let _ = EncodingKey::from_secret(b"example-only-key");
+    }
+
+not_flagged_example:
+  language: rust
+  filename: src/lib.rs
+  code: |
+    use jsonwebtoken::EncodingKey;
+    pub fn init(key: &[u8]) {
+        let _ = EncodingKey::from_secret(key);
+    }
+  why: >-
+    The key is supplied by the caller.
+
+how_skylos_decides:
+  - >-
+    Skylos resolves EncodingKey and its HMAC constructors.
+  - >-
+    For the base64 constructors the literal must decode to nonempty key material. The diagnostic omits the key.
+source_refs:
+  - path: skylos/visitors/languages/rust/sensitive.py
+    symbol: 'def literal_signing_key('
+fix:
+  explanation: >-
+    Load key material from secret storage and rotate any key that has been deployed.
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Configuration supplied by another module or a key management service is outside the literal check.
+  suppress:
+    - text: >-
+        Record the reason on the reported line with `// skylos: ignore[SKY-D388]`.
+      check: inline
+related: [SKY-S101]

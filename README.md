@@ -291,10 +291,14 @@ expected answers and tool calls, use `skylos agent test`. See
 - Dart needs `pip install "skylos[dart]"`.
 - Rust dead-code checks are experimental. Use `skylos . --confidence 40` to
   see candidates such as unused private functions and enum variants.
-- Rust security checks (`--danger`) include disabled TLS verification, unsafe
-  Unix file permissions, and server-side request forgery (SSRF). For `reqwest`,
-  Skylos checks whether incoming data can choose the host of a request that
-  gets sent. It can miss SSRF that depends on DNS or on code inside a dependency.
+- Rust security checks (`--danger`) follow request data into SQL execution
+  (rusqlite, SQLx and MySQL), shell commands, filesystem paths, HTML and
+  outgoing requests. They also cover disabled TLS verification, insecure
+  session cookies, authentication over HTTP and sensitive values in URLs.
+- Other Rust checks include exposed secrets in logs or password writes, weak
+  cryptography, Unix file permissions, regexes built from request text and
+  unbounded memory allocation. Coverage depends on the crate and call path.
+  For example, SSRF inside a dependency or through DNS can still be missed.
 - Rust quality checks (`--quality`) include unreachable statements and duplicate
   branch bodies.
 

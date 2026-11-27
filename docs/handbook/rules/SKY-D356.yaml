@@ -2,7 +2,7 @@ id: SKY-D356
 title: Cleartext outbound HTTP
 family: security
 severity: MEDIUM
-languages: [Python]
+languages: [Python, Rust]
 gate:
   full: counted
 
@@ -10,6 +10,8 @@ what_it_is: >-
   A URL that starts with `http://` is sent without encryption. SKY-D356
   reports Python `requests`, `httpx` and `urllib` calls whose URL has an
   explicit `http://` scheme and a host other than the local machine.
+  In Rust it reports a dispatched reqwest request that targets a cleartext
+  URL and sets Basic, Bearer or Authorization credentials.
 
 why_it_matters: >-
   Anyone on the network path, such as a shared Wi-Fi, a compromised router
@@ -45,7 +47,35 @@ not_flagged_example:
     Skylos skips `localhost` and loopback IP addresses when the host part of
     the URL is complete.
 
+more_examples:
+  - flagged:
+      language: rust
+      filename: src/status.rs
+      expect_line: 4
+      code: |
+        use reqwest::blocking::Client;
+        pub fn status(token: &str) {
+            let client = Client::new();
+            let _ = client.get("http://api.example.org/status").bearer_auth(token).send();
+        }
+    not_flagged:
+      language: rust
+      filename: src/status.rs
+      code: |
+        use reqwest::blocking::Client;
+        pub fn status(token: &str) {
+            let client = Client::new();
+            let _ = client.get("https://api.example.org/status").bearer_auth(token).send();
+        }
+      why: The client uses HTTPS for the authenticated request.
+
 how_skylos_decides:
+  - >-
+    Rust requires a literal HTTP destination, a recognized reqwest client,
+    an authentication API or Authorization header, and a blocking send or
+    an async request that is polled. A caller-supplied client can still
+    reject the URL at runtime. Local HTTPS-only builders, loopback addresses
+    and unpolled request futures stay quiet.
   - >-
     Finds `get`, `post`, `put`, `patch`, `delete`, `head`, `options` and
     `request` on the `requests` and `httpx` modules, and
@@ -64,6 +94,8 @@ how_skylos_decides:
     transport choice; it does not claim that sensitive data is sent.
 
 source_refs:
+  - path: skylos/visitors/languages/rust/transport.py
+    symbol: "def carries_auth("
   - path: skylos/rules/danger/python_security_gaps.py
     symbol: "_HTTP_CALLS = {"
   - path: skylos/rules/danger/python_security_gaps.py

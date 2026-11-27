@@ -6,7 +6,18 @@ from functools import lru_cache
 from itertools import pairwise
 from pathlib import Path
 
-from . import permissions, reqwest
+from . import (
+    cookies,
+    log_formats,
+    permissions,
+    request_patterns,
+    reqwest,
+    sensitive,
+    sql,
+    tls,
+    transport,
+)
+from . import unbounded_input
 from ._security_bindings import (
     SYMBOLIC,
     UNKNOWN,
@@ -104,6 +115,7 @@ _STORE_WRITES = ("create", "insert", "update", "upsert", "save", "replace", "sto
 _MAX_CHAIN = 4
 _OPERATOR_INPUT = "operator_input"
 _D210 = "SKY-D210"
+_D211 = "SKY-D211"
 _D212 = "SKY-D212"
 _D215 = "SKY-D215"
 _D216 = "SKY-D216"
@@ -112,6 +124,7 @@ _D228 = "SKY-D228"
 _REQUEST_ONLY_RULES = frozenset({_D216, _D228})
 _SEVERITY = {
     _D210: "HIGH",
+    _D211: "CRITICAL",
     _D212: "HIGH",
     _D215: "HIGH",
     _D216: "CRITICAL",
@@ -350,6 +363,10 @@ class _SecurityFlow(_ScopeAttributes):
         self.siblings = siblings
         self.refuted = refuted
         self.call_arguments = {}
+        self.tls_callers = (
+            {} if any(name in source for name in tls.OPTION_NAMES) else None
+        )
+        self.tls_parameters = []
         self.library_calls = set()
         self.build_script = _is_build_script(file_path)
         self.harness_file = (
@@ -416,6 +433,10 @@ class _SecurityFlow(_ScopeAttributes):
                 ),
             }
         }
+        if rule == _D211 and sql.REMOTE_SOURCE in sources:
+            metadata["security_evidence"]["assumption"] = (
+                "The HTTP peer can supply SQL text. A source path alone does not establish exploitability."
+            )
         if extra:
             metadata.update(extra)
         finding = {
@@ -493,6 +514,17 @@ class _SecurityFlow(_ScopeAttributes):
                         and ident not in local_names
                     ):
                         value = Value(local_function=child.start_byte)
+                    elif (
+                        child.type == "const_item"
+                        and not conditional
+                        and ident not in local_names
+                    ):
+                        initializer = self.field(child, "value")
+                        if (
+                            initializer is not None
+                            and initializer.type == "boolean_literal"
+                        ):
+                            value = tls.literal(initializer)
                     state.bind(ident, value)
                     local_names.add(ident)
         if self.siblings and node == self.root:
@@ -536,7 +568,7 @@ class _SecurityFlow(_ScopeAttributes):
         # provide a name make it ambiguous.
         provided = {}
         for module, conditional in globs:
-            for name in GLOB_EXPORTS.get(module, ()):
+            for name in GLOB_EXPORTS.get(module, sql.MYSQL_GLOBS.get(module, ())):
                 if name in state.frames[-1]:
                     continue
                 provided.setdefault(name, set()).add(
@@ -657,7 +689,24 @@ class _SecurityFlow(_ScopeAttributes):
                 sources = frozenset()
                 if inner not in NON_TEXT_TYPES:
                     sources = frozenset({request_label(f"extractor {api}")})
-                self.bind_pattern(pattern, Value(sources=sources | symbolic), state)
+                kind = None
+                if (
+                    pattern is not None
+                    and pattern.type == "tuple_struct_pattern"
+                    and inner
+                    and state.resolve(inner) == "std::string::String"
+                ):
+                    kind = sql.TEXT
+                elif (
+                    inner == "usize"
+                    and pattern is not None
+                    and pattern.type == "tuple_struct_pattern"
+                    and not any("usize" in frame for frame in state.frames)
+                ):
+                    kind = request_patterns.SIZE
+                self.bind_pattern(
+                    pattern, Value(sources=sources | symbolic, kind=kind), state
+                )
                 continue
             if pattern is None or pattern.type != "identifier":
                 self.bind_pattern(pattern, Value(sources=symbolic), state)
@@ -665,14 +714,32 @@ class _SecurityFlow(_ScopeAttributes):
             name = self.text(pattern)
             sources = frozenset()
             kind = "path" if api in _PATH_TYPES else None
+            if api in {sensitive.SECRET, unbounded_input.SOCKET}:
+                kind = api
             if api in permissions.FS_TYPES:
                 kind = self.fs_type_kind(self.field(param, "type"), state)
             if api in REQUEST_OBJECTS:
-                kind = "http_request"
+                kind = (
+                    "actix_http_request"
+                    if api in {"actix_web::HttpRequest", "actix_web::web::HttpRequest"}
+                    else "http_request"
+                )
             elif api in reqwest.TYPES:
                 kind = reqwest.TYPES[api]
+            elif api in cookies.RECEIVERS:
+                kind = api
+            elif api in sql.EXECUTOR_TYPES:
+                kind = sql.executor_type(api, inner, state)
+            elif (
+                api == sql.CONNECTION
+                or api in sql.MYSQL_TYPES
+                or api in tls.HANDLE_TYPES
+            ):
+                kind = api
             elif api in HTTP_CLIENT_TYPES:
                 kind = "http_client"
+            if self.text(self.field(param, "type")) == "bool":
+                kind = tls.PARAMETER
             if name in route_params:
                 # A typed route parameter was validated by its FromParam.
                 if self.rocket_text_type(param, state):
@@ -683,7 +750,12 @@ class _SecurityFlow(_ScopeAttributes):
                 and (node.start_byte, name) not in self.refuted
             ):
                 sources = frozenset({f"parameter:{name}"})
-            state.bind(name, Value(sources=sources | symbolic, kind=kind))
+            http_transport = (
+                transport.HTTP_ALLOWED
+                if api in {"reqwest::Client", "reqwest::blocking::Client"}
+                else None
+            )
+            state.bind_value(name, Value(sources=sources | symbolic, kind=kind, http_transport=http_transport))
         self.return_values.append([])
         self.functions.append(node)
         self.deferred_http.append(None)
@@ -807,7 +879,7 @@ class _SecurityFlow(_ScopeAttributes):
         if node is None:
             return
         if node.type in {"identifier", "shorthand_field_identifier"}:
-            state.bind(self.text(node), value)
+            state.bind_value(self.text(node), value)
             return
         for index, child in enumerate(node.children):
             if child.is_named and node.field_name_for_child(index) not in {
@@ -852,20 +924,38 @@ class _SecurityFlow(_ScopeAttributes):
             children = node.named_children
             return self.statement(children[0], state) if children else (UNKNOWN, True)
         if kind == "let_declaration":
-            value = self.expression(self.field(node, "value"), state)
+            initializer = self.field(node, "value")
+            value = self.expression(initializer, state)
             type_node = self.field(node, "type")
             if type_node is not None:
                 fs_kind = self.fs_type_kind(type_node, state)
                 if fs_kind or value.kind in permissions.FS_TYPES:
                     value = replace(value, kind=fs_kind)
+                api, inner = self.parameter_type(type_node, state)
+                if request_patterns.integer_vec(
+                    type_node, state
+                ) and request_patterns.empty_constructor(initializer, state):
+                    value = Value(kind=request_patterns.EMPTY_VEC)
+                if api in tls.HANDLE_TYPES:
+                    value = replace(value, kind=reqwest.TYPES.get(api, api))
+                elif api in sql.EXECUTOR_TYPES or api in sql.MYSQL_TYPES:
+                    value = Value(kind=sql.executor_type(api, inner, state))
             pattern = self.field(node, "pattern")
+            if pattern is not None and pattern.type == "identifier":
+                if any(c.type == "mutable_specifier" for c in node.children):
+                    if (value.kind or "").startswith("rust_fixed_bytes_"):
+                        value = replace(value, kind=None)
+                else:
+                    key_kind = sensitive.repeated_key_kind(initializer)
+                    if key_kind:
+                        value = replace(value, kind=key_kind)
             self.bind_pattern(pattern, value, state)
             return value, True
         if kind == "assignment_expression":
             value = self.expression(self.field(node, "right"), state)
             left = self.field(node, "left")
             if left is not None and left.type == "identifier":
-                state.assign(self.text(left), value)
+                state.assign(self.text(left), replace(value, kind=None) if (value.kind or "").startswith("rust_fixed_bytes_") else value)
             else:
                 self.assign_request_url(left, value, state)
             return value, True
@@ -884,8 +974,16 @@ class _SecurityFlow(_ScopeAttributes):
             return self.match(node, state)
         if kind in {"while_expression", "for_expression", "loop_expression"}:
             before, branch = state.copy(), state.copy()
-            self.expression(self.field(node, "condition"), branch)
+            condition = self.expression(self.field(node, "condition"), branch)
+            if kind == "while_expression" and condition == tls.FALSE:
+                return UNKNOWN, True
             value = self.expression(self.field(node, "value"), branch)
+            if (
+                kind == "for_expression"
+                and value.kind == sql.MAPPED_ROWS
+                and not value.items
+            ):
+                self.sql_result(node, replace(value, kind=sql.EXECUTED + sql.MAPPED_ROWS + "::next"), branch)
             branch.frames.append({})
             self.bind_pattern(
                 self.field(node, "pattern"),
@@ -936,14 +1034,25 @@ class _SecurityFlow(_ScopeAttributes):
             )
             for item in self.let_conditions(condition)
         ]
-        if not bound:
-            self.expression(condition, state)
+        condition_value = UNKNOWN if bound else self.expression(condition, state)
         alternatives, values = [], []
         for truth, body in [
             (True, self.field(node, "consequence")),
             (False, self.field(node, "alternative")),
         ]:
+            if condition_value.kind == tls.BOOLEAN and condition_value.literal in {
+                "true",
+                "false",
+            }:
+                if truth != (condition_value.literal == "true"):
+                    continue
             branch = state.copy()
+            if (
+                condition is not None
+                and condition.type == "identifier"
+                and condition_value.kind == tls.BOOLEAN
+            ):
+                branch.assign(self.text(condition), tls.TRUE if truth else tls.FALSE)
             if unix_condition is not None and truth != unix_condition:
                 branch.conditions |= {("(", "not", "(", "unix", ")", ")")}
             if truth and bound:
@@ -969,7 +1078,7 @@ class _SecurityFlow(_ScopeAttributes):
                 values.append(value)
         if alternatives:
             state.merge(alternatives)
-        return joined(values), bool(alternatives)
+        return sql.join_strings(values), bool(alternatives)
 
     def match(self, node, state):
         subject = self.expression(self.field(node, "value"), state)
@@ -1000,7 +1109,7 @@ class _SecurityFlow(_ScopeAttributes):
                 values.append(value)
         if alternatives:
             state.merge(alternatives)
-        return joined(values), bool(alternatives)
+        return sql.join_strings(values), bool(alternatives)
 
     def invalidate_path(self, node, state):
         # Invalidating at the escape point also covers a subsequently stored
@@ -1011,6 +1120,19 @@ class _SecurityFlow(_ScopeAttributes):
             old = state.get(self.text(node))
             if old.kind in reqwest.REQUESTS:
                 state.assign(self.text(node), Value(kind=old.kind))
+            if old.kind in cookies.TYPES:
+                state.assign(self.text(node), UNKNOWN)
+            if old.kind in {
+                tls.BOOLEAN,
+                tls.PARAMETER,
+                tls.INPUT_LINE,
+                tls.EMPTY_BUFFER,
+            }:
+                state.assign(self.text(node), replace(old, kind=None, literal=None))
+            if old.kind == sensitive.EXPOSED:
+                state.assign(self.text(node), replace(old, kind=None))
+            if sql.mutable_sql_value(old):
+                state.assign(self.text(node), replace(old, kind=None, password_write=None))
             if old.kind == "path":
                 state.assign(
                     self.text(node),
@@ -1139,6 +1261,14 @@ class _SecurityFlow(_ScopeAttributes):
         if node is None:
             return UNKNOWN
         kind = node.type
+        if kind == "boolean_literal":
+            return tls.literal(node)
+        if kind == "unary_expression" and node.children[0].type == "!":
+            child = node.named_children[-1]
+            operand = self.expression(child, state)
+            if operand.kind == tls.BOOLEAN:
+                return tls.inverted(operand)
+            return replace(operand, kind=None, api=None, literal=None, canonical=False, contained=False)
         if kind == "async_block":
             body = next((c for c in node.named_children if c.type == "block"), None)
             return self.deferred_body(body, state.copy())
@@ -1172,6 +1302,21 @@ class _SecurityFlow(_ScopeAttributes):
             "assignment_expression",
         }:
             return self.statement(node, state)[0]
+        if (
+            kind == "binary_expression"
+            and self.text(self.field(node, "operator")) == "+"
+        ):
+            left = self.expression(self.field(node, "left"), state)
+            right = self.expression(self.field(node, "right"), state)
+            combined = sql.join_strings([left, right])
+            return replace(
+                combined,
+                kind=combined.kind if combined.kind in sql.TEXT_KINDS else None,
+                api=None,
+                literal=None,
+                canonical=False,
+                contained=False,
+            )
         if kind == "array_expression":
             items = tuple(
                 self.expression(child, state) for child in node.named_children
@@ -1252,6 +1397,27 @@ class _SecurityFlow(_ScopeAttributes):
         value = joined(self.expression(child, state) for child in node.named_children)
         api = state.resolve(self.text(self.field(node, "macro")))
         tokens = next((c for c in node.named_children if c.type == "token_tree"), None)
+        if tokens is not None and api in sensitive.LOG_MACROS:
+            if sensitive.logs_secret(api, tokens, state):
+                self.sensitive_finding(
+                    node,
+                    state,
+                    (
+                        "SKY-D251",
+                        "HIGH",
+                        f"{api}! logs the exposed contents of a SecretString. Remove the value from the log.",
+                    ),
+                )
+            if log_formats.logs_request_text(tokens, state):
+                self.sensitive_finding(
+                    node,
+                    state,
+                    (
+                        "SKY-D392",
+                        "MEDIUM",
+                        f"{api}! displays decoded request text directly in a log message. Escape line breaks before writing a text log.",
+                    ),
+                )
         if tokens is not None and api in self._FORMAT_MACROS | self._WRITE_MACROS:
             formatted = self.formatted(
                 node, tokens.children[1:-1], state, writer=api in self._WRITE_MACROS
@@ -1290,9 +1456,11 @@ class _SecurityFlow(_ScopeAttributes):
                 and group[0].type == "identifier"
                 and group[1].type == "="
             ):
-                named[self.text(group[0])] = self.token_value(group[2:], state)
+                value = self.format_argument(group[2:], state)
+                named[self.text(group[0])] = sql.format_argument(value, group[2:])
             else:
-                positional.append(self.token_value(group, state))
+                value = self.format_argument(group, state)
+                positional.append(sql.format_argument(value, group))
         parts, literal, index, next_position = [], [], 0, 0
         while index < len(template):
             if template.startswith(("{{", "}}"), index):
@@ -1306,7 +1474,8 @@ class _SecurityFlow(_ScopeAttributes):
             end = template.find("}", index + 1)
             if end < 0:
                 break
-            name = template[index + 1 : end].split(":", 1)[0].strip()
+            name, _, format_spec = template[index + 1 : end].partition(":")
+            name = name.strip()
             if not name:
                 value = (
                     positional[next_position]
@@ -1324,6 +1493,10 @@ class _SecurityFlow(_ScopeAttributes):
                 value = state.get(name)
             else:
                 value = UNKNOWN
+            if format_spec and value.kind in sql.TEXT_KINDS:
+                value = replace(value, kind=None)
+            if format_spec and value.kind == sensitive.EXPOSED:
+                value = replace(value, kind=None)
             parts.append(("".join(literal), value))
             literal = []
             index = end + 1
@@ -1350,13 +1523,52 @@ class _SecurityFlow(_ScopeAttributes):
             )
         return replace(
             inserted,
-            kind="string",
+            kind=sql.formatted_kind(parts, inserted),
+            secret_in_url=transport.exposed_url(parts),
+            interpolated_request_pattern=(
+                bool(parts)
+                and bool(parts[0][0].strip())
+                and bool(tail.strip())
+                and any(v.kind == sql.TEXT and v.request_sources for _, v in parts)
+            ),
             api=None,
             literal=None if parts else template,
             canonical=False,
             contained=False,
             host=host,
         )
+
+    @staticmethod
+    def rendered_string_length(value):
+        return Value(sources=value.sources, cleared=value.cleared | {_D228})
+
+    def format_argument(self, tokens, state):
+        # Macro arguments arrive as flat tokens. Only the entire expression
+        # `known_string.len()` gives a byte count with no input text.
+        if (
+            len(tokens) == 4
+            and tokens[0].type == "identifier"
+            and tokens[1].type == "."
+            and tokens[2].text == b"len"
+            and tokens[3].type == "token_tree"
+            and tokens[3].children[0].type == "("
+            and not any(
+                child.type not in {"line_comment", "block_comment"}
+                for child in tokens[3].named_children
+            )
+        ):
+            receiver = state.get(self.text(tokens[0]))
+            if receiver.kind in sql.TEXT_KINDS and not receiver.items:
+                return self.rendered_string_length(receiver)
+        value = self.token_value(tokens, state)
+        if value.kind in {sensitive.SECRET, sensitive.EXPOSED}:
+            return replace(
+                value,
+                kind=sensitive.EXPOSED
+                if sensitive.exposed_argument(tokens, state)
+                else None,
+            )
+        return value
 
     def token_value(self, tokens, state):
         """Approximate the value of a macro argument from its tokens: names
@@ -1472,6 +1684,25 @@ class _SecurityFlow(_ScopeAttributes):
             part.type == "self_parameter" for part in params.named_children
         )
         values = args[1:] if receiver_first and has_self else args
+        if (
+            self.tls_callers is not None
+            and not self.harness_file
+            and _TEST_CFG not in state.conditions
+        ):
+            switches = [
+                (i, arg)
+                for i, arg in enumerate(values)
+                if arg.kind in {tls.BOOLEAN, tls.PARAMETER} and not arg.items
+            ]
+            awaited = node.parent is not None and node.parent.type == "await_expression"
+            if (
+                switches
+                and (awaited or not is_async_function(target))
+                and tls.direct_call_path(node)
+            ):
+                for index, arg in switches:
+                    key = f"{SYMBOLIC}{target.start_byte}#{index}"
+                    self.tls_callers.setdefault(key, set()).add(arg)
         return self.apply_helper(
             node,
             self.text(self.field(target, "name")),
@@ -1563,11 +1794,22 @@ class _SecurityFlow(_ScopeAttributes):
         )
 
     def await_value(self, node, value, state, operation="await"):
+        if value.kind == sql.VALUE_FUTURE and not value.items:
+            return value.awaited or UNKNOWN
+        if (value.kind or "").startswith(sql.FUTURE) and not value.items:
+            return self.sql_result(
+                node,
+                replace(value, kind=sql.EXECUTED + value.kind[len(sql.FUTURE) :]),
+                state,
+            )
         if value.kind == "rust_helper_future":
             return self.poll_helper(node, value, state)
         if value.kind == "reqwest_future":
+            self.authenticated_http(node, value, state)
             self.url_sink(node, value, f"reqwest dispatch ({operation})", state)
-            return UNKNOWN
+            return Value(kind="result_reqwest_async_response")
+        if value.kind == "reqwest_text_future" and not value.items:
+            return Value(kind="result_" + sql.REMOTE_TEXT)
         return replace(
             value, kind=None, api=None, literal=None, canonical=False, contained=False
         )
@@ -1576,9 +1818,84 @@ class _SecurityFlow(_ScopeAttributes):
         if result.kind == "reqwest_blocking_dispatch":
             callee = self.field(node, "function")
             method_name = self.field(callee, "field") or node
+            self.authenticated_http(method_name, result, state)
             self.url_sink(method_name, result, f"reqwest dispatch ({operation})", state)
-            return UNKNOWN
+            return Value(kind="result_reqwest_blocking_response")
         return result
+
+    def tls_setting(self, node, kind, name, args, state):
+        if len(args) != 1:
+            return None
+        setting = tls.setting(kind, name)
+        if setting is None:
+            return None
+        owner, check, disabled = setting
+        switch = args[0]
+        if not switch.items and switch.kind == tls.BOOLEAN:
+            if switch.literal == disabled.literal:
+                self.tls_off(
+                    node, f"{owner}::{name} disables TLS {check} verification.", state
+                )
+            elif switch.literal is None:
+                self.tls_off(
+                    node,
+                    f"{owner}::{name} can disable TLS {check} verification depending on its Boolean input.",
+                    state,
+                )
+        elif (
+            switch.kind == tls.PARAMETER
+            and not switch.items
+            and not self.harness_file
+            and _TEST_CFG not in state.conditions
+            and tls.direct_call_path(node)
+        ):
+            message = f"A local caller supplies a setting that can disable TLS {check} verification in {owner}::{name}."
+            self.tls_parameters.append((switch, disabled, node, message, state))
+        # The native-tls and reqwest setters return their builder. Curl's
+        # setters return Result<(), Error> and leave the handle in place.
+        return UNKNOWN if kind in tls.CURL else Value(kind=kind)
+
+    def authenticated_http(self, node, value, state):
+        if value.secret_in_url and not value.items:
+            self.configuration_finding(
+                "SKY-D391",
+                node,
+                state,
+                "rust_reqwest_url_secret",
+                "An exposed SecretString is included in the request URL. URLs can be logged. Send the secret in an appropriate header or body.",
+                severity="HIGH",
+            )
+        if value.http_transport == transport.AUTHENTICATED and not value.items:
+            self.configuration_finding(
+                "SKY-D356",
+                node,
+                state,
+                "rust_reqwest_http_auth",
+                "The reqwest client was asked to send HTTP authentication to a cleartext HTTP URL. Use HTTPS.",
+            )
+
+    def configuration_finding(
+        self, rule, node, state, evidence, message, *, severity="MEDIUM"
+    ):
+        if self.harness_file or _TEST_CFG in state.conditions:
+            return
+        owner = node.parent
+        while owner is not None and owner.type != "function_item":
+            if owner.type in {"closure_expression", "async_block"}:
+                return
+            owner = owner.parent
+        self.findings.append(
+            {
+                "rule_id": rule,
+                "severity": severity,
+                "category": "danger",
+                "file": self.file,
+                "line": node.start_point[0] + 1,
+                "col": node.start_point[1],
+                "message": message,
+                "metadata": {"security_evidence": {"evidence_kind": evidence}},
+            }
+        )
 
     def tls_off(self, node, message, state):
         if self.harness_file or _TEST_CFG in state.conditions:
@@ -1599,6 +1916,12 @@ class _SecurityFlow(_ScopeAttributes):
                     }
                 },
             }
+        )
+
+    def sensitive_finding(self, node, state, finding):
+        rule, severity, message = finding
+        self.configuration_finding(
+            rule, node, state, "rust_resolved_api", message, severity=severity
         )
 
     def certificate_verifier(self, node, state):
@@ -1647,25 +1970,64 @@ class _SecurityFlow(_ScopeAttributes):
                     state,
                 )
 
+    def argument_nodes(self, node):
+        arguments = self.field(node, "arguments")
+        if arguments is None:
+            return []
+        return [
+            child
+            for child in arguments.named_children
+            if child.type not in {"line_comment", "block_comment"}
+        ]
+
     def call(self, node, state):
         callee = self.field(node, "function")
-        args_node = self.field(node, "arguments")
-        arg_nodes = list(args_node.named_children) if args_node is not None else []
+        arg_nodes = self.argument_nodes(node)
+        if callee is not None and callee.type == "generic_function":
+            member = self.field(callee, "function")
+            type_args = self.field(callee, "type_arguments")
+            if (
+                member is not None
+                and member.type == "field_expression"
+                and self.text(self.field(member, "field")) == "parse"
+                and not arg_nodes
+                and type_args is not None
+                and [self.text(c) for c in type_args.named_children] == ["bool"]
+            ):
+                source = self.expression(self.field(member, "value"), state)
+                if source.kind == tls.INPUT_LINE and not source.items:
+                    return Value(kind="result_" + tls.BOOLEAN)
+                return replace(
+                    source,
+                    kind=None,
+                    api=None,
+                    literal=None,
+                    canonical=False,
+                    contained=False,
+                )
+            callee = member or callee
         if callee is not None and callee.type == "field_expression":
             receiver_node = self.field(callee, "value")
             receiver = self.expression(receiver_node, state)
+            method = self.text(self.field(callee, "field"))
+            buffer = tls.stdin_buffer(receiver, method, arg_nodes, state)
             args = [self.expression(arg, state) for arg in arg_nodes]
+            if buffer is not None:
+                state.assign(buffer, replace(state.get(buffer), kind=tls.INPUT_LINE))
+            network_buffer = unbounded_input.read_destination(
+                receiver, method, arg_nodes, state
+            )
+            if network_buffer is not None:
+                offset = unbounded_input.target_statement_offset(node)
+                if offset is not None:
+                    state.assign(self.text(network_buffer), Value(kind=unbounded_input.READ_BUFFERS[method], network_read_statement=offset))
             self.record_call(node, args)
             targets = self.local_targets(callee, True, state)
             if targets:
                 returned = self.local_call(node, targets, args, state)
                 if returned is not None:
                     return returned
-            method = self.text(self.field(callee, "field"))
             return self.method(node, receiver_node, receiver, method, args, state)
-        if callee is not None and callee.type == "generic_function":
-            # ``Webmention::new::<Url>(..)``: the turbofish is not part of the path.
-            callee = self.field(callee, "function") or callee
         callable_value = self.expression(callee, state)
         args = [self.expression(arg, state) for arg in arg_nodes]
         if not args and callable_value.kind in {"rust_closure", "rust_async_closure"}:
@@ -1682,6 +2044,21 @@ class _SecurityFlow(_ScopeAttributes):
         if callable_value.return_sources:
             combined = joined([combined, Value(sources=callable_value.return_sources)])
         api = state.resolve(self.text(callee))
+        # Easy2::<Handler>::new and its qualified setters select the same
+        # handle API regardless of the response handler type.
+        owner_node = self.field(callee, "path")
+        if owner_node is not None and owner_node.type == "generic_type":
+            owner = state.resolve(self.text(self.field(owner_node, "type")))
+            if sensitive.legacy_encryptor(
+                owner, owner_node, self.text(self.field(callee, "name")), args, state
+            ):
+                return Value(kind="rustcrypto_legacy_encryptor")
+            if self.text(
+                self.field(callee, "name")
+            ) == "with_capacity" and request_patterns.integer_vec(owner_node, state):
+                api = "std::vec::Vec::with_capacity"
+            if owner in {"curl::easy::Easy2", sql.BUILDER}:
+                api = owner + "::" + self.text(self.field(callee, "name"))
         if (
             len(args) == 1
             and args[0].kind == "rust_closure"
@@ -1710,9 +2087,93 @@ class _SecurityFlow(_ScopeAttributes):
                     return returned
         else:
             self.library_calls.add((node.start_byte, node.end_byte))
+        if api:
+            cookie = cookies.constructor(api, arg_nodes, state, self.text)
+            if cookie is not None:
+                return cookie
         fs_value = self.permission_call(node, callee, api, args, arg_nodes, state)
         if fs_value is not None:
             return fs_value
+        if api == "std::string::String::new" and not args:
+            return Value(kind=tls.EMPTY_BUFFER)
+        if api == "std::io::stdin" and not args:
+            return Value(kind=tls.STDIN)
+        if api == "std::fs::exists" and len(args) == 1:
+            return Value(kind="result_" + tls.BOOLEAN)
+        handle = tls.constructor(api, len(args))
+        if handle:
+            return Value(kind=handle)
+        if api and len(args) == 2:
+            owner, _, name = api.rpartition("::")
+            result = self.tls_setting(
+                self.field(callee, "name") or callee,
+                reqwest.TYPES.get(owner, owner),
+                name,
+                args[1:],
+                state,
+            )
+            if result is not None:
+                return result
+        if len(args) == 1:
+            argument = args[0]
+            if (
+                api in request_patterns.REGEX
+                and argument.kind == sql.TEXT
+                and argument.interpolated_request_pattern
+                and not argument.items
+            ):
+                self.sensitive_finding(
+                    node,
+                    state,
+                    (
+                        "SKY-D389",
+                        "MEDIUM",
+                        "Request text is inserted between fixed parts of a regular expression. Escape literal input with regex::escape.",
+                    ),
+                )
+            if (
+                api
+                in {
+                    "std::string::String::with_capacity",
+                    "std::vec::Vec::with_capacity",
+                }
+                and argument.kind == request_patterns.SIZE
+                and not argument.items
+                and (
+                    api.startswith("std::string::")
+                    or (owner_node is not None and owner_node.type == "generic_type")
+                )
+                and request_patterns.unchecked_capacity(node, state)
+            ):
+                self.sensitive_finding(
+                    node,
+                    state,
+                    (
+                        "SKY-D390",
+                        "HIGH",
+                        "A request supplies the allocation capacity directly. Enforce a maximum before allocating.",
+                    ),
+                )
+        if api in {
+            "serde_json::from_reader",
+            "serde_json::from_slice",
+            "serde_json::from_str",
+        } and unbounded_input.unbounded_decode(api, node, args, state):
+            self.sensitive_finding(
+                node,
+                state,
+                (
+                    "SKY-D233",
+                    "MEDIUM",
+                    "An unbounded network input is decoded into a Vec. Limit the stream or the buffer size before parsing JSON.",
+                ),
+            )
+        sensitive_value = sensitive.identifier_call(api, args, state)
+        if sensitive_value is not None:
+            return sensitive_value
+        finding = sensitive.call_finding(api, args, state)
+        if finding:
+            self.sensitive_finding(node, state, finding)
         if api in _ENV_LOOKUPS and self.cargo_build_variable(args):
             return Value(kind="result_string")
         if api in _SOURCES:
@@ -1734,6 +2195,9 @@ class _SecurityFlow(_ScopeAttributes):
             if position < len(args):
                 self.url_sink(node, args[position], api, state)
             return UNKNOWN
+        sql_result = sql.function(api, args, state)
+        if sql_result is not None:
+            return self.sql_result(node, sql_result, state)
         if api in HTTP_CLIENT_CONSTRUCTORS:
             return Value(kind="http_client")
         if api in URL_ENCODERS or api in HTML_ESCAPERS:
@@ -1782,7 +2246,7 @@ class _SecurityFlow(_ScopeAttributes):
         if api in _PATH_CONSTRUCTORS:
             return replace(combined, kind="path", canonical=False)
         if api == "std::string::String::from":
-            return replace(combined, kind="string")
+            return combined if combined.kind in sql.TEXT_KINDS else replace(combined, kind="string")
         if self.stored_data(self.text(callee), arg_nodes):
             return UNKNOWN
         # Unknown calls may mutate a borrowed path after its guard.
@@ -2087,10 +2551,143 @@ class _SecurityFlow(_ScopeAttributes):
             permissions.review_finding(rule, node, self.file, api, literal)
         )
 
+    def sql_result(self, node, result, state):
+        if not (result.kind or "").startswith(sql.EXECUTED):
+            return result
+        exposed_password = (
+            result.password_write is not None and result.password_write.complete
+        )
+        if _TEST_CFG in state.conditions or not (
+            result.real_sources or exposed_password
+        ):
+            return UNKNOWN
+        # A closure or async block may be created and discarded without
+        # running its database call. This local rule does not trace callbacks.
+        owner = node.parent
+        while owner is not None and owner.type != "function_item":
+            if owner.type in {"closure_expression", "async_block"}:
+                return UNKNOWN
+            owner = owner.parent
+        api = result.kind[len(sql.EXECUTED) :]
+        if exposed_password:
+            self.sensitive_finding(
+                node,
+                state,
+                (
+                    "SKY-D387",
+                    "HIGH",
+                    "A SQLx write binds an exposed SecretString directly to a password column. Store a password hash.",
+                ),
+            )
+        if not result.real_sources:
+            return UNKNOWN
+        self.sink(
+            _D211,
+            f"Externally supplied text reaches the SQL statement executed by {api}. "
+            "Use a fixed query and bind values separately.",
+            node,
+            Value(sources=result.real_sources),
+            state,
+            via=api,
+            extra={"rust_flow": {"via": api}},
+        )
+        return UNKNOWN
+
     def method(self, node, receiver_node, receiver, name, args, state):
+        if (
+            receiver.kind == request_patterns.EMPTY_VEC
+            and name in {"reserve", "reserve_exact"}
+            and len(args) == 1
+            and args[0].kind == request_patterns.SIZE
+            and not args[0].items
+            and request_patterns.unchecked_capacity(node, state)
+        ):
+            self.sensitive_finding(
+                node,
+                state,
+                (
+                    "SKY-D390",
+                    "HIGH",
+                    "A request supplies the additional Vec capacity directly. Enforce a maximum before reserving memory.",
+                ),
+            )
+        if (
+            (receiver.kind or "").startswith("rust_fixed_bytes_")
+            and name in {"into", "as_slice", "as_ref"}
+            and not args
+        ):
+            return Value(kind=receiver.kind)
+        if receiver.kind in {"rustcrypto_legacy_encryptor", "sha1::Sha1", "md5::Md5"}:
+            finding = sensitive.crypto_method_finding(receiver, name, args, state)
+            if finding:
+                self.sensitive_finding(node, state, finding)
+        if receiver.kind in {sensitive.SECRET, sensitive.EXPOSED}:
+            result = sensitive.method_result(receiver, name, args, state)
+            if result is not None:
+                return result
+            if (
+                receiver.kind == sensitive.EXPOSED
+                and receiver_node.type == "identifier"
+                and name not in {"len", "is_empty"}
+            ):
+                state.assign(self.text(receiver_node), replace(receiver, kind=None))
+        if sensitive.writes_password(receiver, name, args):
+            self.sensitive_finding(node, state, ("SKY-D387", "HIGH", "A rusqlite write binds an exposed SecretString directly to a password column. Store a password hash."))
         combined = joined([receiver, *args])
-        arguments = self.field(node, "arguments")
-        arg_nodes = list(arguments.named_children) if arguments is not None else []
+        sql_result = sql.method(receiver, name, args, state)
+        if (
+            receiver.password_write is not None
+            and sql_result is None
+            and receiver_node.type == "identifier"
+        ):
+            # A method such as Query::try_bind can alter the next bind position.
+            state.assign(
+                self.text(receiver_node), replace(receiver, password_write=None)
+            )
+        if receiver.kind == sql.BUILDER and receiver_node.type == "identifier":
+            if sql_result is None:
+                state.assign(self.text(receiver_node), UNKNOWN)
+            elif sql_result.kind == sql.BUILDER:
+                # A setter returns &mut self. If that reference escapes, subsequent
+                # mutations through the alias could replace the original SQL.
+                standalone = (
+                    node.parent is not None
+                    and node.parent.type == "expression_statement"
+                )
+                state.assign(
+                    self.text(receiver_node), sql_result if standalone else UNKNOWN
+                )
+        if sql_result is not None:
+            return self.sql_result(node, sql_result, state)
+        if receiver.kind in sql.TEXT_KINDS:
+            if name == "len" and not args and not receiver.items:
+                return self.rendered_string_length(receiver)
+            if not args and name in {
+                "as_str",
+                "as_ref",
+                "to_string",
+                "to_owned",
+                "clone",
+            }:
+                return receiver
+            if receiver_node.type == "identifier" and name not in {
+                "len",
+                "is_empty",
+                "parse",
+                "as_bytes",
+            }:
+                state.assign(self.text(receiver_node), replace(receiver, kind=None))
+        arg_nodes = self.argument_nodes(node)
+        if not receiver.items:
+            if receiver.kind in cookies.RECEIVERS or receiver.kind in cookies.TYPES:
+                cookie = cookies.method(
+                    node, receiver_node, receiver, name, args, arg_nodes, state, self
+                )
+                if cookie is not None:
+                    return cookie
+            tls_input = tls.input_method(receiver, receiver_node, name, args, state)
+            if tls_input is not None:
+                return tls_input
         if not receiver.items:
             if (
                 receiver.kind == permissions.PERMISSIONS
@@ -2148,17 +2745,26 @@ class _SecurityFlow(_ScopeAttributes):
                 and len(args) == 1
             ):
                 return receiver
+        if name in tls.OPTIONS and not receiver.items:
+            method = self.field(self.field(node, "function"), "field") or node
+            result = self.tls_setting(method, receiver.kind, name, args, state)
+            if result is not None:
+                return result
         if (
-            name in {"danger_accept_invalid_certs", "danger_accept_invalid_hostnames"}
-            and len(arg_nodes) == 1
-            and self.text(arg_nodes[0]) == "true"
+            receiver.kind == tls.NATIVE
+            and len(args) == 1
+            and name
+            in {
+                "add_root_certificate",
+                "disable_built_in_roots",
+                "identity",
+                "max_protocol_version",
+                "min_protocol_version",
+                "request_alpns",
+                "use_sni",
+            }
         ):
-            self.tls_off(
-                node,
-                f"TLS certificate verification is disabled ({name}(true)): any "
-                "server can impersonate the peer.",
-                state,
-            )
+            return receiver
         if name in {"set_verify", "set_verify_callback"} and arg_nodes:
             mode = state.resolve(self.text(arg_nodes[0])) or ""
             if mode.startswith("openssl::") and mode.endswith("SslVerifyMode::NONE"):
@@ -2182,9 +2788,23 @@ class _SecurityFlow(_ScopeAttributes):
                 return UNKNOWN
             result = reqwest.method(receiver, name, args)
             if result is not None:
+                if (
+                    name == "query"
+                    and receiver.kind in reqwest.REQUEST_BUILDERS
+                    and len(arg_nodes) == 1
+                    and not receiver.items
+                    and transport.query_pairs(arg_nodes[0], state, self.text)
+                ):
+                    result = replace(result, secret_in_url=True)
                 return self.reqwest_result(
                     node, result, f"reqwest blocking {name}()", state
                 )
+            if (
+                receiver.kind in reqwest.REQUESTS
+                and receiver_node.type == "identifier"
+                and (receiver.http_transport or receiver.secret_in_url)
+            ):
+                state.assign(self.text(receiver_node), replace(receiver, http_transport=None, secret_in_url=False))
         if receiver.kind == "http_client":
             if name in HTTP_VERBS:
                 position = HTTP_VERBS[name]
@@ -2192,8 +2812,19 @@ class _SecurityFlow(_ScopeAttributes):
                     self.url_sink(node, args[position], f"client.{name}()", state)
                 return Value(kind="http_request_builder")
             return Value(kind="http_client")
-        if receiver.kind == "http_request" and name in REQUEST_OBJECT_METHODS:
-            return Value(sources=frozenset({request_label(f"request.{name}()")}))
+        if (
+            receiver.kind in {"http_request", "actix_http_request"}
+            and name in REQUEST_OBJECT_METHODS
+        ):
+            raw_query = (
+                receiver.kind == "actix_http_request"
+                and name == "query_string"
+                and not args
+            )
+            return Value(
+                sources=frozenset({request_label(f"request.{name}()")}),
+                kind=sql.TEXT if raw_query else None,
+            )
         if receiver.kind == "path":
             if name == "file_name" and not args:
                 return Value(
@@ -2364,6 +2995,12 @@ def analyze_security_flow(root_node, file_path, source, *, siblings=None):
         refuted = refuted | proven
         flow = _SecurityFlow(root_node, file_path, source, refuted, flow.summaries, flow.http_returns, siblings=siblings)
         flow.module(root_node)
+    for switch, disabled, node, message, state in flow.tls_parameters:
+        if any(
+            tls.caller_disables(key, disabled, flow.tls_callers)
+            for key in switch.sources
+        ):
+            flow.tls_off(node, message, state)
     return flow
 
 

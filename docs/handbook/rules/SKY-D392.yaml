@@ -1,0 +1,69 @@
+id: SKY-D392
+title: Decoded request text in a log message
+family: security
+severity: MEDIUM
+languages: [Rust]
+cwe: [CWE-117]
+gate:
+  full: counted
+
+what_it_is: >-
+  A log or tracing message displays a decoded request string. A line break
+  in that value can split one event across several lines in a text log.
+
+why_it_matters: >-
+  People and tools that read one event per line can mistake the extra lines
+  for separate events.
+
+flagged_example:
+  language: rust
+  filename: src/lib.rs
+  expect_line: 3
+  code: |
+    use axum::extract::Path;
+    pub async fn lookup(Path(name): Path<String>) {
+        log::warn!("Unknown item {name}");
+    }
+
+not_flagged_example:
+  language: rust
+  filename: src/lib.rs
+  code: |
+    use axum::extract::Path;
+    pub async fn lookup(Path(name): Path<String>) {
+        log::warn!("Unknown item {name:?}");
+    }
+  why: >-
+    Rust's debug format escapes line breaks in this String.
+
+how_skylos_decides:
+  - >-
+    Skylos follows string values from recognized decoded HTTP extractors into
+    log and tracing message templates. It checks captured names, named
+    arguments and positional arguments that use the default display format.
+  - >-
+    Structured fields and debug-formatted strings have different rendering
+    rules. An HTTP URI's raw query string keeps its percent encoding.
+    These cases stay quiet.
+
+source_refs:
+  - path: skylos/visitors/languages/rust/log_formats.py
+    symbol: 'def logs_request_text('
+
+fix:
+  explanation: >-
+    Escape line breaks before writing a text log. For a String, debug
+    formatting escapes control characters. A structured logging backend can
+    also encode each field as data.
+
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A deployed log formatter may already encode the entire message as one
+      JSON string. The scanner cannot see the backend's runtime configuration.
+  suppress:
+    - check: inline
+      text: >-
+        Use `// skylos: ignore[SKY-D392]` with the reason on a reviewed call.
+
+related: [SKY-D251]

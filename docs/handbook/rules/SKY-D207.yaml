@@ -8,7 +8,7 @@ severity_note: >-
   TypeScript/JavaScript, an MD5 hash over data whose names do not look like a
   credential, identity or certificate stays MEDIUM but is marked low-risk and
   left out of the terminal list.
-languages: [Python, TypeScript/JavaScript, Go, Java]
+languages: [Python, TypeScript/JavaScript, Go, Java, Rust]
 gate:
   full: counted
   note: >-
@@ -115,6 +115,8 @@ more_examples:
         it is passed to `MessageDigest.getInstance()`.
 
 how_skylos_decides:
+  - >-
+    In Rust the input must be exposed SecretString contents or its bytes. Skylos resolves the MD5 API from the md5 crate or OpenSSL.
   - >-
     Runs with `--danger`. In Python it finds calls to `hashlib.md5()`,
     including `from hashlib import md5` and other import aliases, and

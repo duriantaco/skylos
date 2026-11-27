@@ -1,0 +1,55 @@
+id: SKY-D386
+title: Legacy cipher used for encryption
+family: security
+severity: HIGH
+languages: [Rust]
+cwe: [CWE-327]
+gate:
+  full: counted
+
+what_it_is: >-
+  OpenSSL encrypts new data with DES, RC2 or RC4. RustCrypto CBC encryption with single DES also triggers this rule.
+why_it_matters: >-
+  These ciphers no longer provide adequate protection for new messages.
+
+flagged_example:
+  language: rust
+  filename: src/lib.rs
+  expect_line: 3
+  code: |
+    use openssl::symm::{encrypt, Cipher};
+    pub fn store(key: &[u8], iv: &[u8], bytes: &[u8]) {
+        let _ = encrypt(Cipher::des_cbc(), key, Some(iv), bytes);
+    }
+
+not_flagged_example:
+  language: rust
+  filename: src/lib.rs
+  code: |
+    use openssl::symm::{encrypt_aead, Cipher};
+    pub fn store(key: &[u8], nonce: &[u8], bytes: &[u8], tag: &mut [u8]) {
+        let _ = encrypt_aead(Cipher::aes_256_gcm(), key, Some(nonce), &[], bytes, tag);
+    }
+  why: >-
+    AES-GCM authenticates the encrypted message.
+
+how_skylos_decides:
+  - >-
+    Skylos resolves the cipher selector and the encryption call.
+  - >-
+    A local alias of either can still be checked.
+source_refs:
+  - path: skylos/visitors/languages/rust/sensitive.py
+    symbol: 'def call_finding('
+fix:
+  explanation: >-
+    Use a modern authenticated encryption scheme and migrate readers separately.
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Decryption for reading legacy data is outside this check.
+  suppress:
+    - text: >-
+        Record the reason on the reported line with `// skylos: ignore[SKY-D386]`.
+      check: inline
+related: [SKY-D207]

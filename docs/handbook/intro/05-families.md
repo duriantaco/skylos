@@ -32,9 +32,9 @@ with that rule.
 ## One ID across languages
 
 When several languages have the same problem, Skylos reports it under one
-ID. SQL injection is SKY-D211 in Python, TypeScript, Java, Kotlin, Go, C# and
-PHP (a Next.js server action has its own rule, SKY-D281). The Go engine
-emits its own `SKY-G` IDs, and Skylos renames the ones with a shared rule
+ID. SQL injection is SKY-D211 in Python, TypeScript/JavaScript, Java, Kotlin,
+Go, C#, PHP, Ruby and Rust (a Next.js server action has its own rule, SKY-D281).
+The Go engine emits its own `SKY-G` IDs, and Skylos renames the ones with a shared rule
 before reporting, not always to the same number: SKY-G211 becomes SKY-D211,
 SKY-G209 becomes SKY-D250. Only Go-only rules keep a `SKY-G` ID.
 

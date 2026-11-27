@@ -1,0 +1,64 @@
+id: SKY-D391
+title: Exposed secret in a request URL
+family: security
+severity: HIGH
+languages: [Rust]
+cwe: [CWE-598]
+gate:
+  full: counted
+
+what_it_is: >-
+  A reqwest request puts a raw SecretString in its URL.
+why_it_matters: >-
+  Servers, proxies and monitoring tools can log URL paths and query strings,
+  including those sent over HTTPS.
+
+flagged_example:
+  language: rust
+  filename: src/lib.rs
+  expect_line: 4
+  code: |
+    use secrecy::{ExposeSecret, SecretString};
+    pub async fn read(client: &reqwest::Client, token: &SecretString) {
+        let raw = token.expose_secret();
+        let _ = client.get("https://api.example.org/status").query(&[("token", raw)]).send().await;
+    }
+
+not_flagged_example:
+  language: rust
+  filename: src/lib.rs
+  code: |
+    use secrecy::{ExposeSecret, SecretString};
+    pub async fn read(client: &reqwest::Client, token: &SecretString) {
+        let raw = token.expose_secret();
+        let _ = client.get("https://api.example.org/status").bearer_auth(raw).send().await;
+    }
+  why: The server receives the token in the Authorization header.
+
+how_skylos_decides:
+  - >-
+    Tracks expose_secret() on secrecy::SecretString into simple format!
+    placeholders in the path or query of a fixed-origin URL, or inline
+    query parameter pairs on a reqwest builder. It checks the request
+    when a blocking client sends it or an async request is polled.
+  - >-
+    Fragments are local to the client. A secret in a fragment, an unopened
+    request or a protected authorization header stays quiet.
+source_refs:
+  - path: skylos/visitors/languages/rust/transport.py
+    symbol: "def exposed_url("
+  - path: skylos/visitors/languages/rust/transport.py
+    symbol: "def query_pairs("
+fix:
+  explanation: >-
+    Use HTTPS and move the credential to the authentication header supported by the service.
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A service that requires a credential in the URL may need a short-lived
+      credential and redaction of request logs.
+  suppress:
+    - text: >-
+        Record the reviewed service requirement with // skylos: ignore[SKY-D391] on the reported line.
+      check: inline
+related: [SKY-D251, SKY-D356]

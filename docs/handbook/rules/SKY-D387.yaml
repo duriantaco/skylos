@@ -1,0 +1,88 @@
+id: SKY-D387
+title: Exposed password written to a database
+family: security
+severity: HIGH
+languages: [Rust]
+cwe: [CWE-256]
+gate:
+  full: counted
+
+what_it_is: >-
+  A rusqlite or SQLx write binds the exposed contents of a SecretString to a password column.
+why_it_matters: >-
+  A reader with access to the stored records may be able to recover the original password.
+
+flagged_example:
+  language: rust
+  filename: src/lib.rs
+  expect_line: 4
+  code: |
+    use secrecy::{ExposeSecret, SecretString};
+    pub fn save(db: &rusqlite::Connection, pw: &SecretString) {
+        let raw = pw.expose_secret();
+        let _ = db.execute("INSERT INTO accounts(password) VALUES (?1)", [raw]);
+    }
+
+not_flagged_example:
+  language: rust
+  filename: src/lib.rs
+  code: |
+    pub fn save_hash(db: &rusqlite::Connection, hash: &argon2::password_hash::PasswordHash<'_>) {
+        let encoded = hash.to_string();
+        let _ = db.execute("INSERT INTO accounts(password_hash) VALUES (?1)", [encoded]);
+    }
+  why: >-
+    The bound value is an encoded password hash.
+
+more_examples:
+  - flagged:
+      language: rust
+      filename: src/accounts.rs
+      expect_line: 6
+      code: |
+        use secrecy::{ExposeSecret, SecretString};
+        pub async fn save(pool: &sqlx::PgPool, id: i64, pw: &SecretString) {
+            let write = sqlx::query("UPDATE accounts SET password_hash = $2 WHERE id = $1")
+                .bind(id)
+                .bind(pw.expose_secret());
+            let _ = write.execute(pool).await;
+        }
+    not_flagged:
+      language: rust
+      filename: src/accounts.rs
+      code: |
+        pub async fn save(pool: &sqlx::PgPool, id: i64, hash: &argon2::password_hash::PasswordHash<'_>) {
+            let write = sqlx::query("UPDATE accounts SET password_hash = $2 WHERE id = $1")
+                .bind(id)
+                .bind(hash.to_string());
+            let _ = write.execute(pool).await;
+        }
+      why: The second parameter receives the encoded password hash.
+
+how_skylos_decides:
+  - >-
+    Skylos checks a literal INSERT with named columns or an UPDATE with simple
+    assignments. It matches positional placeholders to the columns named
+    `password`, `passwd` or `password_hash`. The value bound at one of those
+    positions must come from exposing a SecretString.
+  - >-
+    It checks bound values sent to rusqlite and SQLx. SQLx needs a visible
+    execution such as an awaited `execute` call. Reading rows, binding an
+    encoded hash, and building a query without running it stay quiet.
+source_refs:
+  - path: skylos/visitors/languages/rust/sensitive.py
+    symbol: 'def writes_password('
+  - path: skylos/visitors/languages/rust/sensitive.py
+    symbol: 'def password_write('
+fix:
+  explanation: >-
+    For account authentication, derive a salted password hash before saving the record.
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Database-side triggers, encryption and schema policy are outside this local check.
+  suppress:
+    - text: >-
+        Record the reason on the reported line with `// skylos: ignore[SKY-D387]`.
+      check: inline
+related: [SKY-D251]
