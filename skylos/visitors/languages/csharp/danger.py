@@ -8,12 +8,18 @@ from pathlib import Path
 from skylos.rules.quality.standards import security_cwe_entries
 from skylos.visitors.languages.csharp import models
 from skylos.visitors.languages.csharp._lex import (
+    _METHOD_RE,
     _TOKEN_RE,
+    _argument_spans,
     _RawTokenMatch,
     mask_comments_and_strings,
     matching_brace,
 )
 from skylos.visitors.languages.csharp.models import Rule
+from skylos.visitors.languages.csharp.route_project import (
+    RouteFileFacts,
+    local_route_facts,
+)
 
 _ASSIGN_RE = re.compile(
     r"\b(?:(?P<decl_type>[\w.:<>\[\],?]+)\s+)?"
@@ -31,14 +37,6 @@ _FOREACH_RE = re.compile(
     r"^foreach\s*\(\s*(?:var|[\w.<>\[\],?]+)\s+@?(?P<name>[A-Za-z_]\w*)\s+in\s+(?P<source>.+)\)",
     re.DOTALL,
 )
-_METHOD_RE = re.compile(
-    r"(?m)(?:^|(?<=[;{}]))\s*(?P<attrs>(?:\[[^\]\n]+\]\s*)*)"
-    r"(?P<mods>(?:(?:public|private|protected|internal|static|async|virtual|override|sealed|abstract|extern|partial|unsafe|new)\s+)*)"
-    r"(?P<rtype>(?:[A-Za-z_][\w.<>\[\],?]*\s+)+)"
-    r"(?P<name>[A-Za-z_]\w*)\s*(?:<[^;{}()]+>)?\s*"
-    r"\((?P<params>(?:[^;{}()]|\([^;{}()]*\))*)\)\s*"
-    r"(?:where\s+[^{=>]+)?(?P<opener>\{|=>)"
-)
 _CONSTRUCTOR_RE = re.compile(
     r"(?m)(?:^|(?<=[;{}]))\s*(?P<attrs>(?:\[[^\]\n]+\]\s*)*)"
     r"(?P<mods>(?:(?:public|private|protected|internal|static|extern|unsafe)\s+)*)"
@@ -55,9 +53,6 @@ _MEMBER_DECL_RE = re.compile(
     r"(?P<mods>(?:(?:public|private|protected|internal|static|readonly|const|volatile|new|required|virtual|override|abstract|sealed|unsafe|extern)\s+)*)"
     r"(?P<type>[A-Za-z_][\w.:]*(?:\s*<[^;{}()=]*>)?(?:\s*\[\s*\])*\??)\s+"
     r"@?(?P<name>[A-Za-z_]\w*)\s*(?P<tail>(?:=(?!=)|=>|,)[\s\S]*)?$"
-)
-_MAP_CALL_RE = re.compile(
-    r"\.\s*Map(?:Get|Post|Put|Delete|Patch|Methods|Fallback)\s*(?:<[^;{}()]*>)?\s*\("
 )
 _CALL_NAME_RE = re.compile(r"(?P<name>[A-Za-z_]\w*)\s*(?:<[^;{}()]*>)?\s*\(")
 _MODIFIERS = frozenset(
@@ -417,8 +412,10 @@ class _Collector:
         ]
 
 
-def scan_danger(file_path: str, source: str) -> list[dict]:
-    context = _file_context(source)
+def scan_danger(
+    file_path: str, source: str, *, route_facts: RouteFileFacts | None = None
+) -> list[dict]:
+    context = _file_context(source, route_facts)
     extra: dict[int, dict[str, set[str]]] = {}
     collector = _Collector(file_path)
     for _ in range(_MAX_ROUNDS):
@@ -438,7 +435,7 @@ def scan_danger(file_path: str, source: str) -> list[dict]:
     return collector.findings()
 
 
-def _file_context(source: str) -> _FileContext:
+def _file_context(source: str, route_facts: RouteFileFacts | None = None) -> _FileContext:
     masked = mask_comments_and_strings(source)
     classes = _classes(masked)
     classes_by_name: dict[str, _ClassInfo] = {}
@@ -453,19 +450,17 @@ def _file_context(source: str) -> _FileContext:
                 scope.owner.proof_types.setdefault(param.name, set()).add(
                     param.raw_type
                 )
-    handlers: set[tuple[str | None, str]] = set()
-    scopes.extend(_minimal_api_scopes(source, masked, classes, handlers))
+    if route_facts is None or not route_facts.matches(source):
+        route_facts = local_route_facts(masked)
+    for start, end in route_facts.lambdas:
+        scope = _lambda_scope(source, masked, start, end, classes)
+        if scope is not None:
+            scopes.append(scope)
     for scope in scopes:
-        if scope.kind != "method":
-            continue
-        for qualifier, name in handlers:
-            if scope.name == name and (
-                qualifier is None
-                or (scope.owner is not None and scope.owner.name == qualifier)
-            ):
-                scope.entry = True
-        if not scope.entry:
-            scope.entry = _is_entry_method(scope)
+        if scope.kind in {"method", "local"}:
+            scope.entry = (
+                scope.body_offset in route_facts.method_offsets or _is_entry_method(scope)
+            )
     scopes.append(
         _Scope(
             body=_blank_spans(source, spans),
@@ -768,43 +763,25 @@ def _scope_span(masked: str, match: re.Match[str]) -> tuple[int, int] | None:
     return expression_start, expression_end + 1
 
 
-def _minimal_api_scopes(
-    source: str,
-    masked: str,
-    classes: list[_ClassInfo],
-    handlers: set[tuple[str | None, str]],
-) -> list[_Scope]:
-    scopes: list[_Scope] = []
-    for match in _MAP_CALL_RE.finditer(masked):
-        open_paren = match.end() - 1
-        close_paren = _matching_paren(masked, open_paren)
-        if close_paren < 0:
-            continue
-        pieces = _argument_spans(masked, open_paren + 1, close_paren)
-        if len(pieces) < 2:
-            continue
-        start, end = pieces[-1]
-        handler = masked[start:end]
-        group = re.fullmatch(
-            r"\s*(?:(?P<cls>[A-Za-z_]\w*)\s*\.\s*)?(?P<name>[A-Za-z_]\w*)\s*", handler
-        )
-        if group:
-            handlers.add((group.group("cls"), group.group("name")))
-            continue
-        scope = _lambda_scope(source, masked, start, end, classes)
-        if scope is not None:
-            scopes.append(scope)
-    return scopes
-
-
 def _lambda_scope(
     source: str, masked: str, start: int, end: int, classes: list[_ClassInfo]
 ) -> _Scope | None:
+    # A delegate cast can wrap the entire lambda, e.g. (Func<string>)(() => value).
+    cast = re.match(
+        r"\s*\(\s*(?:(?:global::)?System\.)?(?:Func|Action)\s*(?:<[\w.,?<>\[\]:\s]+>)?\s*\)\s*(?=\()",
+        masked[start:end],
+    )
+    if cast:
+        opening = start + cast.end()
+        close = _matching_paren(masked, opening)
+        if close == -1 or close >= end or masked[close + 1 : end].strip():
+            return None
+        start, end = opening + 1, close
     text = masked[start:end]
     arrow = _top_level_arrow(text)
     if arrow < 0:
         return None
-    head = re.sub(r"\[[^\]]*\]", " ", text[:arrow])
+    head = re.sub(r"^\s*(?:\[[^\]]*\]\s*)*", "", text[:arrow])
     head = re.sub(r"\b(?:static|async)\b", " ", head).strip()
     if not (head.startswith("(") and head.endswith(")")):
         return None
@@ -3030,23 +3007,6 @@ def _arguments_at(statement: str, code: str, open_paren: int) -> list[str]:
     if close_paren < 0:
         return []
     return _split_arguments(statement, code, open_paren + 1, close_paren)
-
-
-def _argument_spans(masked: str, start: int, end: int) -> list[tuple[int, int]]:
-    spans: list[tuple[int, int]] = []
-    depth = 0
-    begin = start
-    for index in range(start, end):
-        char = masked[index]
-        if char in "([{":
-            depth += 1
-        elif char in ")]}":
-            depth -= 1
-        elif char == "," and depth == 0:
-            spans.append((begin, index))
-            begin = index + 1
-    spans.append((begin, end))
-    return spans
 
 
 def _matching_paren(code: str, open_paren: int) -> int:
