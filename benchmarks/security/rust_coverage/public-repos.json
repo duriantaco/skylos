@@ -1,0 +1,723 @@
+[
+  {
+    "cohort": "repeat",
+    "repo": "BurntSushi/ripgrep",
+    "commit": "3e85c6c148fdce38a99ceeb9d2780dc7b03b4a4f",
+    "archive_sha256": "4941908703b03d836d49aba11fc4ac12d919969b0bb4b53894ce7d55b4716999",
+    "rust_files": 105,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "crates/searcher/examples/search-stdin.rs",
+        "lines": [
+          24,
+          24
+        ],
+        "rules": [
+          "SKY-D389"
+        ],
+        "reason": "This CLI search example intentionally accepts a regex from its operator.",
+        "file_sha256": "1651e1603c3cfb1f02ed6234f231a9a1ed368dbede94d0e0914cd8a0c804d33c"
+      }
+    ]
+  },
+  {
+    "cohort": "repeat",
+    "repo": "sharkdp/fd",
+    "commit": "2e8648f10fe55af6258ab90ab889eb8b96033379",
+    "archive_sha256": "08912dbc7470fb17e3648983ee210fecb4aad88974288e5ef17d57c032fbc893",
+    "rust_files": 25,
+    "unchecked": 0,
+    "quiet_controls": []
+  },
+  {
+    "cohort": "repeat",
+    "repo": "alexcrichton/tar-rs",
+    "commit": "e0127f17781a00f460330373a79196e3b5e30d56",
+    "archive_sha256": "2d36e2c7a8abe6c3602252541fc9f88fec08ec922bfc9a661061b6574ac45342",
+    "rust_files": 19,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "examples/write.rs",
+        "lines": [
+          7,
+          7
+        ],
+        "rules": [
+          "SKY-D215"
+        ],
+        "reason": "The example creates a fixed archive filename.",
+        "file_sha256": "419ac3e4155035e32b52cd8e6ae987a2d99cf82f60abbfb315c2a2c4f8e8fd19"
+      },
+      {
+        "path": "examples/write.rs",
+        "lines": [
+          11,
+          11
+        ],
+        "rules": [
+          "SKY-D215"
+        ],
+        "reason": "The opened source file is a literal path.",
+        "file_sha256": "419ac3e4155035e32b52cd8e6ae987a2d99cf82f60abbfb315c2a2c4f8e8fd19"
+      },
+      {
+        "path": "src/entry.rs",
+        "lines": [
+          822,
+          822
+        ],
+        "rules": [
+          "SKY-D416"
+        ],
+        "reason": "The Unix extraction path passes a computed mode read from archive metadata and applies the caller mask. The expression supplies no decimal permission literal.",
+        "file_sha256": "d69cb4abc616f8b39b67d62cd865ec7fc91d3ff37fdc1eee546bdcd8f6bc433c"
+      },
+      {
+        "path": "src/builder.rs",
+        "lines": [
+          840,
+          840
+        ],
+        "rules": [
+          "SKY-D416"
+        ],
+        "reason": "The numeric argument is octal. Its receiver is an archive Header populated for the GNU long-name entry.",
+        "file_sha256": "b4b762cf6d4a8d36fdf91904cc7a52a15a6874f250ffa8a01f708c9be3869c43"
+      },
+      {
+        "path": "src/header.rs",
+        "lines": [
+          813,
+          813
+        ],
+        "rules": [
+          "SKY-D416"
+        ],
+        "reason": "The receiver is an archive header. Its deterministic mode is selected from two explicit octal values.",
+        "file_sha256": "b359f43e5540879b1e95e382be963cfc6e5a51a45713e5c615e10c0b1a9cd0c5"
+      }
+    ]
+  },
+  {
+    "cohort": "repeat",
+    "repo": "cberner/redb",
+    "commit": "2fc790d14fb62f39137b13f7943df433bec082c2",
+    "archive_sha256": "ca0bcba8e39feb978e43387d3294daddf79e6c7a6dae1cd942a2a653b3f20a26",
+    "rust_files": 98,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "examples/int_keys.rs",
+        "lines": [
+          7,
+          7
+        ],
+        "rules": [
+          "SKY-D215"
+        ],
+        "reason": "The example database has a literal filename.",
+        "file_sha256": "7fde85698129b70ce0a77f92f15d674130833614108d82066b262280d4d11321"
+      },
+      {
+        "path": "examples/int_keys.rs",
+        "lines": [
+          11,
+          11
+        ],
+        "rules": [
+          "SKY-D211"
+        ],
+        "reason": "The example table accepts integer keys and values.",
+        "file_sha256": "7fde85698129b70ce0a77f92f15d674130833614108d82066b262280d4d11321"
+      }
+    ]
+  },
+  {
+    "cohort": "repeat",
+    "repo": "tokio-rs/mini-redis",
+    "commit": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+    "archive_sha256": "2959ff55744add5a1b4c9157ac7d5bc14709bc43e5ed4600ad06883c03133203",
+    "rust_files": 28,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "examples/hello_world.rs",
+        "lines": [
+          21,
+          21
+        ],
+        "rules": [
+          "SKY-D216"
+        ],
+        "reason": "The example connects to a literal loopback address.",
+        "file_sha256": "be736630cc805e2b95211b714cd4552da47925f21907d5e2e7e190782c97236e"
+      },
+      {
+        "path": "examples/hello_world.rs",
+        "lines": [
+          24,
+          24
+        ],
+        "rules": [
+          "SKY-D387"
+        ],
+        "reason": "The stored text is a fixed example value.",
+        "file_sha256": "be736630cc805e2b95211b714cd4552da47925f21907d5e2e7e190782c97236e"
+      }
+    ]
+  },
+  {
+    "cohort": "repeat",
+    "repo": "seanmonstar/httparse",
+    "commit": "a0fa552e4e0fa9a5914a736ef3a556748fef709b",
+    "archive_sha256": "cfd03b168bb41448e1212d1f8ed4ace4f2556c2461195abeb43ea20f0290ec6c",
+    "rust_files": 17,
+    "unchecked": 0,
+    "quiet_controls": []
+  },
+  {
+    "cohort": "repeat",
+    "repo": "ruuda/hound",
+    "commit": "9a11bf0f8229e6f990b4365b1332c9aec5317d9d",
+    "archive_sha256": "5f0c78206cd4cd6f130c2bf5e70bb9a8aef2a76674170cc004fd50e719117d92",
+    "rust_files": 12,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "examples/append.rs",
+        "lines": [
+          32,
+          32
+        ],
+        "rules": [
+          "SKY-D210"
+        ],
+        "reason": "This filesystem check chooses an audio file operation. It does not configure TLS.",
+        "file_sha256": "dcd32b0b9d8b1612a0a1291232bba2ef6401bd03eec537dfa4647066bb89ea96"
+      }
+    ]
+  },
+  {
+    "cohort": "repeat",
+    "repo": "nix-rust/nix",
+    "commit": "d160098658225be1dc9242b5d009e8ac361089ea",
+    "archive_sha256": "318362171201fae9535a06133bcc7e7cd469b5e64a7be0ecb2a0f5c556efc985",
+    "rust_files": 119,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "test/test_unistd.rs",
+        "lines": [
+          1281,
+          1281
+        ],
+        "rules": [
+          "SKY-D416"
+        ],
+        "reason": "Linux/Android integration test only. This standard Unix setter uses an explicit octal literal.",
+        "file_sha256": "717f8570b998b8998a3b6b82a41c9d7e132ebb6f6e3d3385ae1ba2211ce1241c"
+      },
+      {
+        "path": "test/mount/test_mount.rs",
+        "lines": [
+          44,
+          44
+        ],
+        "rules": [
+          "SKY-D416"
+        ],
+        "reason": "Linux mount integration test only. The argument is a bitwise union of named flags.",
+        "file_sha256": "778fcf8c5be812768cb212935ea929a7e7a2f346019e6654f4b010fc0043f825"
+      },
+      {
+        "path": "test/test_fcntl.rs",
+        "lines": [
+          79,
+          79
+        ],
+        "rules": [
+          "SKY-D416"
+        ],
+        "reason": "Linux integration test only. This is nix’s OpenHow builder and the argument is a named bitflag value.",
+        "file_sha256": "700dfdee3858215a0ba92b685c55605d0af2c3ee3cc7d4b8703c86c09d11b540"
+      }
+    ]
+  },
+  {
+    "cohort": "repeat",
+    "repo": "dtolnay/thiserror",
+    "commit": "aa7e8161d55acd7792f4e3d1d9b1b3052134dfaf",
+    "archive_sha256": "3a7668bc99b36ac276a40fbc2163b116bd2735ed6920162719cce557fdc2c10f",
+    "rust_files": 68,
+    "unchecked": 0,
+    "quiet_controls": []
+  },
+  {
+    "cohort": "repeat",
+    "repo": "matklad/once_cell",
+    "commit": "80fe900b21f6d76c1a2ed74d3343e8a3a88c46d0",
+    "archive_sha256": "de901954453a58ea7195d02ccf6cf6d39538d20fce7d5cfe84260c9e63cc1929",
+    "rust_files": 20,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "examples/regex.rs",
+        "lines": [
+          17,
+          17
+        ],
+        "rules": [
+          "SKY-D389"
+        ],
+        "reason": "The immediately following pattern is a fixed raw literal.",
+        "file_sha256": "4a2e0fb093c7f5bbe0fff8689fc0c670c5334344a1bfda376f5faa98a05d459f"
+      },
+      {
+        "path": "examples/regex.rs",
+        "lines": [
+          8,
+          8
+        ],
+        "rules": [
+          "SKY-D389"
+        ],
+        "reason": "The macro matcher only accepts a literal.",
+        "file_sha256": "4a2e0fb093c7f5bbe0fff8689fc0c670c5334344a1bfda376f5faa98a05d459f"
+      }
+    ]
+  },
+  {
+    "cohort": "repeat",
+    "repo": "rust-embedded/embedded-hal",
+    "commit": "41f29f6bfced1cae0cbe712ba96ee32c075b3125",
+    "archive_sha256": "d99148ff42ea3bebb173414e50a406b921b80a9ad2284972648118afc38f5fd0",
+    "rust_files": 56,
+    "unchecked": 0,
+    "quiet_controls": []
+  },
+  {
+    "cohort": "repeat",
+    "repo": "rust-cli/anstyle",
+    "commit": "f9a1b491750dcd6d9b7746bca442ddf2c3b92aca",
+    "archive_sha256": "f64725048af63e88f7cc9a3a8df0c8847653a915756a69c960d0f387982b5dff",
+    "rust_files": 69,
+    "unchecked": 0,
+    "quiet_controls": []
+  },
+  {
+    "cohort": "repeat",
+    "repo": "rustwasm/console_error_panic_hook",
+    "commit": "4dc30a5448ed3ffcfb961b1ad54d000cca881b84",
+    "archive_sha256": "6040d31b13d0aed1b8e4a78f6c8d92d4805988db8386c6c37155972a86dafcca",
+    "rust_files": 2,
+    "unchecked": 0,
+    "quiet_controls": []
+  },
+  {
+    "cohort": "fresh",
+    "repo": "orhun/binsider",
+    "commit": "7f0633d1a69af15cc3be9e0533cb36dbe67eb598",
+    "archive_sha256": "f60f2157869e64f51508a08dd89d57bc2d8ff2afd39d1d3018a0ce6c275940db",
+    "rust_files": 24,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "examples/demo.rs",
+        "lines": [
+          15,
+          15
+        ],
+        "rules": [
+          "SKY-D215"
+        ],
+        "reason": "The local demo reads its own program argument path. A listed incoming-request path traversal report is unwarranted.",
+        "file_sha256": "c250f8782e53cc9dc2ae3aab014b9685b8427cb4d3f0d15ddffc238cb888b6bd"
+      },
+      {
+        "path": "examples/demo.rs",
+        "lines": [
+          39,
+          40
+        ],
+        "rules": [
+          "SKY-D212"
+        ],
+        "reason": "The demo converts a terminal key into an application command enum. This call does not pass remote text to a shell.",
+        "file_sha256": "c250f8782e53cc9dc2ae3aab014b9685b8427cb4d3f0d15ddffc238cb888b6bd"
+      }
+    ]
+  },
+  {
+    "cohort": "fresh",
+    "repo": "sharkdp/hexyl",
+    "commit": "6ecc29b9c8c84d08a7e860f7f69c22b113b480ea",
+    "archive_sha256": "10cbf60da82b37305e77c66a82e90bc1770cac4d4c04f1341b6081e419de7d49",
+    "rust_files": 7,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "examples/simple.rs",
+        "lines": [
+          23,
+          23
+        ],
+        "rules": [
+          "SKY-D251",
+          "SKY-D392"
+        ],
+        "reason": "The printer receives fixed PNG sample bytes and writes to stdout.",
+        "file_sha256": "3bb07376341211a379c53e9740faeae5a9722ac6a80d9074214b6060e6a3a70b"
+      },
+      {
+        "path": "src/lib.rs",
+        "lines": [
+          881,
+          881
+        ],
+        "rules": [
+          "SKY-D251",
+          "SKY-D392"
+        ],
+        "reason": "The renderer writes one numeric byte in hex, using a fixed format string.",
+        "file_sha256": "78b70f9e2b9efb36a5323917441d6936fb994142de4425ef739102a81489bcfb"
+      }
+    ]
+  },
+  {
+    "cohort": "fresh",
+    "repo": "chmln/sd",
+    "commit": "44febdf86343c653255ae4f20f5e1882dad6be17",
+    "archive_sha256": "46049afb12566927aedbf5f33af4bd34f2281e2e43a1bf14994d0a66f0b956dc",
+    "rust_files": 13,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "sd/src/replacer/mod.rs",
+        "lines": [
+          36,
+          36
+        ],
+        "rules": [
+          "SKY-D389"
+        ],
+        "reason": "The general-purpose search API compiles CLI/library caller pattern text. It has no incoming web-request flow; the literal mode escapes it.",
+        "file_sha256": "a776e7420198d2ab1fde5a9da62cc70cfa48e4269ffdd30c8ebce0cc821c72d9"
+      },
+      {
+        "path": "sd/src/replacer/mod.rs",
+        "lines": [
+          108,
+          108
+        ],
+        "rules": [
+          "SKY-D390"
+        ],
+        "reason": "Output capacity follows the length of an already materialized haystack.",
+        "file_sha256": "a776e7420198d2ab1fde5a9da62cc70cfa48e4269ffdd30c8ebce0cc821c72d9"
+      }
+    ]
+  },
+  {
+    "cohort": "fresh",
+    "repo": "BurntSushi/termcolor",
+    "commit": "d672e7b09f3ac3e8c0c12e67a67c5d46265df88d",
+    "archive_sha256": "55a5d1eac3aaefe1c7bd129504880c050c60bcbde19d582f1a1e2e16127a0800",
+    "rust_files": 3,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "src/lib.rs",
+        "lines": [
+          372,
+          377
+        ],
+        "rules": [
+          "SKY-D251",
+          "SKY-D392"
+        ],
+        "reason": "A Display implementation formats a color configuration error. No HTTP request or exposed password enters the formatter.",
+        "file_sha256": "155112a5bc22f4640911dff4a167721ade0b739eb1eda4d108727044dcfd9918"
+      },
+      {
+        "path": "src/lib.rs",
+        "lines": [
+          2225,
+          2231
+        ],
+        "rules": [
+          "SKY-D251",
+          "SKY-D392"
+        ],
+        "reason": "A color parse error formats the rejected color name for its caller. This is a formatter, not a network log statement.",
+        "file_sha256": "155112a5bc22f4640911dff4a167721ade0b739eb1eda4d108727044dcfd9918"
+      }
+    ]
+  },
+  {
+    "cohort": "fresh",
+    "repo": "rust-cli/human-panic",
+    "commit": "06c87394a5c6989af4c153c16f7e16342948ae96",
+    "archive_sha256": "75fab5d9483680eea0cb8605eee7a678b50e10184ab1703334cc0b912a2ce59a",
+    "rust_files": 8,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "src/panic.rs",
+        "lines": [
+          80,
+          80
+        ],
+        "rules": [
+          "SKY-D251",
+          "SKY-D392"
+        ],
+        "reason": "The error renderer writes an ANSI style value to stderr.",
+        "file_sha256": "75240f54b22268b7243933caeef61025a6d04c0ed5c1f42f6e5fb17542f7768c"
+      },
+      {
+        "path": "src/panic.rs",
+        "lines": [
+          127,
+          129
+        ],
+        "rules": [
+          "SKY-D251",
+          "SKY-D392"
+        ],
+        "reason": "The program prints the homepage/repository from package metadata, not an exposed password or request field.",
+        "file_sha256": "75240f54b22268b7243933caeef61025a6d04c0ed5c1f42f6e5fb17542f7768c"
+      }
+    ]
+  },
+  {
+    "cohort": "fresh",
+    "repo": "seanmonstar/warp",
+    "commit": "1fdc5eebfc6faae4f29b4f686dd8b34356064456",
+    "archive_sha256": "cfa872e31e8c783ea158d0d03ee8ef1fd3668dd8fbd2bef9a8d1a38853cd5203",
+    "rust_files": 84,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "examples/body.rs",
+        "lines": [
+          22,
+          23
+        ],
+        "rules": [
+          "SKY-D233",
+          "SKY-D390"
+        ],
+        "reason": "The example caps the request body at 16 KiB before JSON decoding.",
+        "file_sha256": "57eb99b3a59c33474c5d5c7c22964bea66c663f525c755924ed75eca8fba4aa1"
+      },
+      {
+        "path": "examples/body.rs",
+        "lines": [
+          26,
+          26
+        ],
+        "rules": [
+          "SKY-D228"
+        ],
+        "reason": "The example returns serialized JSON. It does not interpolate input into HTML.",
+        "file_sha256": "57eb99b3a59c33474c5d5c7c22964bea66c663f525c755924ed75eca8fba4aa1"
+      },
+      {
+        "path": "examples/tls.rs",
+        "lines": [
+          17,
+          18
+        ],
+        "rules": [
+          "SKY-D210",
+          "SKY-D388"
+        ],
+        "reason": "The example TLS server loads a certificate and key from paths; the literals are paths, not key material or verification-off switches.",
+        "file_sha256": "38192d91accc35dbb7a6fa6c1201e1687b07f79e48b805a34e7a2689b12310fc"
+      }
+    ]
+  },
+  {
+    "cohort": "fresh",
+    "repo": "zesterer/ariadne",
+    "commit": "5e62913d34dabf34140ad812448dc8faae5abf15",
+    "archive_sha256": "420103c29a3efd3951359b0ac4871cf816e5a6084ca4771963cd3311dc523e31",
+    "rust_files": 18,
+    "unchecked": 1,
+    "quiet_controls": [
+      {
+        "path": "examples/simple.rs",
+        "lines": [
+          4,
+          7
+        ],
+        "rules": [
+          "SKY-D251",
+          "SKY-D392"
+        ],
+        "reason": "The diagnostic uses literal messages and fixed label spans.",
+        "file_sha256": "a0e9b2df62c828b867dd5e8231875f61a481eee8022f60ea30cb0cb72438c48e"
+      },
+      {
+        "path": "examples/simple.rs",
+        "lines": [
+          8,
+          10
+        ],
+        "rules": [
+          "SKY-D215",
+          "SKY-D392"
+        ],
+        "reason": "The diagnostic prints a source included at compile time with a constant path.",
+        "file_sha256": "a0e9b2df62c828b867dd5e8231875f61a481eee8022f60ea30cb0cb72438c48e"
+      }
+    ]
+  },
+  {
+    "cohort": "fresh-specialist",
+    "repo": "sfackler/rust-postgres",
+    "commit": "6c161e3226c0ca0f18f665610cbeb09862fe2f4b",
+    "archive_sha256": "0835723f00277693b7c1e9be241e7cfc0c0f18d05bfb645cbb4d2abb0639af7b",
+    "rust_files": 132,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "tokio-postgres/tests/test/main.rs",
+        "lines": [
+          204,
+          210
+        ],
+        "rules": [
+          "SKY-D211",
+          "SKY-D387"
+        ],
+        "reason": "The upstream pipeline test prepares fixed SQL and executes it with separate names. Neither statement writes a password.",
+        "file_sha256": "87498ba88206bd81b34961faaac159fcc5fc016156cc4f2b4db8184da3f8a9fb"
+      },
+      {
+        "path": "tokio-postgres/tests/test/main.rs",
+        "lines": [
+          454,
+          460
+        ],
+        "rules": [
+          "SKY-D211",
+          "SKY-D387"
+        ],
+        "reason": "The upstream typed insert binds name and age to positional slots in a fixed statement.",
+        "file_sha256": "87498ba88206bd81b34961faaac159fcc5fc016156cc4f2b4db8184da3f8a9fb"
+      },
+      {
+        "path": "tokio-postgres/tests/test/main.rs",
+        "lines": [
+          465,
+          471
+        ],
+        "rules": [
+          "SKY-D211"
+        ],
+        "reason": "The upstream typed query uses a fixed statement and binds the name separately.",
+        "file_sha256": "87498ba88206bd81b34961faaac159fcc5fc016156cc4f2b4db8184da3f8a9fb"
+      }
+    ]
+  },
+  {
+    "cohort": "fresh-specialist",
+    "repo": "sfackler/rust-native-tls",
+    "commit": "ea5426e0847652ca3dd780b69a351b06de91dfd6",
+    "archive_sha256": "3ec7dc8127d3ba02bf3fa467f8b2dccc0af0ba15e4a5c4e15392b532cb28bde1",
+    "rust_files": 9,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "examples/google-connect.rs",
+        "lines": [
+          8,
+          11
+        ],
+        "rules": [
+          "SKY-D210"
+        ],
+        "reason": "The official example uses the default connector and supplies a fixed matching hostname to its TLS handshake.",
+        "file_sha256": "339a8cb9c9b8c472f8cac96711950114528c8700e5e48d6f61d59b636b69eb0c"
+      },
+      {
+        "path": "src/test.rs",
+        "lines": [
+          72,
+          75
+        ],
+        "rules": [
+          "SKY-D210"
+        ],
+        "reason": "The published hostname-verification test expects the default connector to reject a mismatched hostname.",
+        "file_sha256": "ae2f7f0c7d9912bf5e7b59a4c74e69f56d9c9c9f08ff537c4a2fad7339aa0638"
+      },
+      {
+        "path": "src/test.rs",
+        "lines": [
+          118,
+          125
+        ],
+        "rules": [
+          "SKY-D210"
+        ],
+        "reason": "The test selects a custom CA and adds it to the connector. The handshake still verifies the certificate.",
+        "file_sha256": "ae2f7f0c7d9912bf5e7b59a4c74e69f56d9c9c9f08ff537c4a2fad7339aa0638"
+      }
+    ]
+  },
+  {
+    "cohort": "fresh-specialist",
+    "repo": "iqlusioninc/crates",
+    "commit": "fa634bebb676ae18311764512b4db6ff3fae4b6e",
+    "archive_sha256": "9fc8c97c2fa4cc9f16aef4b05207811f0b60f7259818e04ba8577508ff555108",
+    "rust_files": 61,
+    "unchecked": 0,
+    "quiet_controls": [
+      {
+        "path": "secrecy/src/lib.rs",
+        "lines": [
+          142,
+          145
+        ],
+        "rules": [
+          "SKY-D251",
+          "SKY-D392"
+        ],
+        "reason": "The secret wrapper Debug implementation emits the type name and a fixed redaction marker; no secret bytes are formatted.",
+        "file_sha256": "fff6ae0b824e66b235ced95eb864939f9326a07c684da79abe8765f752d6e1ef"
+      },
+      {
+        "path": "hkd32/src/key_material.rs",
+        "lines": [
+          31,
+          34
+        ],
+        "rules": [
+          "SKY-D250",
+          "SKY-D388"
+        ],
+        "reason": "The public constructor requires a CryptoRng. It fills the buffer from that generator before converting the buffer into a key.",
+        "file_sha256": "e5b7b73d9e496cbaf381502f0b995487d7167c90ee3791b3ac4cc4e7556321a9"
+      },
+      {
+        "path": "hkd32/src/key_material.rs",
+        "lines": [
+          93,
+          97
+        ],
+        "rules": [
+          "SKY-D207",
+          "SKY-D208",
+          "SKY-D386",
+          "SKY-D388"
+        ],
+        "reason": "The public key-derivation implementation uses HMAC-SHA-512 keyed with the supplied parent key.",
+        "file_sha256": "e5b7b73d9e496cbaf381502f0b995487d7167c90ee3791b3ac4cc4e7556321a9"
+      }
+    ]
+  }
+]

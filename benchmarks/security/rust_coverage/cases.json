@@ -1,0 +1,1021 @@
+{
+  "breadth": {
+    "original_manifest_sha256": "d05e9b6e51b1c8b190d406966e070e115c491e6132eb8b56a4b798d270fcceaa",
+    "cases": [
+      {
+        "path": "src/rust_insecure_cookie_1.rs",
+        "family": "rust-insecure-cookie",
+        "line": 3,
+        "rules": [
+          "SKY-D252"
+        ],
+        "positive": true,
+        "sha256": "d95b0a0433af9f2fddc71e1ec8b1fa680cfabfb689ae8f274c2f0da1f4fa1f03",
+        "source": "fn add(jar: &mut cookie::CookieJar, value: &str) {\n    let c = cookie::Cookie::new(\"session_id\", value.to_owned());\n    jar.add(c);\n}\n"
+      },
+      {
+        "path": "src/rust_insecure_cookie_2.rs",
+        "family": "rust-insecure-cookie",
+        "line": 3,
+        "rules": [
+          "SKY-D252"
+        ],
+        "positive": true,
+        "sha256": "0f565690ed4403ee6ab8464994c0e0b3db5dcf57f776a79323ca7d204042ee9c",
+        "source": "fn attach(value: &str, jar: &mut cookie::CookieJar) {\n    let item = cookie::Cookie::build((\"sid\", value.to_string())).secure(false).build();\n    jar.add(item);\n}\n"
+      },
+      {
+        "path": "src/rust_insecure_cookie_3.rs",
+        "family": "rust-insecure-cookie",
+        "line": 3,
+        "rules": [
+          "SKY-D252"
+        ],
+        "positive": false,
+        "sha256": "63c12151505ac974575b3041bd594be078eef75a114506a52c4372718caef292",
+        "source": "fn attach(value: &str, jar: &mut cookie::CookieJar) {\n    let item = cookie::Cookie::build((\"sid\", value.to_string())).secure(true).build();\n    jar.add(item);\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_logging_1.rs",
+        "family": "rust-cleartext-logging",
+        "line": 4,
+        "rules": [
+          "SKY-D251"
+        ],
+        "positive": true,
+        "sha256": "8e1162eb4306e15ddf1b606fe730e5478b79a0f73d6279ca70d8c74febac1c45",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nfn event(key: &SecretString) {\n    let exposed = key.expose_secret();\n    log::error!(\"Recovery phrase was {}\", exposed);\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_logging_2.rs",
+        "family": "rust-cleartext-logging",
+        "line": 3,
+        "rules": [
+          "SKY-D251"
+        ],
+        "positive": true,
+        "sha256": "78019257ec68ebc4b2d95f1cbd3a4157e82c1cd69c9e7accefe1e3bbb5b2859e",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nfn audit(key: &SecretString) {\n    tracing::warn!(value = %key.expose_secret(), \"Recovery failed\");\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_logging_3.rs",
+        "family": "rust-cleartext-logging",
+        "line": 3,
+        "rules": [
+          "SKY-D251"
+        ],
+        "positive": false,
+        "sha256": "d3f88aa375766a887bc2c2590bbc6977d40212f3a3a5078de6ed80cd07766274",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nfn audit(_key: &SecretString) {\n    log::info!(\"Recovery phrase updated\");\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_storage_database_1.rs",
+        "family": "rust-cleartext-storage-database",
+        "line": 4,
+        "rules": [
+          "SKY-D387"
+        ],
+        "positive": true,
+        "sha256": "eb7df6dacf35e834aeb00d215c416f3e23f3f1395c79a9cd860af98128edeff9",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nfn save(db: &rusqlite::Connection, password: &SecretString) {\n    let visible = password.expose_secret();\n    let _ = db.execute(\"UPDATE member SET password = ?1 WHERE id = 42\", [visible]);\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_storage_database_2.rs",
+        "family": "rust-cleartext-storage-database",
+        "line": 3,
+        "rules": [
+          "SKY-D387"
+        ],
+        "positive": true,
+        "sha256": "b83a342d4bb76eb98642ab61e104e83781c454cbe87b3421684b3495e6b8eb1d",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nasync fn save(pool: &sqlx::SqlitePool, pass: &SecretString) {\n    let _ = sqlx::query(\"INSERT INTO account (password) VALUES (?)\").bind(pass.expose_secret()).execute(pool).await;\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_storage_database_3.rs",
+        "family": "rust-cleartext-storage-database",
+        "line": 2,
+        "rules": [
+          "SKY-D387"
+        ],
+        "positive": false,
+        "sha256": "cd9b7073025f4fa7dc43281ea5a3dd69d2ed92961742c49d09d32521b1c263cf",
+        "source": "fn save(db: &rusqlite::Connection) {\n    let _ = db.execute(\"UPDATE member SET display_name = ?1 WHERE id = 42\", [\"example\"]);\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_transmission_1.rs",
+        "family": "rust-cleartext-transmission",
+        "line": 4,
+        "rules": [
+          "SKY-D391"
+        ],
+        "positive": true,
+        "sha256": "b5125c36a44c22c44668c4f8a24de0360afd4151e014e6cbbbd308219f66cbe3",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nasync fn fetch(http: &reqwest::Client, key: &SecretString) {\n    let exposed = key.expose_secret();\n    let _ = http.get(format!(\"https://service.example/session?token={exposed}\")).send().await;\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_transmission_2.rs",
+        "family": "rust-cleartext-transmission",
+        "line": 3,
+        "rules": [
+          "SKY-D391"
+        ],
+        "positive": true,
+        "sha256": "5cbe5a49ea5adbbbf2f6ab954fa1e71c1d8e68adb3d62831849fd4b170fa17ff",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nasync fn fetch(http: &reqwest::Client, key: &SecretString) {\n    let _ = http.get(\"https://service.example/session\").query(&[(\"access_token\", key.expose_secret())]).send().await;\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_transmission_3.rs",
+        "family": "rust-cleartext-transmission",
+        "line": 3,
+        "rules": [
+          "SKY-D391"
+        ],
+        "positive": false,
+        "sha256": "2a7f82e6ef498975ecbad01a67748d5ac2dc442fc539d21fcf2ae3e167174bcd",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nasync fn fetch(http: &reqwest::Client, key: &SecretString) {\n    let _ = http.get(\"https://service.example/session\").bearer_auth(key.expose_secret()).send().await;\n}\n"
+      },
+      {
+        "path": "src/rust_xss_1.rs",
+        "family": "rust-xss",
+        "line": 3,
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": true,
+        "sha256": "1609340187507bc2da56e3f35b2c7e1a6429e0d8f878bcac3aac39d68651636c",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) -> axum::response::Html<String> {\n    axum::response::Html(format!(\"<article>{label}</article>\"))\n}\n"
+      },
+      {
+        "path": "src/rust_xss_2.rs",
+        "family": "rust-xss",
+        "line": 2,
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": false,
+        "sha256": "03fda44f3b65c08e389bb02c19288c6c51732c213d4edffdcea34502257c94b9",
+        "source": "fn display(req: actix_web::HttpRequest) -> actix_web::HttpResponse {\n    let body = format!(\"<b>{}</b>\", req.query_string());\n    actix_web::HttpResponse::Ok().content_type(\"text/html\").body(body)\n}\n",
+        "original_positive": true,
+        "adjudication": "An encoded URI query inserted into an HTML text node cannot introduce an HTML tag. The parser rejects the tag delimiters and the sample does not decode them."
+      },
+      {
+        "path": "src/rust_xss_3.rs",
+        "family": "rust-xss",
+        "line": 4,
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": false,
+        "sha256": "f1f0975b0b694282b52bca120a5cf6298deb6c416b5d808cb98e3ed2ffe2bbdb",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) -> axum::response::Html<String> {\n    let clean = html_escape::encode_text(&label);\n    axum::response::Html(format!(\"<article>{clean}</article>\"))\n}\n"
+      },
+      {
+        "path": "src/rust_sql_injection_1.rs",
+        "family": "rust-sql-injection",
+        "line": 4,
+        "rules": [
+          "SKY-D211"
+        ],
+        "positive": true,
+        "sha256": "38f3ced3317452412cbe6de05bb3bd179eca6485ae45186193d99dfacbb30467",
+        "source": "use axum::extract::Path;\nfn find(Path(label): Path<String>, db: &rusqlite::Connection) {\n    let statement = format!(\"SELECT id FROM note WHERE name = '{label}'\");\n    let _ = db.query_row(&statement, [], |r| r.get::<_,i64>(0));\n}\n"
+      },
+      {
+        "path": "src/rust_sql_injection_2.rs",
+        "family": "rust-sql-injection",
+        "line": 4,
+        "rules": [
+          "SKY-D211"
+        ],
+        "positive": true,
+        "sha256": "7ce22f9ebfa81d2911a548f46231cb1fd257603e204a7f7ed08e4b20d52d14bd",
+        "source": "use axum::extract::Path;\nasync fn find(Path(label): Path<String>, db: &sqlx::SqlitePool) {\n    let text = format!(\"SELECT id FROM note WHERE title = '{label}'\");\n    let _ = sqlx::query(&text).fetch_all(db).await;\n}\n"
+      },
+      {
+        "path": "src/rust_sql_injection_3.rs",
+        "family": "rust-sql-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D211"
+        ],
+        "positive": false,
+        "sha256": "3b6ad9a61b971eb11e4738450110ad92b798c55fbb92d26faa1528aa1391e663",
+        "source": "use axum::extract::Path;\nasync fn find(Path(label): Path<String>, db: &sqlx::SqlitePool) {\n    let _ = sqlx::query(\"SELECT id FROM note WHERE title = ?\").bind(label).fetch_all(db).await;\n}\n"
+      },
+      {
+        "path": "src/rust_unsafe_deserialization_1.rs",
+        "family": "rust-unsafe-deserialization",
+        "line": 5,
+        "rules": [
+          "SKY-D233",
+          "SKY-D204"
+        ],
+        "positive": true,
+        "sha256": "f5829ae5202e74dfb439b8cf0a98cbdb5bdd982a011b2a2a7c5011f126fa325c",
+        "source": "use std::io::Read;\nfn receive(mut stream: std::net::TcpStream) -> Result<(),Box<dyn std::error::Error>> {\n    let mut data = Vec::new();\n    stream.read_to_end(&mut data)?;\n    let _: Vec<String> = serde_json::from_slice(&data)?;\n    Ok(())\n}\n"
+      },
+      {
+        "path": "src/rust_unsafe_deserialization_2.rs",
+        "family": "rust-unsafe-deserialization",
+        "line": 2,
+        "rules": [
+          "SKY-D233",
+          "SKY-D204"
+        ],
+        "positive": true,
+        "sha256": "63e412117e8de10b3e711cc7b0081c8b31ce732eed4b45ec1fd88d63557e5865",
+        "source": "fn receive(stream: std::net::TcpStream) -> serde_json::Result<()> {\n    let _: Vec<String> = serde_json::from_reader(stream)?;\n    Ok(())\n}\n"
+      },
+      {
+        "path": "src/rust_unsafe_deserialization_3.rs",
+        "family": "rust-unsafe-deserialization",
+        "line": 5,
+        "rules": [
+          "SKY-D233",
+          "SKY-D204"
+        ],
+        "positive": false,
+        "sha256": "789033675425c44cd73c77d4daa11190f57047c349b31d0324cbd64bfe7da1bb",
+        "source": "use std::io::Read;\nfn receive(stream: std::net::TcpStream) -> Result<(),Box<dyn std::error::Error>> {\n    let mut data = Vec::new();\n    stream.take(1024).read_to_end(&mut data)?;\n    let _: Vec<String> = serde_json::from_slice(&data)?;\n    Ok(())\n}\n"
+      },
+      {
+        "path": "src/rust_disabled_certificate_check_1.rs",
+        "family": "rust-disabled-certificate-check",
+        "line": 3,
+        "rules": [
+          "SKY-D210"
+        ],
+        "positive": true,
+        "sha256": "b7584d83af7ffb5a7d201d103b5a40d04fb367308249f44c8a9af54e6b26be4d",
+        "source": "fn tweak(handle: &mut curl::easy::Easy) {\n    let verify = false;\n    let _ = handle.ssl_verify_peer(verify);\n}\n"
+      },
+      {
+        "path": "src/rust_disabled_certificate_check_2.rs",
+        "family": "rust-disabled-certificate-check",
+        "line": 2,
+        "rules": [
+          "SKY-D210"
+        ],
+        "positive": true,
+        "sha256": "d81fc04093d8cb3a869644b5624f9d2cdca21e1237239c9b1d719a2d7c0ffb72",
+        "source": "fn tweak(builder: reqwest::ClientBuilder) {\n    let _ = builder.tls_danger_accept_invalid_hostnames(true);\n}\n"
+      },
+      {
+        "path": "src/rust_disabled_certificate_check_3.rs",
+        "family": "rust-disabled-certificate-check",
+        "line": 2,
+        "rules": [
+          "SKY-D210"
+        ],
+        "positive": false,
+        "sha256": "4f429bb06cd54c3e9194c8dcd19e61671a15ae20828e2cd15b5c6f60c592f1fb",
+        "source": "fn tweak(builder: reqwest::ClientBuilder) {\n    let _ = builder.tls_danger_accept_invalid_hostnames(false);\n}\n"
+      },
+      {
+        "path": "src/rust_non_https_url_1.rs",
+        "family": "rust-non-https-url",
+        "line": 2,
+        "rules": [
+          "SKY-D356"
+        ],
+        "positive": true,
+        "sha256": "89bc126e2fc469e1de4ef35b3c267c7fe1028e7190450c36e7e5bbc7708becb4",
+        "source": "fn configure() {\n    let _ = reqwest::blocking::get(\"http://weather.example/forecast\");\n}\n"
+      },
+      {
+        "path": "src/rust_non_https_url_2.rs",
+        "family": "rust-non-https-url",
+        "line": 2,
+        "rules": [
+          "SKY-D356"
+        ],
+        "positive": true,
+        "sha256": "90c6f01869b4eafe43003dc55d8f18c9df26753dc93fc7f82107cbc94358d2c3",
+        "source": "async fn records(http: &reqwest::Client, name: &str, pass: &str) {\n    let _ = http.get(\"http://archive.example/list\").basic_auth(name, Some(pass)).send().await;\n}\n"
+      },
+      {
+        "path": "src/rust_non_https_url_3.rs",
+        "family": "rust-non-https-url",
+        "line": 2,
+        "rules": [
+          "SKY-D356"
+        ],
+        "positive": false,
+        "sha256": "491dce485bd8cdca29b4f48a14226c387cc774370877751998a3df58e8a5f00a",
+        "source": "async fn records(http: &reqwest::Client, name: &str, pass: &str) {\n    let _ = http.get(\"https://archive.example/list\").basic_auth(name, Some(pass)).send().await;\n}\n"
+      },
+      {
+        "path": "src/rust_hard_coded_cryptographic_value_1.rs",
+        "family": "rust-hard-coded-cryptographic-value",
+        "line": 2,
+        "rules": [
+          "SKY-D388"
+        ],
+        "positive": true,
+        "sha256": "cf50a18ed2f700a96bef085929740029155f612ed8080212b6fd122811ff5a1b",
+        "source": "fn configure() {\n    let _key = jsonwebtoken::EncodingKey::from_secret(b\"example-key-for-a-documentation-fixture\");\n}\n"
+      },
+      {
+        "path": "src/rust_hard_coded_cryptographic_value_2.rs",
+        "family": "rust-hard-coded-cryptographic-value",
+        "line": 4,
+        "rules": [
+          "SKY-D388"
+        ],
+        "positive": true,
+        "sha256": "8f08275a3c777051844f44a67b89fe747f233ec5cbb5223d1e6312412ecfea81",
+        "source": "use aes_gcm::KeyInit;\nfn build() {\n    let key = [7u8; 32];\n    let _cipher = aes_gcm::Aes256Gcm::new((&key).into());\n}\n"
+      },
+      {
+        "path": "src/rust_hard_coded_cryptographic_value_3.rs",
+        "family": "rust-hard-coded-cryptographic-value",
+        "line": 2,
+        "rules": [
+          "SKY-D388"
+        ],
+        "positive": false,
+        "sha256": "bfe9f5b5ec0a37fdd5d9b51a8f2979bd3bc553e9d243ec416b24aa541fad7b08",
+        "source": "fn load(bytes: &[u8]) {\n    let _key = jsonwebtoken::EncodingKey::from_secret(bytes);\n}\n"
+      },
+      {
+        "path": "src/rust_log_injection_1.rs",
+        "family": "rust-log-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D392",
+          "SKY-D393"
+        ],
+        "positive": true,
+        "sha256": "715a7a3b358d7d677562b38fca2b81276d7da86e68e4a0af9ca60e6769aeb506",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    log::info!(\"Item selected {}\", label);\n}\n"
+      },
+      {
+        "path": "src/rust_log_injection_2.rs",
+        "family": "rust-log-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D392",
+          "SKY-D393"
+        ],
+        "positive": false,
+        "sha256": "ed3b190f483945b0a7d4cc3c234081f13eb20833e7e4e45cc8dfb0d34267fc15",
+        "source": "fn audit(req: actix_web::HttpRequest) {\n    let value = req.query_string();\n    tracing::info!(\"Received: {value}\");\n}\n",
+        "original_positive": true,
+        "adjudication": "Actix returns the encoded HTTP URI query; CR and LF cannot occur unescaped."
+      },
+      {
+        "path": "src/rust_log_injection_3.rs",
+        "family": "rust-log-injection",
+        "line": 4,
+        "rules": [
+          "SKY-D392",
+          "SKY-D393"
+        ],
+        "positive": false,
+        "sha256": "10bd03261bd8278818c48560ab773471e33916552c14337220869fd2a0127754",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let safe = label.replace(['\\r', '\\n'], \" \");\n    log::info!(\"Item selected {}\", safe);\n}\n"
+      },
+      {
+        "path": "src/rust_regex_injection_1.rs",
+        "family": "rust-regex-injection",
+        "line": 4,
+        "rules": [
+          "SKY-D389"
+        ],
+        "positive": true,
+        "sha256": "4158cde3562ae9cc71ac85d92a8f4879b57aef1ef80a935711dfc500aa61a619",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let pattern = format!(\"^tag-{label}$\");\n    let _ = regex::Regex::new(&pattern);\n}\n"
+      },
+      {
+        "path": "src/rust_regex_injection_2.rs",
+        "family": "rust-regex-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D389"
+        ],
+        "positive": true,
+        "sha256": "9e23f7c5de48348928ef3888f1e38bc025b70b176323ce6c01842cdac1a6d15e",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let _ = regex::bytes::Regex::new(&format!(\"release-{label}/\"));\n}\n"
+      },
+      {
+        "path": "src/rust_regex_injection_3.rs",
+        "family": "rust-regex-injection",
+        "line": 4,
+        "rules": [
+          "SKY-D389"
+        ],
+        "positive": false,
+        "sha256": "09a0cdb914a640be316bee8f9dd8d0784cec5586b5f8eb9460ef02098d863935",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let safe = regex::escape(&label);\n    let _ = regex::Regex::new(&format!(\"^tag-{safe}$\"));\n}\n"
+      },
+      {
+        "path": "src/rust_request_forgery_1.rs",
+        "family": "rust-request-forgery",
+        "line": 3,
+        "rules": [
+          "SKY-D216"
+        ],
+        "positive": true,
+        "sha256": "22aadc2d3835ccff133195c5c79f07cc26dc9616d7feb612d7499b3d8e3180ea",
+        "source": "use axum::extract::Path;\nasync fn handle(Path(label): Path<String>) {\n    let _ = reqwest::Client::new().get(label).send().await;\n}\n"
+      },
+      {
+        "path": "src/rust_request_forgery_2.rs",
+        "family": "rust-request-forgery",
+        "line": 3,
+        "rules": [
+          "SKY-D216"
+        ],
+        "positive": true,
+        "sha256": "a6a7b8ace470a1962d162df92740964bcfe0ab26731318c88e6ca270d577d2dc",
+        "source": "fn fetch(req: actix_web::HttpRequest) {\n    let target = req.query_string();\n    let _ = reqwest::blocking::get(target);\n}\n"
+      },
+      {
+        "path": "src/rust_request_forgery_3.rs",
+        "family": "rust-request-forgery",
+        "line": 3,
+        "rules": [
+          "SKY-D216"
+        ],
+        "positive": false,
+        "sha256": "a04da73d650269c6b2d93c42c41289d5d505c37ffaa495e3f12dd7ef9bc8212a",
+        "source": "use axum::extract::Path;\nasync fn handle(Path(label): Path<String>) {\n    let _ = reqwest::Client::new().get(\"https://catalog.example/search\").query(&[(\"tag\", label)]).send().await;\n}\n"
+      },
+      {
+        "path": "src/rust_uncontrolled_allocation_size_1.rs",
+        "family": "rust-uncontrolled-allocation-size",
+        "line": 3,
+        "rules": [
+          "SKY-D390"
+        ],
+        "positive": true,
+        "sha256": "9b4ace3d1cd5e7052e90eef2a9c1e6f5eece413adc9c3bc6374b11831958cc11",
+        "source": "use axum::extract::Path;\nfn plan(Path(entries): Path<usize>) {\n    let _memo = String::with_capacity(entries);\n}\n"
+      },
+      {
+        "path": "src/rust_uncontrolled_allocation_size_2.rs",
+        "family": "rust-uncontrolled-allocation-size",
+        "line": 4,
+        "rules": [
+          "SKY-D390"
+        ],
+        "positive": true,
+        "sha256": "6eb284aff38d320ee487b1e53292d79deee8cb2bc27597fed92cf49804718797",
+        "source": "use axum::extract::Path;\nfn plan(Path(entries): Path<usize>) {\n    let mut values: Vec<u8> = Vec::new();\n    values.reserve(entries);\n}\n"
+      },
+      {
+        "path": "src/rust_uncontrolled_allocation_size_3.rs",
+        "family": "rust-uncontrolled-allocation-size",
+        "line": 3,
+        "rules": [
+          "SKY-D390"
+        ],
+        "positive": false,
+        "sha256": "52124f12ad547b88a6628a8d331bbe84bf41163f8578ab7bf696c3a320f72e3b",
+        "source": "use axum::extract::Path;\nfn plan(Path(entries): Path<usize>) {\n    let _memo = String::with_capacity(entries.min(4096));\n}\n"
+      },
+      {
+        "path": "src/rust_command_line_injection_1.rs",
+        "family": "rust-command-line-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D212"
+        ],
+        "positive": true,
+        "sha256": "c1d76765b7c8a64ea9994ea593f3ef5293101154d743b9b7e22dd92815b6f2f6",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let _ = std::process::Command::new(\"sh\").arg(\"-c\").arg(label).status();\n}\n"
+      },
+      {
+        "path": "src/rust_command_line_injection_2.rs",
+        "family": "rust-command-line-injection",
+        "line": 2,
+        "rules": [
+          "SKY-D212"
+        ],
+        "positive": true,
+        "sha256": "5cd8fba263c3d23e0c2db84694dc044f6ad47dacea8356a3587fae07b6ebd1d5",
+        "source": "fn task(req: actix_web::HttpRequest) {\n    let _ = std::process::Command::new(req.query_string()).status();\n}\n"
+      },
+      {
+        "path": "src/rust_command_line_injection_3.rs",
+        "family": "rust-command-line-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D212"
+        ],
+        "positive": false,
+        "sha256": "ceef7e2ca5a4ffdd52f8e72ca70ed3ec342759fc4e1ab56e33da82995cba8537",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let _ = std::process::Command::new(\"echo\").arg(\"--\").arg(label).status();\n}\n"
+      },
+      {
+        "path": "src/rust_path_injection_1.rs",
+        "family": "rust-path-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D215"
+        ],
+        "positive": true,
+        "sha256": "5c2c43eb37d77643b464d1fd243705be52b427a980fc011c522e2274174219a9",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let _ = std::fs::read_to_string(&label);\n}\n"
+      },
+      {
+        "path": "src/rust_path_injection_2.rs",
+        "family": "rust-path-injection",
+        "line": 4,
+        "rules": [
+          "SKY-D215"
+        ],
+        "positive": true,
+        "sha256": "3d6e1453b86f523aa358080489f8724ab564ea5eb8a9b9908b5972a958d1c49a",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let dir = std::path::Path::new(\"docs\");\n    let _ = std::fs::File::open(dir.join(label));\n}\n"
+      },
+      {
+        "path": "src/rust_path_injection_3.rs",
+        "family": "rust-path-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D215"
+        ],
+        "positive": false,
+        "sha256": "7e723b2d4e729f36e3e2b294c953be60a3fc829b91751b4d99d6163b39a3b746",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let _ = std::fs::read_to_string(\"fixtures/overview.txt\");\n}\n"
+      },
+      {
+        "path": "src/rust_weak_cryptographic_algorithm_1.rs",
+        "family": "rust-weak-cryptographic-algorithm",
+        "line": 3,
+        "rules": [
+          "SKY-D386"
+        ],
+        "positive": true,
+        "sha256": "9f33ce866d798f6e637e79ce105a62523ffac4a528d5422c59f0a3dc46629c58",
+        "source": "fn encode(key: &[u8], iv: &[u8], data: &[u8]) {\n    let cipher = openssl::symm::Cipher::des_cbc();\n    let _ = openssl::symm::encrypt(cipher, key, Some(iv), data);\n}\n"
+      },
+      {
+        "path": "src/rust_weak_cryptographic_algorithm_2.rs",
+        "family": "rust-weak-cryptographic-algorithm",
+        "line": 3,
+        "rules": [
+          "SKY-D386"
+        ],
+        "positive": true,
+        "sha256": "917b95cd9c1992d85f272a3da3f0dc5a00f8a5fcaa8d0b0b52c72a9dadd5c719",
+        "source": "use cbc::cipher::{BlockEncryptMut, KeyIvInit};\nfn encode(key: &[u8;8], iv: &[u8;8], data: &[u8]) {\n    let enc = cbc::Encryptor::<des::Des>::new(key.into(), iv.into());\n    let _ = enc.encrypt_padded_vec_mut::<cbc::cipher::block_padding::Pkcs7>(data);\n}\n"
+      },
+      {
+        "path": "src/rust_weak_cryptographic_algorithm_3.rs",
+        "family": "rust-weak-cryptographic-algorithm",
+        "line": 4,
+        "rules": [
+          "SKY-D386"
+        ],
+        "positive": false,
+        "sha256": "54443cfd3c1d4f658d61d0a080c13c20d20b5fbdd212d2303dcb7ce8ecb1e45d",
+        "source": "fn encode(key: &[u8],iv: &[u8],data: &[u8]) {\n    let cipher = openssl::symm::Cipher::aes_256_gcm();\n    let mut tag = [0;16];\n    let _ = openssl::symm::encrypt_aead(cipher, key, Some(iv), &[], data, &mut tag);\n}\n"
+      },
+      {
+        "path": "src/rust_weak_sensitive_data_hashing_1.rs",
+        "family": "rust-weak-sensitive-data-hashing",
+        "line": 4,
+        "rules": [
+          "SKY-D207",
+          "SKY-D208"
+        ],
+        "positive": true,
+        "sha256": "fc4493a92f5343994e2ffe52e8934b6fc80d2c3c55237131329f8f31453a35b3",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nfn derive(key: &SecretString) {\n    let source = key.expose_secret().as_bytes();\n    let _digest = openssl::sha::sha1(source);\n}\n"
+      },
+      {
+        "path": "src/rust_weak_sensitive_data_hashing_2.rs",
+        "family": "rust-weak-sensitive-data-hashing",
+        "line": 5,
+        "rules": [
+          "SKY-D207",
+          "SKY-D208"
+        ],
+        "positive": true,
+        "sha256": "9e7369156cd69e4413e9bad3a30a9fe2497e60dc1f567ef590c31a6f9f634880",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nuse sha1::Digest;\nfn derive(key: &SecretString) {\n    let mut digest = sha1::Sha1::new();\n    digest.update(key.expose_secret().as_bytes());\n    let _digest = digest.finalize();\n}\n"
+      },
+      {
+        "path": "src/rust_weak_sensitive_data_hashing_3.rs",
+        "family": "rust-weak-sensitive-data-hashing",
+        "line": 2,
+        "rules": [
+          "SKY-D207",
+          "SKY-D208"
+        ],
+        "positive": false,
+        "sha256": "2d06f3e21e4f817f68b47587f81aa3d4ebe69cffe20ab2c7043fe953fe952813",
+        "source": "fn legacy_file_checksum(data: &[u8]) {\n    let _file_id = openssl::sha::sha1(data);\n}\n"
+      }
+    ]
+  },
+  "holdout": {
+    "original_manifest_sha256": "0a5aaa7f57eff09bf1b39a010cf4e613f49cfda15ea2893792221f8f3bd78c2e",
+    "cases": [
+      {
+        "path": "src/rust_insecure_cookie_1.rs",
+        "family": "rust-insecure-cookie",
+        "line": 3,
+        "rules": [
+          "SKY-D252"
+        ],
+        "positive": true,
+        "sha256": "268bf102aa993e2c95b8f511135b9b3b93e460005fcc0019ea0400689701015c",
+        "source": "fn keep(jar: &mut cookie::CookieJar, v: &str) {\n    let c = cookie::Cookie::build((\"access_token\", v.to_owned())).build();\n    jar.add(c);\n}\n"
+      },
+      {
+        "path": "src/rust_insecure_cookie_2.rs",
+        "family": "rust-insecure-cookie",
+        "line": 3,
+        "rules": [
+          "SKY-D252"
+        ],
+        "positive": false,
+        "sha256": "f48051af3a87f5a0c60e5df65f6622646c5942b72f4b99c7db42637bdbcb0607",
+        "source": "fn keep(jar: &mut cookie::CookieJar) {\n    let c = cookie::Cookie::new(\"style\", \"compact\");\n    jar.add(c);\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_logging_1.rs",
+        "family": "rust-cleartext-logging",
+        "line": 4,
+        "rules": [
+          "SKY-D251"
+        ],
+        "positive": true,
+        "sha256": "52625c03ee9266b75d1d600b18aeaacfb1d01b9feda5c5ba4f810faa14782399",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nfn report(value: &SecretString) {\n    let text = value.expose_secret();\n    tracing::error!(\"private recovery data: {text}\");\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_logging_2.rs",
+        "family": "rust-cleartext-logging",
+        "line": 3,
+        "rules": [
+          "SKY-D251"
+        ],
+        "positive": false,
+        "sha256": "4efd67b5a59642eeff7679c48f0c959777e6282c750336f5495df892d68cc22d",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nfn report(_value: &SecretString) {\n    tracing::info!(\"value updated\");\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_storage_database_1.rs",
+        "family": "rust-cleartext-storage-database",
+        "line": 4,
+        "rules": [
+          "SKY-D387"
+        ],
+        "positive": true,
+        "sha256": "dd7341b6e358ac0aaa421161c0c7e954f51a3f33b69165433dc16ec6ac7cd092",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nfn persist(db: &rusqlite::Connection,value: &SecretString) {\n    let pw = value.expose_secret();\n    let _ = db.execute(\"INSERT INTO profiles (password) VALUES (?1)\", [pw]);\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_storage_database_2.rs",
+        "family": "rust-cleartext-storage-database",
+        "line": 2,
+        "rules": [
+          "SKY-D387"
+        ],
+        "positive": false,
+        "sha256": "e1dbf63f1a3c938f45922ac5043ee1eed93896d77369504ccc9a42b0a3ad0ed4",
+        "source": "fn persist(db: &rusqlite::Connection) {\n    let _ = db.execute(\"UPDATE profiles SET status = ?1\", [\"ready\"]);\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_transmission_1.rs",
+        "family": "rust-cleartext-transmission",
+        "line": 4,
+        "rules": [
+          "SKY-D391"
+        ],
+        "positive": true,
+        "sha256": "8c184c26a3041dac6ecb9f955057841c69224117ff23708ac74fa06bd071cae8",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nasync fn inspect(key: &SecretString) {\n    let val = key.expose_secret();\n    let _ = reqwest::get(format!(\"https://relay.example/inspect?key={val}\")).await;\n}\n"
+      },
+      {
+        "path": "src/rust_cleartext_transmission_2.rs",
+        "family": "rust-cleartext-transmission",
+        "line": 3,
+        "rules": [
+          "SKY-D391"
+        ],
+        "positive": false,
+        "sha256": "0948d0b8db0d0bd3bad13f4e0c8f970a8482f86d6aa7d4d4d0ffd9085bf8d3cf",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nasync fn inspect(key: &SecretString) {\n    let _ = reqwest::Client::new().get(\"https://relay.example/api\").header(\"Authorization\",key.expose_secret()).send().await;\n}\n"
+      },
+      {
+        "path": "src/rust_xss_1.rs",
+        "family": "rust-xss",
+        "line": 3,
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": true,
+        "sha256": "04f9c2477dee71416f0ec343700586180d1710a36d62844cbcaaf14d9b82d6a8",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) -> axum::response::Html<String> {\n    let html = format!(\"<p>Current label: {label}</p>\");\n    axum::response::Html(html)\n}\n"
+      },
+      {
+        "path": "src/rust_xss_2.rs",
+        "family": "rust-xss",
+        "line": 3,
+        "rules": [
+          "SKY-D228"
+        ],
+        "positive": false,
+        "sha256": "c8dc882cd7e1798e0f15a5d4b1d1490a210541ec35f88bfd41f25505a9fab5f4",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) -> axum::response::Html<String> {\n    let html = format!(\"<p>{label:?}</p>\", label=label.len());\n    axum::response::Html(html)\n}\n"
+      },
+      {
+        "path": "src/rust_sql_injection_1.rs",
+        "family": "rust-sql-injection",
+        "line": 4,
+        "rules": [
+          "SKY-D211"
+        ],
+        "positive": true,
+        "sha256": "6da67b9c856af7ade0630626984043db0ac21338578a65d105e65c2e09c622f0",
+        "source": "use axum::extract::Path;\nfn update(Path(label): Path<String>,db: &rusqlite::Connection) {\n    let sql = format!(\"SELECT title FROM post WHERE slug = '{label}'\");\n    let _ = db.execute_batch(&sql);\n}\n"
+      },
+      {
+        "path": "src/rust_sql_injection_2.rs",
+        "family": "rust-sql-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D211"
+        ],
+        "positive": false,
+        "sha256": "5d2394289e4048e9102348f78f4db2bed1b48d68da4ffd6ad8e0aefc08c3e130",
+        "source": "use axum::extract::Path;\nfn update(Path(label): Path<String>,db: &rusqlite::Connection) {\n    let _ = db.execute(\"UPDATE post SET slug = ?1\", [label]);\n}\n"
+      },
+      {
+        "path": "src/rust_unsafe_deserialization_1.rs",
+        "family": "rust-unsafe-deserialization",
+        "line": 5,
+        "rules": [
+          "SKY-D233",
+          "SKY-D204"
+        ],
+        "positive": true,
+        "sha256": "ae92578c1cd1bcfa711a8e834dd01ece4ce29d802ed453c4f0cc18d94ae7343e",
+        "source": "use std::io::Read;\nfn parse(mut stream: std::net::TcpStream) -> Result<(), Box<dyn std::error::Error>> {\n    let mut body = String::new();\n    stream.read_to_string(&mut body)?;\n    let _: Vec<String> = serde_json::from_str(&body)?;\n    Ok(())\n}\n"
+      },
+      {
+        "path": "src/rust_unsafe_deserialization_2.rs",
+        "family": "rust-unsafe-deserialization",
+        "line": 2,
+        "rules": [
+          "SKY-D233",
+          "SKY-D204"
+        ],
+        "positive": false,
+        "sha256": "3668263dbbddc3276bb27606d1f73aa921361e418e56407cf4e7f1ee1a5f99ea",
+        "source": "fn parse() -> serde_json::Result<()> {\n    let _: Vec<String> = serde_json::from_str(\"[]\")?;\n    Ok(())\n}\n"
+      },
+      {
+        "path": "src/rust_disabled_certificate_check_1.rs",
+        "family": "rust-disabled-certificate-check",
+        "line": 3,
+        "rules": [
+          "SKY-D210"
+        ],
+        "positive": true,
+        "sha256": "de85fa58863e68897d1ba4661ac9b64aa874889d6dc81880d13dff2e2d814a90",
+        "source": "fn settings(easy: &mut curl::easy::Easy) {\n    let off = (false);\n    let _ = easy.ssl_verify_host(off);\n}\n"
+      },
+      {
+        "path": "src/rust_disabled_certificate_check_2.rs",
+        "family": "rust-disabled-certificate-check",
+        "line": 4,
+        "rules": [
+          "SKY-D210"
+        ],
+        "positive": false,
+        "sha256": "0c259daaa637b809e2b0b5dfb212c042f822c3cc333be677537acf77257c2764",
+        "source": "fn configure() {\n    let mut v = true;\n    v = false;\n    let _ = reqwest::blocking::Client::builder().danger_accept_invalid_certs(v);\n}\n"
+      },
+      {
+        "path": "src/rust_non_https_url_1.rs",
+        "family": "rust-non-https-url",
+        "line": 2,
+        "rules": [
+          "SKY-D356"
+        ],
+        "positive": true,
+        "sha256": "608ef449257d3d4c0d9db67cf5219a153b4459751c9470965486b31534b0380b",
+        "source": "async fn get(credential: &str) {\n    let _ = reqwest::Client::new().get(\"http://jobs.example/list\").bearer_auth(credential).send().await;\n}\n"
+      },
+      {
+        "path": "src/rust_non_https_url_2.rs",
+        "family": "rust-non-https-url",
+        "line": 2,
+        "rules": [
+          "SKY-D356"
+        ],
+        "positive": false,
+        "sha256": "bbaa871810740a5fb6f9f496361259fcdcc093208e6096fd5914b8d29b8ca5ec",
+        "source": "async fn get(credential: &str) {\n    let _ = reqwest::Client::new().get(\"https://jobs.example/list\").bearer_auth(credential).send().await;\n}\n"
+      },
+      {
+        "path": "src/rust_hard_coded_cryptographic_value_1.rs",
+        "family": "rust-hard-coded-cryptographic-value",
+        "line": 3,
+        "rules": [
+          "SKY-D388"
+        ],
+        "positive": true,
+        "sha256": "79f37f9e88d6a0c61a9428173237af2e807cad66652488a521285c0fc11cae89",
+        "source": "fn configure() {\n    let k = b\"not-a-real-key-just-a-fixture\";\n    let _ = jsonwebtoken::EncodingKey::from_secret(k);\n}\n"
+      },
+      {
+        "path": "src/rust_hard_coded_cryptographic_value_2.rs",
+        "family": "rust-hard-coded-cryptographic-value",
+        "line": 2,
+        "rules": [
+          "SKY-D388"
+        ],
+        "positive": false,
+        "sha256": "9b2bf23579b0784773935ea94c4a87265adcf35ca0dd79daeb4b4d126f24f65f",
+        "source": "fn create(secret: &[u8]) {\n    let _ = jsonwebtoken::EncodingKey::from_secret(secret);\n}\n"
+      },
+      {
+        "path": "src/rust_log_injection_1.rs",
+        "family": "rust-log-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D392"
+        ],
+        "positive": false,
+        "sha256": "08bce52ff53a4cdfbfe23b83c3f4a5452f9d77adc89f12270839f379c8be9955",
+        "source": "fn log(request: actix_web::HttpRequest) {\n    let raw = request.query_string();\n    log::warn!(\"unknown selector {raw}\");\n}\n",
+        "original_positive": true,
+        "adjudication": "Actix returns the encoded HTTP URI query; CR and LF cannot occur unescaped."
+      },
+      {
+        "path": "src/rust_log_injection_2.rs",
+        "family": "rust-log-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D392"
+        ],
+        "positive": false,
+        "sha256": "388cf5cda5d32afd7e7ec6afddb2a9acce5ea7b461c69c0e7861ed46d223c9ea",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    log::warn!(\"invalid selector {:?}\", label);\n}\n"
+      },
+      {
+        "path": "src/rust_regex_injection_1.rs",
+        "family": "rust-regex-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D389"
+        ],
+        "positive": true,
+        "sha256": "6b956443c6cf759bc7292d3a542a3db18956667666a9a0040737e35310231516",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let _re = regex::bytes::Regex::new(&format!(\"^{}-item$\",label));\n}\n"
+      },
+      {
+        "path": "src/rust_regex_injection_2.rs",
+        "family": "rust-regex-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D389"
+        ],
+        "positive": false,
+        "sha256": "43ab910fb4a0c5b6cf882ea9e707bd61d144f5ebe50b1468609336f3f3228683",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let _re = regex::Regex::new(\"^build-[0-9]+$\");\n}\n"
+      },
+      {
+        "path": "src/rust_request_forgery_1.rs",
+        "family": "rust-request-forgery",
+        "line": 3,
+        "rules": [
+          "SKY-D216"
+        ],
+        "positive": true,
+        "sha256": "0191aacf284c237d5d510542c7d4c2b26977f3511efc0a361957a028bb422a96",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let response = reqwest::blocking::Client::new().post(label).send();\n}\n"
+      },
+      {
+        "path": "src/rust_request_forgery_2.rs",
+        "family": "rust-request-forgery",
+        "line": 3,
+        "rules": [
+          "SKY-D216"
+        ],
+        "positive": false,
+        "sha256": "4d6b43e0625a4be2e38b402d1837f6c06a1a42d16fe94bb1ffeea6d813211370",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let _ = reqwest::blocking::Client::new().post(\"https://example.test/search\").body(label).send();\n}\n"
+      },
+      {
+        "path": "src/rust_uncontrolled_allocation_size_1.rs",
+        "family": "rust-uncontrolled-allocation-size",
+        "line": 3,
+        "rules": [
+          "SKY-D390"
+        ],
+        "positive": true,
+        "sha256": "59262d97ad8be1ded080f5fbc74aab7aecc8e0920c3a05d18980c4e89b3f94b0",
+        "source": "use axum::extract::Path;\nfn allocate(Path(size): Path<usize>) {\n    let _buffer = std::vec::Vec::<u16>::with_capacity(size);\n}\n"
+      },
+      {
+        "path": "src/rust_uncontrolled_allocation_size_2.rs",
+        "family": "rust-uncontrolled-allocation-size",
+        "line": 2,
+        "rules": [
+          "SKY-D390"
+        ],
+        "positive": false,
+        "sha256": "e54eeb3766be7503c49fa7eefdd3bad335619cf410f8c8d45bf4702119e032fa",
+        "source": "fn allocate() {\n    let _buffer = std::vec::Vec::<u16>::with_capacity(128);\n}\n"
+      },
+      {
+        "path": "src/rust_command_line_injection_1.rs",
+        "family": "rust-command-line-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D212"
+        ],
+        "positive": true,
+        "sha256": "72abfdba3aa02a6a5afa5fd428290405e205ffea0cac85edbc4b1f2f4955c9f5",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let _ = std::process::Command::new(label).status();\n}\n"
+      },
+      {
+        "path": "src/rust_command_line_injection_2.rs",
+        "family": "rust-command-line-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D212"
+        ],
+        "positive": false,
+        "sha256": "6d33415d2071ce008466c230a9ac44a33755e30acce735a7a6422d1be87d6768",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let _ = std::process::Command::new(\"printf\").arg(\"%s\").arg(label).status();\n}\n"
+      },
+      {
+        "path": "src/rust_path_injection_1.rs",
+        "family": "rust-path-injection",
+        "line": 4,
+        "rules": [
+          "SKY-D215"
+        ],
+        "positive": true,
+        "sha256": "d6a4d85dbfc06bc0761a99b4d8775f01f47b7d21b8675c163c3b387b4da57509",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let name = label;\n    let _ = std::fs::read(name);\n}\n"
+      },
+      {
+        "path": "src/rust_path_injection_2.rs",
+        "family": "rust-path-injection",
+        "line": 3,
+        "rules": [
+          "SKY-D215"
+        ],
+        "positive": false,
+        "sha256": "cc7f599a55ca579bd31f35cf7054cdc1109914efbefa16c561b176e8fda3329b",
+        "source": "use axum::extract::Path;\nfn handle(Path(label): Path<String>) {\n    let _ = std::fs::read(\"fixtures/default\");\n}\n"
+      },
+      {
+        "path": "src/rust_weak_cryptographic_algorithm_1.rs",
+        "family": "rust-weak-cryptographic-algorithm",
+        "line": 3,
+        "rules": [
+          "SKY-D386"
+        ],
+        "positive": true,
+        "sha256": "35684e028a912ba8d5c201bdae7a74fbad414dd64e85d21ff1413af52ed12a2f",
+        "source": "fn seal(k:&[u8], data:&[u8]) {\n    let alg = openssl::symm::Cipher::des_ecb();\n    let _ = openssl::symm::encrypt(alg, k, None, data);\n}\n"
+      },
+      {
+        "path": "src/rust_weak_cryptographic_algorithm_2.rs",
+        "family": "rust-weak-cryptographic-algorithm",
+        "line": 4,
+        "rules": [
+          "SKY-D386"
+        ],
+        "positive": false,
+        "sha256": "8991f6c013e8455fb27a2c938d163de26a2253aa3cb4e9eaacd38ceba82039e6",
+        "source": "fn seal(k:&[u8],nonce:&[u8],data:&[u8]) {\n    let alg = openssl::symm::Cipher::aes_128_gcm();\n    let mut tag = [0; 16];\n    let _ = openssl::symm::encrypt_aead(alg, k, Some(nonce), &[], data, &mut tag);\n}\n"
+      },
+      {
+        "path": "src/rust_weak_sensitive_data_hashing_1.rs",
+        "family": "rust-weak-sensitive-data-hashing",
+        "line": 4,
+        "rules": [
+          "SKY-D207",
+          "SKY-D208"
+        ],
+        "positive": true,
+        "sha256": "568a0cbc7a9f4ea3e755b2d6ff3155ebfe399e2295d1ee77a2191fc572110d61",
+        "source": "use secrecy::{SecretString, ExposeSecret};\nfn legacy(value: &SecretString) {\n    let secret = value.expose_secret().as_bytes();\n    let _ = md5::compute(secret);\n}\n"
+      },
+      {
+        "path": "src/rust_weak_sensitive_data_hashing_2.rs",
+        "family": "rust-weak-sensitive-data-hashing",
+        "line": 2,
+        "rules": [
+          "SKY-D207",
+          "SKY-D208"
+        ],
+        "positive": false,
+        "sha256": "546d2ac13d360c8566cb722eaba21703105461ca12cc0729a8173541db1d30c3",
+        "source": "fn configure() {\n    let _ = md5::compute(b\"build-marker\");\n}\n"
+      }
+    ]
+  }
+}

@@ -65,13 +65,19 @@ def score(cli, cases, *, no_grep_verify=False):
             or expected_paths - visited
         ):
             raise ValueError("Incomplete scan. Cannot score uninspected cases.")
-        findings = {
-            (Path(row["file"]).relative_to(project), row["rule_id"])
-            for row in report.get("danger", [])
-        }
+        findings = {}
+        for row in report.get("danger", []):
+            key = (Path(row["file"]).relative_to(project), row["rule_id"])
+            findings.setdefault(key, set()).add(row["line"])
         decisions = {}
         for case in cases:
-            hit = any((Path(case["path"]), rule) in findings for rule in case["rules"])
+            lines = set().union(
+                *(
+                    findings.get((Path(case["path"]), rule), ())
+                    for rule in case["rules"]
+                )
+            )
+            hit = case["line"] in lines if "line" in case else bool(lines)
             if case["positive"]:
                 decisions[case["path"]] = "TP" if hit else "FN"
             else:

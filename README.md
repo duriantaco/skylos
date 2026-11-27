@@ -299,6 +299,8 @@ expected answers and tool calls, use `skylos agent test`. See
   cryptography, Unix file permissions, regexes built from request text and
   unbounded memory allocation. Coverage depends on the crate and call path.
   For example, SSRF inside a dependency or through DNS can still be missed.
+  The [Rust security benchmark](benchmarks/security/rust_coverage/README.md)
+  lists the measured cases, missed detections, and results on 23 repositories.
 - Rust quality checks (`--quality`) include unreachable statements and duplicate
   branch bodies.
 
