@@ -24,6 +24,11 @@ class Value:
     # For a URL string: the part that chooses the host. ``None`` means the
     # whole value; a value without sources means a literal fixed the host.
     host: Value | None = None
+    # A local async helper can send several requests and return a separate
+    # value. Its sends take effect when a caller actually polls its future.
+    pending_http: tuple[tuple[str, Value], ...] = ()
+    awaited: Value | None = None
+    local_function: int | None = None
 
     @property
     def real_sources(self):
@@ -50,6 +55,8 @@ def joined(values):
     if not values:
         return UNKNOWN
     first = values[0]
+    if len(values) == 1:
+        return first
     items = first.items if all(v.items == first.items for v in values) else ()
     if not items and any(v.items for v in values):
         items = (
@@ -71,6 +78,17 @@ def joined(values):
         guarded_api=first.guarded_api
         if all(v.guarded_api == first.guarded_api for v in values)
         else None,
+        local_function=first.local_function
+        if all(v.local_function == first.local_function for v in values)
+        else None,
+        pending_http=tuple(
+            dict.fromkeys(effect for v in values for effect in v.pending_http)
+        )
+        if any(v.pending_http for v in values)
+        else (),
+        awaited=joined(v.awaited for v in values)
+        if all(v.awaited is not None for v in values)
+        else None,
         literal=first.literal
         if all(v.literal == first.literal for v in values)
         else None,
@@ -79,6 +97,36 @@ def joined(values):
         shell=any(v.shell for v in values),
         shell_switch=any(v.shell_switch for v in values),
         items=items,
+    )
+
+
+def bind_http_return(template, function_key, arguments):
+    """Replace formal destination parameters in a helper's returned HTTP value."""
+    prefix = f"{SYMBOLIC}{function_key}#"
+    sources = []
+    for label in template.sources:
+        if label.startswith(prefix):
+            index = int(label[len(prefix) :])
+            if index < len(arguments):
+                value = arguments[index]
+                sources.append(value.host if value.host is not None else value)
+        elif not label.startswith("parameter:"):
+            sources.append(Value(sources=frozenset({label})))
+    bound = joined(sources)
+    return replace(
+        template,
+        sources=bound.sources,
+        cleared=template.cleared | bound.cleared,
+        host=bind_http_return(template.host, function_key, arguments)
+        if template.host is not None
+        else None,
+        pending_http=tuple(
+            (via, bind_http_return(value, function_key, arguments))
+            for via, value in template.pending_http
+        ),
+        awaited=bind_http_return(template.awaited, function_key, arguments)
+        if template.awaited is not None
+        else None,
     )
 
 
@@ -165,6 +213,10 @@ class State:
     def resolve(self, path):
         if path.startswith(("::std::", "::tokio::", "::async_std::")):
             return path[2:]
+        if path.startswith(("::reqwest::", "::reqwest_middleware::")):
+            root = path.split("::", 2)[1]
+            if not any(root in frame for frame in self.frames):
+                return path[2:]
         parts = path.split("::")
         base = self.get(parts[0]).api
         return "::".join([base, *parts[1:]]) if base else None

@@ -208,8 +208,12 @@ how_skylos_decides:
     or a non-request base followed by `/`, `?` or `#` fixes it, and
     percent-encoding clears a value. Environment variables, arguments and
     stored rows (a query given a database pool or connection) are not
-    request data. A request value handed to a same-file helper that fetches
-    it is reported at that call.
+    request data. For reqwest and reqwest-middleware, the finding points to
+    the blocking send, the await, or a known task executor that runs the
+    request. Building and discarding a request stays quiet. Skylos follows
+    builders returned by local helpers. A Cargo project scan also checks
+    directly resolved helpers across one ordinary module boundary when it
+    can read both source files.
 
 source_refs:
   - path: skylos/rules/danger/danger_net/ssrf_flow.py
@@ -235,6 +239,8 @@ source_refs:
     note: Rust sinks; `formatted()` decides which value chooses the host.
   - path: skylos/visitors/languages/rust/web_model.py
     symbol: "HTTP_FUNCTIONS = {"
+  - path: skylos/visitors/languages/rust/reqwest.py
+    symbol: "def dispatch(value)"
 
 fix:
   explanation: >-

@@ -186,11 +186,11 @@ def test_ssrf_through_local_helpers_is_reported_at_the_handler_call(tmp_path):
         tmp_path,
         """use actix_web::web::{Data, Query};
 use reqwest_middleware::ClientWithMiddleware;
-fn send(client: &ClientWithMiddleware, url: String) {
-    client.request(reqwest::Method::GET, url);
+async fn send(client: &ClientWithMiddleware, url: String) {
+    let _ = client.request(reqwest::Method::GET, url).send().await;
 }
 async fn fetch(url: String, client: &ClientWithMiddleware) {
-    send(client, url);
+    send(client, url).await;
 }
 async fn handler(Query(params): Query<Params>, client: Data<ClientWithMiddleware>) {
     let target = params.target_url();
@@ -203,11 +203,10 @@ async fn internal(client: Data<ClientWithMiddleware>) {
     )
     [finding] = [f for f in findings if f["rule_id"] == "SKY-D216"]
     assert finding["line"] == 11
-    assert "fetch() -> send() -> client.request()" in finding["message"]
-    assert (
-        finding["metadata"]["rust_flow"]["via"]
-        == "fetch() -> send() -> client.request()"
-    )
+    via = finding["metadata"]["rust_flow"]["via"]
+    assert "fetch() -> send() -> " in via
+    assert "await" in via
+    assert via in finding["message"]
 
 
 def test_env_url_is_not_ssrf(tmp_path):

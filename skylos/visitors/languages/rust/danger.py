@@ -6,12 +6,13 @@ from functools import lru_cache
 from itertools import pairwise
 from pathlib import Path
 
-from . import permissions
+from . import permissions, reqwest
 from ._security_bindings import (
     SYMBOLIC,
     UNKNOWN,
     State,
     Value,
+    bind_http_return,
     joined,
     unwrap,
     use_bindings,
@@ -337,12 +338,16 @@ class _ScopeAttributes:
 
 
 class _SecurityFlow(_ScopeAttributes):
-    def __init__(self, root, file_path, source, refuted=frozenset(), summaries=None):
+    def __init__(self, root, file_path, source, refuted=frozenset(), summaries=None, http_returns=None, *, siblings=None):
         self.root = root
         self.file = str(Path(file_path))
         super().__init__(source)
         self.findings = []
         self.return_values = []
+        self.deferred_http = []
+        self.http_returns_in = http_returns or {}
+        self.http_returns = {}
+        self.siblings = siblings
         self.refuted = refuted
         self.call_arguments = {}
         self.library_calls = set()
@@ -350,7 +355,7 @@ class _SecurityFlow(_ScopeAttributes):
         self.harness_file = (
             self.build_script
             or _is_test_path(file_path)
-            or _declared_test_only(file_path)
+            or (siblings is None and _declared_test_only(file_path))
         )
         # Which parameters of this file's functions reach a sink, from the
         # previous round: {function start byte: {index: {(rule, via)}}}.
@@ -455,6 +460,16 @@ class _SecurityFlow(_ScopeAttributes):
         request data (and, for D212/D215, operator input as review)."""
         if not self.reaches(rule, value):
             return
+        if rule == _D216 and _TEST_CFG in state.conditions:
+            return
+        if (
+            rule == _D216
+            and self.deferred_http
+            and self.deferred_http[-1] is not None
+            and reqwest.has_dispatch(via)
+        ):
+            self.deferred_http[-1].append((via, value))
+            return
         self.record_summary(rule, value, via)
         if rule in _REQUEST_ONLY_RULES:
             if not value.request_sources or _TEST_CFG in state.conditions:
@@ -465,11 +480,24 @@ class _SecurityFlow(_ScopeAttributes):
 
     def declarations(self, node, state):
         # Rust items (including use declarations) apply throughout their scope.
-        for child, _conditional in self.scope_statements(node):
+        local_names = set()
+        for child, conditional in self.scope_statements(node):
             if child.type in _ITEMS:
                 name = self.field(child, "name")
                 if name is not None:
-                    state.bind(self.text(name), UNKNOWN)
+                    ident = self.text(name)
+                    value = UNKNOWN
+                    if (
+                        child.type == "function_item"
+                        and not conditional
+                        and ident not in local_names
+                    ):
+                        value = Value(local_function=child.start_byte)
+                    state.bind(ident, value)
+                    local_names.add(ident)
+        if self.siblings and node == self.root:
+            for name, api in self.siblings.roots.items():
+                state.bind(name, Value(api=api))
         bindings = {}
         globs = []
         for child, conditional, guards, complete_guards in self.scope_entries(node):
@@ -479,6 +507,16 @@ class _SecurityFlow(_ScopeAttributes):
                         globs.append((state.resolve(path), conditional))
                         continue
                     api = state.resolve(path)
+                    if (
+                        self.siblings
+                        and api
+                        and api.startswith("@crate::")
+                        and any(
+                            name not in _INERT_ATTRIBUTES
+                            for name, _ in self.attributes(child)
+                        )
+                    ):
+                        api = None
                     value = (
                         Value(guarded_api=(guards, api))
                         if conditional and guards and complete_guards and api
@@ -631,6 +669,8 @@ class _SecurityFlow(_ScopeAttributes):
                 kind = self.fs_type_kind(self.field(param, "type"), state)
             if api in REQUEST_OBJECTS:
                 kind = "http_request"
+            elif api in reqwest.TYPES:
+                kind = reqwest.TYPES[api]
             elif api in HTTP_CLIENT_TYPES:
                 kind = "http_client"
             if name in route_params:
@@ -646,11 +686,42 @@ class _SecurityFlow(_ScopeAttributes):
             state.bind(name, Value(sources=sources | symbolic, kind=kind))
         self.return_values.append([])
         self.functions.append(node)
+        self.deferred_http.append(None)
         try:
-            self.block(self.field(node, "body"), state)
+            body = self.field(node, "body")
+            tail, continuing = self.block(body, state)
+            returned = self.return_values[-1]
+            if continuing:
+                returned.append(tail if self.has_tail_expression(body) else UNKNOWN)
+            # Require all returning branches to agree on the HTTP value type.
+            if returned and all(
+                v.kind and ("reqwest_" in v.kind or v.kind == "rust_helper_future")
+                for v in returned
+            ):
+                value = joined(returned)
+                if value.kind:
+                    self.http_returns[node.start_byte] = value
         finally:
+            self.deferred_http.pop()
             self.functions.pop()
             self.return_values.pop()
+
+    def has_tail_expression(self, body):
+        if body is None:
+            return False
+        last = next(
+            (
+                child
+                for child in reversed(body.named_children)
+                if child.type not in {"line_comment", "block_comment"}
+            ),
+            None,
+        )
+        return bool(
+            last is not None
+            and last.type not in _ITEMS | {"use_declaration", "let_declaration"}
+            and not (last.children and last.children[-1].type == ";")
+        )
 
     def parameter_type(self, type_node, state):
         """(resolved outer type, text of its first type argument)."""
@@ -795,6 +866,8 @@ class _SecurityFlow(_ScopeAttributes):
             left = self.field(node, "left")
             if left is not None and left.type == "identifier":
                 state.assign(self.text(left), value)
+            else:
+                self.assign_request_url(left, value, state)
             return value, True
         if kind == "return_expression":
             value = joined(
@@ -936,6 +1009,8 @@ class _SecurityFlow(_ScopeAttributes):
             return
         if node.type == "identifier":
             old = state.get(self.text(node))
+            if old.kind in reqwest.REQUESTS:
+                state.assign(self.text(node), Value(kind=old.kind))
             if old.kind == "path":
                 state.assign(
                     self.text(node),
@@ -953,6 +1028,33 @@ class _SecurityFlow(_ScopeAttributes):
         elif node.type in {"reference_expression", "parenthesized_expression"}:
             child = self.field(node, "value") or next(iter(node.named_children), None)
             self.invalidate_path(child, state)
+
+    def assign_request_url(self, left, value, state):
+        while left is not None and left.type == "parenthesized_expression":
+            left = next(iter(left.named_children), None)
+        if (
+            left is None
+            or left.type != "unary_expression"
+            or left.children[0].type != "*"
+        ):
+            return
+        call = next(iter(left.named_children), None)
+        callee = self.field(call, "function")
+        if callee is None or callee.type != "field_expression":
+            return
+        receiver = self.field(callee, "value")
+        arguments = self.field(call, "arguments")
+        if (
+            receiver is not None
+            and receiver.type == "identifier"
+            and self.text(self.field(callee, "field")) == "url_mut"
+            and arguments is not None
+            and not arguments.named_children
+        ):
+            name = self.text(receiver)
+            kind = state.get(name).kind
+            if kind in reqwest.REQUESTS:
+                state.assign(name, reqwest.destination(value, kind))
 
     def containment(self, node, truth, state):
         if node is None:
@@ -1010,14 +1112,43 @@ class _SecurityFlow(_ScopeAttributes):
         ):
             state.assign(self.text(receiver), replace(value, contained=True))
 
+    def deferred_body(self, body, state):
+        effects = []
+        self.deferred_http.append(effects)
+        self.return_values.append([])
+        try:
+            tail, continuing = self.statement(body, state)
+            returned = self.return_values[-1]
+            if continuing:
+                if (
+                    body is not None
+                    and body.type == "block"
+                    and not self.has_tail_expression(body)
+                ):
+                    tail = UNKNOWN
+                returned.append(tail)
+            result = joined(returned)
+        finally:
+            self.return_values.pop()
+            self.deferred_http.pop()
+        return Value(
+            kind="rust_helper_future", pending_http=tuple(effects), awaited=result
+        )
+
     def expression(self, node, state):
         if node is None:
             return UNKNOWN
         kind = node.type
+        if kind == "async_block":
+            body = next((c for c in node.named_children if c.type == "block"), None)
+            return self.deferred_body(body, state.copy())
         if kind == "identifier":
             return state.get(self.text(node))
         if kind == "scoped_identifier":
             return Value(api=state.resolve(self.text(node)))
+        if kind == "await_expression":
+            value = self.expression(node.named_children[0], state)
+            return self.await_value(node.children[-1], value, state)
         if kind in {"string_literal", "raw_string_literal"}:
             text = self.text(node)
             first, last = text.find('"'), text.rfind('"')
@@ -1056,6 +1187,14 @@ class _SecurityFlow(_ScopeAttributes):
                 pattern = self.field(param, "pattern") or param
                 self.bind_pattern(pattern, UNKNOWN, closure)
             body = self.field(node, "body")
+            if params is not None and not params.named_children:
+                future = self.deferred_body(body, closure)
+                is_async = any(token.type == "async" for token in node.children)
+                return replace(
+                    future,
+                    kind="rust_async_closure" if is_async else "rust_closure",
+                    return_sources=future.awaited.sources,
+                )
             self.return_values.append([])
             try:
                 tail, _continuing = self.statement(body, closure)
@@ -1278,7 +1417,7 @@ class _SecurityFlow(_ScopeAttributes):
             return replace(value, cleared=value.cleared | {_D228}, host=None)
         return value
 
-    def local_targets(self, callee, method_style):
+    def local_targets(self, callee, method_style, state):
         """Function items of this file a call can reach, and whether its first
         argument is the receiver. Only unambiguous helpers count."""
         enclosing_impl = None
@@ -1303,10 +1442,11 @@ class _SecurityFlow(_ScopeAttributes):
                 if impl is not None and impl == enclosing_impl
             ]
         if callee.type == "identifier":
+            binding = state.get(self.text(callee)).local_function
             found = [
                 (node, False)
                 for node, impl in self.local_functions.get(self.text(callee), ())
-                if impl is None
+                if impl is None and node.start_byte == binding
             ]
             return found if len(found) == 1 else []
         if callee.type == "scoped_identifier":
@@ -1324,23 +1464,47 @@ class _SecurityFlow(_ScopeAttributes):
     def local_call(self, node, targets, args, state):
         """Request data passed to a local helper whose parameter reaches a sink
         is reported here, at the call that hands it over."""
-        for target, receiver_first in targets:
-            params = self.field(target, "parameters")
-            declared = list(params.named_children) if params is not None else []
-            has_self = any(part.type == "self_parameter" for part in declared)
-            values = args[1:] if receiver_first and has_self else args
-            summary = self.summaries_in.get(target.start_byte, {})
-            name = self.text(self.field(target, "name"))
-            for index, argument in enumerate(values):
-                for rule, via in sorted(summary.get(index, ())):
-                    chain = f"{name}()" + (f" -> {via}" if via else "")
-                    if chain.count("->") > _MAX_CHAIN:
-                        continue  # recursion: the shorter chain is already known
-                    value = argument
-                    if rule == _D216 and argument.host is not None:
-                        value = argument.host
-                    if not self.reaches(rule, value):
-                        continue
+        if len(targets) != 1:
+            return None
+        target, receiver_first = targets[0]
+        params = self.field(target, "parameters")
+        has_self = params is not None and any(
+            part.type == "self_parameter" for part in params.named_children
+        )
+        values = args[1:] if receiver_first and has_self else args
+        return self.apply_helper(
+            node,
+            self.text(self.field(target, "name")),
+            target.start_byte,
+            values,
+            state,
+            self.summaries_in.get(target.start_byte, {}),
+            self.http_returns_in.get(target.start_byte),
+            is_async_function(target),
+        )
+
+    def apply_helper(
+        self, node, name, target_key, values, state, sinks, returned, is_async
+    ):
+        effects = []
+        for index, argument in enumerate(values):
+            for rule, via in sorted(sinks.get(index, ())):
+                chain = f"{name}()" + (f" -> {via}" if via else "")
+                if chain.count("->") > _MAX_CHAIN:
+                    continue
+                value = (
+                    argument.host
+                    if rule == _D216 and argument.host is not None
+                    else argument
+                )
+                if not self.reaches(rule, value):
+                    continue
+                if rule == _D216:
+                    if is_async and reqwest.has_dispatch(via):
+                        effects.append((chain, value))
+                    else:
+                        self.helper_http_sink(node, chain, value, state)
+                else:
                     self.record_summary(rule, value, chain)
                     if not value.request_sources or _TEST_CFG in state.conditions:
                         continue
@@ -1351,6 +1515,36 @@ class _SecurityFlow(_ScopeAttributes):
                         value,
                         extra={"rust_flow": {"via": chain}},
                     )
+        result = (
+            bind_http_return(returned, target_key, values)
+            if returned is not None
+            else None
+        )
+        if is_async and (effects or result is not None):
+            return Value(
+                kind="rust_helper_future",
+                pending_http=tuple(effects),
+                awaited=result
+                if result is not None
+                else Value(sources=joined(values).sources),
+            )
+        return result
+
+    def helper_http_sink(self, node, via, value, state):
+        self.sink(
+            _D216,
+            _CALL_SITE_MESSAGES[_D216].format(chain=via),
+            node,
+            value,
+            state,
+            via=via,
+            extra={"rust_flow": {"via": via}},
+        )
+
+    def poll_helper(self, node, value, state):
+        for via, destination in value.pending_http:
+            self.helper_http_sink(node, via, destination, state)
+        return value.awaited if value.awaited is not None else UNKNOWN
 
     def url_sink(self, node, value, description, state):
         """The URL of an outbound HTTP request (D216). Only the part that
@@ -1367,6 +1561,24 @@ class _SecurityFlow(_ScopeAttributes):
             state,
             via=description,
         )
+
+    def await_value(self, node, value, state, operation="await"):
+        if value.kind == "rust_helper_future":
+            return self.poll_helper(node, value, state)
+        if value.kind == "reqwest_future":
+            self.url_sink(node, value, f"reqwest dispatch ({operation})", state)
+            return UNKNOWN
+        return replace(
+            value, kind=None, api=None, literal=None, canonical=False, contained=False
+        )
+
+    def reqwest_result(self, node, result, operation, state):
+        if result.kind == "reqwest_blocking_dispatch":
+            callee = self.field(node, "function")
+            method_name = self.field(callee, "field") or node
+            self.url_sink(method_name, result, f"reqwest dispatch ({operation})", state)
+            return UNKNOWN
+        return result
 
     def tls_off(self, node, message, state):
         if self.harness_file or _TEST_CFG in state.conditions:
@@ -1444,9 +1656,11 @@ class _SecurityFlow(_ScopeAttributes):
             receiver = self.expression(receiver_node, state)
             args = [self.expression(arg, state) for arg in arg_nodes]
             self.record_call(node, args)
-            targets = self.local_targets(callee, True)
+            targets = self.local_targets(callee, True, state)
             if targets:
-                self.local_call(node, targets, args, state)
+                returned = self.local_call(node, targets, args, state)
+                if returned is not None:
+                    return returned
             method = self.text(self.field(callee, "field"))
             return self.method(node, receiver_node, receiver, method, args, state)
         if callee is not None and callee.type == "generic_function":
@@ -1454,15 +1668,46 @@ class _SecurityFlow(_ScopeAttributes):
             callee = self.field(callee, "function") or callee
         callable_value = self.expression(callee, state)
         args = [self.expression(arg, state) for arg in arg_nodes]
+        if not args and callable_value.kind in {"rust_closure", "rust_async_closure"}:
+            if callable_value.kind == "rust_async_closure":
+                return replace(callable_value, kind="rust_helper_future")
+            result = self.poll_helper(node, callable_value, state)
+            # Closure summaries only prove data origins and reqwest lifecycle.
+            if result.kind and (
+                "reqwest_" in result.kind or result.kind == "rust_helper_future"
+            ):
+                return result
+            return Value(sources=callable_value.return_sources)
         combined = joined(args)
         if callable_value.return_sources:
             combined = joined([combined, Value(sources=callable_value.return_sources)])
         api = state.resolve(self.text(callee))
+        if (
+            len(args) == 1
+            and args[0].kind == "rust_closure"
+            and api
+            in {
+                "std::thread::spawn",
+                "tokio::task::spawn_blocking",
+                "async_std::task::spawn_blocking",
+            }
+        ):
+            self.poll_helper(node, args[0], state)
+            return UNKNOWN
+        if self.siblings and api in self.siblings.helpers:
+            scope = node.parent
+            while scope is not None and scope.type not in {"source_file", "mod_item"}:
+                scope = scope.parent
+            if scope is not None and scope.type == "source_file":
+                name, key, sinks, returned, is_async = self.siblings.helpers[api]
+                return self.apply_helper(node, name, key, args, state, sinks, returned, is_async) or UNKNOWN
         if api is None:
             self.record_call(node, args)
-            targets = self.local_targets(callee, False)
+            targets = self.local_targets(callee, False, state)
             if targets:
-                self.local_call(node, targets, args, state)
+                returned = self.local_call(node, targets, args, state)
+                if returned is not None:
+                    return returned
         else:
             self.library_calls.add((node.start_byte, node.end_byte))
         fs_value = self.permission_call(node, callee, api, args, arg_nodes, state)
@@ -1472,6 +1717,18 @@ class _SecurityFlow(_ScopeAttributes):
             return Value(kind="result_string")
         if api in _SOURCES:
             return Value(sources=frozenset({api}), kind="result_string")
+        if api and api.startswith(("reqwest::", "reqwest_middleware::")):
+            result = reqwest.function(api, args)
+            if result is not None:
+                return self.reqwest_result(node, result, api, state)
+        if len(args) == 1 and args[0].kind in {"reqwest_future", "rust_helper_future"}:
+            if api in reqwest.SPAWN:
+                self.await_value(node, args[0], state, api)
+                return UNKNOWN
+            if api == "async_std::task::block_on":
+                return self.await_value(node, args[0], state, api)
+            if api in {"std::boxed::Box::pin", "std::pin::Pin::new"}:
+                return args[0]
         if api in HTTP_FUNCTIONS:
             position = HTTP_FUNCTIONS[api]
             if position < len(args):
@@ -1917,6 +2174,17 @@ class _SecurityFlow(_ScopeAttributes):
             and receiver.kind.startswith(("result_", "option_"))
         ):
             return unwrap(receiver)
+        if receiver.kind and receiver.kind.startswith("reqwest_"):
+            if name == "url_mut" and receiver.kind in reqwest.REQUESTS and not args:
+                # A mutable URL reference can escape. Only a direct replacement
+                # (handled when visiting the assignment) establishes a new host.
+                self.invalidate_path(receiver_node, state)
+                return UNKNOWN
+            result = reqwest.method(receiver, name, args)
+            if result is not None:
+                return self.reqwest_result(
+                    node, result, f"reqwest blocking {name}()", state
+                )
         if receiver.kind == "http_client":
             if name in HTTP_VERBS:
                 position = HTTP_VERBS[name]
@@ -2072,21 +2340,37 @@ class _SecurityFlow(_ScopeAttributes):
         return UNKNOWN
 
 
-def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
-    if root_node is None:
-        return []
-    flow = _SecurityFlow(root_node, file_path, source)
+def is_async_function(node):
+    return any(
+        token.type == "async"
+        for child in node.named_children
+        if child.type == "function_modifiers"
+        for token in child.children
+    )
+
+
+def analyze_security_flow(root_node, file_path, source, *, siblings=None):
+    flow = _SecurityFlow(root_node, file_path, source, siblings=siblings)
     flow.module(root_node)
     refuted = frozenset()
     for _round in range(_CALLER_ROUNDS):
         # Parameter summaries grow until every local helper chain is known;
         # caller proofs shrink the parameters that count as operator input.
-        proven = flow.refuted_parameters()
-        if proven <= refuted and flow.summaries == flow.summaries_in:
+        # The Cargo pass already selected production modules. Its only rule
+        # requires request data, so it needs no extra filesystem caller proofs.
+        proven = flow.refuted_parameters() if siblings is None else refuted
+        if proven <= refuted and flow.summaries == flow.summaries_in and flow.http_returns == flow.http_returns_in:
             break
         refuted = refuted | proven
-        flow = _SecurityFlow(root_node, file_path, source, refuted, flow.summaries)
+        flow = _SecurityFlow(root_node, file_path, source, refuted, flow.summaries, flow.http_returns, siblings=siblings)
         flow.module(root_node)
+    return flow
+
+
+def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
+    if root_node is None:
+        return []
+    flow = analyze_security_flow(root_node, file_path, source)
     return _dedupe_findings(flow.findings)
 
 
