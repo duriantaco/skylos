@@ -1,0 +1,63 @@
+id: SKY-Q505
+title: Literal NULL in a PostgreSQL NOT IN filter
+family: quality
+severity: MEDIUM
+languages: [PostgreSQL]
+gate:
+  full: listed
+  note: This PostgreSQL check is report-only.
+
+what_it_is: >-
+  A required filter uses NOT IN to test a column or scalar literal. The
+  list on the right contains a literal NULL.
+why_it_matters: >-
+  With ordinary equality, a matching value fails the filter. For an unmatched
+  value the comparison evaluates to unknown, so that value fails too.
+how_skylos_decides:
+  - >-
+    With the PostgreSQL dialect selected, run Skylos with --quality. Skylos
+    checks WHERE, HAVING, join conditions, aggregate FILTER and MERGE conditions.
+  - >-
+    The predicate must stand alone or be required under AND. OR and NOT branches,
+    projections, list subqueries, explicit casts and computed list items are skipped.
+source_refs:
+  - path: skylos/visitors/languages/postgresql.py
+    symbol: 'def _check_filter('
+
+flagged_example:
+  language: sql
+  files:
+    - filename: orders.sql
+      code: |
+        SELECT id FROM orders
+        WHERE status NOT IN ('closed', NULL);
+    - &config
+      filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.sql]
+        dialect = "postgresql"
+  expect_file: orders.sql
+  expect_line: 2
+not_flagged_example:
+  language: sql
+  files:
+    - filename: orders.sql
+      code: &keep_known |
+        SELECT id FROM orders
+        WHERE status <> 'closed';
+    - *config
+  why: This filter keeps orders with a known status other than closed.
+fix:
+  explanation: >-
+    Decide whether to include rows with a missing status. Use IS DISTINCT FROM
+    'closed' if those rows should also pass.
+  filename: orders.sql
+  language: sql
+  code: *keep_known
+false_alarms_and_suppression:
+  misfires:
+    - A user-defined type can implement different comparison behavior for NULL.
+  suppress:
+    - text: Check the column type and the intended treatment of missing values.
+related: [SKY-Q504]

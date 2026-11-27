@@ -1,12 +1,16 @@
 # PostgreSQL benchmark
 
+The [coverage expansion benchmark](expanded/README.md) compares the original
+CLI with the added checks on new labeled cases and replays the original source
+holdout.
+
 The 27 hand-labeled inputs in `cases.json` cover three checks in standalone
 PostgreSQL scripts. Each valid input has an exhaustive list of expected rule
 and line pairs. The intentionally incomplete final input checks parse-error
 reporting. The labels and inputs were frozen before any scanner ran. Their
 SHA-256 is `5ab9f1f3fb520cc4cc68f96c0b3910c93bb2aa4ebaa18a88b4175920ab05b87b`.
 
-## Results
+## Original three-check results
 
 The 2026-11-27 run used pglast 8.9, SQLFluff 4.5.0 and eslint-plugin-postgresql
 0.31.0 with ESLint 10.15.0. Each tool accepted all 26 valid inputs and reported

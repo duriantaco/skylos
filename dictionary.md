@@ -3520,8 +3520,12 @@ dialects or parse errors appear in `analysis_summary.sql_analysis`.
   A data-changing CTE can still execute when its output is unread.
 - `SKY-Q504` flags ordinary equality or inequality against a literal NULL
   in supported PostgreSQL filters. Use IS NULL or IS NOT NULL.
-- `SKY-D417` flags a SECURITY DEFINER function definition without a fixed
-  function-local search path. Verify the database privileges and intended
-  object names before changing a function.
+- `SKY-Q505` flags a required `NOT IN` filter with a literal NULL in a
+  literal list. With ordinary equality, even unmatched values fail the filter.
+  It skips subquery lists and branches under OR or NOT.
+- `SKY-D417` flags a SECURITY DEFINER function or procedure created without a
+  fixed local search path. It also checks an ALTER that explicitly selects
+  SECURITY DEFINER and removes the path in the same statement. Verify the
+  effective role and schema permissions before changing a routine.
 
 These are advisory findings for review.

@@ -358,6 +358,7 @@ _RULES = (
     RuleCatalogEntry("SKY-Q502", "File too large", "quality", finding_type="advice"),
     RuleCatalogEntry("SKY-Q503", "Unused PostgreSQL SELECT CTE", "quality", "LOW", finding_type="review"),
     RuleCatalogEntry("SKY-Q504", "PostgreSQL filter compares with NULL", "quality", "MEDIUM", finding_type="review"),
+    RuleCatalogEntry("SKY-Q505", "Literal NULL in a PostgreSQL NOT IN filter", "quality", "MEDIUM", finding_type="review"),
     RuleCatalogEntry("SKY-Q701", "High coupling", "quality", finding_type="advice"),
     RuleCatalogEntry("SKY-Q702", "Low cohesion", "quality", finding_type="advice"),
     RuleCatalogEntry(
@@ -1950,7 +1951,7 @@ _RULES = (
         cwe=("CWE-732",),
     ),
     RuleCatalogEntry(
-        "SKY-D417", "PostgreSQL privileged function inherits search_path",
+        "SKY-D417", "PostgreSQL privileged routine inherits search_path",
         "security", "MEDIUM", finding_type="review", cwe=("CWE-426",),
     ),
     RuleCatalogEntry(

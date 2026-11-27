@@ -11,6 +11,12 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 RULES = {"SKY-Q503", "SKY-Q504"}
+# Accept only the committed ground truths before following any paths they contain.
+FROZEN_MANIFESTS = {
+    "a04c1e0542837b8f1c2eee00e89c5d23870c4c85acd7db3acb2128d096b8f11f",
+    "909f533442e0ef758652f600b1287a514a0cab50b2ead25fb1f43c383b52773f",
+    "b7e2474e1442575b959605ad369c7f59192601b9b5dd432b595cec1045281942",
+}
 
 
 def materialize(manifest, project, cache):
@@ -35,7 +41,9 @@ def materialize(manifest, project, cache):
         target.parent.mkdir(parents=True, exist_ok=True)
         dialect = case["dialect"]
         (target.parent / "skylos.toml").write_text(f'[sql]\ndialect = "{dialect}"\n')
-        data = sources[case["source"]]
+        data = (
+            sources[case["source"]] if "source" in case else case["sql"].encode("utf-8")
+        )
         if "lines" in case:
             first, last = case["lines"]
             data = b"".join(data.splitlines(keepends=True)[first - 1 : last])
@@ -43,6 +51,7 @@ def materialize(manifest, project, cache):
 
 
 def score(manifest, report, project):
+    rules = set(manifest.get("rules", RULES))
     cases = {c["name"]: c for c in manifest["cases"]}
     coverage = report["analysis_summary"]["sql_analysis"]
     statuses = {
@@ -52,15 +61,15 @@ def score(manifest, report, project):
     if cases.keys() != statuses.keys():
         raise ValueError(f"Unexpected CLI coverage: {cases.keys() ^ statuses.keys()}")
     findings = []
-    for finding in report.get("quality", []):
-        if finding["rule_id"] not in RULES:
+    for finding in [*report.get("quality", []), *report.get("danger", [])]:
+        if finding["rule_id"] not in rules:
             continue
         name = Path(finding["file"]).relative_to(project).as_posix()
         first = cases[name].get("lines", [1])[0]
         findings.append((name, finding["rule_id"], first + finding["line"] - 1))
     counts = {
         rule: dict.fromkeys(("tp", "fp", "tn", "fn", "unscored"), 0)
-        for rule in sorted(RULES)
+        for rule in sorted(rules)
     }
     unexpected = []
     unscored = []
@@ -78,8 +87,12 @@ def score(manifest, report, project):
             for i, (f, r, line) in enumerate(findings)
             if f == name and r == rule and start <= line <= end
         }
-        matched.update(hits)
         positive = label["expected"] == "positive"
+        if positive and hits:
+            # One finding satisfies a label. Keep duplicate reports visible.
+            matched.add(min(hits))
+        else:
+            matched.update(hits)
         key = ("tp" if hits else "fn") if positive else ("fp" if hits else "tn")
         counts[rule][key] += 1
         if key in {"fp", "fn"}:
@@ -181,6 +194,12 @@ def compare_sqlfluff(manifest, project, executable):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skylos", default="skylos")
+    parser.add_argument("--manifest", type=Path, default=HERE / "manifest.json")
+    parser.add_argument(
+        "--danger",
+        action="store_true",
+        help="Enable danger checks on generated examples",
+    )
     parser.add_argument(
         "--sqlfluff", help="Also compare SQLFluff on the labeled PostgreSQL files"
     )
@@ -192,8 +211,13 @@ def main():
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    source = (HERE / "manifest.json").read_bytes()
+    source = args.manifest.read_bytes()
+    digest = hashlib.sha256(source).hexdigest()
+    if digest not in FROZEN_MANIFESTS:
+        parser.error("The PostgreSQL benchmark manifest differs from the frozen labels")
     manifest = json.loads(source)
+    if args.sqlfluff and set(manifest.get("rules", RULES)) != RULES:
+        parser.error("The SQLFluff comparison supports the Q503/Q504 source holdout")
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp).resolve() / "sources"
         materialize(manifest, project, args.cache)
@@ -213,13 +237,15 @@ def main():
             "--progress",
             "off",
         ]
+        if args.danger:
+            command.append("--danger")
         subprocess.run(
             command, cwd=tmp, env={**os.environ, "SKYLOS_JOBS": "1"}, check=True
         )
         results = score(manifest, json.loads(output.read_text()), project)
         if args.sqlfluff:
             results["sqlfluff"] = compare_sqlfluff(manifest, project, args.sqlfluff)
-    results = {"manifest_sha256": hashlib.sha256(source).hexdigest(), **results}
+    results = {"manifest_sha256": digest, **results}
     args.output.write_text(json.dumps(results, indent=2) + "\n")
     print(
         json.dumps(

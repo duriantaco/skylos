@@ -11,6 +11,7 @@ from pathlib import Path
 
 CASES_FILE = Path(__file__).with_name("cases.json")
 FROZEN_SHA256 = "5ab9f1f3fb520cc4cc68f96c0b3910c93bb2aa4ebaa18a88b4175920ab05b87b"
+EXPANDED_SHA256 = "909f533442e0ef758652f600b1287a514a0cab50b2ead25fb1f43c383b52773f"
 RULES = {
     "skylos": {
         "SKY-Q503": "unused_cte",
@@ -24,7 +25,27 @@ RULES = {
 }
 
 
-def load_cases():
+def load_cases(procedures=False):
+    if procedures:
+        data = (CASES_FILE.parent / "expanded" / "generated.json").read_bytes()
+        if hashlib.sha256(data).hexdigest() != EXPANDED_SHA256:
+            raise ValueError("PostgreSQL procedure labels changed after the freeze")
+        manifest = json.loads(data)
+        sql = {case["name"]: case["sql"] for case in manifest["cases"]}
+        cases = {}
+        for label in manifest["labels"]:
+            if label["rule"] != "SKY-D417":
+                continue
+            name = label["name"]
+            lines = (
+                [label["original_lines"][0]] if label["expected"] == "positive" else []
+            )
+            cases[name] = {
+                "id": name,
+                "sql": sql[name],
+                "expected": {"definer_search_path": lines},
+            }
+        return cases
     data = CASES_FILE.read_bytes()
     if hashlib.sha256(data).hexdigest() != FROZEN_SHA256:
         raise ValueError("PostgreSQL labels changed after the freeze")
@@ -137,7 +158,7 @@ def scan_skylos(cases):
     return rows
 
 
-def score(tool, cases, observations):
+def score(tool, cases, observations, label_sha256=FROZEN_SHA256):
     if set(observations) != set(cases):
         raise ValueError("Expected one tool report per input, including clean files")
     counts = {
@@ -178,7 +199,7 @@ def score(tool, cases, observations):
                 )
     return {
         "tool": tool,
-        "label_sha256": FROZEN_SHA256,
+        "label_sha256": label_sha256,
         "cases": len(cases),
         "valid_scored": len(cases) - len(invalid) - len(unparsed),
         "invalid_controls": invalid,
@@ -192,10 +213,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tool", choices=RULES)
     parser.add_argument(
+        "--procedures",
+        action="store_true",
+        help="Score the five generated procedure cases",
+    )
+    parser.add_argument(
         "--binary", type=Path, help="Installed SQLFluff or ESLint executable"
     )
     args = parser.parse_args()
-    cases = load_cases()
+    if args.procedures and args.tool == "sqlfluff":
+        parser.error("The SQLFluff comparison covers only the quality checks")
+    cases = load_cases(args.procedures)
     if args.tool == "skylos":
         sys.path.insert(0, str(CASES_FILE.resolve().parents[2]))
         observations = scan_skylos(cases)
@@ -207,7 +235,8 @@ def main():
             for filename, case in cases.items():
                 (workdir / filename).write_text(case["sql"] + "\n", encoding="utf8")
             observations = scan_external(args.tool, args.binary.absolute(), workdir)
-    print(json.dumps(score(args.tool, cases, observations), indent=2))
+    digest = EXPANDED_SHA256 if args.procedures else FROZEN_SHA256
+    print(json.dumps(score(args.tool, cases, observations, digest), indent=2))
 
 
 if __name__ == "__main__":

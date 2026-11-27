@@ -1,0 +1,336 @@
+{
+  "date": "2026-11-27",
+  "baseline_commit": "41b75e081b116b6cd5cf7a4f79499d86f38bb2ea",
+  "candidate_source_sha256": {
+    "skylos/visitors/languages/postgresql.py": "b79209a285b6fb49574b79b549467928eaf3f49cb1da5db4477e964fe04669f4",
+    "skylos/visitors/languages/postgresql_script.py": "f61f4367378cb5e8882e0bad5905a8a90d5d744789e9184f23e3655546483acc"
+  },
+  "environment": {
+    "python": "3.13.18",
+    "pglast": "8.9",
+    "sqlfluff": "4.5.0",
+    "eslint": "10.15.0",
+    "eslint-plugin-postgresql": "0.31.0"
+  },
+  "generated": {
+    "manifest_sha256": "909f533442e0ef758652f600b1287a514a0cab50b2ead25fb1f43c383b52773f",
+    "baseline": {
+      "checks": {
+        "SKY-D417": {
+          "tp": 0,
+          "fp": 0,
+          "tn": 3,
+          "fn": 2,
+          "unscored": 0
+        },
+        "SKY-Q503": {
+          "tp": 0,
+          "fp": 0,
+          "tn": 0,
+          "fn": 0,
+          "unscored": 0
+        },
+        "SKY-Q504": {
+          "tp": 0,
+          "fp": 0,
+          "tn": 0,
+          "fn": 0,
+          "unscored": 1
+        },
+        "SKY-Q505": {
+          "tp": 0,
+          "fp": 0,
+          "tn": 11,
+          "fn": 5,
+          "unscored": 1
+        }
+      },
+      "coverage_counts": {
+        "checked": 21,
+        "unparsed": 4
+      },
+      "findings_outside_labels": [],
+      "coverage_expectation_mismatches": {
+        "connect_boundary.sql": [
+          "checked",
+          "unparsed"
+        ],
+        "connect_first.sql": [
+          "checked",
+          "unparsed"
+        ]
+      }
+    },
+    "candidate": {
+      "checks": {
+        "SKY-D417": {
+          "tp": 2,
+          "fp": 0,
+          "tn": 3,
+          "fn": 0,
+          "unscored": 0
+        },
+        "SKY-Q503": {
+          "tp": 0,
+          "fp": 0,
+          "tn": 0,
+          "fn": 0,
+          "unscored": 0
+        },
+        "SKY-Q504": {
+          "tp": 1,
+          "fp": 0,
+          "tn": 0,
+          "fn": 0,
+          "unscored": 0
+        },
+        "SKY-Q505": {
+          "tp": 5,
+          "fp": 0,
+          "tn": 12,
+          "fn": 0,
+          "unscored": 0
+        }
+      },
+      "coverage_counts": {
+        "checked": 23,
+        "unparsed": 2
+      },
+      "findings_outside_labels": [],
+      "coverage_expectation_mismatches": {}
+    },
+    "coverage_changes": {
+      "connect_boundary.sql": [
+        "unparsed",
+        "checked"
+      ],
+      "connect_first.sql": [
+        "unparsed",
+        "checked"
+      ]
+    },
+    "eslint_procedure_comparison": {
+      "parsed": 5,
+      "exact_line_scores": {
+        "tp": 0,
+        "fp": 1,
+        "fn": 2,
+        "tn_files": 3
+      },
+      "disagreements": [
+        {
+          "case": "procedure_definer.sql",
+          "rule": "definer_search_path",
+          "missed_lines": [
+            3
+          ],
+          "unexpected_lines": [
+            1
+          ]
+        },
+        {
+          "case": "procedure_other_option.sql",
+          "rule": "definer_search_path",
+          "missed_lines": [
+            2
+          ],
+          "unexpected_lines": []
+        }
+      ],
+      "procedures_with_correct_finding_anywhere_in_the_declaration": 1,
+      "positive_procedures": 2,
+      "control_procedures_without_findings": 3
+    }
+  },
+  "sources": {
+    "manifest_sha256": "b7e2474e1442575b959605ad369c7f59192601b9b5dd432b595cec1045281942",
+    "baseline": {
+      "checks": {
+        "SKY-Q505": {
+          "tp": 0,
+          "fp": 0,
+          "tn": 17,
+          "fn": 1,
+          "unscored": 0
+        }
+      },
+      "coverage_counts": {
+        "checked": 6,
+        "unparsed": 1
+      },
+      "findings_outside_labels": [],
+      "coverage_expectation_mismatches": {}
+    },
+    "candidate": {
+      "checks": {
+        "SKY-Q505": {
+          "tp": 1,
+          "fp": 0,
+          "tn": 17,
+          "fn": 0,
+          "unscored": 0
+        }
+      },
+      "coverage_counts": {
+        "checked": 6,
+        "unparsed": 1
+      },
+      "findings_outside_labels": [],
+      "coverage_expectation_mismatches": {}
+    },
+    "coverage_changes": {}
+  },
+  "holdout": {
+    "manifest_sha256": "a04c1e0542837b8f1c2eee00e89c5d23870c4c85acd7db3acb2128d096b8f11f",
+    "baseline": {
+      "checks": {
+        "SKY-Q503": {
+          "tp": 1,
+          "fp": 0,
+          "tn": 14,
+          "fn": 0,
+          "unscored": 0
+        },
+        "SKY-Q504": {
+          "tp": 0,
+          "fp": 0,
+          "tn": 10,
+          "fn": 0,
+          "unscored": 0
+        }
+      },
+      "coverage_counts": {
+        "checked": 27,
+        "unparsed": 2,
+        "unsupported_dialect": 2
+      },
+      "findings_outside_labels": [],
+      "coverage_expectation_mismatches": {}
+    },
+    "candidate": {
+      "checks": {
+        "SKY-Q503": {
+          "tp": 1,
+          "fp": 0,
+          "tn": 14,
+          "fn": 0,
+          "unscored": 0
+        },
+        "SKY-Q504": {
+          "tp": 0,
+          "fp": 0,
+          "tn": 10,
+          "fn": 0,
+          "unscored": 0
+        }
+      },
+      "coverage_counts": {
+        "checked": 28,
+        "unparsed": 1,
+        "unsupported_dialect": 2
+      },
+      "findings_outside_labels": [],
+      "coverage_expectation_mismatches": {}
+    },
+    "coverage_changes": {
+      "chinook/postgresql/Chinook_PostgreSql.sql": [
+        "unparsed",
+        "checked"
+      ]
+    },
+    "additional_Q505_findings_on_checked_files": [],
+    "sqlfluff": {
+      "checks": {
+        "SKY-Q503": {
+          "tp": 0,
+          "fp": 0,
+          "tn": 13,
+          "fn": 1,
+          "unscored": 1
+        },
+        "SKY-Q504": {
+          "tp": 0,
+          "fp": 0,
+          "tn": 10,
+          "fn": 0,
+          "unscored": 0
+        }
+      },
+      "coverage_counts": {
+        "checked": 21,
+        "unparsed": 1
+      },
+      "unexpected_labeled_results": [
+        [
+          "regression/unread-cte-insert-target.sql",
+          "SKY-Q503",
+          1679,
+          1679,
+          "fn"
+        ]
+      ],
+      "unscored_labels": [
+        [
+          "regression/merge.sql",
+          "SKY-Q503",
+          1436,
+          1439,
+          "unparsed"
+        ]
+      ]
+    }
+  },
+  "initial_generated": {
+    "manifest_sha256": "5ab9f1f3fb520cc4cc68f96c0b3910c93bb2aa4ebaa18a88b4175920ab05b87b",
+    "baseline_cli": {
+      "observed_finding_counts": {
+        "SKY-D417": 3,
+        "SKY-Q503": 5,
+        "SKY-Q504": 6
+      },
+      "missing": [],
+      "unexpected": [],
+      "coverage_counts": {
+        "checked": 26,
+        "unparsed": 1
+      },
+      "coverage_mismatches": {}
+    },
+    "candidate_cli": {
+      "observed_finding_counts": {
+        "SKY-D417": 3,
+        "SKY-Q503": 5,
+        "SKY-Q504": 6
+      },
+      "missing": [],
+      "unexpected": [],
+      "coverage_counts": {
+        "checked": 26,
+        "unparsed": 1
+      },
+      "coverage_mismatches": {}
+    },
+    "sqlfluff": {
+      "unused_cte": {
+        "tp": 4,
+        "fp": 0,
+        "fn": 1,
+        "tn_files": 21
+      },
+      "null_comparison": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 1,
+        "tn_files": 20
+      }
+    },
+    "eslint": {
+      "definer_search_path": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 1,
+        "tn_files": 23
+      }
+    }
+  }
+}

@@ -1679,7 +1679,7 @@ def _review_only_lines(groups: dict[tuple[str, str], list[dict]]) -> list[str]:
         elif kind == "unix_permissions":
             reason = "Review the intended Unix file permissions"
         elif kind == "postgresql_search_path":
-            reason = "Review the function's PostgreSQL search path"
+            reason = "Review the routine's PostgreSQL search path"
         examples = []
         for row in rows[:3]:
             location = f"{os.path.basename(row['file'])}:{row['line']}"

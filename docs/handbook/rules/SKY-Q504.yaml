@@ -61,4 +61,4 @@ false_alarms_and_suppression:
     - A database configured with transform_null_equals can rewrite equality to IS NULL.
   suppress:
     - text: Use an explicit null test to make the query portable across PostgreSQL settings.
-related: [SKY-Q503]
+related: [SKY-Q505, SKY-Q503]

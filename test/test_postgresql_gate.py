@@ -19,8 +19,12 @@ def _rows():
             }
         ],
         "quality": [
-            {**location, "rule_id": rule, "severity": "LOW"}
-            for rule in ("SKY-Q503", "SKY-Q504")
+            {**location, "rule_id": rule, "severity": severity}
+            for rule, severity in (
+                ("SKY-Q503", "LOW"),
+                ("SKY-Q504", "MEDIUM"),
+                ("SKY-Q505", "MEDIUM"),
+            )
         ],
     }
 
@@ -28,17 +32,17 @@ def _rows():
 @pytest.mark.parametrize("strict", [False, True])
 def test_frozen_postgresql_advisories_stay_visible_and_pass_gate(strict):
     result = _rows()
-    config = {"gate": {"max_quality": 0, "rules": ["SKY-Q503", "SKY-Q504"]}}
+    config = {"gate": {"max_quality": 0, "rules": ["SKY-Q503", "SKY-Q504", "SKY-Q505"]}}
     assert check_gate(result, config, strict=strict)[0]
     findings = _flatten_findings(result)
-    assert len(findings) == 3
+    assert len(findings) == 4
     assert findings[0]["_review_only_kind"] == "postgresql_search_path"
     summary = _review_only_lines(
         {("SKY-D417", findings[0]["_review_only_kind"]): findings[:1]}
     )
     assert "PostgreSQL search path" in summary[-1]
     annotations = _github_annotation_items(result)
-    assert len(annotations) == 3
+    assert len(annotations) == 4
     assert any("review only" in item["title"] for item in annotations)
 
 
@@ -54,7 +58,7 @@ def test_precommit_uses_normalized_advisories_and_preserves_other_security(tmp_p
         [finding for finding in findings if finding["category"] != "debt"]
     )
     assert [r["rule_id"] for r in blocking] == ["SKY-D211"]
-    assert suppressed == 3
+    assert suppressed == 4
     assert not check_gate(result, {}, strict=True)[0]
 
 

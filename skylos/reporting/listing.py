@@ -237,7 +237,7 @@ def is_unproven_source_review(finding):
     return False
 
 
-POSTGRESQL_QUALITY_ADVISORIES = frozenset({"SKY-Q503", "SKY-Q504"})
+POSTGRESQL_QUALITY_ADVISORIES = frozenset({"SKY-Q503", "SKY-Q504", "SKY-Q505"})
 POSTGRESQL_SEARCH_PATH_RULE = "SKY-D417"
 
 NONBLOCKING_REVIEW_RULES = frozenset({"SKY-D324", "SKY-D325"})

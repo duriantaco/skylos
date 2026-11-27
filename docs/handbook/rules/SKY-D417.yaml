@@ -1,29 +1,34 @@
 id: SKY-D417
-title: PostgreSQL SECURITY DEFINER function inherits its search path
+title: PostgreSQL SECURITY DEFINER routine inherits its search path
 family: security
 severity: MEDIUM
 languages: [PostgreSQL]
 gate:
   full: listed
-  note: This initial PostgreSQL check is report-only.
+  note: This PostgreSQL check is report-only.
 
 what_it_is: >-
-  A function declared SECURITY DEFINER runs with its owner's privileges.
-  Without a fixed search_path on the function, unqualified object names
+  A function or procedure declared SECURITY DEFINER runs with its owner's privileges.
+  Without a fixed search_path on the routine, unqualified object names
   can resolve according to the caller's session settings.
 why_it_matters: >-
   An unqualified name can resolve to the wrong object when an untrusted
-  user can create objects in a schema searched first. The function then
+  user can create objects in a schema searched first. The routine then
   accesses that object with the owner's privileges.
 how_skylos_decides:
   - >-
     Install the postgres extra and run `skylos . --danger`. Set
     `dialect = "postgresql"` under `[tool.skylos.sql]` in pyproject.toml
-    for the folder containing the function.
+    for the folder containing the SQL file.
   - >-
-    Skylos checks the SQL that declares the function for SECURITY DEFINER
-    and a fixed search_path. Review the effective role and schema grants
-    in the database to judge the impact.
+    Skylos checks CREATE and CREATE OR REPLACE on functions and procedures.
+    On ALTER FUNCTION, PROCEDURE or ROUTINE, it reports only when the same
+    statement selects SECURITY DEFINER and leaves the local path explicitly
+    cleared. A later SET in that statement can fix the path again.
+  - >-
+    SET search_path FROM CURRENT captures the current value. The rule checks
+    whether the path is fixed. Review schema grants and the captured value
+    in the database to judge whether the schemas are trusted.
 source_refs:
   - path: skylos/visitors/languages/postgresql.py
     symbol: 'def scan_postgresql('
@@ -62,7 +67,7 @@ fix:
   code: *safe_path
 false_alarms_and_suppression:
   misfires:
-    - A later migration can set the function's path with ALTER FUNCTION.
+    - A later migration can set the routine's path.
   suppress:
     - text: Inspect the effective function settings and grants before accepting this finding.
 related: [SKY-Q504]

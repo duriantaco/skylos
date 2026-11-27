@@ -6,7 +6,7 @@ from bisect import bisect_right
 from dataclasses import dataclass
 
 try:
-    from pglast import ast, enums, parse_sql
+    from pglast import ast, enums
     from pglast.parser import ParseError
 except ImportError:
     ast = None
@@ -30,45 +30,90 @@ class _Scope:
         return None
 
 
-def _filter_comparisons(expr):
-    """Only inspect predicates, without mistaking a subquery's output for a filter."""
-    pending = [expr]
+def _literal_null_list(expr):
+    left = expr.lexpr
+    if isinstance(left, ast.ColumnRef):
+        if not all(isinstance(field, ast.String) for field in left.fields):
+            return False
+    elif not isinstance(left, ast.A_Const) or left.isnull:
+        return False
+    values = expr.rexpr
+    return (
+        isinstance(values, tuple)
+        and all(isinstance(item, ast.A_Const) for item in values)
+        and any(item.isnull for item in values)
+    )
+
+
+def _check_filter(expr, report, null_equals_enabled):
+    """Inspect boolean predicates. A nested SELECT owns its own filter."""
+    pending = [(expr, True)]
     while pending:
-        node = pending.pop()
+        node, required = pending.pop()
         if isinstance(node, ast.BoolExpr):
-            pending.extend(node.args or ())
+            required = required and node.boolop == enums.BoolExprType.AND_EXPR
+            pending.extend((arg, required) for arg in node.args or ())
+            continue
+        if not isinstance(node, ast.A_Expr) or len(node.name or ()) != 1:
+            continue
+        operator = node.name[0].sval
+        if (
+            node.kind == enums.A_Expr_Kind.AEXPR_IN
+            and operator == "<>"
+            and required
+            and _literal_null_list(node)
+        ):
+            report(
+                node.location,
+                "SKY-Q505",
+                "MEDIUM",
+                "Literal NULL in a NOT IN filter. With ordinary equality, even "
+                "unmatched values cannot satisfy this condition. Check how missing "
+                "values should be handled.",
+            )
         elif (
-            isinstance(node, ast.A_Expr)
-            and node.kind == enums.A_Expr_Kind.AEXPR_OP
-            and len(node.name) == 1
-            and node.name[0].sval in {"=", "<>"}
+            node.kind == enums.A_Expr_Kind.AEXPR_OP
+            and operator in {"=", "<>"}
+            and not (operator == "=" and null_equals_enabled)
             and any(
                 isinstance(side, ast.A_Const) and side.isnull
                 for side in (node.lexpr, node.rexpr)
             )
         ):
-            yield node
+            replacement = "IS NULL" if operator == "=" else "IS NOT NULL"
+            report(
+                node.location,
+                "SKY-Q504",
+                "MEDIUM",
+                f"Ordinary comparison with NULL in a filter. Use {replacement} to test for null.",
+            )
 
 
 def _definer_option(stmt):
-    if stmt.is_procedure:
-        return None
+    # CREATE starts with no routine-local settings. ALTER preserves any
+    # existing settings unless this statement explicitly removes them.
+    creating = isinstance(stmt, ast.CreateFunctionStmt)
+    path_known_missing = creating
+    options = stmt.options if creating else stmt.actions
     security = None
-    for option in stmt.options or ():
-        if option.defname == "security" and option.arg.boolval:
+    for option in options or ():
+        if option.defname == "security":
+            if security is not None:
+                return None  # PostgreSQL rejects duplicate SECURITY clauses.
             security = option
-        if (
-            option.defname == "set"
-            and option.arg.name == "search_path"
-            and option.arg.kind
-            in {
-                enums.VariableSetKind.VAR_SET_VALUE,
-                enums.VariableSetKind.VAR_SET_CURRENT,
-            }
-        ):
-            # FROM CURRENT captures a fixed value when the function is created.
-            return None
-    return security
+        elif option.defname == "set":
+            # PostgreSQL applies routine settings from left to right.
+            setting = option.arg
+            if setting.kind == enums.VariableSetKind.VAR_RESET_ALL:
+                path_known_missing = True
+            elif setting.name and setting.name.lower() == "search_path":
+                path_known_missing = setting.kind in {
+                    enums.VariableSetKind.VAR_SET_DEFAULT,
+                    enums.VariableSetKind.VAR_RESET,
+                }
+    if security is not None and security.arg.boolval and path_known_missing:
+        return security
+    return None
 
 
 def _scan_statement(stmt, report, null_equals_enabled):
@@ -92,14 +137,14 @@ def _scan_statement(stmt, report, null_equals_enabled):
         ):
             # Function volatility and user-defined side effects need a database catalog.
             has_effect.add(owner)
-        if isinstance(node, ast.CreateFunctionStmt):
+        if isinstance(node, (ast.CreateFunctionStmt, ast.AlterFunctionStmt)):
             option = _definer_option(node)
             if option:
                 report(
                     option.location,
                     "SKY-D417",
                     "MEDIUM",
-                    "SECURITY DEFINER function has no fixed search_path in its declaration. "
+                    "This statement leaves a SECURITY DEFINER routine without a fixed search_path. "
                     "Set the path to trusted schemas and put pg_temp last.",
                 )
         with_clause = getattr(node, "withClause", None)
@@ -133,17 +178,7 @@ def _scan_statement(stmt, report, null_equals_enabled):
                 or (field == "quals" and isinstance(node, ast.JoinExpr))
                 or (field == "condition" and isinstance(node, ast.MergeWhenClause))
             ):
-                for comparison in _filter_comparisons(value):
-                    equality = comparison.name[0].sval == "="
-                    if equality and null_equals_enabled:
-                        continue
-                    replacement = "IS NULL" if equality else "IS NOT NULL"
-                    report(
-                        comparison.location,
-                        "SKY-Q504",
-                        "MEDIUM",
-                        f"Ordinary comparison with NULL in a filter. Use {replacement} to test for null.",
-                    )
+                _check_filter(value, report, null_equals_enabled)
     for location, name in definitions.items():
         if location not in used and location not in has_effect:
             report(
@@ -166,8 +201,12 @@ def scan_postgresql(source: str, filename: str) -> tuple[list[dict], str | None]
         return [], "PostgreSQL source is not valid UTF-8."
     if source_bytes > 4_000_000:
         return [], "PostgreSQL file exceeds the 4 MB parse limit."
+    from .postgresql_script import PsqlScriptError, parse_sessions
+
     try:
-        statements = parse_sql(source)
+        sessions = parse_sessions(source)
+    except PsqlScriptError as exc:
+        return [], str(exc)
     except (ParseError, RecursionError) as exc:
         return [], f"PostgreSQL parse error: {exc}"
 
@@ -179,32 +218,33 @@ def scan_postgresql(source: str, filename: str) -> tuple[list[dict], str | None]
         findings.append(
             {
                 "file": str(filename),
-                "line": 1 + bisect_right(newlines, offset),
+                "line": 1 + bisect_right(newlines, session_offset + offset),
                 "rule_id": rule_id,
                 "severity": severity,
                 "message": message,
             }
         )
 
-    may_rewrite_null_equals = False
-    for raw in statements:
-        stmt = raw.stmt
-        if (
-            isinstance(stmt, ast.VariableSetStmt)
-            and stmt.name == "transform_null_equals"
-        ):
-            args = stmt.args or ()
-            value = args[0].val if args else None
-            # A transaction rollback or savepoint can restore a previous setting.
-            # Stay conservative once the script enables nonstandard NULL equality.
-            may_rewrite_null_equals |= (
-                stmt.kind == enums.VariableSetKind.VAR_SET_CURRENT
-                or (
-                    isinstance(value, ast.String)
-                    and value.sval.lower() in {"on", "yes", "true", "1"}
+    for session_offset, statements in sessions:
+        may_rewrite_null_equals = False
+        for raw in statements:
+            stmt = raw.stmt
+            if (
+                isinstance(stmt, ast.VariableSetStmt)
+                and stmt.name == "transform_null_equals"
+            ):
+                args = stmt.args or ()
+                value = args[0].val if args else None
+                # A transaction rollback or savepoint can restore a previous setting.
+                # Stay conservative once the script enables nonstandard NULL equality.
+                may_rewrite_null_equals |= (
+                    stmt.kind == enums.VariableSetKind.VAR_SET_CURRENT
+                    or (
+                        isinstance(value, ast.String)
+                        and value.sval.lower() in {"on", "yes", "true", "1"}
+                    )
+                    or (isinstance(value, ast.Integer) and value.ival == 1)
                 )
-                or (isinstance(value, ast.Integer) and value.ival == 1)
-            )
-        _scan_statement(stmt, report, may_rewrite_null_equals)
+            _scan_statement(stmt, report, may_rewrite_null_equals)
     findings.sort(key=lambda finding: (finding["line"], finding["rule_id"]))
     return findings, None

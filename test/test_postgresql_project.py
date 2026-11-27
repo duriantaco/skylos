@@ -15,7 +15,7 @@ def write(path, text):
 
 def test_public_scan_partitions_dialects_and_reports_advisories(tmp_path):
     pytest.importorskip("pglast")
-    query = "WITH spare AS (SELECT 1) SELECT 1 WHERE 1 = NULL;"
+    query = "WITH spare AS (SELECT 1) SELECT 1 WHERE 1 = NULL AND 2 NOT IN (0, NULL);"
     for folder, dialect in [("pg", "postgresql"), ("my", "mysql"), ("ms", "tsql")]:
         write(tmp_path / folder / "skylos.toml", f'[sql]\ndialect = "{dialect}"\n')
         write(tmp_path / folder / "sample.SQL", query)
@@ -52,6 +52,7 @@ CREATE FUNCTION count_ones() RETURNS int LANGUAGE sql SECURITY DEFINER AS 'SELEC
     assert {r for r in measured if r[1] == "sample.SQL"} == {
         ("SKY-Q503", "sample.SQL"),
         ("SKY-Q504", "sample.SQL"),
+        ("SKY-Q505", "sample.SQL"),
     }
     from skylos.ui.scope_notes import scope_note_lines
 

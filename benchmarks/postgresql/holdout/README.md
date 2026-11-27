@@ -1,5 +1,9 @@
 # PostgreSQL source holdout
 
+The results below describe the first PostgreSQL implementation. The
+[coverage expansion benchmark](../expanded/README.md) replays this same manifest,
+including the full Chinook PostgreSQL script.
+
 We froze the file list, source digests and 25 expected results before the first
 scan. All 16 source files are pinned to commits and Git blob IDs. Their SHA-256
 digests are verified on every replay. The manifest includes each selected line

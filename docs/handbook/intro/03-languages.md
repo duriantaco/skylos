@@ -69,11 +69,28 @@ in a mixed repository. An unknown dialect, an unsupported dialect or
 conflicting settings appear in `analysis_summary.sql_analysis`. This
 section also records parse failures and missing parser installations.
 
-The initial reviews cover an unused read-only common table expression,
-an ordinary comparison against NULL in a filter, and a privileged function
-that inherits its search path. The checks operate on parsed SQL files.
-Database contents, schema permissions and dynamically built SQL are outside
-their scope. Findings are report-only.
+| Flag | Finding | Example to review |
+| --- | --- | --- |
+| `--quality` | SKY-Q503 | An unused read-only SELECT CTE |
+| `--quality` | SKY-Q504 | `WHERE deleted_at = NULL` |
+| `--quality` | SKY-Q505 | `WHERE status NOT IN ('closed', NULL)` |
+| `--danger` | SKY-D417 | A SECURITY DEFINER function or procedure without a fixed local search path |
+
+If the query should keep orders with a known status other than 'closed',
+use `WHERE status <> 'closed'`. To also keep orders whose status is missing,
+use `WHERE status IS DISTINCT FROM 'closed'`. With ordinary equality, the
+original `NOT IN` filter keeps neither group.
+
+Skylos can read a script that switches databases with a literal `\c dbname`
+or `\connect dbname` on its own line between complete statements. It
+parses each SQL session locally. Files with client-side includes, conditionals
+or inline COPY data are reported as unchecked. Look at each file's `status`
+in the SQL analysis summary. An `unparsed` entry also gives a `reason`.
+
+All four findings are advisory, including in strict mode. A strict coverage
+gate can still fail when a file could not be checked. Schema permissions,
+unused database objects and SQL assembled by application code are outside the
+scope of these standalone SQL checks.
 
 ## Checking Rust security
 
