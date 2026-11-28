@@ -22,6 +22,37 @@
 * **cicd:** only treat a real YAML comment as an inline ignore for D340 and for shell-command findings on a one-line `run:`, so a marker inside a quoted step value no longer hides a publish or exfiltration finding.
 * **cicd:** locate each shell-command finding inside its own `run:` value, so repeating the command next to an ignore marker elsewhere in the workflow no longer hides it and identical steps are each reported.
 
+## [5.9.0](https://github.com/duriantaco/skylos/compare/v5.8.0...v5.9.0) (2026-11-28)
+
+
+### Features
+
+* **cli:** make skylos lint run native architecture checks ([#1299](https://github.com/duriantaco/skylos/issues/1299)) ([5ae59a2](https://github.com/duriantaco/skylos/commit/5ae59a2a20c72142e6ea555014c9712ba9685da8))
+* **cli:** show active files and phase estimates during scans ([#1306](https://github.com/duriantaco/skylos/issues/1306)) ([654e151](https://github.com/duriantaco/skylos/commit/654e15192e4e620861b812ba03bdf2d5891b1cd7))
+* **done:** expose pytest regression replay ([#1293](https://github.com/duriantaco/skylos/issues/1293)) ([6d59947](https://github.com/duriantaco/skylos/commit/6d5994766464d7a0a313d97deec49396ca030e35))
+* **rust:** improve dead code detection and add Unix permission checks ([#1307](https://github.com/duriantaco/skylos/issues/1307)) ([8261466](https://github.com/duriantaco/skylos/commit/8261466fd580ee26d89eb63ca1e3dbb0718969c6))
+* **secrets:** scan more files and git history ([#1291](https://github.com/duriantaco/skylos/issues/1291)) ([06e8d2a](https://github.com/duriantaco/skylos/commit/06e8d2ac34f8a2bacf141166e0907854c7dd8f64))
+* **security:** review Django, Envoy, and S3 DNS records ([#1305](https://github.com/duriantaco/skylos/issues/1305)) ([d0c10e7](https://github.com/duriantaco/skylos/commit/d0c10e7545cab88d1235056fbe57b04c28eded01))
+* **security:** trace configured RSA key sizes through Django models ([#1298](https://github.com/duriantaco/skylos/issues/1298)) ([6d8253f](https://github.com/duriantaco/skylos/commit/6d8253fa6ec2c6a1ae4b5bef4862621f0030737e))
+* **sql:** check PostgreSQL files and migrations ([#1311](https://github.com/duriantaco/skylos/issues/1311)) ([f64d70f](https://github.com/duriantaco/skylos/commit/f64d70fccd402f670e3053b435262acb68fbf361))
+
+
+### Bug Fixes
+
+* **analysis:** preserve dynamic import evidence and js call attribution ([#1308](https://github.com/duriantaco/skylos/issues/1308)) ([ec386d6](https://github.com/duriantaco/skylos/commit/ec386d6f9299808ede9576ecbd0715898d3df5e6))
+* **ci:** report advisory decisions and group review-only findings ([#1303](https://github.com/duriantaco/skylos/issues/1303)) ([af833bf](https://github.com/duriantaco/skylos/commit/af833bf8c4b754b62e2e5690578b6553978178d0))
+* **corpus:** exercise the positive Django fixture lifecycles ([#1302](https://github.com/duriantaco/skylos/issues/1302)) ([1ad143c](https://github.com/duriantaco/skylos/commit/1ad143ca3e7f2aa115d3436d435288610a9437a3))
+* **corpus:** make the Gin registration fixture runnable ([#1304](https://github.com/duriantaco/skylos/issues/1304)) ([7b579b1](https://github.com/duriantaco/skylos/commit/7b579b132ea47e8034a590d01538fbfeb424f7dc))
+* **corpus:** make the Starlette route fixture runnable ([#1300](https://github.com/duriantaco/skylos/issues/1300)) ([0594e39](https://github.com/duriantaco/skylos/commit/0594e397aa3b942fd9945665841fb0e7ee38b824))
+* **corpus:** run the unittest lifecycle fixture ([#1301](https://github.com/duriantaco/skylos/issues/1301)) ([dbf4ef6](https://github.com/duriantaco/skylos/commit/dbf4ef6d33aa32ca865a1472cdf01205ff0be3ec))
+* **csharp:** resolve ASP.NET Core Minimal API handlers across files ([#1310](https://github.com/duriantaco/skylos/issues/1310)) ([95052e0](https://github.com/duriantaco/skylos/commit/95052e082aeb1688668f745505ba9084d3cff69c))
+* **deadcode:** improve python framework detections ([#1312](https://github.com/duriantaco/skylos/issues/1312)) ([e009a5e](https://github.com/duriantaco/skylos/commit/e009a5e1deed7cca7491165454f2f1b2525dc537))
+* **deadcode:** prove SvelteKit entry points ([#1297](https://github.com/duriantaco/skylos/issues/1297)) ([ee4b4de](https://github.com/duriantaco/skylos/commit/ee4b4de389531a223a6c356833bf1ce5fc66bf31))
+* **deadcode:** resolve Vite globs and scope Next export roots ([#1296](https://github.com/duriantaco/skylos/issues/1296)) ([718dd39](https://github.com/duriantaco/skylos/commit/718dd39fdd5a8794deb8494f62bb99f94d8d0432))
+* **release:** harden Skylos supply chain ([#1294](https://github.com/duriantaco/skylos/issues/1294)) ([00140f8](https://github.com/duriantaco/skylos/commit/00140f8b01f10b7630ad76cb3d8a4714c1878a77))
+* **rust:** report reqwest SSRF when requests are dispatched ([#1309](https://github.com/duriantaco/skylos/issues/1309)) ([7d3187d](https://github.com/duriantaco/skylos/commit/7d3187dec2adb1f6179c4bfdc40f31fdf4580f61))
+* **security:** trace SQL through registered SQLite workers ([#1295](https://github.com/duriantaco/skylos/issues/1295)) ([4705cac](https://github.com/duriantaco/skylos/commit/4705cace7b6de77519340e327b637f6d54220e48))
+
 ## [5.8.0](https://github.com/duriantaco/skylos/compare/v5.7.0...v5.8.0) (2026-11-23)
 
 
