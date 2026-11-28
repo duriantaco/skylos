@@ -103,13 +103,21 @@ _SQLALCHEMY_BASES = {
     "sqlalchemy.orm.decl_api.DeclarativeBase",
     "sqlalchemy.orm.decl_api.DeclarativeBaseNoMeta",
 }
+_BASE_DECORATORS = {
+    "sqlalchemy.orm.as_declarative",
+    "sqlalchemy.orm.decl_api.as_declarative",
+    "sqlalchemy.ext.declarative.as_declarative",
+    f"{_REGISTRY}.as_declarative_base",
+}
+_MAPPING_DECORATORS = {f"{_REGISTRY}.mapped", f"{_REGISTRY}.mapped_as_dataclass"}
 _SQLALCHEMY_MAPPED = {
     f"{provider}.{name}"
     for provider in ("sqlalchemy.orm", "sqlalchemy.orm.base")
     for name in ("Mapped", "DynamicMapped", "WriteOnlyMapped")
 }
 _SQLALCHEMY_FIELDS = {
-    f"sqlalchemy.orm.{name}"
+    f"{provider}.{name}"
+    for provider in ("sqlalchemy.orm", _FLASK_EXTENSION)
     for name in (
         "RelationshipProperty",
         "column_property",
@@ -123,7 +131,9 @@ _SQLALCHEMY_FIELDS = {
     )
 } | {
     "sqlalchemy.Column",
+    "sqlalchemy.schema.Column",
     "sqlalchemy.sql.schema.Column",
+    f"{_FLASK_EXTENSION}.Column",
     "sqlalchemy.ext.associationproxy.association_proxy",
 }
 _DECLARED_ATTR = {
@@ -160,7 +170,7 @@ class _Member:
 class _Model:
     path: Path
     bases: tuple[str | None, ...]
-    decorators: tuple[str | None, ...]
+    decorators: tuple[tuple[str | None, bool], ...]
     members: list[_Member] = field(default_factory=list)
 
 
@@ -229,7 +239,10 @@ class _ModelBindings:
                     info.path,
                     tuple(_qualified_head(base, bindings) for base in node.bases),
                     tuple(
-                        _qualified_head(decorator, bindings)
+                        (
+                            _qualified_head(decorator, bindings),
+                            isinstance(decorator, ast.Call),
+                        )
                         for decorator in node.decorator_list
                     ),
                 )
@@ -410,11 +423,16 @@ def _imports_model_framework(parsed_files):
     for parsed in parsed_files:
         for node in ast.walk(parsed.tree):
             if isinstance(node, ast.Import):
-                if any(alias.name.partition(".")[0] in _FRAMEWORKS for alias in node.names):
+                if any(
+                    alias.name.partition(".")[0] in _FRAMEWORKS for alias in node.names
+                ):
                     return True
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                if node.module.partition(".")[0] in _FRAMEWORKS:
-                    return True
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and node.module.partition(".")[0] in _FRAMEWORKS
+            ):
+                return True
     return False
 
 
@@ -426,10 +444,16 @@ def find_model_members(definitions, parsed_files, root):
         root = root.parent
     index = _ModelBindings(root, parsed_files)
     expand = cache(index.expand)
-    bases = {
-        key: tuple(expand(base, model.path) for base in model.bases)
-        for key, model in index.models.items()
-    }
+    bases = {}
+    mapped = set()
+    for key, model in index.models.items():
+        bases[key] = [expand(base, model.path) for base in model.bases]
+        for decorator, called in model.decorators:
+            provider = expand(decorator, model.path)
+            if called and provider in _BASE_DECORATORS:
+                bases[key].append(_DECLARATIVE_BASE)
+            elif provider in _MAPPING_DECORATORS:
+                mapped.add(key)
 
     @cache
     def ancestors(key):
@@ -442,16 +466,7 @@ def find_model_members(definitions, parsed_files, root):
                     pending.append(base)
         return found
 
-    mapped = {
-        key
-        for key, model in index.models.items()
-        if ancestors(key) & _SQLALCHEMY_BASES
-        or any(
-            expand(decorator, model.path)
-            in {f"{_REGISTRY}.mapped", f"{_REGISTRY}.mapped_as_dataclass"}
-            for decorator in model.decorators
-        )
-    }
+    mapped.update(key for key in index.models if ancestors(key) & _SQLALCHEMY_BASES)
     mapper_members = index.descendants_of_mappers(mapped, bases)
 
     @cache

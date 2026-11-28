@@ -335,6 +335,77 @@ def test_sqlalchemy_implicit_columns_registry_and_mixins(tmp_path):
     } <= findings
 
 
+@pytest.mark.parametrize(
+    "base_decorator", ["as_declarative", "mappings.as_declarative_base"]
+)
+def test_decorated_orm_bases_pass_mapping_to_subclasses(tmp_path, base_decorator):
+    findings = _findings(
+        tmp_path,
+        {
+            "app.py": f"""
+                from sqlalchemy import Integer
+                from sqlalchemy.orm import Mapped, as_declarative, registry
+                from sqlalchemy.schema import Column as SchemaColumn
+
+                mappings = registry()
+                @{base_decorator}()
+                class Foundation: pass
+
+                class Product(Foundation):
+                    __tablename__ = "products"
+                    product_id = SchemaColumn(Integer, primary_key=True)
+                    weight: Mapped[int]
+                    old_label = "unused"
+
+                def as_declarative():
+                    return lambda cls: cls
+
+                @as_declarative()
+                class Detached: pass
+
+                class Ordinary(Detached):
+                    orphan = SchemaColumn(Integer)
+
+                if __name__ == "__main__":
+                    print(Product(), Ordinary())
+            """
+        },
+    )
+    assert findings.isdisjoint({"app.Product.product_id", "app.Product.weight"})
+    assert {"app.Product.old_label", "app.Ordinary.orphan"} <= findings
+
+
+def test_inherited_flask_sqlalchemy_models_use_extension_fields(tmp_path):
+    findings = _findings(
+        tmp_path,
+        {
+            "app.py": """
+                from flask_sqlalchemy import SQLAlchemy
+
+                db = SQLAlchemy()
+
+                class Record(db.Model):
+                    __abstract__ = True
+
+                class User(Record):
+                    identifier = db.Column(db.Integer, primary_key=True)
+                    manager_id = db.Column(db.Integer, db.ForeignKey("user.identifier"))
+                    manager = db.relationship("User", remote_side=[identifier])
+
+                class Ordinary:
+                    detached = db.Column(db.Integer)
+
+                if __name__ == "__main__":
+                    print(User(), Ordinary())
+            """
+        },
+    )
+    assert findings.isdisjoint(
+        {"app.User.identifier", "app.User.manager_id", "app.User.manager"}
+    )
+    assert "app.Ordinary.detached" in findings
+
+
 def test_local_orm_names_do_not_hide_dead_members(tmp_path):
     findings = _findings(
         tmp_path,

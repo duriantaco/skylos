@@ -115,7 +115,8 @@ how_skylos_decides:
     when you said to keep it (an inline ignore, a whitelist entry, a
     configured entry point) or when something outside the code calls it: a
     framework decorator such as `@app.route`, `@app.command` or
-    `@shared_task`, a pytest or unittest hook, or a dunder method. Test,
+    `@shared_task`, a known hook in a loaded pytest plugin or a
+    `conftest.py`, a unittest hook, or a dunder method. Test,
     example and benchmark paths (`tests/`, `test_*.py`, `conftest.py`,
     `*.spec.ts`, `examples/`, `benchmarks/` and similar) are skipped too.
     The exception is Go: an unexported helper in a `_test.go` file that the

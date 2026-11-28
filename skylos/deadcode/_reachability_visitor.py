@@ -228,7 +228,7 @@ class SourceVisitor(ast.NodeVisitor):
                 node.id,
                 binding,
                 owner=self.owner,
-                import_only=registration_only,
+                registration_only=registration_only,
                 proven=self.proven_context,
             )
             if (

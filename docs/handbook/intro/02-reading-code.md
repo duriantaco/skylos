@@ -44,6 +44,33 @@ On top of the syntax tree, rules work out what the code means:
   and Swift are the exception: their analysers only report private names,
   which they resolve themselves.
 
+## When a Python framework calls your code
+
+A function can be in use even if your project never calls it directly.
+For example, Starlette calls `health` when a request reaches this route.
+
+```python
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+
+async def health(request):
+    return PlainTextResponse("ok")
+
+app = Starlette(routes=[Route("/health", health)])
+```
+
+Skylos follows the route from the application to the handler. If the only
+reference to another handler is in a route list that the app never uses,
+that handler can still appear in the report.
+
+The same question helps when reviewing other findings. For Flask, look for
+the call that registers the blueprint. For a class-based Celery task, look
+for the worker's `register_task` call. For a pytest hook outside
+`conftest.py`, check how pytest loads the plugin, for example through
+`pytest_plugins` or a `pytest11` entry point. If deployment supplies that
+registration outside the scanned files, check it before deleting the code.
+
 ## What does run
 
 The default scan starts only `git` and the bundled Go engine; the text

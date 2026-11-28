@@ -112,6 +112,85 @@ def test_flask_recreated_blueprint_keeps_distinct_route_owners(tmp_path):
     assert "web.active_catalog.sku" not in _unused(result, "unused_parameters")
 
 
+@pytest.mark.parametrize("mounted", ["first", "second", None])
+def test_flask_stacked_routes_accept_either_registered_blueprint(tmp_path, mounted):
+    registration = f"app.register_blueprint({mounted})" if mounted else ""
+    result = _scan(
+        tmp_path,
+        {
+            "web.py": f"""
+                from flask import Blueprint, Flask
+                app = Flask(__name__)
+                first = Blueprint("first", __name__)
+                second = Blueprint("second", __name__)
+                @first.get("/one")
+                @second.get("/two")
+                def shared_page():
+                    return page_title()
+                def page_title():
+                    return "Home"
+                {registration}
+            """,
+        },
+    )
+    names = {"web.shared_page", "web.page_title"}
+    assert _unused(result) & names == (set() if mounted else names)
+
+
+def test_flask_module_helper_can_supply_a_blueprint_after_app_creation(tmp_path):
+    result = _scan(
+        tmp_path,
+        {
+            "web.py": """
+                from flask import Blueprint, Flask
+                app = Flask(__name__)
+                current = Blueprint("current", __name__)
+                retired = Blueprint("retired", __name__)
+                @current.get("/")
+                def homepage():
+                    return site_name()
+                def site_name():
+                    return "Home"
+                @retired.get("/old")
+                def old_page():
+                    return "Old"
+                def current_routes():
+                    return current
+                app.register_blueprint(current_routes())
+            """,
+        },
+    )
+    unused = _unused(result)
+    assert not unused & {"web.homepage", "web.site_name"}
+    assert "web.old_page" in unused
+
+
+def test_flask_conditional_registration_keeps_only_possible_blueprints(tmp_path):
+    result = _scan(
+        tmp_path,
+        {
+            "web.py": """
+                from flask import Blueprint, Flask
+                from os import getenv
+                app = Flask(__name__)
+                first = Blueprint("first", __name__)
+                second = Blueprint("second", __name__)
+                retired = Blueprint("retired", __name__)
+                @first.get("/one")
+                def primary_view(): return 1
+                @second.get("/two")
+                def secondary_view(): return 2
+                @retired.get("/old")
+                def old_view(): return 3
+                app.register_blueprint(first if getenv("MODE") else second)
+            """,
+        },
+    )
+    unused = _unused(result)
+    assert not unused & {"web.primary_view", "web.secondary_view"}
+    assert "web.old_view" in unused
+
+
 @pytest.mark.parametrize(
     "application",
     [

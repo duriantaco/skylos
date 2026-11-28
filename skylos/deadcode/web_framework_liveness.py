@@ -758,6 +758,8 @@ class _WebScanner:
     def _flask_callback(self, node, bindings, definition):
         if definition is None or "flask" in self.index.shadowed:
             return None
+        attached = False
+        pending_attachment = False
         for decorator in node.decorator_list:
             function = decorator.func if isinstance(decorator, ast.Call) else decorator
             if (
@@ -766,15 +768,13 @@ class _WebScanner:
                 and (receiver := _qualified(function.value, bindings))
             ):
                 self.evidence.blueprint_decorators.append((definition, receiver))
-        for decorator in node.decorator_list:
-            function = decorator.func if isinstance(decorator, ast.Call) else decorator
-            registered = _flask_decorator(_qualified(function, bindings))
+            qualified = _qualified(function, bindings)
+            registered = _flask_decorator(qualified)
             deferred = registered is not None and (
                 registered[0].startswith("flask_login.")
                 or getattr(function, "attr", None) == "shell_context_processor"
             )
             if registered is None or deferred:
-                qualified = _qualified(function, bindings)
                 if qualified and isinstance(function, ast.Attribute):
                     if function.attr in _FLASK_CALLBACK_METHODS:
                         self.evidence.imported_callbacks.append(
@@ -792,7 +792,7 @@ class _WebScanner:
                             )
                         )
                 if deferred:
-                    return False
+                    pending_attachment = True
                 continue
             source, symbol = registered
             if source == "flask.Blueprint":
@@ -800,14 +800,19 @@ class _WebScanner:
                     (
                         definition,
                         symbol,
-                        _qualified(function, bindings).rpartition(".")[2],
+                        qualified.rpartition(".")[2],
                     )
                 )
                 # Its body cannot prove that its own Blueprint is installed.
-                return False
-            self._flask_signature(definition, _qualified(function, bindings))
+                pending_attachment = True
+                continue
+            self._flask_signature(definition, qualified)
             self.evidence.targets.append((definition, "flask_web_callback"))
+            attached = True
+        if attached:
             return True
+        if pending_attachment:
+            return False
         return None
 
     def _flask_signature(self, definition, registration):
@@ -919,6 +924,8 @@ class _WebScanner:
         blueprint = _qualified(argument, bindings)
         if blueprint:
             self.evidence.blueprint_registrations.add((receiver, blueprint))
+        elif argument is not None:
+            self._record_blueprint_uses(argument, bindings)
 
     def _django_call(self, call, function, bindings, routes):
         if function in _DJANGO_LAUNCHERS and isinstance(self.settings_module, str):
@@ -1354,7 +1361,7 @@ def reconcile_flask_blueprint_decorators(definitions, file_contexts, refs, files
     for module in parsed:
         scanner = _WebScanner(index, module, factories, track_uncertain_blueprints=True)
         scanner.suite(module.tree.body, scanner.evidence.bindings)
-        if not scanner.evidence.flask_app_seen and scanner.module_function_calls:
+        if scanner.module_function_calls:
             called = {
                 id(definition)
                 for line in scanner.module_function_calls

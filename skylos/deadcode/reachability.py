@@ -494,7 +494,7 @@ class PythonReachabilityReport:
             ref.target is not None
             and (
                 ref.target != target
-                or ref.import_only
+                or ref.registration_only
                 or ref.owner in self.unreachable_keys
             )
             for ref in references

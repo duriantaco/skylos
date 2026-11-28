@@ -34,7 +34,7 @@ class SourceReference:
     name: str
     target: str | None
     owner: str | None
-    import_only: bool = False
+    registration_only: bool = False
 
 
 @dataclass
@@ -210,20 +210,24 @@ class ReferenceGraph:
         *,
         owner: str | None,
         import_only: bool = False,
+        registration_only: bool = False,
         proven: bool = True,
     ) -> None:
         target = binding[1] if binding and binding[0] == "symbol" else None
         self._record_lines(
             module.path,
             node,
-            SourceReference(name, target, owner, import_only=import_only),
+            SourceReference(name, target, owner, registration_only=registration_only),
         )
+        # Imports and framework registration arguments both bind a name.
+        # Only the framework pass can establish that a callback is installed.
+        creates_edge = not (import_only or registration_only)
         if target is None:
-            if not import_only:
+            if creates_edge:
                 self.protect(index.by_simple_name.get(name, ()), owner)
             return
         self.observed[target] += 1
-        if not import_only:
+        if creates_edge:
             self._add_edge(target, owner, proven=proven)
 
     def _record_lines(

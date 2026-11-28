@@ -114,10 +114,12 @@ how_skylos_decides:
     `locals()`, `vars()` with no argument, `eval`, `exec` or reads its own
     frame.
   - >-
-    Skips fields that a framework reads by declaration: Enum members,
-    dataclass, attrs and NamedTuple fields, Pydantic and other `*Model` or
-    `*Schema` class attributes, ORM columns, Django and DRF settings and
-    serializer fields, Marshmallow fields and type aliases. A class
+    Skips fields that a framework reads by declaration, including Enum
+    members, dataclass, attrs and NamedTuple fields, Pydantic and SQLModel
+    fields, mapped SQLAlchemy columns, Django and DRF settings and
+    serializer fields, Marshmallow fields and type aliases. For Pydantic
+    and SQLModel, Skylos follows the model base through imports and aliases.
+    A local base named `ExampleSchema` can still have unused fields. A class
     attribute whose name also appears as an attribute of another class is
     kept too, since Skylos cannot tell which class a read belongs to.
   - >-
@@ -137,6 +139,9 @@ source_refs:
   - path: skylos/analysis/penalties.py
     symbol: "def _check_data_model_fields(def_obj, analyzer, framework)"
     note: framework fields, `_`, dynamic locals and shared attribute names.
+  - path: skylos/deadcode/model_liveness.py
+    symbol: "def find_model_members(definitions, parsed_files, root)"
+    note: Python model fields and ORM declarations.
   - path: skylos/visitors/base.py
     symbol: "def _reads_locals_dynamically(node: ast.Call)"
   - path: skylos/visitors/languages/typescript/core.py
