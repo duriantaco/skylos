@@ -141,8 +141,10 @@ check. Add one `{ path = "...", fingerprint = "..." }` entry to
 `allow_public_writes` in the same base policy. A PR cannot approve itself.
 For the reusable GitHub Action, use `fetch-depth: 0`, enable
 `postgres-policy: 'true'` in gate or review mode, and pin the action to a
-trusted commit. Require the job in your branch rules to prevent merging on
-failure and require owner review for policy and workflow edits.
+trusted commit. Run the workflow on `pull_request`. If you use a merge queue,
+also enable `merge_group`. A push-only workflow skips the migration check.
+Require the job in your branch rules to prevent merging on failure and
+require owner review for policy and workflow edits.
 
 Runtime access depends on the deployed schema, grants and row policies. Test
 role access on a disposable database with the intended app roles. A scan
