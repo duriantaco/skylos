@@ -1,0 +1,64 @@
+id: SKY-D433
+title: Spring Security CSRF disabled
+family: security
+severity: MEDIUM
+languages:
+  - Java
+cwe:
+  - CWE-352
+gate:
+  full: counted
+what_it_is: Skylos reports Java Spring Security configurations that explicitly disable cross-site
+  request forgery protection.
+  The finding points to the Java call that configures CSRF.
+why_it_matters: When a browser attaches credentials automatically, an application needs a separate
+  way to verify that a state-changing request was intentional.
+flagged_example:
+  language: java
+  filename: src/main/java/SecurityConfig.java
+  expect_line: 5
+  code: |
+    import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+
+    class SecurityConfig {
+        void configure(HttpSecurity http) {
+            http.csrf(csrf -> csrf.disable());
+        }
+    }
+not_flagged_example:
+  language: java
+  filename: src/main/java/SecurityConfig.java
+  code: |
+    import org.springframework.security.config.Customizer;
+    import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+
+    class SecurityConfig {
+        void configure(HttpSecurity http) {
+            http.csrf(Customizer.withDefaults());
+        }
+    }
+  why: The configuration keeps Spring Security's default CSRF protection enabled.
+how_skylos_decides:
+  - Requires a resolved Spring Security HttpSecurity receiver.
+  - Recognizes legacy csrf().disable() and supported callbacks that call disable on the CSRF
+    configurer.
+  - Reports a review finding. The scanner does not establish how the chain authenticates requests
+    at runtime.
+source_refs:
+  - path: skylos/visitors/languages/java/transport_policy.py
+    symbol: def check_spring_csrf(
+fix:
+  explanation: Keep CSRF protection for browser-authenticated routes. If a chain uses only credentials
+    that browsers do not attach automatically, review that chain explicitly.
+false_alarms_and_suppression:
+  misfires:
+    - An isolated API chain may intentionally use only explicit authorization headers. Check
+      the chain matching and credential types before accepting the finding.
+  suppress:
+    - text: >-
+        Mark the reviewed line with a rule-scoped Skylos ignore for SKY-D433.
+        Record the evidence that justifies the exception.
+      check: inline
+related:
+  - SKY-D432
+  - SKY-D252

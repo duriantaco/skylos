@@ -1,0 +1,91 @@
+id: SKY-D380
+title: SSH host-key verification disabled
+family: security
+severity: HIGH
+languages:
+  - Python
+  - Go
+cwe:
+  - CWE-322
+gate:
+  full: counted
+what_it_is: Skylos reports SSH client settings that accept unknown host keys. It recognizes Paramiko
+  policies in Python and host-key callbacks from Go's SSH package.
+why_it_matters: A client that accepts unknown host keys cannot reliably verify the identity of
+  the SSH server. This can expose application data and remote operations to an impersonating
+  endpoint.
+flagged_example:
+  language: python
+  filename: transport.py
+  expect_line: 6
+  code: |
+    import paramiko
+
+    def create_client(known_hosts):
+        client = paramiko.SSHClient()
+        client.load_host_keys(known_hosts)
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        return client
+not_flagged_example:
+  language: python
+  filename: transport.py
+  code: |
+    import paramiko
+
+    def create_client(known_hosts):
+        client = paramiko.SSHClient()
+        client.load_host_keys(known_hosts)
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        return client
+  why: The client rejects an unknown key and verifies known keys against its configured trust
+    store.
+how_skylos_decides:
+  - In Python, resolves the Paramiko client and policy through supported aliases and helper arguments.
+    Reports AutoAddPolicy and WarningPolicy on set_missing_host_key_policy.
+  - In Go, checks a resolved golang.org/x/crypto/ssh ClientConfig literal or field assignment
+    for InsecureIgnoreHostKey. The Go engine resolves supported aliases within the same package.
+source_refs:
+  - path: skylos/rules/danger/ssh_host_keys.py
+    symbol: def scan(
+  - path: skylos/engines/go/internal/analyzer/ssh_host_keys.go
+    symbol: func (a *Analyzer) checkSSHHostKeyConfig(
+fix:
+  explanation: Use a trusted known_hosts file or verify a pinned host key. Keep Paramiko's default
+    RejectPolicy or configure Go's knownhosts callback.
+false_alarms_and_suppression:
+  misfires:
+    - A development fixture can intentionally accept temporary SSH keys. Keep that setting in
+      the fixture and verify that it cannot reach production.
+  suppress:
+    - text: >-
+        Mark the reviewed line with a rule-scoped Skylos ignore for SKY-D380.
+        Record the evidence that justifies the exception.
+      check: inline
+related:
+  - SKY-D210
+  - SKY-D235
+more_examples:
+  - flagged:
+      language: go
+      filename: transport.go
+      expect_line: 6
+      code: |
+        package app
+
+        import "golang.org/x/crypto/ssh"
+
+        func settings() *ssh.ClientConfig {
+            return &ssh.ClientConfig{HostKeyCallback: ssh.InsecureIgnoreHostKey()}
+        }
+    not_flagged:
+      language: go
+      filename: transport.go
+      code: |
+        package app
+
+        import "golang.org/x/crypto/ssh"
+
+        func settings(pinned ssh.PublicKey) *ssh.ClientConfig {
+            return &ssh.ClientConfig{HostKeyCallback: ssh.FixedHostKey(pinned)}
+        }
+      why: The callback only accepts the trusted public key supplied to the configuration.

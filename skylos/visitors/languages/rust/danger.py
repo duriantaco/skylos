@@ -103,6 +103,18 @@ _INERT_ATTRIBUTES = {
     "track_caller",
     "warn",
 }
+_CERTIFICATE_MODULES = {
+    "rustls::client::danger",
+    "rustls::client",
+    "tokio_rustls::rustls::client::danger",
+    "tokio_rustls::rustls::client",
+}
+_CERTIFICATE_VERIFIER_TRAITS = {
+    f"{module}::ServerCertVerifier" for module in _CERTIFICATE_MODULES
+}
+_CERTIFICATE_ASSERTIONS = {
+    f"{module}::ServerCertVerified::assertion" for module in _CERTIFICATE_MODULES
+}
 _CALLER_ROUNDS = 6
 # Arguments that name a database pool, connection or transaction.
 _STORE_ARGUMENT_RE = re.compile(
@@ -1925,50 +1937,145 @@ class _SecurityFlow(_ScopeAttributes):
         )
 
     def certificate_verifier(self, node, state):
-        """``impl ServerCertVerifier for X`` whose ``verify_server_cert``
-        returns ``ServerCertVerified::assertion()`` without any check: every
-        certificate, including an attacker's, is accepted."""
+        """Detect native certificate verifiers that always return acceptance."""
         trait = self.field(node, "trait")
         if trait is None or self.harness_item(node):
             return
-        trait_path = state.resolve(self.text(trait)) or ""
-        if self.text(trait).rsplit("::", 1)[-1] != "ServerCertVerifier" or not (
-            trait_path.startswith(("rustls::", "tokio_rustls::"))
-        ):
+        trait_path = state.resolve(self.text(trait))
+        if trait_path not in _CERTIFICATE_VERIFIER_TRAITS:
             return
         body = self.field(node, "body")
         for item in body.named_children if body is not None else ():
-            if item.type != "function_item":
-                continue
-            if self.text(self.field(item, "name")) != "verify_server_cert":
-                continue
-            block = self.field(item, "body")
-            statements = [
-                child
-                for child in (block.named_children if block is not None else ())
-                if child.type not in {"line_comment", "block_comment"}
-            ]
-            if len(statements) != 1:
-                continue
-            only = statements[0]
-            if only.type == "expression_statement" and only.named_children:
-                only = only.named_children[0]
-            if only.type == "return_expression" and only.named_children:
-                only = only.named_children[0]
-            text = re.sub(r"\s+", "", self.text(only))
-            if re.fullmatch(
-                r"Ok\((?:[A-Za-z_][A-Za-z0-9_]*::)*ServerCertVerified::assertion\(\)\)",
-                text,
+            if (
+                item.type != "function_item"
+                or self.text(self.field(item, "name")) != "verify_server_cert"
+                or self.harness_item(item)
             ):
+                continue
+            result = self._certificate_result(
+                item, state, node.parent, frozenset(), self._certificate_bindings(node)
+            )
+            if result == "accepted":
                 type_name = self.text(self.field(node, "type"))
                 self.tls_off(
                     item,
                     f"TLS certificate verification is disabled: {type_name}'s "
-                    "verify_server_cert accepts every certificate "
-                    "(ServerCertVerified::assertion() without checks), so any "
-                    "server can impersonate the peer.",
+                    "verify_server_cert accepts every certificate without checks.",
                     state,
                 )
+
+    def _certificate_bindings(self, node):
+        """Collect names that hide constructor or helper paths in a verifier."""
+        state = State()
+        parameters = self.field(node, "parameters")
+        for parameter in parameters.named_children if parameters is not None else ():
+            self.bind_pattern(self.field(parameter, "pattern"), UNKNOWN, state)
+        type_parameters = self.field(node, "type_parameters")
+        for parameter in (
+            type_parameters.named_children if type_parameters is not None else ()
+        ):
+            name = self.field(parameter, "name")
+            if name is not None:
+                state.bind(self.text(name), UNKNOWN)
+        return set(state.frames[0])
+
+    def _certificate_result(self, function, state, scope, visited, outer_bindings=()):
+        if (
+            function.start_byte in visited
+            or len(visited) >= 4
+            or is_async_function(function)
+        ):
+            return None
+        visited = visited | {function.start_byte}
+        body = self.field(function, "body")
+        if body is None:
+            return None
+        statements = [
+            child
+            for child in body.named_children
+            if child.type not in {"line_comment", "block_comment"}
+        ]
+        if not 1 <= len(statements) <= 8:
+            return None
+        bindings = dict.fromkeys(
+            self._certificate_bindings(function).union(outer_bindings)
+        )
+        for statement in statements[:-1]:
+            if statement.type != "let_declaration":
+                return None
+            pattern = self.field(statement, "pattern")
+            if pattern is None or pattern.type != "identifier":
+                return None
+            result = self._certificate_expression(
+                self.field(statement, "value"), state, scope, bindings, visited
+            )
+            if result is None:
+                return None
+            bindings[self.text(pattern)] = result
+        return self._certificate_expression(
+            statements[-1], state, scope, bindings, visited
+        )
+
+    def _certificate_prelude_ok(self, name, state, scope):
+        if name != "Ok" or any("Ok" in frame for frame in state.frames):
+            return False
+        # An unmodelled glob can import a value named Ok ahead of the prelude.
+        return not any(
+            name == "*"
+            for child, _conditional in self.scope_statements(scope)
+            if child.type == "use_declaration"
+            for name, _path in use_bindings(child, self.text)
+        )
+
+    def _certificate_expression(self, node, state, scope, bindings, visited):
+        while node is not None and node.type in {
+            "expression_statement",
+            "return_expression",
+            "parenthesized_expression",
+        }:
+            node = node.named_children[0] if len(node.named_children) == 1 else None
+        if node is None:
+            return None
+        if node.type == "identifier":
+            return bindings.get(self.text(node))
+        if node.type != "call_expression":
+            return None
+        callee = self.field(node, "function")
+        name = self.text(callee)
+        if name.partition("::")[0] in bindings:
+            return None
+        args = self.argument_nodes(node)
+        api = state.resolve(name)
+        prelude_ok = self._certificate_prelude_ok(name, state, scope)
+        if len(args) == 1 and (
+            prelude_ok or api in {"std::result::Result::Ok", "core::result::Result::Ok"}
+        ):
+            marker = self._certificate_expression(
+                args[0], state, scope, bindings, visited
+            )
+            return "accepted" if marker == "assertion" else None
+        if args:
+            return None
+        if api in _CERTIFICATE_ASSERTIONS:
+            return "assertion"
+        if callee is None or callee.type != "identifier":
+            return None
+        bound = state.get(name).local_function
+        for helper, owner in self.local_functions.get(name, ()):
+            parameters = self.field(helper, "parameters")
+            if (
+                owner is None
+                and helper.parent == scope
+                and helper.start_byte == bound
+                and parameters is not None
+                and not parameters.named_children
+                and all(
+                    attribute in _INERT_ATTRIBUTES and attribute != "cfg_attr"
+                    for attribute, _ in self.attributes(helper)
+                )
+            ):
+                return self._certificate_result(helper, state, scope, visited)
+        return None
 
     def argument_nodes(self, node):
         arguments = self.field(node, "arguments")
@@ -2170,6 +2277,11 @@ class _SecurityFlow(_ScopeAttributes):
             )
         sensitive_value = sensitive.identifier_call(api, args, state)
         if sensitive_value is not None:
+            if (
+                (finding := sensitive.exposed_weak_digest(sensitive_value.kind))
+                and self._direct_digest_return(node, sensitive_value.kind, state)
+            ):
+                self.sensitive_finding(node, state, finding)
             return sensitive_value
         finding = sensitive.call_finding(api, args, state)
         if finding:
@@ -2274,6 +2386,37 @@ class _SecurityFlow(_ScopeAttributes):
             canonical=False,
             contained=False,
         )
+
+    def _direct_digest_return(self, node, digest_type, state):
+        value = node
+        explicit = False
+        while value.parent is not None and value.parent.type in {
+            "parenthesized_expression",
+            "return_expression",
+            "expression_statement",
+        }:
+            value = value.parent
+            explicit |= value.type == "return_expression"
+        if value.type == "expression_statement" and not explicit:
+            return False
+        body = value.parent
+        owner = body.parent if body is not None and body.type == "block" else None
+        if owner is None or owner.type != "function_item":
+            return False
+        tail = next(
+            (
+                child
+                for child in reversed(body.named_children)
+                if child.type not in {"line_comment", "block_comment"}
+            ),
+            None,
+        )
+        if value != tail or not any(
+            child.type == "visibility_modifier" and self.text(child) == "pub"
+            for child in owner.named_children
+        ):
+            return False
+        return state.resolve(self.text(self.field(owner, "return_type"))) == digest_type
 
     def cargo_build_variable(self, args):
         if not self.build_script or len(args) != 1 or args[0].literal is None:

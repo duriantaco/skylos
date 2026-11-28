@@ -1431,6 +1431,21 @@ not reported by D350 to D353.
 Suppress with `# skylos: ignore[SKY-D35x]` on the reported line or the line
 above it. SKY-D355 to SKY-D359 cover the Python checks described above.
 
+### Language security policy checks
+
+| ID | Severity | What it reports |
+| --- | --- | --- |
+| SKY-D380 | HIGH | Paramiko or Go SSH client configuration that accepts unknown host keys. |
+| SKY-D384 | MEDIUM | ECB selected by a recognized Python cipher or Kotlin JCA block cipher. |
+| SKY-D430 | HIGH | A recognized Python TLS configuration explicitly selecting TLS 1.0, TLS 1.1, or an older protocol. |
+| SKY-D431 | HIGH | A browser Window sends runtime data to a wildcard origin, or unchecked Window message data reaches a supported sensitive action. |
+| SKY-D432 | MEDIUM | A Spring Boot application configuration exposes all enabled Actuator endpoints over HTTP. |
+| SKY-D433 | MEDIUM | A recognized Spring Security configuration explicitly disables CSRF protection. |
+| SKY-D434 | HIGH | A sensitive value is written to Foundation UserDefaults in Swift. |
+| SKY-D435 | MEDIUM | A direct unbounded C library write in C++. |
+| SKY-D436 | HIGH | A source-visible C allocation is freed twice in the same straight-line C++ block. |
+| SKY-D437 | HIGH | A source-visible C allocation is dereferenced after being freed in the same straight-line C++ block. |
+
 ## Kubernetes Deployment Exposure (SKY-DEP)
 
 Skylos correlates resources in one rendered multi-document Kubernetes file.

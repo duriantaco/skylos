@@ -15,6 +15,7 @@ from skylos.rules.config.cicd.github_actions import (
 from skylos.rules.config.cicd.gitlab_ci import scan_gitlab_ci, scan_gitlab_ci_file
 from skylos.rules.config.container.dockerfile import scan_dockerfiles
 from skylos.rules.config.deployment.exposure import scan_deployment_exposure
+from skylos.rules.config.deployment.spring import scan_spring_actuator
 from skylos.rules.config.edge.docker_compose import scan_docker_compose
 from skylos.rules.config.edge.envoy import scan_envoy_http1
 from skylos.rules.config.edge.systemd import scan_systemd
@@ -192,6 +193,15 @@ def scan_config_files(
     findings.extend(scan_systemd(root, changed_files=changed_files, ignore=ignore))
     findings.extend(
         scan_deployment_exposure(root, changed_files=changed_files, ignore=ignore)
+    )
+    findings.extend(
+        scan_spring_actuator(
+            root,
+            changed_files=changed_files,
+            ignore=ignore,
+            scan_paths=scan_paths,
+            exclude_folders=exclude_folders,
+        )
     )
     selection_values = (
         [required_rules] if isinstance(required_rules, str) else required_rules or ()

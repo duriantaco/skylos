@@ -2,7 +2,10 @@ id: SKY-D206
 title: Unsafe YAML load
 family: security
 severity: HIGH
-languages: [Python]
+languages: [Python, Ruby]
+severity_note: >-
+  Ruby findings with a proven input source are HIGH. Other resolved nonliteral
+  Ruby unsafe loads are MEDIUM review findings.
 gate:
   full: counted
   note: >-
@@ -11,15 +14,14 @@ gate:
 cwe: [CWE-502]
 
 what_it_is: >-
-  PyYAML's full and unsafe loaders understand tags such as
-  `!!python/object/apply:os.system`, which create Python objects and call
-  functions while the file is read. SKY-D206 reports YAML loads that do not
-  use one of PyYAML's data-only loaders.
+  SKY-D206 reports Python YAML loads that use or may use a loader outside
+  the supported data-only set. In Ruby, it recognizes explicit
+  `YAML.unsafe_load` and `Psych.unsafe_load` calls on resolved library receivers.
 
 why_it_matters: >-
-  A deploy service that reads a `.deploy.yml` from a pushed branch with the
-  full loader runs any command written into that file. Whoever can push a
-  branch can then take over the build or deploy host.
+  An unsafe object loader can instantiate objects and invoke application code
+  while reading YAML. Files, request bodies, and command-line input can come
+  from people who should only be able to supply data.
 
 flagged_example:
   language: python
@@ -77,7 +79,14 @@ how_skylos_decides:
     the finding is marked low-risk: hidden from the default list, still in
     JSON output and counted by the gate.
 
+  - >-
+    In Ruby, reports a resolved `unsafe_load` call with proven input as HIGH
+    and a nonliteral value with unknown provenance as a MEDIUM review.
+    Literal data and lookalike receivers stay quiet.
+
 source_refs:
+  - path: skylos/visitors/languages/ruby/security.py
+    symbol: '"rule_id": "SKY-D206"'
   - path: skylos/rules/danger/calls.py
     symbol: "DANGEROUS_CALLS = {"
     note: the YAML entries.
@@ -98,7 +107,8 @@ fix:
   explanation: >-
     Use `yaml.safe_load()` (or `Loader=yaml.SafeLoader`). If the file needs
     custom types, register constructors on a `SafeLoader` subclass that
-    build plain data.
+    build plain data. In Ruby, use `YAML.safe_load` or `Psych.safe_load` and
+    permit additional classes only when required.
   filename: deploy/config.py
   code: |
     from pathlib import Path

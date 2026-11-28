@@ -1,0 +1,64 @@
+id: SKY-D437
+title: Local pointer used after free
+family: security
+severity: HIGH
+languages:
+  - C++
+cwe:
+  - CWE-416
+gate:
+  full: counted
+what_it_is: Skylos reports a direct dereference, array access or member access after a known
+  local C allocation was freed in the same straight-line C++ block.
+  The finding points to the evaluated access.
+why_it_matters: Freed storage no longer belongs to the program's pointer. Reading or writing
+  through it is undefined behavior even when the old bytes are still present.
+flagged_example:
+  language: cpp
+  filename: sample.cpp
+  expect_line: 6
+  code: |
+    #include <cstdlib>
+
+    int sample() {
+        auto *ptr = static_cast<char *>(std::calloc(1, 8));
+        std::free(ptr);
+        return ptr[0];
+    }
+not_flagged_example:
+  language: cpp
+  filename: sample.cpp
+  code: |
+    #include <cstdlib>
+
+    int sample() {
+        auto *ptr = static_cast<char *>(std::calloc(1, 8));
+        if (!ptr) return 0;
+        int value = ptr[0];
+        std::free(ptr);
+        return value;
+    }
+  why: The evaluated access occurs before free, and the function returns a copied value.
+how_skylos_decides:
+  - Tracks known local malloc and calloc allocations and simple aliases within one straight-line
+    block.
+  - Reports evaluated accesses through a freed pointer. Unevaluated operands such as sizeof are
+    separate from actual reads.
+source_refs:
+  - path: skylos/visitors/languages/cpp/danger.py
+    symbol: def scan_memory_calls(
+fix:
+  explanation: Complete all uses before releasing the allocation. Use an owning container or
+    an RAII wrapper where possible.
+false_alarms_and_suppression:
+  misfires:
+    - The check covers local operations with a visible allocation and free. Lifetime across functions,
+      branches, or ownership transfers needs separate review.
+  suppress:
+    - text: >-
+        Mark the reviewed line with a rule-scoped Skylos ignore for SKY-D437.
+        Record the evidence that justifies the exception.
+      check: inline
+related:
+  - SKY-D435
+  - SKY-D436

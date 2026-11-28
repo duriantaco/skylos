@@ -432,6 +432,7 @@ def scan_danger(
         if not changed:
             break
     _scan_file_patterns(context, collector)
+    _scan_xml_policies(context, collector)
     return collector.findings()
 
 
@@ -2850,6 +2851,242 @@ def _expression_end(masked: str, start: int) -> int:
         elif char in ";," and depth == 0:
             return index
     return len(masked)
+
+
+_XML_READER_CREATE = re.compile(
+    rf"(?<![\w.])(?P<owner>{_PROVIDER_TYPE_TEXT})\s*\.\s*Create\s*\("
+)
+_XML_CONSTRUCTION = re.compile(
+    rf"new(?:(?:\s+(?P<type>{_PROVIDER_TYPE_TEXT}))|(?=\s*\())\s*"
+    r"(?:\(\s*\)\s*)?(?:\{(?P<initializer>[\s\S]*)\})?"
+)
+_XML_ASSIGNMENT = re.compile(
+    rf"(?:(?:using|await)\s+)*(?:(?P<type>{_PROVIDER_TYPE_TEXT})\s+)?"
+    r"(?P<name>@?[A-Za-z_]\w*)(?:\s*\.\s*(?P<member>DtdProcessing|XmlResolver))?"
+    r"\s*=\s*(?P<value>[\s\S]+)"
+)
+_XML_PARSE = re.compile(rf"(?P<type>{_PROVIDER_TYPE_TEXT})\s*\.\s*Parse")
+_XML_IDENTIFIER = re.compile(r"@?[A-Za-z_]\w*")
+
+
+@dataclass
+class _XmlPolicyState:
+    locals: dict[str, int] = field(default_factory=dict)
+    settings: dict[int, tuple[bool, bool]] = field(default_factory=dict)
+    conditions: dict[str, bool] = field(default_factory=dict)
+
+    def copy(self):
+        return _XmlPolicyState(
+            self.locals.copy(), self.settings.copy(), self.conditions.copy()
+        )
+
+
+def _scan_xml_policies(context: _FileContext, collector: _Collector) -> None:
+    if "XmlReader" not in context.masked or "XmlReaderSettings" not in context.masked:
+        return
+    from .bindings import ReferenceContext
+    from .core import _namespace_ranges, _type_ranges
+
+    namespaces = _namespace_ranges(context.masked)
+    references = ReferenceContext(
+        context.masked, _type_ranges(context.masked, namespaces), namespaces
+    )
+
+    def native(spelling, name, offset, *, value_position=False):
+        spelling = _compact_name(spelling)
+        references.record("xml", offset, spelling=spelling)
+        facts = references.destination.pop("xml")[0]
+        native_name = f"System.Xml.{name}"
+        if native_name in context.project_types:
+            return False
+        if spelling.startswith("global::"):
+            return spelling.removeprefix("global::") == native_name
+        if value_position and facts["receiver_shadowed"]:
+            return False
+        root, dot, tail = spelling.partition(".")
+        if root in facts["aliases"]:
+            return facts["aliases"][root] + dot + tail == native_name
+        if "." in spelling:
+            return spelling == native_name
+        return (
+            spelling == name
+            and name not in context.classes_by_name
+            and ("System.Xml" in facts["usings"] or facts["namespace"] == "System.Xml")
+        )
+
+    def property_value(name, value, offset):
+        value = value.strip()
+        if name == "DtdProcessing":
+            member = _XML_PARSE.fullmatch(value)
+            return bool(
+                member and native(member["type"], name, offset, value_position=True)
+            )
+        created = _XML_CONSTRUCTION.fullmatch(value)
+        return bool(
+            created
+            and created["type"]
+            and native(created["type"], "XmlUrlResolver", offset)
+        )
+
+    def policy_value(value, state, offset, declared_type=None):
+        value = value.strip()
+        if _XML_IDENTIFIER.fullmatch(value):
+            return state.settings.get(state.locals.get(value.removeprefix("@")))
+        created = _XML_CONSTRUCTION.fullmatch(value)
+        if not created:
+            return None
+        settings_type = created["type"] or declared_type
+        if not settings_type or not native(settings_type, "XmlReaderSettings", offset):
+            return None
+        fields = {}
+        initializer = created["initializer"] or ""
+        for left, right in _argument_spans(initializer, 0, len(initializer)):
+            key, equals, item = initializer[left:right].partition("=")
+            if equals and key.strip() in {"DtdProcessing", "XmlResolver"}:
+                fields[key.strip()] = property_value(key.strip(), item, offset)
+        return fields.get("DtdProcessing", False), fields.get("XmlResolver", False)
+
+    def used_by_reader(code, state, offset, scope, body):
+        native_call = False
+        for call in _XML_READER_CREATE.finditer(code):
+            prefix = code[: call.start()]
+            if "=>" in prefix or not native(
+                call["owner"], "XmlReader", offset + call.start(), value_position=True
+            ):
+                continue
+            native_call = True
+            start = call.end()
+            close = _matching_paren(code, start - 1)
+            if close < 0:
+                continue
+            settings = None
+            for index, (left, right) in enumerate(_argument_spans(code, start, close)):
+                argument = code[left:right].strip()
+                named = re.match(r"(?P<name>[A-Za-z_]\w*)\s*:(?!:)", argument)
+                if named and named["name"] == "settings":
+                    settings = argument[named.end() :]
+                    break
+                if index == 1 and not named:
+                    settings = argument
+            if settings and policy_value(settings, state, offset + start) == (
+                True,
+                True,
+            ):
+                collector.add(
+                    models.XML_READER_POLICY,
+                    scope.start_line
+                    + body.count("\n", 0, offset - scope.body_offset + call.start()),
+                )
+        return native_call
+
+    def invalidate_used_settings(code, state):
+        for name in _XML_IDENTIFIER.findall(code):
+            state.settings.pop(state.locals.get(name.removeprefix("@")), None)
+            if "(" in code:
+                state.conditions.pop(name, None)
+
+    def update(code, state, offset, native_call):
+        assignment = _XML_ASSIGNMENT.fullmatch(code.strip().removesuffix(";").rstrip())
+        if not assignment:
+            # Arbitrary calls taking settings by reference may replace or
+            # change the object. The native reader snapshots the input policy.
+            if not native_call:
+                invalidate_used_settings(code, state)
+            return
+        name = assignment["name"].removeprefix("@")
+        value = assignment["value"].strip()
+        member = assignment["member"]
+        if member:
+            identity = state.locals.get(name)
+            if identity in state.settings:
+                dtd, resolver = state.settings[identity]
+                flag = property_value(member, value, offset)
+                state.settings[identity] = (
+                    (flag, resolver) if member == "DtdProcessing" else (dtd, flag)
+                )
+            return
+        state.conditions.pop(name, None)
+        identity = state.locals.get(value.removeprefix("@"))
+        if identity is not None:
+            state.locals[name] = identity
+            return
+        state.locals.pop(name, None)
+        policy = policy_value(value, state, offset, assignment["type"])
+        if policy is not None:
+            state.locals[name] = offset
+            state.settings[offset] = policy
+        elif not native_call:
+            invalidate_used_settings(value, state)
+
+    def walk(statement, states, scope, body):
+        if statement is None or not states:
+            return states
+        if statement.kind == "block":
+            for child in statement.parts:
+                states = walk(child, states, scope, body)
+            return states
+        if statement.kind == "if":
+            left = body.find("(", statement.start, statement.end)
+            right = _matching_paren(body, left)
+            condition = body[left + 1 : right].strip()
+            identifier = re.fullmatch(
+                r"(?P<negated>!\s*)?(?P<name>[A-Za-z_]\w*)", condition
+            )
+            outcomes = []
+            for outcome, part in zip((True, False), statement.parts):
+                group = []
+                for state in states:
+                    if condition in {"true", "false"} and outcome != (
+                        condition == "true"
+                    ):
+                        continue
+                    branch = state.copy()
+                    if "(" in condition:
+                        invalidate_used_settings(condition, branch)
+                    if identifier and condition not in {"true", "false"}:
+                        name = identifier["name"]
+                        required = outcome != bool(identifier["negated"])
+                        if (
+                            name in state.conditions
+                            and state.conditions[name] != required
+                        ):
+                            continue
+                        branch.conditions[name] = required
+                    group.append(branch)
+                outcomes.extend(walk(part, group, scope, body))
+            return outcomes[:32]
+        if statement.kind == "wrapper" and statement.parts:
+            part = statement.parts[0]
+            header = body[statement.start : part.start]
+            if header.startswith("using"):
+                offset = scope.body_offset + statement.start
+                for state in states:
+                    if not used_by_reader(header, state, offset, scope, body):
+                        invalidate_used_settings(header, state)
+                return walk(part, states, scope, body)
+        if statement.kind in {"loop", "switch", "try", "wrapper"}:
+            # A later use requires an effective policy on a modeled path.
+            # Drop surrounding facts across constructs with unknown writes.
+            return [_XmlPolicyState() for _ in states]
+        if statement.kind in {"simple", "exit"}:
+            code = body[statement.start : statement.end]
+            offset = scope.body_offset + statement.start
+            for state in states:
+                native_call = used_by_reader(code, state, offset, scope, body)
+                update(code, state, offset, native_call)
+            if statement.kind == "exit":
+                return []
+        return states
+
+    for scope in context.scopes:
+        if "Create" not in scope.body or "DtdProcessing" not in scope.body:
+            continue
+        body = mask_comments_and_strings(scope.body)
+        states = [_XmlPolicyState()]
+        for statement in _parse_block(body, 0, len(body)):
+            states = walk(statement, states, scope, body)
+            if not states:
+                break
 
 
 def _scan_file_patterns(context: _FileContext, collector: _Collector) -> None:

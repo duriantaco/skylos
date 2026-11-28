@@ -280,9 +280,9 @@ expected answers and tool calls, use `skylos agent test`. See
 | Ruby | Partial | Partial | No |
 | Dart | Yes | Partial | No |
 | C# | Partial | Partial | Partial |
-| C++ | Partial | No | No |
+| C++ | Partial | Partial | No |
 | Kotlin | Partial | Partial | No |
-| Swift | Partial | No | No |
+| Swift | Partial | Partial | No |
 | Shell | No | Partial | No |
 | PostgreSQL | Unused CTE chains and unreachable CASE arms | Routine search paths, grants, login roles | Query filters, counts, index migrations and foreign keys |
 

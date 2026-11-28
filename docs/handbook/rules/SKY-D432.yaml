@@ -1,0 +1,60 @@
+id: SKY-D432
+title: Spring Boot Actuator wildcard exposure
+family: security
+severity: MEDIUM
+languages:
+  - YAML
+  - Java properties
+cwe:
+  - CWE-200
+gate:
+  full: counted
+what_it_is: Skylos reports Spring Boot application configuration that exposes all enabled Actuator
+  endpoints over HTTP.
+  A finding identifies the wildcard in the file that declares it, including profile-specific files.
+why_it_matters: A wildcard can expose management endpoints an application did not intend to serve.
+  The reachable endpoints and data depend on the application's dependencies, access controls
+  and deployment settings.
+flagged_example:
+  language: yaml
+  filename: src/main/resources/application.yaml
+  expect_line: 5
+  code: |
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: "*"
+not_flagged_example:
+  language: yaml
+  filename: src/main/resources/application.yaml
+  code: |
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: "health,info"
+  why: The configuration explicitly lists the two endpoints needed for monitoring.
+how_skylos_decides:
+  - Reads conventional Spring Boot application YAML and properties files, including profile-specific
+    names.
+  - Locates a literal wildcard on management.endpoints.web.exposure.include. A wildcard exclusion
+    in the same configuration takes precedence.
+source_refs:
+  - path: skylos/rules/config/deployment/spring.py
+    symbol: def scan_spring_actuator(
+fix:
+  explanation: List only the Actuator endpoints you need and restrict access to management endpoints
+    in the deployed application.
+false_alarms_and_suppression:
+  misfires:
+    - A management listener may be reachable only on a protected network. Review the exposed
+      endpoints and network policy for each affected profile.
+  suppress:
+    - text: >-
+        Mark the reviewed line with a rule-scoped Skylos ignore for SKY-D432.
+        Record the evidence that justifies the exception.
+      check: inline
+related:
+  - SKY-D433
+  - SKY-D210

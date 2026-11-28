@@ -40,6 +40,9 @@ from skylos.visitors.languages.typescript.angular_sanitizer import (
     check_angular_sanitizer_bypass,
 )
 from skylos.visitors.languages.typescript.library_sinks import check_library_sinks
+from skylos.visitors.languages.typescript.browser_messages import (
+    find_browser_message_issues,
+)
 from skylos.visitors.languages.typescript.express_taint import (
     merge_express_taint_findings,
     safe_redirect_prefix,
@@ -4078,6 +4081,16 @@ def scan_danger(
         is_test_file=is_test_file,
     )
     merge_express_taint_findings(findings, request_taint.findings)
+    if (
+        b"postMessage" in source_bytes
+        or b"onmessage" in source_bytes
+        or (b"message" in source_bytes and b"addEventListener" in source_bytes)
+    ):
+        message_flow = security_flow or build_security_flow(
+            root_node, source_bytes, str(file_path), lang
+        )
+        findings.extend(find_browser_message_issues(message_flow))
+
     if request_taint.safe_sink_lines:
         findings = [
             finding

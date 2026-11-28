@@ -233,6 +233,45 @@ _MODIFIER_WORDS = frozenset(
 )
 _SEVERITY_RANK = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 _UNKNOWN = object()
+_JCA_CIPHER = "javax.crypto.Cipher"
+_JCA_BLOCK_CIPHERS = frozenset(
+    {
+        "AES",
+        "AES_128",
+        "AES_192",
+        "AES_256",
+        "ARIA",
+        "BLOWFISH",
+        "CAMELLIA",
+        "DES",
+        "DESEDE",
+        "IDEA",
+        "RC2",
+        "RC5",
+        "SEED",
+        "SERPENT",
+        "SM4",
+        "TWOFISH",
+    }
+)
+_SERVLET_COOKIES = {
+    "javax.servlet.http.Cookie": "javax.servlet.http.HttpServletResponse",
+    "jakarta.servlet.http.Cookie": "jakarta.servlet.http.HttpServletResponse",
+}
+_KTOR_CALL = "io.ktor.server.application.ApplicationCall"
+_SENSITIVE_COOKIE_NAMES = {
+    "session",
+    "sessionid",
+    "jsessionid",
+    "phpsessid",
+    "sid",
+    "auth",
+    "authtoken",
+    "accesstoken",
+    "refreshtoken",
+    "idtoken",
+}
+_COOKIE_FLAG_SETTERS = {"setSecure": "secure", "setHttpOnly": "httpOnly"}
 
 
 @dataclass
@@ -327,6 +366,7 @@ class KotlinSecurityScanner:
             self._scan_function(function)
         self._scan_android()
         self._scan_file_patterns()
+        self._scan_jca_ciphers()
         return sorted(
             self.findings.values(), key=lambda item: (item["line"], item["rule_id"])
         )
@@ -459,6 +499,8 @@ class KotlinSecurityScanner:
         return functions
 
     def _scan_function(self, function: _Function) -> None:
+        if "addCookie" in self.code or ".cookies" in self.code:
+            self._scan_cookie_flags(function)
         state = _State()
         state.constants = set(self.file_constants)
         owner = function.owner
@@ -1297,6 +1339,198 @@ class KotlinSecurityScanner:
             cwe=cwe,
         )
 
+    def _qualified_native(self, spelling: str) -> str:
+        normalized = re.sub(r"[\s`]", "", spelling)
+        if "." in normalized:
+            return normalized
+        if normalized in self.declared_types:
+            return ""
+        return self.import_bindings.get(normalized, "")
+
+    def _scan_jca_ciphers(self) -> None:
+        if "getInstance" not in self.code or "javax.crypto" not in self.code:
+            return
+        for call in self._calls(self.code, 0):
+            if not call.args:
+                continue
+            if call.receiver:
+                receiver = re.sub(r"[\s`]", "", call.receiver)
+                if (
+                    call.name != "getInstance"
+                    or self._qualified_native(receiver) != _JCA_CIPHER
+                    or self._encoder_shadowed(
+                        receiver.split(".")[0], call.receiver_start
+                    )
+                ):
+                    continue
+            elif (
+                self.import_bindings.get(call.name) != _JCA_CIPHER + ".getInstance"
+                or call.name in self.declared_functions
+                or self._encoder_shadowed(call.name, call.name_start)
+            ):
+                continue
+            transformation = self._literal_value(*call.args[0])
+            if transformation is None:
+                continue
+            components = [item.strip().upper() for item in transformation.split("/")]
+            if (
+                len(components) == 3
+                and components[0] in _JCA_BLOCK_CIPHERS
+                and components[1] == "ECB"
+            ):
+                self._add(
+                    "SKY-D384",
+                    "MEDIUM",
+                    "JCA Cipher selects ECB, which can reveal repeated plaintext blocks. Use an authenticated mode.",
+                    call.name_start,
+                    cwe="CWE-327",
+                )
+
+    def _report_cookie_flags(self, call: _Call, flags: dict) -> None:
+        missing = [flag for flag in ("secure", "httpOnly") if flags.get(flag) is False]
+        if missing:
+            self._add(
+                "SKY-D252",
+                "MEDIUM",
+                "Sensitive response cookie is missing "
+                + " and ".join(missing)
+                + ". Enable both Secure and HttpOnly for authentication cookies.",
+                call.name_start,
+                cwe="CWE-614" if "secure" in missing else "CWE-1004",
+            )
+
+    def _scan_cookie_flags(self, function: _Function) -> None:
+        response_types = {
+            param.name: self._qualified_native(param.type) for param in function.params
+        }
+        cookies: dict[str, tuple[str, dict]] = {}
+        for start, end in _statements(self.lexed, function.start, function.end):
+            statement = self.code[start:end]
+            declaration = _DECL_RE.match(statement)
+            calls = self._calls(statement, start)
+            statement_start = _skip_space(self.code, start)
+            outer = next(
+                (
+                    call
+                    for call in calls
+                    if call.receiver_start == statement_start
+                    and not self.code[call.close_paren + 1 : end].strip()
+                ),
+                None,
+            )
+            if outer is not None:
+                receiver = re.sub(r"\s+", "", outer.receiver)
+                if outer.name == "append" and receiver.endswith(".response.cookies"):
+                    if (
+                        response_types.get(receiver.removesuffix(".response.cookies"))
+                        == _KTOR_CALL
+                    ):
+                        self._check_ktor_cookie(outer)
+                    continue
+                if outer.name == "addCookie" and len(outer.args) == 1:
+                    argument = self.code[slice(*outer.args[0])].strip()
+                    cookie = cookies.get(argument) or self._constructed_cookie(
+                        calls, *outer.args[0]
+                    )
+                    if cookie is not None and response_types.get(receiver) == cookie[0]:
+                        self._report_cookie_flags(outer, cookie[1])
+                        continue
+                if (
+                    receiver in cookies
+                    and outer.name in _COOKIE_FLAG_SETTERS
+                    and len(outer.args) == 1
+                ):
+                    option = self.code[slice(*outer.args[0])].strip()
+                    cookies[receiver][1][_COOKIE_FLAG_SETTERS[outer.name]] = (
+                        _literal_bool(option)
+                    )
+                    continue
+            assignment = re.fullmatch(
+                rf"\s*(?P<name>{_IDENT})\s*\.\s*(?P<flag>secure|isHttpOnly)\s*=\s*(?P<value>.*?)\s*",
+                statement,
+                re.DOTALL,
+            )
+            if assignment and assignment.group("name") in cookies:
+                flag = "secure" if assignment.group("flag") == "secure" else "httpOnly"
+                cookies[assignment.group("name")][1][flag] = _literal_bool(
+                    assignment.group("value")
+                )
+                continue
+            # An unmodelled use can alias, mutate or expire the cookie before
+            # the response is written. Discard its previous known options.
+            for identifier in _IDENT_RE.findall(statement):
+                cookies.pop(identifier.strip("`"), None)
+            if declaration is not None:
+                name = declaration.group("name").strip("`")
+                response_types.pop(name, None)
+                cookie = self._constructed_cookie(calls, start + declaration.end(), end)
+                if cookie is not None:
+                    cookies[name] = cookie
+
+    def _constructed_cookie(self, calls: list[_Call], start: int, end: int):
+        start = _skip_space(self.code, start)
+        for call in calls:
+            if (
+                call.receiver_start != start
+                or len(call.args) != 2
+                or call.close_paren >= end
+                or self.code[call.close_paren + 1 : end].strip()
+            ):
+                continue
+            spelling = call.receiver + "." + call.name if call.receiver else call.name
+            owner = self._qualified_native(spelling)
+            if owner not in _SERVLET_COOKIES:
+                continue
+            root = re.sub(r"[\s`]", "", spelling).split(".")[0]
+            if self._encoder_shadowed(root, call.receiver_start):
+                continue
+            if (
+                _sensitive_cookie(self._literal_value(*call.args[0]))
+                and self._literal_value(*call.args[1]) != ""
+            ):
+                return _SERVLET_COOKIES[owner], {"secure": False, "httpOnly": False}
+        return None
+
+    def _check_ktor_cookie(self, call: _Call) -> None:
+        positions = (
+            "name",
+            "value",
+            "encoding",
+            "maxAge",
+            "expires",
+            "domain",
+            "path",
+            "secure",
+            "httpOnly",
+        )
+        arguments = {}
+        for index, (raw_start, end) in enumerate(
+            _split_spans(self.code, call.open_paren + 1, call.close_paren)
+        ):
+            label = re.match(rf"\s*({_IDENT})\s*=(?![=>])", self.code[raw_start:end])
+            if label:
+                arguments[label.group(1)] = (raw_start + label.end(), end)
+            elif index < len(positions):
+                arguments[positions[index]] = (raw_start, end)
+        if (
+            "name" not in arguments
+            or "value" not in arguments
+            or not _sensitive_cookie(self._literal_value(*arguments["name"]))
+            or self._literal_value(*arguments["value"]) == ""
+            or (
+                "maxAge" in arguments
+                and self.code[slice(*arguments["maxAge"])].strip() in {"0", "0L"}
+            )
+        ):
+            return
+        flags = {
+            flag: _literal_bool(self.code[slice(*arguments[flag])].strip())
+            if flag in arguments
+            else False
+            for flag in ("secure", "httpOnly")
+        }
+        self._report_cookie_flags(call, flags)
+
     def _scan_file_patterns(self) -> None:
         code = self.code
         for match in re.finditer(
@@ -1995,6 +2229,14 @@ class KotlinSecurityScanner:
             else:
                 flat.append((start, end))
         return flat
+
+
+def _literal_bool(text: str) -> bool | None:
+    return {"true": True, "false": False}.get(text)
+
+
+def _sensitive_cookie(name: str | None) -> bool:
+    return name is not None and re.sub(r"[^a-z0-9]", "", name.lower()) in _SENSITIVE_COOKIE_NAMES
 
 
 def scan_kotlin_security(lexed: KotlinSource, file_path: str) -> list[dict]:

@@ -14,9 +14,8 @@ import (
 // and os.Executable() are the program's own inputs and are not sources.
 //
 // Taint is tracked per top-level function, flow-insensitively: a name is
-// tainted if any assignment in the function gives it a tainted value. Same-
-// file functions called with a tainted argument get that parameter tainted,
-// iterated to a fixpoint.
+// tainted if any assignment in the function gives it a tainted value. A
+// resolved call into the same package can propagate taint to its parameters.
 
 type funcTaint struct {
 	tainted map[string]bool
@@ -42,6 +41,9 @@ type funcTaint struct {
 	responseWrites map[string][]respWrite
 	// requests whose URL or host is set from untrusted input (G216 via Do)
 	urlAssigned map[string]bool
+	// A tainted argument may affect only the path on a fixed destination.
+	fixedHostArgs    map[string]string
+	variableHostArgs map[string]bool
 }
 
 type taintKind int
@@ -483,43 +485,61 @@ func collectDefs(body ast.Node) map[string][]ast.Expr {
 	return defs
 }
 
-// computeTaint records, for every call in the file, the taint of the
+// computeTaint records, for every call in the package, the taint of the
 // top-level function it appears in.
-func (a *Analyzer) computeTaint(file *ast.File) {
+func (a *Analyzer) computeTaint(files []*ast.File, buildable map[*ast.File]bool, facts map[*ast.File]*pkgFacts) {
 	a.callTaint = make(map[*ast.CallExpr]*funcTaint)
 	a.assignTaint = make(map[*ast.AssignStmt]*funcTaint)
+	a.literalTaint = make(map[*ast.CompositeLit]*funcTaint)
 	var funcs []*ast.FuncDecl
 	byName := map[string][]*ast.FuncDecl{}
+	packageFunctions := map[string][]*ast.FuncDecl{}
 	scopes := map[*ast.FuncDecl]*funcTaint{}
-	for _, decl := range file.Decls {
-		fd, ok := decl.(*ast.FuncDecl)
-		if !ok || fd.Body == nil {
-			continue
+	owners := map[*ast.FuncDecl]*ast.File{}
+	imports := map[*ast.File]map[string]string{}
+	for _, file := range files {
+		a.imports = fileImports(file)
+		imports[file] = a.imports
+		a.facts = facts[file]
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Body == nil {
+				continue
+			}
+			funcs = append(funcs, fd)
+			owners[fd] = file
+			byName[fd.Name.Name] = append(byName[fd.Name.Name], fd)
+			if fd.Recv == nil && buildable[file] {
+				packageFunctions[fd.Name.Name] = append(packageFunctions[fd.Name.Name], fd)
+			}
+			ft := emptyFuncTaint()
+			ft.defs = collectDefs(fd.Body)
+			ft.multiDefs = collectMultiDefs(fd.Body)
+			ft.declTypes = collectDeclTypes(fd, a.imports)
+			a.seedSourceParams(fd.Type.Params, ft.tainted)
+			a.seedSourceParams(fd.Type.Params, ft.xss)
+			a.seedSourceParams(fd.Type.Params, ft.pathTainted)
+			for name := range ft.tainted {
+				ft.paramTainted[name] = true
+			}
+			scopes[fd] = ft
 		}
-		funcs = append(funcs, fd)
-		byName[fd.Name.Name] = append(byName[fd.Name.Name], fd)
-		ft := emptyFuncTaint()
-		ft.defs = collectDefs(fd.Body)
-		ft.multiDefs = collectMultiDefs(fd.Body)
-		ft.declTypes = collectDeclTypes(fd, a.imports)
-		a.seedSourceParams(fd.Type.Params, ft.tainted)
-		a.seedSourceParams(fd.Type.Params, ft.xss)
-		a.seedSourceParams(fd.Type.Params, ft.pathTainted)
-		for name := range ft.tainted {
-			ft.paramTainted[name] = true
-		}
-		scopes[fd] = ft
 	}
 
 	for round := 0; round < maxTaintRounds; round++ {
 		changed := false
 		for _, fd := range funcs {
+			a.imports = imports[owners[fd]]
+			a.facts = facts[owners[fd]]
 			if a.propagate(fd.Body, scopes[fd]) {
 				changed = true
 			}
 		}
 		for _, fd := range funcs {
 			caller := scopes[fd]
+			file := owners[fd]
+			a.imports = imports[file]
+			a.facts = facts[file]
 			a.scope = caller
 			ast.Inspect(fd.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
@@ -530,6 +550,14 @@ func (a *Analyzer) computeTaint(file *ast.File) {
 					return true // a call into another package
 				}
 				for _, callee := range byName[calleeName(call.Fun)] {
+					if owners[callee] != file {
+						id, direct := call.Fun.(*ast.Ident)
+						if !direct || id.Obj != nil || !buildable[file] || callee.Recv != nil ||
+							len(packageFunctions[id.Name]) != 1 || packageFunctions[id.Name][0] != callee ||
+							localDecl(id.Name, caller) || a.imports[id.Name] != "" {
+							continue
+						}
+					}
 					params := paramNames(callee.Type.Params)
 					for i, arg := range call.Args {
 						idx := i
@@ -543,10 +571,23 @@ func (a *Analyzer) computeTaint(file *ast.File) {
 						if name == "" || name == "_" {
 							continue
 						}
-						if !scopes[callee].tainted[name] && a.isTainted(arg, caller.tainted) {
-							scopes[callee].tainted[name] = true
-							scopes[callee].paramTainted[name] = true
-							changed = true
+						if a.isTainted(arg, caller.tainted) {
+							target := scopes[callee]
+							if !target.tainted[name] {
+								target.tainted[name] = true
+								target.paramTainted[name] = true
+								changed = true
+							}
+							prefix, known := a.leadingLiteral(arg, caller, 0)
+							if known && fixedHostPrefixRE.MatchString(prefix) {
+								if target.fixedHostArgs[name] == "" && !target.variableHostArgs[name] {
+									target.fixedHostArgs[name] = prefix
+									changed = true
+								}
+							} else if !target.variableHostArgs[name] {
+								target.variableHostArgs[name] = true
+								changed = true
+							}
 						}
 						if !scopes[callee].xss[name] && a.isXSSTainted(arg, caller) {
 							scopes[callee].xss[name] = true
@@ -567,8 +608,16 @@ func (a *Analyzer) computeTaint(file *ast.File) {
 		}
 	}
 
-	guardMetadata := a.guardFileMetadata(file)
+	metadata := map[*ast.File]guardFileFacts{}
 	for _, fd := range funcs {
+		file := owners[fd]
+		a.imports = imports[file]
+		a.facts = facts[file]
+		guardMetadata, exists := metadata[file]
+		if !exists {
+			guardMetadata = a.guardFileMetadata(file)
+			metadata[file] = guardMetadata
+		}
 		ft := scopes[fd]
 		a.scope = ft
 		a.collectValueGuards(guardMetadata, fd, ft)
@@ -582,6 +631,9 @@ func (a *Analyzer) computeTaint(file *ast.File) {
 			if assign, ok := n.(*ast.AssignStmt); ok {
 				a.assignTaint[assign] = ft
 			}
+			if literal, ok := n.(*ast.CompositeLit); ok {
+				a.literalTaint[literal] = ft
+			}
 			return true
 		})
 	}
@@ -593,6 +645,7 @@ func emptyFuncTaint() *funcTaint {
 		paramTainted: map[string]bool{}, redirectGuarded: map[token.Pos]map[string]bool{}, xss: map[string]bool{},
 		declTypes: map[string]ast.Expr{}, multiDefs: map[string][]ast.Expr{},
 		responseWrites: map[string][]respWrite{}, urlAssigned: map[string]bool{},
+		fixedHostArgs: map[string]string{}, variableHostArgs: map[string]bool{},
 	}
 }
 
@@ -654,6 +707,11 @@ func (a *Analyzer) leadingLiteral(expr ast.Expr, ft *funcTaint, depth int) (stri
 		}
 	case *ast.Ident:
 		values := ft.defs[e.Name]
+		if len(values) == 0 && !ft.variableHostArgs[e.Name] {
+			if prefix := ft.fixedHostArgs[e.Name]; prefix != "" {
+				return prefix, true
+			}
+		}
 		if len(values) == 1 && values[0] != nil {
 			return a.leadingLiteral(values[0], ft, depth+1)
 		}

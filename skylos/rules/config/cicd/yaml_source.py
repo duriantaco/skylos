@@ -358,3 +358,32 @@ def load_yaml_with_locations(
     finally:
         if loader is not None:
             loader.dispose()
+
+
+def load_yaml_documents_with_locations(
+    text: str, *, max_documents: int = 32
+) -> list[tuple[dict[Any, Any], YamlSource]]:
+    """Parse a bounded stream of YAML mappings while retaining original lines."""
+    if yaml is None or max_documents < 1:
+        return []
+    loader = None
+    documents = []
+    try:
+        loader = _LocationLoader(text, 64, 50_000)
+        for _ in range(max_documents):
+            if not loader.check_node():
+                return documents
+            root = loader.get_node()
+            if not isinstance(root, MappingNode):
+                continue
+            source = YamlSource(root, loader)
+            data = loader.construct_document(root)
+            if isinstance(data, dict):
+                source.data = data
+                documents.append((data, source))
+        return [] if loader.check_node() else documents
+    except Exception:
+        return []
+    finally:
+        if loader is not None:
+            loader.dispose()

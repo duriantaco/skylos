@@ -3,10 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from skylos.analysis.errors import analysis_error_payload
+from skylos.analysis.finding_filter import partition_inline_ignored_findings
 from skylos.core.inline_directives import directive_ignores
 from skylos.core.safe_cache_io import read_text_no_symlink
 
 from .core import SwiftCore, SwiftScanError, descendants
+from .danger import scan_foundation_storage
 
 MAX_SWIFT_SOURCE_BYTES = 2_000_000
 
@@ -27,7 +29,7 @@ class DummyVisitor:
         self.ignore_rules_by_line = {}
 
 
-def _result(config, core=None, visitor=None):
+def _result(config, core=None, visitor=None, danger=None):
     visitor = visitor or DummyVisitor()
     return (
         core.defs if core else [],
@@ -37,7 +39,7 @@ def _result(config, core=None, visitor=None):
         visitor,
         visitor,
         [],
-        [],
+        danger or [],
         [],
         None,
         None,
@@ -46,11 +48,11 @@ def _result(config, core=None, visitor=None):
     )
 
 
-def _metadata(result, source, error=None, ignored=None, rules=None):
+def _metadata(result, source, error=None, ignored=None, rules=None, suppressed=None):
     return (
         *result,
         ignored or set(),
-        [],
+        suppressed or [],
         {},
         {},
         set(),
@@ -124,6 +126,7 @@ def scan_swift_file(
     try:
         core = SwiftCore(str(path), source.encode("utf-8"))
         core.scan()
+        danger = scan_foundation_storage(core) if enable_danger_rules else []
     except (SwiftScanError, RecursionError) as error:
         result = _result(config)
         return _metadata(
@@ -158,10 +161,13 @@ def scan_swift_file(
     )
     ignored, rules = directive_ignores(comments, source.count("\n") + 1)
     visitor.ignore_lines, visitor.ignore_rules_by_line = ignored, rules
-    result = _result(config, core, visitor)
+    danger, suppressed = partition_inline_ignored_findings(
+        danger, "security", ignored, rules
+    )
+    result = _result(config, core, visitor, danger)
     error = _parse_error(str(path), core.root_node)
     return (
-        _metadata(result, source, error, ignored, rules)
+        _metadata(result, source, error, ignored, rules, suppressed)
         if _include_analysis_metadata or error is not None
         else result
     )

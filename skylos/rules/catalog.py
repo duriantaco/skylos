@@ -1508,8 +1508,16 @@ _RULES = (
         finding_type="review",
     ),
     RuleCatalogEntry(
+        "SKY-D380", "SSH host-key verification disabled", "security", "HIGH",
+        finding_type="review", cwe=("CWE-322",),
+    ),
+    RuleCatalogEntry(
         "SKY-D383", "Undersized RSA key generation", "security", "MEDIUM",
         finding_type="review",
+    ),
+    RuleCatalogEntry(
+        "SKY-D384", "ECB mode selected for encryption", "security", "MEDIUM",
+        finding_type="review", cwe=("CWE-327",),
     ),
     RuleCatalogEntry(
         "SKY-D385",
@@ -1575,6 +1583,38 @@ _RULES = (
         "MEDIUM",
         finding_type="review",
         cwe=("CWE-117",),
+    ),
+    RuleCatalogEntry(
+        "SKY-D430", "Obsolete TLS protocol configured", "security", "HIGH",
+        finding_type="review", cwe=("CWE-327",),
+    ),
+    RuleCatalogEntry(
+        "SKY-D431", "Unvalidated browser message origin", "security", "HIGH",
+        finding_type="review", cwe=("CWE-346",),
+    ),
+    RuleCatalogEntry(
+        "SKY-D432", "Spring Boot Actuator wildcard exposure", "security", "MEDIUM",
+        finding_type="review", cwe=("CWE-200",),
+    ),
+    RuleCatalogEntry(
+        "SKY-D433", "Spring Security CSRF disabled", "security", "MEDIUM",
+        finding_type="review", cwe=("CWE-352",),
+    ),
+    RuleCatalogEntry(
+        "SKY-D434", "Sensitive data stored in UserDefaults", "security", "HIGH",
+        finding_type="review", cwe=("CWE-922",),
+    ),
+    RuleCatalogEntry(
+        "SKY-D435", "Unbounded C library write", "security", "MEDIUM",
+        finding_type="review", cwe=("CWE-676",),
+    ),
+    RuleCatalogEntry(
+        "SKY-D436", "Repeated free of a local allocation", "security", "HIGH",
+        finding_type="review", cwe=("CWE-415",),
+    ),
+    RuleCatalogEntry(
+        "SKY-D437", "Local pointer used after free", "security", "HIGH",
+        finding_type="review", cwe=("CWE-416",),
     ),
     RuleCatalogEntry(
         "SKY-D510", "Prototype pollution", "security", "HIGH", finding_type="review"

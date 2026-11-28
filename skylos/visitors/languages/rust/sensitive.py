@@ -277,6 +277,17 @@ _DIGEST_TYPES = {"sha1::Sha1": "sha1", "md5::Md5": "md5"}
 _AES_KEYS = {"aes_gcm::Aes128Gcm": 16, "aes_gcm::Aes256Gcm": 32}
 
 
+def exposed_weak_digest(kind):
+    digest = _DIGEST_TYPES.get(kind)
+    if digest is None:
+        return None
+    return (
+        _DIGESTS[digest],
+        "MEDIUM",
+        f"This public function returns a {digest.upper()} digester. Review callers and choose a secure algorithm for security-sensitive use.",
+    )
+
+
 def repeated_key_kind(initializer):
     """Recognize only fixed AES-sized byte arrays, never their material."""
     if initializer is None or initializer.type != "array_expression":

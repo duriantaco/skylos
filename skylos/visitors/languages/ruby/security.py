@@ -19,6 +19,8 @@ class Value:
     truthy: bool | None = None
     fixed_url_origin: bool = False
     fixed_origin_string: bool = False
+    raw_html: bool = False
+    escaped_html: bool = False
 
 
 UNKNOWN = Value()
@@ -43,7 +45,7 @@ class CommandScan:
         self.findings = []
         self.coverage = {
             "status": "bounded",
-            "supported_rules": ["SKY-D211", "SKY-D212", "SKY-D216"],
+            "supported_rules": ["SKY-D206", "SKY-D211", "SKY-D212", "SKY-D216", "SKY-D226"],
             "checked_sinks": 0,
             "unresolved": [],
             "unsupported_families": [
@@ -65,6 +67,11 @@ class CommandScan:
                     if name in {"ARGV", "STDIN", "$stdin"}:
                         self.source_shadowed.add(name)
         self.provider_uncertain = self._provider_uncertain()
+        self.yaml_scopes = (
+            {scope.body.id: scope for scope in core.scopes if scope.body is not None}
+            if b"unsafe_load" in core.source
+            else {}
+        )
 
     def text(self, node):
         return self.core.text(node)
@@ -399,6 +406,82 @@ class CommandScan:
         self.inspect_operation(node, env)
         self._walk_children(node, env)
 
+    def yaml_scope(self, node):
+        while node is not None:
+            if node.id in self.yaml_scopes:
+                return self.yaml_scopes[node.id]
+            node = node.parent
+        return None
+
+    def inspect_yaml(self, node, env, source, *, require_source=False):
+        if self.text(node.child_by_field_name("method")) != "unsafe_load":
+            return
+        receiver = node.child_by_field_name("receiver")
+        args = node.child_by_field_name("arguments")
+        if (
+            not receiver
+            or receiver.type not in {"constant", "scope_resolution"}
+            or not args
+        ):
+            return
+        if not args.named_children or args.named_children[0].type in {
+            "pair",
+            "hash_splat_argument",
+            "splat_argument",
+        }:
+            return
+        scope = self.yaml_scope(node)
+        if scope is None:
+            return
+        spelling = self.text(receiver)
+        name = self.core._constant(receiver, scope, at=node.start_byte)
+        if name not in {"YAML", "Psych"}:
+            return
+        if name in self.core.classes or name in self.core.alias_bindings:
+            return
+        if not spelling.startswith("::"):
+            lexical = scope.owner
+            while lexical:
+                candidate = f"{lexical}.{spelling.replace('::', '.')}"
+                if (
+                    candidate in self.core.alias_bindings
+                    and candidate not in self.core.class_aliases
+                ):
+                    return
+                lexical = lexical.rpartition(".")[0]
+        value = self.value(args.named_children[0], env)
+        if value.state == "literal":
+            return
+        proven = value.state == "tainted"
+        if require_source and not proven:
+            return
+        self.findings.append(
+            {
+                "rule_id": "SKY-D206",
+                "severity": "HIGH" if proven else "MEDIUM",
+                "message": (
+                    f"Ruby YAML unsafe_load deserializes data from {source}. Use safe_load."
+                    if proven
+                    else "Ruby YAML unsafe_load enables object deserialization. Review input provenance or use safe_load."
+                ),
+                "file": self.core.file_path,
+                "line": node.start_point[0] + 1,
+                "col": node.start_point[1] + 1,
+                "cwe": "CWE-502",
+                "category": "danger",
+                "metadata": {
+                    "security_evidence": {
+                        "evidence_kind": "bounded_ruby_source_flow"
+                        if proven
+                        else "unsafe_api_review",
+                        "assessment": "use" if proven else "review",
+                        "sources": [source] if proven else [],
+                        "analysis_complete": False,
+                    }
+                },
+            }
+        )
+
     def inspect_operation(self, node, env):
         if node.type == "subshell":
             self.coverage["checked_sinks"] += 1
@@ -415,6 +498,7 @@ class CommandScan:
                 elif any(v.state == "unknown" for v in values):
                     self.unknown(node, "unresolved backtick input")
         if node.type == "call":
+            self.inspect_yaml(node, env, "ARGV/STDIN")
             receiver = self.text(node.child_by_field_name("receiver"))
             method = self.text(node.child_by_field_name("method"))
             args = node.child_by_field_name("arguments")
@@ -457,7 +541,11 @@ class CommandScan:
                     fixed_origin_string=all(value.fixed_origin_string for value in values),
                 )
             elif any(value.state == "tainted" for value in values):
-                env[name] = TAINTED
+                env[name] = Value(
+                    "tainted",
+                    raw_html=any(value.raw_html for value in values),
+                    escaped_html=all(value.escaped_html for value in values),
+                )
             else:
                 env[name] = UNKNOWN
 

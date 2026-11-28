@@ -16,9 +16,9 @@ languages that rule covers.
 | Ruby | `.rb` | Partial | Partial | No | tree-sitter |
 | Dart | `.dart` | Yes | Partial | No | tree-sitter, with the `skylos[dart]` extra |
 | C# | `.cs` | Partial | Partial | Partial | Skylos's own lexer |
-| C++ | `.cpp .cc .cxx`, headers for references | Partial | No | No | tree-sitter |
+| C++ | `.cpp .cc .cxx`, plus C++ headers | Partial | Partial | No | tree-sitter |
 | Kotlin | `.kt .kts` | Partial | Partial | No | Skylos's own lexer |
-| Swift | `.swift` | Partial | No | No | tree-sitter |
+| Swift | `.swift` | Partial | Partial | No | tree-sitter |
 | PostgreSQL | `.sql` | Unused CTE chains and unreachable CASE arms | Grants, login roles, routine search paths | Query logic and migration DDL | PostgreSQL parser via `skylos[postgres]` |
 | Shell | `.sh .bash .zsh .ksh .bats` | No | Partial | No | Skylos's own reader |
 
@@ -47,7 +47,10 @@ Terraform files have their own rules.
   supported when the project references `Asp.Versioning.Http` directly.
   Ambiguous overloads, conditional registrations and custom build inputs
   limit matching.
-- **C++** dead code reports only unused file-local functions.
+- **C++** dead code reports only unused file-local functions. Security checks
+  review direct unbounded C library writes and source-visible pointers used or
+  freed after a free in the same straight-line block.
+- **Swift** security checks review sensitive writes to Foundation UserDefaults.
 - **Dart** needs `pip install "skylos[dart]"`, which compiles a parser and so
   needs a C compiler. Without it, `.dart` files are listed as not analysed.
 

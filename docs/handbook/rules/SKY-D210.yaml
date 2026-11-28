@@ -2,7 +2,7 @@ id: SKY-D210
 title: TLS certificate verification turned off
 family: security
 severity: HIGH
-languages: [Python, TypeScript/JavaScript, Go, Rust]
+languages: [Python, TypeScript/JavaScript, Go, Rust, Java, Dart, PHP]
 gate:
   full: counted
 cwe: [CWE-295]
@@ -11,7 +11,8 @@ what_it_is: >-
   TLS (the "S" in HTTPS) checks the server's certificate so a client knows it
   is talking to the real server. SKY-D210 reports code that switches that
   check off, such as `requests.get(url, verify=False)`,
-  `rejectUnauthorized: false` or `InsecureSkipVerify: true`.
+  `rejectUnauthorized: false` or `InsecureSkipVerify: true`. It also covers
+  selected certificate and hostname settings in Java, Dart and PHP.
 
 why_it_matters: >-
   Anyone on the network path, such as a hostile Wi-Fi hotspot, a compromised
@@ -213,7 +214,24 @@ how_skylos_decides:
     verifier that checks anything first is not reported, and neither is code
     under `tests/` or `benches/`, `build.rs`, or `#[cfg(test)]`/`#[test]` code.
 
+  - >-
+    In Java, resolves JDK X.509 trust-manager implementations and reports
+    certificate checks that return without validating. The finding points to
+    the method. It does not establish whether a client uses that manager.
+  - >-
+    In Dart, checks a resolved `dart:io` HttpClient whose effective
+    `badCertificateCallback` accepts every certificate within the tracked scope.
+  - >-
+    In PHP, checks direct cURL option calls and literal option arrays that turn
+    off peer or hostname verification.
+
 source_refs:
+  - path: skylos/visitors/languages/java/transport_policy.py
+    symbol: "def scan_trust_managers("
+  - path: skylos/visitors/languages/dart/tls.py
+    symbol: "def scan_bad_certificate_callbacks("
+  - path: skylos/visitors/languages/php/curl_tls.py
+    symbol: "def disabled_options("
   - path: skylos/rules/danger/calls.py
     symbol: '"requests.*": ('
     note: the Python entries are marked `production_only`.
@@ -289,4 +307,4 @@ false_alarms_and_suppression:
         `[tool.skylos] ignore = ["SKY-D210"]` turns the rule off for the
         whole project.
 
-related: [SKY-D216, SKY-D252, SKY-D346]
+related: [SKY-D216, SKY-D252, SKY-D346, SKY-D380, SKY-D430]

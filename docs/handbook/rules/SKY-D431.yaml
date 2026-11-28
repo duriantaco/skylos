@@ -1,0 +1,75 @@
+id: SKY-D431
+title: Unvalidated browser message origin
+family: security
+severity: HIGH
+languages:
+  - TypeScript/JavaScript
+cwe:
+  - CWE-346
+gate:
+  full: counted
+what_it_is: Skylos reports browser Window messages that send runtime data to a wildcard origin
+  or pass unchecked incoming data to a supported sensitive action.
+  The finding points to the send or the action that uses the message.
+why_it_matters: A runtime value sent to a wildcard origin can reach a page other than the intended
+  recipient. A handler that accepts messages from any origin can also let an unrelated page influence
+  an application action.
+flagged_example:
+  language: typescript
+  filename: src/messages.ts
+  expect_line: 2
+  code: |
+    function notify(accountId: string) {
+      window.parent.postMessage({accountId}, "*");
+    }
+not_flagged_example:
+  language: typescript
+  filename: src/messages.ts
+  code: |
+    function notify(accountId: string) {
+      window.parent.postMessage({accountId}, "https://app.example");
+    }
+  why: The browser delivers messages only when the recipient has the configured origin.
+how_skylos_decides:
+  - For sending, resolves a browser Window receiver and reports runtime data sent with the wildcard
+    targetOrigin.
+  - For receiving, follows event data from a supported Window message handler to a sensitive
+    action. An exact origin check must protect the action on that path.
+source_refs:
+  - path: skylos/visitors/languages/typescript/browser_messages.py
+    symbol: def find_browser_message_issues(
+fix:
+  explanation: Supply the expected target origin when sending. When receiving, check the exact
+    expected origin and validate the message shape before acting on the payload.
+false_alarms_and_suppression:
+  misfires:
+    - A public readiness message can intentionally use a wildcard. Keep private or runtime payloads
+      on a channel constrained to the intended origin.
+  suppress:
+    - text: >-
+        Mark the reviewed line with a rule-scoped Skylos ignore for SKY-D431.
+        Record the evidence that justifies the exception.
+      check: inline
+related:
+  - SKY-D226
+  - SKY-D230
+  - SKY-D216
+more_examples:
+  - flagged:
+      language: typescript
+      filename: src/preferences.ts
+      expect_line: 2
+      code: |
+        window.addEventListener("message", event => {
+          fetch("/preferences", {method: "POST", body: JSON.stringify(event.data)});
+        });
+    not_flagged:
+      language: typescript
+      filename: src/preferences.ts
+      code: |
+        window.addEventListener("message", event => {
+          if (event.origin !== "https://app.example") return;
+          fetch("/preferences", {method: "POST", body: JSON.stringify(event.data)});
+        });
+      why: The request runs only for events from the chosen origin. Validate the payload before
+        using it.

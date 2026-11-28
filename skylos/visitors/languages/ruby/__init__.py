@@ -139,7 +139,10 @@ def scan_ruby_file(
         else ([], {"status": "disabled", "unresolved": []})
     )
     if enable_danger_rules:
-        danger.extend(RailsScan(core, coverage).scan())
+        by_site = {(row["rule_id"], row["line"], row["col"]): row for row in danger}
+        for row in RailsScan(core, coverage).scan():
+            by_site[row["rule_id"], row["line"], row["col"]] = row
+        danger = list(by_site.values())
     visitor.security_coverage = coverage
     comments = (
         [

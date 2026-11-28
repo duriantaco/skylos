@@ -10,6 +10,11 @@ from .security import TAINTED, UNKNOWN, CommandScan
 _FIXED_URL_ORIGIN = re.compile(r"^https?://[A-Za-z0-9.-]+(?::[0-9]+)?/")
 
 _RULES = {
+    "SKY-D226": (
+        "HIGH",
+        "CWE-79",
+        "Rails renders request-controlled data marked as HTML safe. Escape plain text or sanitize allowed markup.",
+    ),
     "SKY-D211": (
         "CRITICAL",
         "CWE-89",
@@ -61,7 +66,7 @@ class RailsScan(CommandScan):
             self.scope = scope
             self.overrides = {
                 method
-                for method in ("params", "request", "URI")
+                for method in ("params", "request", "URI", "helpers", "view_context", "render")
                 if any(f"{owner}#{method}" in self.core.methods for owner in ancestors)
             }
             self.walk(scope.body, {name: UNKNOWN for name in scope.locals})
@@ -164,6 +169,36 @@ class RailsScan(CommandScan):
         return None
 
     def value(self, node, env):
+        if node is not None and node.type == "call":
+            method = self.text(node.child_by_field_name("method"))
+            receiver = node.child_by_field_name("receiver")
+            args = node.child_by_field_name("arguments")
+            if (
+                receiver is not None
+                and method == "html_safe"
+                and (args is None or not args.named_children)
+            ):
+                value = self.value(receiver, env)
+                return replace(
+                    value, raw_html=value.state == "tainted" and not value.escaped_html
+                )
+            if (
+                args is not None
+                and len(args.named_children) == 1
+                and any(
+                    self.framework_accessor(receiver, name, env)
+                    for name in ("helpers", "view_context")
+                )
+            ):
+                if method in {"sanitize", "html_escape", "h"}:
+                    value = self.value(args.named_children[0], env)
+                    return replace(value, raw_html=False, escaped_html=True)
+                if method == "raw":
+                    value = self.value(args.named_children[0], env)
+                    return replace(
+                        value,
+                        raw_html=value.state == "tainted" and not value.escaped_html,
+                    )
         value = super().value(node, env)
         if node is not None and node.type == "string":
             prefix = value.literal
@@ -213,17 +248,45 @@ class RailsScan(CommandScan):
             return "SKY-D216"
         return None
 
+    def yaml_scope(self, node):
+        return self.scope
+
+    def html_argument(self, node, args):
+        if self.text(node.child_by_field_name("method")) != "render" or (
+            "render" in self.overrides
+            or self.text(node.child_by_field_name("receiver")) not in {"", "self"}
+        ):
+            return None
+        options = args.named_children
+        if len(options) == 1 and options[0].type == "hash":
+            options = options[0].named_children
+        html = None
+        for item in options:
+            if item.type != "pair":
+                return None
+            key = self.text(item.child_by_field_name("key")).removeprefix(":")
+            if key in {"body", "plain", "json", "xml", "file", "inline"}:
+                return None
+            if key == "html":
+                html = item.child_by_field_name("value")
+        return html
+
     def inspect_operation(self, node, env):
         if node.type != "call":
             return
         args = node.child_by_field_name("arguments")
         if not args or not args.named_children:
             return
-        rule = self.sink(node)
-        if rule is None:
-            return
+        self.inspect_yaml(node, env, "Rails request parameters", require_source=True)
+        argument = self.html_argument(node, args)
+        if argument is None:
+            rule = self.sink(node)
+            if rule is None:
+                return
+            argument = args.named_children[0]
+        else:
+            rule = "SKY-D226"
         self.coverage["checked_sinks"] += 1
-        argument = args.named_children[0]
         if rule == "SKY-D211" and argument.type in {"pair", "hash"}:
             return  # Active Record binds values in a hash condition.
         if rule == "SKY-D211" and argument.type == "array" and argument.named_children:
@@ -232,7 +295,11 @@ class RailsScan(CommandScan):
         if value.state == "unknown":
             self.unknown(node, "unresolved Rails operation input")
             return
-        if value.state != "tainted" or (rule == "SKY-D216" and value.fixed_url_origin):
+        if (
+            value.state != "tainted"
+            or (rule == "SKY-D216" and value.fixed_url_origin)
+            or (rule == "SKY-D226" and not value.raw_html)
+        ):
             return
         severity, cwe, message = _RULES[rule]
         self.findings.append(
