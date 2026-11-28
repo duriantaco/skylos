@@ -5,7 +5,6 @@
 * ``distutils``/``setuptools`` ``Command`` option parsing reads
   ``user_options``, ``boolean_options``, ``negative_opt`` and ``description``
   from the command class and calls its three lifecycle methods.
-* pydantic reads the inner ``Config`` class of a model or settings class.
 
 Only classes that derive from the named base, directly or through project
 classes, qualify; the same member on any other class stays ordinary code.
@@ -42,20 +41,6 @@ _COMMAND_BASES = frozenset(
 _COMMAND_METHODS = frozenset({"initialize_options", "finalize_options", "run"})
 _COMMAND_ATTRIBUTES = frozenset(
     {"user_options", "boolean_options", "negative_opt", "description"}
-)
-_PYDANTIC_BASES = frozenset(
-    {
-        "pydantic.BaseModel",
-        "pydantic.BaseSettings",
-        "pydantic.main.BaseModel",
-        "pydantic.env_settings.BaseSettings",
-        "pydantic.generics.GenericModel",
-        "pydantic.v1.BaseModel",
-        "pydantic.v1.BaseSettings",
-        "pydantic_settings.BaseSettings",
-        "pydantic_settings.main.BaseSettings",
-        "sqlmodel.SQLModel",
-    }
 )
 
 
@@ -243,8 +228,7 @@ def find_class_protocol_members(
         if bases & _COMMAND_BASES:
             method_names |= _COMMAND_METHODS
             attribute_names |= _COMMAND_ATTRIBUTES
-        reads_config = bool(bases & _PYDANTIC_BASES)
-        if not method_names and not attribute_names and not reads_config:
+        if not method_names and not attribute_names:
             continue
         for child in node.body:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -256,11 +240,6 @@ def find_class_protocol_members(
                             {"method", "function"},
                             child.name,
                         )
-                    )
-            elif isinstance(child, ast.ClassDef):
-                if reads_config and child.name == "Config":
-                    targets.extend(
-                        members(file_key, child.lineno, {"class"}, child.name)
                     )
             elif isinstance(child, (ast.Assign, ast.AnnAssign)):
                 if isinstance(child, ast.Assign):

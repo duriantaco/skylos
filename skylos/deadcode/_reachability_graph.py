@@ -34,6 +34,7 @@ class SourceReference:
     name: str
     target: str | None
     owner: str | None
+    import_only: bool = False
 
 
 @dataclass
@@ -212,7 +213,11 @@ class ReferenceGraph:
         proven: bool = True,
     ) -> None:
         target = binding[1] if binding and binding[0] == "symbol" else None
-        self._record_lines(module.path, node, SourceReference(name, target, owner))
+        self._record_lines(
+            module.path,
+            node,
+            SourceReference(name, target, owner, import_only=import_only),
+        )
         if target is None:
             if not import_only:
                 self.protect(index.by_simple_name.get(name, ()), owner)

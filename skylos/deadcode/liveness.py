@@ -19,6 +19,7 @@ from skylos.deadcode.registration_liveness import (
 )
 from skylos.deadcode._registration_external import find_external_decorator_targets
 from skylos.deadcode.class_protocol_liveness import find_class_protocol_members
+from skylos.deadcode.model_liveness import find_model_members
 from skylos.deadcode.exec_namespace_liveness import find_exec_namespace_targets
 from skylos.deadcode.string_references import (
     find_dynamic_module_attribute_targets,
@@ -171,6 +172,8 @@ def apply_dead_code_liveness(
     _rescue_protocol_overrides(classes, class_methods, report)
     for target in find_class_protocol_members(definitions, parsed_files):
         _mark(target, "protocol_override", report)
+    for target, reason in find_model_members(definitions, parsed_files, root):
+        _mark(target, reason, report)
     _rescue_registration_methods(classes, class_methods, report)
     start_phase(progress_callback, "framework entry points")
     for target, reason in find_framework_entrypoint_targets(
@@ -400,8 +403,10 @@ def _mark(defn: Any, reason: str, report: LivenessReport) -> None:
             ("flask_web_", "django_web_", "ros_launch_", "celery_", "robot_")
         ):
             refs["framework_root"] = 1.0
-        if reason == "unittest_discovery":
+        if reason in {"unittest_discovery", "pytest_hook"}:
             refs["test_entrypoint"] = 1.0
+        elif reason == "pytest_hook_parameter":
+            refs["signature_contract"] = 1.0
     signals = getattr(defn, "framework_signals", None)
     if signals is not None and reason not in signals:
         signals.append(reason)

@@ -21,6 +21,10 @@ _FACTORY_KINDS = {
     "fastapi.APIRouter": "router",
     "fastapi.routing.APIRouter": "router",
 }
+_STARLETTE_FACTORY_KINDS = {
+    "starlette.applications.Starlette": "starlette_app",
+    "starlette.routing.Router": "starlette_router",
+}
 _WILDCARD_PROVIDERS = {
     "fastapi": {
         "FastAPI",
@@ -69,8 +73,6 @@ _HOOK_METHODS = {
 _FOREIGN_FACTORIES = {
     "flask.Flask",
     "flask.Blueprint",
-    "starlette.applications.Starlette",
-    "starlette.routing.Router",
     "aiohttp.web.Application",
     "sanic.Sanic",
 }
@@ -92,6 +94,7 @@ class FastAPIModule:
     tree: ast.Module
     bindings: dict[str, Any] = field(default_factory=dict)
     factory_aliases: dict[str, str] = field(default_factory=dict)
+    assignment_sites: dict[str, tuple[Any, int]] = field(default_factory=dict)
     mentions_fastapi: bool = False
     started: bool = False
     finished: bool = False
@@ -161,6 +164,10 @@ class FastAPILivenessReport:
     unhandled_decorators: dict[Key, set[str]] = field(default_factory=dict)
     decorator_sites: set[tuple[str, int, int, int]] = field(default_factory=set)
     decorator_nodes: dict[Key, list[ast.AST]] = field(default_factory=dict)
+    launch_roots: set[Key] = field(default_factory=set)
+    launch_bindings: set[tuple[str, int, str]] = field(default_factory=set)
+    registration_argument_sites: set[tuple[Path, int, int]] = field(default_factory=set)
+    discarded_argument_refs: list[tuple[str, str]] = field(default_factory=list)
     project: Any = None
     complete: bool = True
     incomplete_reason: str | None = None
@@ -229,6 +236,10 @@ class FastAPIProject:
         self.report.roots.clear()
         self.report.callback_parameters.clear()
         self.report.injected_parameters.clear()
+        self.report.launch_roots.clear()
+        self.report.launch_bindings.clear()
+        self.report.registration_argument_sites.clear()
+        self.report.discarded_argument_refs.clear()
         return self.report
 
     def _limit(self, reason):
@@ -421,16 +432,21 @@ class FastAPIProject:
         return None
 
     def _factory_kind(self, name):
-        if "fastapi" in self.shadowed:
-            return None
         for owner in self._mro(name) or ():
-            if owner in _FACTORY_KINDS:
+            if owner in _FACTORY_KINDS and "fastapi" not in self.shadowed:
                 return _FACTORY_KINDS[owner]
+            if owner in _STARLETTE_FACTORY_KINDS and "starlette" not in self.shadowed:
+                return _STARLETTE_FACTORY_KINDS[owner]
         return None
 
     def method_available(self, object_key, method):
         obj = self.objects.get(object_key)
-        if obj is None or obj.kind not in {"app", "router"}:
+        if obj is None or (
+            obj.kind not in {"app", "router"}
+            and not (
+                obj.kind in {"starlette_app", "starlette_router"} and method == "mount"
+            )
+        ):
             return False
         if object_key + "." + method in self.attribute_values:
             return False
@@ -440,16 +456,18 @@ class FastAPIProject:
             info = self.classes.get(owner)
             if info is not None and method in info.members:
                 return False
-            if owner in _FACTORY_KINDS:
+            if owner in _FACTORY_KINDS or owner in _STARLETTE_FACTORY_KINDS:
                 return True
         return False
 
     def _candidate_receiver(self, receiver, module):
         obj = self.objects.get(receiver)
         if obj is not None:
-            return obj.kind != "foreign" and (
-                obj.kind in {"app", "router", "unknown"} or module.mentions_fastapi
-            )
+            return obj.kind not in {
+                "foreign",
+                "starlette_app",
+                "starlette_router",
+            } and (obj.kind in {"app", "router", "unknown"} or module.mentions_fastapi)
         return module.mentions_fastapi and receiver is None
 
     def collect_module(self, module):
@@ -700,6 +718,11 @@ class FastAPIProject:
                     canonical, statement.value, module, captured
                 )
                 bindings[target.id] = value if value is not None else canonical
+                if owner is None and executed and not uncertain:
+                    module.assignment_sites[target.id] = (
+                        bindings[target.id],
+                        target.lineno,
+                    )
                 kind = self._factory_kind(value)
                 if kind:
                     module.factory_aliases.setdefault(target.id, kind)
@@ -754,6 +777,10 @@ class FastAPIProject:
                     and isinstance(statement.test, ast.Compare)
                     and isinstance(statement.test.left, ast.Name)
                     and statement.test.left.id == "__name__"
+                    and len(statement.test.ops) == 1
+                    and isinstance(statement.test.ops[0], ast.Eq)
+                    and isinstance(statement.test.comparators[0], ast.Constant)
+                    and statement.test.comparators[0].value == "__main__"
                 ):
                     self._suite(
                         statement.body, bindings, module, executed, owner, uncertain
@@ -1049,7 +1076,7 @@ class FastAPIProject:
                 key, object_kind, target, expression, module, executed, uncertain
             )
             self.objects[key] = obj
-            if kind:
+            if kind in {"app", "router"}:
                 module.mentions_fastapi = True
             if kind or syntactic_kind:
                 self.constructors.append(
@@ -1065,7 +1092,7 @@ class FastAPIProject:
                         proven=bool(kind),
                     )
                 )
-            if kind == "app" and executed:
+            if kind in {"app", "starlette_app"} and executed:
                 self.active_objects.add(key)
             if target in self.classes:
                 init = self._class_member(target, "__init__")
@@ -1255,7 +1282,9 @@ class FastAPIProject:
             if current in visited:
                 continue
             visited.add(current)
-            children = conditional.get(current, set()) | self.includes.get(current, set())
+            children = conditional.get(current, set()) | self.includes.get(
+                current, set()
+            )
             for child in children:
                 self._step()
                 if child in self.active_objects or child in possible:
@@ -1264,15 +1293,38 @@ class FastAPIProject:
                 pending.append(child)
         return possible
 
-    def collect(self):
+    def invoke_launch_factory(self, value, module):
+        info = self.callable(value)
+        if info is None:
+            return None
+        call = ast.Call(func=ast.Name(id=info.node.name), args=[], keywords=[])
+        result = self._invoke(value, call, module.bindings, module, True, None, False)
+        if isinstance(result, _Invoked):
+            obj = self.objects.get(result.value)
+            if obj is not None and obj.kind in {
+                "app",
+                "starlette_app",
+                "starlette_router",
+            }:
+                self.active_objects.add(obj.key)
+                return info.key
+        return None
+
+    def collect(self, *, closed_world=False):
         for module in self.modules.values():
             self.collect_module(module)
+        from skylos.deadcode.asgi_launch_liveness import collect_asgi_launches
+
+        collect_asgi_launches(self)
         pending = list(self.active_objects)
         while pending:
             for child in self.includes.get(pending.pop(), ()):
                 if child not in self.active_objects:
                     self.active_objects.add(child)
                     pending.append(child)
+        from skylos.deadcode.starlette_liveness import collect_starlette_liveness
+
+        collect_starlette_liveness(self, closed_world=closed_world)
         has_app = any(
             obj.kind == "app" and obj.executed for obj in self.objects.values()
         )
@@ -1311,9 +1363,9 @@ class FastAPIProject:
         return self.report
 
 
-def collect_fastapi_liveness(definitions, parsed_files, root):
+def collect_fastapi_liveness(definitions, parsed_files, root, *, closed_world=False):
     project = FastAPIProject(definitions, parsed_files, root)
     try:
-        return project.collect()
+        return project.collect(closed_world=closed_world)
     except FastAPIAnalysisLimit:
         return project.report

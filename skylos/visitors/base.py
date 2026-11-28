@@ -22,23 +22,9 @@ from skylos.visitors.registration_decorators import (
 from skylos.visitors.framework_aware import is_registration_decorator
 from typing import Any, Optional, Union
 
-# SQLAlchemy / SQLModel declarative attribute constructors. The ORM reads
-# class attributes built by these through its metaclass, not by name.
+# Django field constructors used by the class metaclass.
 ORM_DECLARATIVE_CONSTRUCTORS = frozenset(
     {
-        "Relationship",
-        "relationship",
-        "RelationshipProperty",
-        "mapped_column",
-        "Column",
-        "column_property",
-        "association_proxy",
-        "backref",
-        "synonym",
-        "composite",
-        "deferred",
-        "dynamic_loader",
-        "query_expression",
         # Django / django-modelcluster / django-taggit relations
         "ForeignKey",
         "ParentalKey",
@@ -882,7 +868,7 @@ class Definition:
         "why_confidence_reduced",
         "_attr_name_ref_count",
         "_framework_decorator_ref_count",
-        "_fastapi_inactive",
+        "_registration_decorator_inactive",
         "conditional_import",
         "suppression_code",
         "folder_role",
@@ -940,7 +926,7 @@ class Definition:
         self.why_confidence_reduced = []
         self._attr_name_ref_count = 0
         self._framework_decorator_ref_count = 0
-        self._fastapi_inactive = False
+        self._registration_decorator_inactive = False
         self.conditional_import = False
         self.suppression_code = None
         self.folder_role = None
@@ -2473,21 +2459,8 @@ class Visitor(ast.NodeVisitor):
                 # are stored values, so an unreferenced member is not dead.
                 is_enum = True
             if base_name in (
-                "Base",
                 "Model",
-                "DeclarativeBase",
-                "SQLModel",
                 "Document",
-            ):
-                is_orm_model = True
-
-        for keyword in node.keywords:
-            # ``class Item(ItemBase, table=True)``: a SQLModel table model,
-            # whatever its (often local) base class is called.
-            if (
-                keyword.arg == "table"
-                and isinstance(keyword.value, ast.Constant)
-                and keyword.value.value is True
             ):
                 is_orm_model = True
 

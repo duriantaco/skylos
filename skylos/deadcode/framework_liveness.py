@@ -19,6 +19,17 @@ _RUNPYTHON = {
     "django.db.migrations.RunPython",
     "django.db.migrations.operations.RunPython",
 }
+_CELERY_APPS = {"celery.Celery", "celery.app.base.Celery"}
+_CELERY_TASK_BASES = {"celery.Task", "celery.app.task.Task", "celery.app.task.BaseTask"}
+_CELERY_REGISTER_METHODS = {app + ".register_task" for app in _CELERY_APPS}
+_CELERY_TASK_CALLBACKS = {
+    "run": None,
+    "before_start": 4,
+    "on_success": 5,
+    "on_retry": 6,
+    "on_failure": 6,
+    "after_return": 7,
+}
 
 
 def find_framework_entrypoint_targets(
@@ -49,6 +60,8 @@ def find_framework_entrypoint_targets(
         scanner = _FrameworkScanner(module, index)
         for definition, reason in scanner.collect():
             found[(id(definition), reason)] = (definition, reason)
+    for definition, reason in index.celery_task_targets():
+        found[(id(definition), reason)] = (definition, reason)
     from skylos.deadcode.web_framework_liveness import find_web_framework_targets
 
     routes = counted_items(
@@ -65,6 +78,10 @@ def find_framework_entrypoint_targets(
 
     start_phase(progress_callback, "ROS launch registrations")
     for definition, reason in find_ros_launch_targets(index, parsed, root):
+        found[(id(definition), reason)] = (definition, reason)
+    from skylos.deadcode.pytest_plugin_liveness import find_pytest_hook_targets
+
+    for definition, reason in find_pytest_hook_targets(index, parsed, root):
         found[(id(definition), reason)] = (definition, reason)
     return list(found.values())
 
@@ -216,6 +233,8 @@ class _DefinitionIndex:
         self.all_by_location = defaultdict(list)
         self._backend_modules = list(parsed)
         self._backend_exports = None
+        self.celery_scanners = {}
+        self.celery_task_registrations = []
         for module in parsed:
             path = self._resolve_path(module.path)
             self.modules[path] = _module_name(path, root)
@@ -276,6 +295,56 @@ class _DefinitionIndex:
                         for item in self.by_name[definition.name]
                         if item is not definition
                     ]
+        self.module_names = set(self.modules.values())
+        self.has_celery = "celery" not in self.shadowed and any(
+            name.split(".", 1)[0] == "celery" for _, name in self.imports
+        )
+
+    def celery_task_targets(self):
+        for (
+            registrar,
+            receiver,
+            task,
+            instance,
+            overrides,
+        ) in self.celery_task_registrations:
+            if not receiver.startswith("@celery:"):
+                app = self._celery_binding(receiver)
+                if (
+                    app is None
+                    or not app[1].startswith("@celery:")
+                    or "." in app[1]
+                    or app[1] + ".register_task" in app[0].task_registration_overrides
+                    or app[0].task_registration_overrides & _CELERY_REGISTER_METHODS
+                ):
+                    continue
+            owner, task_class = registrar, task
+            if task not in registrar.task_classes:
+                imported = self._celery_binding(task)
+                if imported is None:
+                    continue
+                owner, task_class = imported
+            source_overrides = (
+                overrides
+                if owner is registrar
+                else owner.task_member_overrides | overrides
+            )
+            yield from owner._task_targets(
+                task_class, source_overrides, aliases=(task, instance)
+            )
+
+    def _celery_binding(self, name):
+        seen = set()
+        while isinstance(name, str) and name not in seen and len(seen) < 24:
+            seen.add(name)
+            module, _, export = name.rpartition(".")
+            scanner = self.celery_scanners.get(module)
+            if scanner is None:
+                return None
+            name = scanner.bindings.get(export)
+            if name and name.startswith("@"):
+                return scanner, name
+        return None
 
     def _resolve_path(self, path: Path) -> Path:
         cached = self._resolved_paths.get(path)
@@ -388,9 +457,15 @@ class _FrameworkScanner:
         self.loaded_backend_paths: dict[str, str | None] = {}
         self.possible_backend_paths: set[str] = set()
         self.bindings: dict[str, str | None] = {}
+        self.task_classes = {}
+        self.task_instances = {}
+        self.task_member_overrides = set()
+        self.task_registration_overrides = set()
 
     def collect(self):
         self._suite(self.parsed.tree.body, self.bindings)
+        if self.index.has_celery:
+            self.index.celery_scanners[self.index.modules[self.path]] = self
         for app, (value, bindings) in self.routes.items():
             if app not in self.bindings.values():
                 continue
@@ -403,7 +478,11 @@ class _FrameworkScanner:
                 definition = self.index.callable(name)
                 if definition is not None:
                     self.targets.append((definition, "celery_task_router"))
-                    self._parameters(definition, 4, "celery_task_router", celery=True)
+                    self.targets.extend(
+                        self._parameter_targets(
+                            definition, 4, "celery_task_router", celery=True
+                        )
+                    )
         paths = {path for path in self.loaded_backend_paths.values() if path} | {
             path
             for app, path in self.backend_paths.items()
@@ -460,7 +539,9 @@ class _FrameworkScanner:
                     if ready is not None:
                         self._ready_imports(ready.body)
                 self._suite(statement.body, bindings.copy(), class_body=True)
-                bindings[statement.name] = None
+                bindings[statement.name] = (
+                    self._task_class(statement, bindings) if not class_body else None
+                )
                 continue
             if isinstance(statement, (ast.Assign, ast.AnnAssign)):
                 value = statement.value
@@ -584,6 +665,18 @@ class _FrameworkScanner:
 
     def _assignment(self, target, value, bindings, class_body):
         qualified = _qualified(target, bindings)
+        if (
+            self.index.has_celery
+            and not class_body
+            and isinstance(target, ast.Attribute)
+            and qualified
+        ):
+            if qualified.endswith(".register_task"):
+                self.task_registration_overrides.add(qualified)
+            if qualified.startswith(
+                ("@celery_task_class:", "@celery_task:")
+            ) or self._project_export(qualified.rpartition(".")[0]):
+                self.task_member_overrides.add(qualified)
         if qualified is None and isinstance(target, ast.Subscript) and not class_body:
             container = _qualified(target.value, bindings)
             if (
@@ -610,11 +703,13 @@ class _FrameworkScanner:
                 self._invalidate(name, bindings)
             return
         resolved = _qualified(value, bindings)
+        constructor = (
+            _qualified(value.func, bindings) if isinstance(value, ast.Call) else None
+        )
         is_celery = (
             not class_body
             and "celery" not in self.index.shadowed
-            and isinstance(value, ast.Call)
-            and _qualified(value.func, bindings) == "celery.Celery"
+            and constructor in _CELERY_APPS
         )
         self._invalidate(target.id, bindings)
         if is_celery:
@@ -624,7 +719,128 @@ class _FrameworkScanner:
                     self.routes[resolved] = (keyword.value, bindings.copy())
                 elif keyword.arg in {"backend", "result_backend"}:
                     self._record_backend_path(resolved, keyword.value)
+        elif (
+            self.index.has_celery
+            and not class_body
+            and (constructor in self.task_classes or self._project_export(constructor))
+        ):
+            resolved = f"@celery_task:{self.path}:{value.lineno}:{value.col_offset}"
+            self.task_instances[resolved] = constructor
         bindings[target.id] = resolved
+
+    def _project_export(self, name):
+        return name is not None and name.rpartition(".")[0] in self.index.module_names
+
+    def _task_class(self, statement, bindings):
+        if not self.index.has_celery or statement.decorator_list:
+            return None
+        bases = [_qualified(base, bindings) for base in statement.bases]
+        if not any(
+            base in _CELERY_TASK_BASES
+            or base in self.task_classes
+            or self._project_export(base)
+            for base in bases
+        ):
+            return None
+        selected = (
+            f"@celery_task_class:{self.path}:{statement.lineno}:{statement.col_offset}"
+        )
+        members = {}
+        for member in statement.body:
+            if isinstance(member, ast.AnnAssign) and member.value is None:
+                continue
+            for name in _bound_names(member) & {"name", *_CELERY_TASK_CALLBACKS}:
+                members[name] = self, selected, member
+        self.task_classes[selected] = bases, members
+        return selected
+
+    def _task_members(self, task_class, seen=frozenset()):
+        state = self.task_classes.get(task_class)
+        if state is None or task_class in seen or len(seen) >= 24:
+            return None
+        bases, members = state
+        for base in bases:
+            if base in _CELERY_TASK_BASES:
+                return members
+            target = (
+                (self, base)
+                if base in self.task_classes
+                else self.index._celery_binding(base)
+            )
+            if target is not None:
+                owner, parent = target
+                inherited = owner._task_members(parent, seen | {task_class})
+                if inherited is not None:
+                    return inherited | members if len(bases) == 1 else members
+        return None
+
+    def _register_task(self, call, bindings):
+        function = _qualified(call.func, bindings)
+        if not function:
+            return
+        receiver = function.rpartition(".")[0]
+        local_app = receiver.startswith("@celery:") and "." not in receiver
+        if (
+            not (local_app or self._project_export(receiver))
+            or function in self.task_registration_overrides
+            or self.task_registration_overrides & _CELERY_REGISTER_METHODS
+        ):
+            return
+        argument = (
+            call.args[0]
+            if call.args
+            else next(
+                (item.value for item in call.keywords if item.arg == "task"), None
+            )
+        )
+        instance = _qualified(argument, bindings)
+        task_class = (
+            _qualified(argument.func, bindings)
+            if isinstance(argument, ast.Call)
+            else self.task_instances.get(instance)
+        )
+        if task_class in self.task_classes or self._project_export(task_class):
+            self.index.celery_task_registrations.append(
+                (
+                    self,
+                    receiver,
+                    task_class,
+                    instance,
+                    frozenset(self.task_member_overrides),
+                )
+            )
+
+    def _task_targets(self, task_class, overrides, *, aliases):
+        members = self._task_members(task_class) or {}
+        for name, (source, owner, node) in members.items():
+            if any(
+                f"{value}.{name}" in overrides
+                for value in (owner, task_class, *aliases)
+            ) or (
+                source is not self and f"{owner}.{name}" in source.task_member_overrides
+            ):
+                continue
+            kind = "variable" if name == "name" else "method"
+            if kind == "method" and not isinstance(node, ast.FunctionDef):
+                continue
+            candidates = self.index.all_by_location.get((source.path, node.lineno), ())
+            definition = next(
+                (
+                    item
+                    for item in candidates
+                    if item.type == kind and item.simple_name == name
+                ),
+                None,
+            )
+            if definition is not None:
+                reason = (
+                    "celery_task_name" if name == "name" else "celery_task_callback"
+                )
+                yield definition, reason
+                if kind == "method":
+                    yield from self._parameter_targets(
+                        definition, _CELERY_TASK_CALLBACKS[name], reason
+                    )
 
     def _conf_update(self, call, bindings):
         qualified = _qualified(call.func, bindings)
@@ -660,11 +876,24 @@ class _FrameworkScanner:
 
     def _calls(self, expression, bindings):
         for node, definite, shadowed in _backend_access_nodes(expression):
-            if not isinstance(node, ast.Attribute) or node.attr != "backend":
+            accesses_backend = (
+                isinstance(node, ast.Attribute) and node.attr == "backend"
+            )
+            registers_task = (
+                self.index.has_celery
+                and definite
+                and isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "register_task"
+            )
+            if not (accesses_backend or registers_task):
                 continue
             local = {
                 name: value for name, value in bindings.items() if name not in shadowed
             }
+            if registers_task:
+                self._register_task(node, local)
+                continue
             qualified = _qualified(node, local)
             if qualified and qualified.startswith("@celery:"):
                 app, _, attribute = qualified.partition(".")
@@ -691,15 +920,23 @@ class _FrameworkScanner:
             for callback in callbacks:
                 definition = self.index.callable(_qualified(callback, bindings))
                 if definition is not None:
-                    self._parameters(definition, 2, "django_migration_callback")
+                    self.targets.extend(
+                        self._parameter_targets(
+                            definition, 2, "django_migration_callback"
+                        )
+                    )
 
-    def _parameters(self, definition, count, reason, *, celery=False):
+    def _parameter_targets(self, definition, count, reason, *, celery=False):
         node = getattr(definition, "node", None)
         if not isinstance(node, ast.FunctionDef):
             return
         positional = [*node.args.posonlyargs, *node.args.args]
         supplied = positional[:count]
-        if len(positional) < count and node.args.vararg is not None:
+        if count is None:
+            supplied.extend(node.args.kwonlyargs)
+            if node.args.kwarg is not None:
+                supplied.append(node.args.kwarg)
+        if (count is None or len(positional) < count) and node.args.vararg is not None:
             supplied.append(node.args.vararg)
         if celery:
             supplied.extend(
@@ -712,7 +949,7 @@ class _FrameworkScanner:
         parameters = self.index.parameters.get(definition.name, {})
         for argument in supplied:
             if argument.arg in parameters:
-                self.targets.append((parameters[argument.arg], reason))
+                yield parameters[argument.arg], reason
 
     def _ready_imports(self, statements) -> bool:
         """Collect reachable imports; return whether this suite can continue."""

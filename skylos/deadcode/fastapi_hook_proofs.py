@@ -392,7 +392,11 @@ class _Hooks:
                     plain.value, callback.bindings, callback.module
                 )
                 instance = self.project.objects.get(receiver)
-                if instance is not None and instance.kind == "foreign":
+                if instance is not None and instance.kind in {
+                    "foreign",
+                    "starlette_app",
+                    "starlette_router",
+                }:
                     continue
                 if isinstance(receiver, str) and receiver.split(".", 1)[0] in {
                     "flask",
@@ -439,9 +443,15 @@ def collect_fastapi_hooks(project, report):
     """Add callback roots and exact injected-signature parameter identities."""
     hooks = _Hooks(project, report)
     for event in project.constructors:
-        hooks.constructor(_conditional_event(project, report, event))
+        if event.kind in {"app", "router"}:
+            hooks.constructor(_conditional_event(project, report, event))
     for event in project.calls:
-        hooks.call(_conditional_event(project, report, event))
+        instance = project.objects.get(event.receiver)
+        if instance is None or instance.kind not in {
+            "starlette_app",
+            "starlette_router",
+        }:
+            hooks.call(_conditional_event(project, report, event))
     for event in project.decorators:
         hooks.decorator(_conditional_event(project, report, event))
     hooks.syntactic_decorator_candidates()

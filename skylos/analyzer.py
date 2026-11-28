@@ -3051,7 +3051,15 @@ class Skylos:
             from skylos.deadcode.reachability import analyze_python_reachability
 
             report = analyze_python_reachability(
-                self.defs, files, self._project_root, module_names=module_names
+                self.defs,
+                files,
+                self._project_root,
+                module_names=module_names,
+                ignored_load_sites=getattr(
+                    getattr(self, "_fastapi_liveness_report", None),
+                    "registration_argument_sites",
+                    (),
+                ),
             )
             if not report.complete:
                 return
@@ -5984,8 +5992,24 @@ class Skylos:
         from skylos.deadcode.fastapi_evidence import reconcile_fastapi_evidence
 
         self._fastapi_liveness_report = reconcile_fastapi_evidence(
-            self.defs, file_contexts, self.refs, files, root
+            self.defs,
+            file_contexts,
+            self.refs,
+            files,
+            root,
+            closed_world=(
+                not analysis_errors and self._has_complete_python_reachability_scope()
+            ),
         )
+
+        from skylos.deadcode.web_framework_liveness import (
+            reconcile_flask_blueprint_decorators,
+        )
+
+        if not analysis_errors and self._has_complete_python_reachability_scope():
+            reconcile_flask_blueprint_decorators(
+                self.defs, file_contexts, self.refs, files, root
+            )
 
         for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
             self._global_dependency_alias_names.update(
