@@ -159,6 +159,51 @@ more_examples:
         The string before the request value is a full `scheme://host/`
         prefix, so the Go engine treats the host as fixed.
 
+  - flagged:
+      language: go
+      expect_file: retrieve.go
+      expect_line: 6
+      files:
+        - filename: handler.go
+          code: |
+            package app
+
+            import "net/http"
+
+            func handle(r *http.Request) {
+                retrieve(r.FormValue("resource"))
+            }
+        - &retrieve_example
+          filename: retrieve.go
+          code: |
+            package app
+
+            import "net/http"
+
+            func retrieve(endpoint string) {
+                http.Get(endpoint)
+            }
+    not_flagged:
+      language: go
+      files:
+        - filename: handler.go
+          code: |
+            package app
+
+            import (
+                "net/http"
+                "net/url"
+            )
+
+            func handle(r *http.Request) {
+                id := url.PathEscape(r.FormValue("resource"))
+                retrieve("https://catalog.example/items/" + id)
+            }
+        - *retrieve_example
+      why: >-
+        The input only fills the path on the fixed catalog host. The Go engine
+        follows the argument into the helper in the same package.
+
 how_skylos_decides:
   - >-
     In Python, finds HTTP calls: `get`, `post`, `put`, `delete`, `head`,
@@ -194,8 +239,10 @@ how_skylos_decides:
     is recognised as an axios call. Go (reported by the Go
     engine as SKY-G216): request or network input in `http.Get`, `http.Post`,
     `http.NewRequest`, an `http.Client` call or a reverse proxy target,
-    unless a literal prefix fixes the host. Java, Kotlin, C#, PHP, Dart and
-    shell scripts have their own checks with the same idea.
+    unless a literal prefix fixes the host. The Go engine can follow a
+    directly resolved function call into another file in the same buildable
+    package. Java, Kotlin, C#, PHP, Dart and shell scripts have their own checks
+    with the same idea.
   - >-
     Rust: the URL of `reqwest::get`, of `get`/`post`/.../`request(method,
     url)` on a reqwest, reqwest-middleware, awc, ureq, surf, isahc or hyper

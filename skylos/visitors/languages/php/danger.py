@@ -11,6 +11,8 @@ from skylos.rules.danger.danger_web.html_context import (
 )
 
 from . import models
+from .curl_tls import KNOWN_OPTIONS as CURL_TLS_OPTIONS
+from .curl_tls import disabled_options
 
 _SUPERGLOBALS = {
     "$_GET",
@@ -106,6 +108,7 @@ _SEVERITY = {
 }
 _CWE = {
     "SKY-D201": "CWE-95",
+    "SKY-D210": "CWE-295",
     "SKY-D203": "CWE-78",
     "SKY-D204": "CWE-502",
     "SKY-D211": "CWE-89",
@@ -668,12 +671,14 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
 
     static_classes: dict[int, str] = {}
     functions: dict[int, str] = {}
+    curl_constant_shadows: dict[int, set[str]] = {}
     catch_all_handlers: set[int] = set()
 
     def index_namespace(nodes, namespace: str) -> None:
         aliases = {}
         declared = set()
         declared_functions = set()
+        declared_curl_constants = set()
 
         def declarations(node):
             if node.type in {
@@ -690,6 +695,12 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
 
         for node in nodes:
             declarations(node)
+            if node.type == "const_declaration":
+                for element in node.named_children:
+                    if element.type == "const_element" and element.named_children:
+                        constant = text(element.named_children[0])
+                        if constant in CURL_TLS_OPTIONS:
+                            declared_curl_constants.add(constant)
             if node.type != "namespace_use_declaration":
                 continue
             group = child_by_type(node, "namespace_use_group")
@@ -698,11 +709,14 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
                 prefix = child_by_type(node, "namespace_name")
             clauses = (group or node).named_children
             for clause in clauses:
-                if (
-                    clause.type != "namespace_use_clause"
-                    or text(clause).startswith("const ")
-                    or text(node).startswith("use const ")
-                ):
+                if clause.type != "namespace_use_clause":
+                    continue
+                if text(clause).startswith("const ") or text(node).startswith("use const "):
+                    names = clause.named_children
+                    if names:
+                        constant = text(names[-1]).rpartition("\\")[2] or text(names[-1])
+                        if constant in CURL_TLS_OPTIONS:
+                            declared_curl_constants.add(constant)
                     continue
                 if text(clause).startswith("function ") or text(node).startswith(
                     "use function "
@@ -777,6 +791,8 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
                     # name without a namespace-local definition or import.
                     resolved = first
                 functions[node.start_byte] = resolved
+                if resolved in {"curl_setopt", "curl_setopt_array"} and declared_curl_constants:
+                    curl_constant_shadows[node.start_byte] = declared_curl_constants
             elif node.type == "catch_clause":
                 types = node.child_by_field_name("type")
                 if types is not None:
@@ -2102,6 +2118,17 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
         return False
 
     def check_call_sinks(node, tainted_vars: dict[str, set[str]]) -> None:
+        options = disabled_options(
+            node, functions.get(node.start_byte, ""), text, unwrap,
+            curl_constant_shadows.get(node.start_byte, frozenset()),
+        )
+        if options:
+            add_finding(
+                "SKY-D210",
+                f"PHP cURL disables TLS verification with {', '.join(sorted(options))}. "
+                "Enable peer verification and use hostname verification mode 2.",
+                node,
+            )
         args = call_arguments(node)
         arg = first_argument(node)
         if node.type == "scoped_call_expression" and arg is not None:

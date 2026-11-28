@@ -20,6 +20,12 @@ class Rule:
     message: str
 
 
+XML_READER_POLICY = Rule(
+    "SKY-D236",
+    "HIGH",
+    "XmlReader receives settings that parse DTDs with a URL resolver. "
+    "Prohibit DTD processing or keep the XML resolver null.",
+)
 COMMAND = Rule(
     "SKY-D212",
     "CRITICAL",

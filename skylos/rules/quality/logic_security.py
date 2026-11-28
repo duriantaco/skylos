@@ -8,6 +8,7 @@ from pathlib import Path
 
 from skylos.rules import secret_shapes
 from skylos.rules.base import SkylosRule
+from skylos.rules.danger.tls_provenance import _Bindings, _safe_native_name
 from skylos.rules.quality._function_defaults import (
     annotation_accepts_ellipsis,
     ellipsis_type_bindings,
@@ -3877,11 +3878,74 @@ def _is_none_constant(node: ast.AST) -> bool:
 class MissingNetworkTimeoutRule(SkylosRule):
     rule_id = "SKY-L031"
     name = "Missing Network Timeout"
+    _HTTP_VERBS = frozenset(
+        {"get", "options", "head", "post", "put", "patch", "delete"}
+    )
+    _HTTPX_CALLS = frozenset(
+        "httpx." + name
+        for name in (*_HTTP_VERBS, "request", "stream", "Client", "AsyncClient")
+    )
+    _HTTPX_CLIENTS = frozenset({"httpx.Client", "httpx.AsyncClient"})
+    _HTTPX_CLIENT_METHODS = _HTTP_VERBS | {"request", "stream"}
 
     def __init__(self, vibe_dictionary=None):
         self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
+        self._httpx_calls = {}
+
+    def _collect_httpx_calls(self, tree, context):
+        self._httpx_calls = {}
+        source = context.get("source")
+        if isinstance(source, str) and "httpx" not in source:
+            return
+        nodes = list(ast.walk(tree))
+        if not any(
+            isinstance(node, ast.Import)
+            and any(alias.name == "httpx" for alias in node.names)
+            or isinstance(node, ast.ImportFrom)
+            and node.module == "httpx"
+            and not node.level
+            for node in nodes
+        ):
+            return
+        parents = {
+            child: node for node in nodes for child in ast.iter_child_nodes(node)
+        }
+        bindings = _Bindings(tree, parents=parents)
+        for node in nodes:
+            if not (
+                isinstance(node, ast.Call)
+                and any(
+                    kw.arg == "timeout" and _is_none_constant(kw.value)
+                    for kw in node.keywords
+                )
+            ):
+                continue
+            name = bindings.name(node.func)
+            if name not in self._HTTPX_CALLS:
+                if (
+                    not isinstance(node.func, ast.Attribute)
+                    or node.func.attr not in self._HTTPX_CLIENT_METHODS
+                ):
+                    continue
+                receiver = bindings.value(node.func.value)
+                if not isinstance(receiver, ast.Call):
+                    continue
+                name = bindings.name(receiver.func)
+                if name not in self._HTTPX_CLIENTS:
+                    continue
+                proof = receiver.func
+                name += "." + node.func.attr
+            else:
+                proof = node.func
+            if _safe_native_name(
+                proof, bindings, context.get("filename"), context.get("project_root")
+            ):
+                self._httpx_calls[id(node)] = name
 
     def visit_node(self, node, context):
+        if isinstance(node, ast.Module):
+            self._collect_httpx_calls(node, context)
+            return None
         if not isinstance(node, ast.Call):
             return None
 
@@ -3889,9 +3953,14 @@ class MissingNetworkTimeoutRule(SkylosRule):
         if _is_test_file(filename):
             return None
 
-        call_name = _qualified_call_name(node.func)
-        if call_name not in self.vibe_dictionary.network_timeout_calls:
-            return None
+        call_name = self._httpx_calls.get(id(node))
+        if call_name is None:
+            call_name = _qualified_call_name(node.func)
+            if (
+                call_name in self._HTTPX_CALLS
+                or call_name not in self.vibe_dictionary.network_timeout_calls
+            ):
+                return None
 
         timeout_kw = next((kw for kw in node.keywords if kw.arg == "timeout"), None)
         if timeout_kw is not None and not _is_none_constant(timeout_kw.value):

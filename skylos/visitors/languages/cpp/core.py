@@ -51,6 +51,11 @@ def scan_symbols(
     Until one is available, only plainly file-local free functions are eligible
     for dead-code reporting. Ambiguous syntax is treated as live.
     """
+    definitions, references, imports, _ = scan_source(file_path, source)
+    return definitions, references, imports
+
+
+def scan_source(file_path: str, source: str, *, enable_danger: bool = False):
     if CPP_LANG is None:
         raise CppScanError(
             "C++ parser grammar is unavailable; install tree-sitter-cpp",
@@ -142,7 +147,14 @@ def scan_symbols(
         and node.start_byte not in binding_offsets
         and not _has_local_binding(node, source_bytes, local_names)
     ]
-    return definitions, refs, []
+    findings = []
+    if enable_danger:
+        from .danger import scan_memory_calls
+
+        findings = scan_memory_calls(
+            nodes, source_bytes, file_path, local_names
+        )
+    return definitions, refs, [], findings
 
 
 def _local_bindings(nodes, source):

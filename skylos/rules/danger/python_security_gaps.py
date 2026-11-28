@@ -35,6 +35,15 @@ _HTTP_CALLS = {
         "request",
     )
 } | {"urllib.request.urlopen", "urllib.request.Request"}
+_PYCA_CIPHER_FACTORIES = frozenset(
+    {
+        "cryptography.hazmat.primitives.ciphers.Cipher",
+        "cryptography.hazmat.primitives.ciphers.base.Cipher",
+    }
+)
+_PYCRYPTODOME_AES_FACTORIES = frozenset(
+    {"Crypto.Cipher.AES.new", "Cryptodome.Cipher.AES.new"}
+)
 _GRADIO_FACTORIES = {"gradio.Blocks", "gradio.Interface", "gradio.ChatInterface"}
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _GRAPH_QUERY_METHODS = frozenset(
@@ -1066,9 +1075,45 @@ class _Checker(ast.NodeVisitor):
             variants = merged
         return variants
 
+    def _check_cipher_mode(self, node, name, kwargs):
+        if not provider_is_unshadowed(name, self.file_path, self.project_root):
+            return
+        if any(isinstance(arg, ast.Starred) for arg in node.args):
+            return
+        if len(node.args) > 1 and "mode" in kwargs:
+            return
+        mode = kwargs.get("mode", node.args[1] if len(node.args) > 1 else None)
+        if name in _PYCA_CIPHER_FACTORIES:
+            if not (node.args or "algorithm" in kwargs):
+                return
+            modes = self._choices(mode)
+            uses_ecb = modes and all(
+                isinstance(choice, ast.Call)
+                and not (choice.args or choice.keywords)
+                and self._name(choice.func)
+                == "cryptography.hazmat.primitives.ciphers.modes.ECB"
+                for choice in modes
+            )
+        else:
+            if not (node.args or "key" in kwargs):
+                return
+            uses_ecb = self._name(mode) == name.removesuffix(".new") + ".MODE_ECB"
+        if uses_ecb:
+            self._emit(
+                node,
+                "SKY-D384",
+                "MEDIUM",
+                "Cipher selects ECB, which can reveal repeated plaintext blocks. Use an authenticated mode.",
+            )
+
     def visit_Call(self, node):
         name = self._name(node.func)
         kwargs, unpacked = self._keywords(node)
+        if (
+            name in _PYCA_CIPHER_FACTORIES | _PYCRYPTODOME_AES_FACTORIES
+            and not unpacked
+        ):
+            self._check_cipher_mode(node, name, kwargs)
         if name in {"lxml.etree.parse", "lxml.etree.fromstring", "lxml.etree.XML"}:
             parser = kwargs.get("parser", node.args[1] if len(node.args) > 1 else None)
             config = self._entity_resolving_parser(parser)

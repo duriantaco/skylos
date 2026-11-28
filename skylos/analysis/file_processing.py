@@ -158,7 +158,7 @@ LINTER_RULE_NODE_TYPES = {
     TooManyReturnsRule: (ast.FunctionDef, ast.AsyncFunctionDef),
     BooleanTrapRule: (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef),
     BroadExceptionRule: (ast.ExceptHandler,),
-    MissingNetworkTimeoutRule: (ast.Call,),
+    MissingNetworkTimeoutRule: (ast.Module, ast.Call),
     NoEffectStatementRule: (ast.Module, ast.Expr),
     GodFileRule: (ast.Module,),
     GodClassRule: (ast.Module, ast.ClassDef),
@@ -512,10 +512,15 @@ def _scan_ruby_file(file, cfg, *, enable_danger_rules: bool, **_options):
     )
 
 
-def _scan_swift_file(file, cfg, **_options):
+def _scan_swift_file(file, cfg, *, enable_danger_rules: bool, **_options):
     from skylos.visitors.languages.swift import scan_swift_file
 
-    return scan_swift_file(file, cfg, _include_analysis_metadata=True)
+    return scan_swift_file(
+        file,
+        cfg,
+        enable_danger_rules=enable_danger_rules,
+        _include_analysis_metadata=True,
+    )
 
 
 def _scan_dart_file(file, cfg, *, enable_danger_rules: bool, **_options):

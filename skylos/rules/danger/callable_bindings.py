@@ -141,6 +141,8 @@ class _CallableFlow(ValueFlow):
 
 
 class _CallableIndex:
+    flow_type = _CallableFlow
+
     def __init__(self, module):
         self.module = module
         self._ready = True
@@ -167,7 +169,9 @@ class _CallableIndex:
             return
         for node in nodes:
             if isinstance(node, ast.Call):
-                self.watched.setdefault(id(self.scope(node)), []).append(node.func)
+                watched = self.watched_expressions(node)
+                if watched:
+                    self.watched.setdefault(id(self.scope(node)), []).extend(watched)
                 if isinstance(node.func, ast.Name) and node.func.id in {
                     "globals",
                     "locals",
@@ -203,6 +207,9 @@ class _CallableIndex:
                             root = root.value
                         if isinstance(root, ast.Name) and root.id not in local:
                             self.mutable_outer.add(root.id)
+
+    def watched_expressions(self, node):
+        return (node.func,)
 
     def __getstate__(self):
         # Worker results travel back through pickle, and a Definition's node
@@ -261,10 +268,9 @@ class _CallableIndex:
             parent = self.parents.get(id(scope))
             while parent is not None and not isinstance(parent, _SCOPES):
                 parent = self.parents.get(id(parent))
-            # Class namespaces are not enclosing lexical scopes of methods.
-            while isinstance(parent, ast.ClassDef) and not isinstance(
-                scope, ast.ClassDef
-            ):
+            # Class namespaces are not enclosing lexical scopes of methods
+            # or of nested class bodies.
+            while isinstance(parent, ast.ClassDef):
                 anchor = parent
                 parent = self.parents.get(id(parent))
                 while parent is not None and not isinstance(parent, _SCOPES):
@@ -285,7 +291,7 @@ class _CallableIndex:
                     labels |= {_UNKNOWN}
                 return labels
 
-        engine = _CallableFlow(scope, self, outer, min(60000, self.remaining))
+        engine = self.flow_type(scope, self, outer, min(60000, self.remaining))
         result = engine.run(self.watched.get(key, ()))
         self.remaining -= engine._steps
         if result is not None:

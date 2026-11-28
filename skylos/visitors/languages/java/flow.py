@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from . import models
 from .properties import JavaPropertyResources
 from .source_helpers import JavaSourceHelpers
+from .transport_policy import check_spring_csrf, scan_trust_managers
 
 
 REQUEST_SOURCE_METHODS = {
@@ -472,7 +473,9 @@ class JavaSecurityFlowAnalyzer:
 
     def scan(self) -> list[dict]:
         self.helper_summaries = self._collect_helper_summaries()
-        for method in self._method_nodes():
+        methods = self._method_nodes()
+        scan_trust_managers(self, methods)
+        for method in methods:
             self._scan_method(method)
         return self.findings
 
@@ -1179,6 +1182,8 @@ class JavaSecurityFlowAnalyzer:
         method = self._call_name(call)
         args = self._call_args(call)
         line = self._line(call)
+        if method in {"csrf", "disable"}:
+            check_spring_csrf(self, call, state)
 
         if (
             method == "getInstance"

@@ -1,0 +1,78 @@
+id: SKY-D384
+title: ECB mode selected for encryption
+family: security
+severity: MEDIUM
+languages:
+  - Python
+  - Kotlin
+cwe:
+  - CWE-327
+gate:
+  full: counted
+what_it_is: Skylos reports explicit ECB selection in recognized Python ciphers and Kotlin JCA
+  block ciphers.
+  A detached mode value does not establish which cipher will use it.
+why_it_matters: ECB encrypts equal plaintext blocks to equal ciphertext blocks under the same
+  key. The resulting patterns can reveal information about the data.
+flagged_example:
+  language: python
+  filename: cipher.py
+  expect_line: 4
+  code: |
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    def make_cipher(key):
+        return Cipher(algorithms.AES(key), modes.ECB())
+not_flagged_example:
+  language: python
+  filename: cipher.py
+  code: |
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    def make_cipher(key, nonce):
+        return Cipher(algorithms.AES(key), modes.GCM(nonce))
+  why: The block cipher explicitly selects GCM. Generate a unique nonce for each encryption under
+    a key.
+how_skylos_decides:
+  - Matches PyCA Cipher using its ECB mode, or Crypto and Cryptodome AES using the provider's
+    MODE_ECB constant.
+  - In Kotlin, resolves the JCA Cipher.getInstance factory and checks the mode in a literal block-cipher
+    transformation. Algorithm-only calls leave the mode to the provider.
+source_refs:
+  - path: skylos/rules/danger/python_security_gaps.py
+    symbol: def _check_cipher_mode(
+  - path: skylos/visitors/languages/kotlin/security.py
+    symbol: def _scan_jca_ciphers(
+fix:
+  explanation: Use an authenticated encryption API such as AES-GCM or ChaCha20-Poly1305. Follow
+    its nonce and authentication-tag requirements.
+false_alarms_and_suppression:
+  misfires:
+    - A legacy interoperability path can require ECB. Check whether you control both ends and
+      isolate the compatibility code if you cannot update the protocol.
+  suppress:
+    - text: >-
+        Mark the reviewed line with a rule-scoped Skylos ignore for SKY-D384.
+        Record the evidence that justifies the exception.
+      check: inline
+related:
+  - SKY-D207
+  - SKY-D208
+  - SKY-D430
+more_examples:
+  - flagged:
+      language: kotlin
+      filename: CipherFactory.kt
+      expect_line: 3
+      code: |
+        import javax.crypto.Cipher as JcaCipher
+
+        val cipher = JcaCipher.getInstance("AES/ECB/NoPadding")
+    not_flagged:
+      language: kotlin
+      filename: CipherFactory.kt
+      code: |
+        import javax.crypto.Cipher as JcaCipher
+
+        val cipher = JcaCipher.getInstance("AES/GCM/NoPadding")
+      why: The explicit transformation selects authenticated encryption with GCM.

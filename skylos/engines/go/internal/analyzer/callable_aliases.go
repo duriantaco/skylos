@@ -23,7 +23,37 @@ func (a *Analyzer) capturedCallable(expr ast.Expr, ft *funcTaint, depth int) ast
 	return expr
 }
 func (a *Analyzer) sourceTypeRef(expr ast.Expr) typeRef {
-	return a.resolveAliasRef(typeOfExpr(expr, a.imports), 0)
+	for depth := 0; depth <= 8; depth++ {
+		switch node := expr.(type) {
+		case *ast.StarExpr:
+			expr = node.X
+		case *ast.ParenExpr:
+			expr = node.X
+		case *ast.IndexExpr:
+			expr = node.X
+		case *ast.IndexListExpr:
+			expr = node.X
+		case *ast.Ident:
+			if node.Obj == nil {
+				return a.resolveAliasRef(typeOfExpr(node, a.imports), 0)
+			}
+			if spec, ok := node.Obj.Decl.(*ast.TypeSpec); ok && spec.Assign.IsValid() {
+				expr = spec.Type
+				continue
+			}
+			// A local type declaration or generic type parameter can shadow a
+			// same-named package alias.
+			return typeRef{name: node.Name}
+		case *ast.SelectorExpr:
+			if owner, ok := node.X.(*ast.Ident); ok && owner.Obj != nil {
+				return typeRef{}
+			}
+			return typeOfExpr(node, a.imports)
+		default:
+			return typeOfExpr(expr, a.imports)
+		}
+	}
+	return typeRef{}
 }
 func (a *Analyzer) resolveAliasRef(ref typeRef, depth int) typeRef {
 	if depth > 8 {

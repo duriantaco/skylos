@@ -5,7 +5,7 @@ from pathlib import Path
 from skylos.analysis.errors import analysis_error_payload
 from skylos.core.safe_cache_io import read_text_no_symlink
 
-from .core import CppScanError, scan_symbols
+from .core import CppScanError, scan_source
 
 CPP_SOURCE_EXTS = (".cpp", ".cc", ".cxx")
 CPP_HEADER_EXTS = (".hpp", ".hh", ".hxx")
@@ -68,7 +68,7 @@ def scan_cpp_file(
     *,
     enable_danger_rules: bool = True,
 ) -> tuple:
-    """Scan supported C++ source/header files for conservative dead-code data."""
+    """Scan supported C++ source and headers for dead code and security reviews."""
     if config is None:
         config = {}
 
@@ -91,7 +91,9 @@ def scan_cpp_file(
         )
 
     try:
-        defs, refs, raw_imports = scan_symbols(str(path), source)
+        defs, refs, raw_imports, findings = scan_source(
+            str(path), source, enable_danger=enable_danger_rules
+        )
     except CppScanError as exc:
         return _empty_result(
             config,
@@ -105,7 +107,7 @@ def scan_cpp_file(
         DummyVisitor(),
         DummyVisitor(),
         [],
-        [],
+        findings,
         [],
         None,
         None,

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from skylos.reporting.advice_policy import apply_advice_policy
 from skylos.reporting.listing import is_listed, is_unproven_source_review
 from skylos.visitors.languages.rust import scan_rust_file
@@ -363,6 +365,100 @@ def test_checking_verifier_and_test_verifier_are_not_reported(tmp_path):
     assert not _rows(findings, "SKY-D210")
     findings = _scan(tmp_path, _VERIFIER.format(body=accept), name="tests/tls.rs")
     assert not _rows(findings, "SKY-D210")
+
+
+def test_verifier_with_native_acceptance_helper_is_reported(tmp_path):
+    helper = """
+fn verdict() -> Result<ServerCertVerified, rustls::Error> {
+    let marker = ServerCertVerified::assertion();
+    Ok(marker)
+}
+"""
+    findings = _scan(tmp_path, _VERIFIER.format(body="verdict()") + helper)
+    assert [line for line, _ in _rows(findings, "SKY-D210")] == [5]
+
+
+def test_verifier_with_rejecting_or_lookalike_helper_is_quiet(tmp_path):
+    helper = """
+fn verdict() -> Result<ServerCertVerified, rustls::Error> {
+    Err(rustls::Error::General(String::new()))
+}
+"""
+    assert not _rows(
+        _scan(tmp_path, _VERIFIER.format(body="verdict()") + helper), "SKY-D210"
+    )
+    assert not _rows(
+        _scan(tmp_path, _VERIFIER.format(body="Ok(local::ServerCertVerified::assertion())")),
+        "SKY-D210",
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "if approved() { return Ok(ServerCertVerified::assertion()); } reject()",
+        "let verdict = || reject(); verdict()",
+        "Ok(ServerCertVerified::assertion())",
+    ],
+)
+def test_verifier_does_not_assume_branches_or_shadowed_success(tmp_path, body):
+    helper = """
+fn reject() -> Result<ServerCertVerified, rustls::Error> {
+    Err(rustls::Error::General(String::new()))
+}
+fn verdict() -> Result<ServerCertVerified, rustls::Error> {
+    std::result::Result::Ok(ServerCertVerified::assertion())
+}
+#[allow(non_snake_case)]
+fn Ok(_: ServerCertVerified) -> Result<ServerCertVerified, rustls::Error> {
+    reject()
+}
+"""
+    assert not _rows(_scan(tmp_path, _VERIFIER.format(body=body) + helper), "SKY-D210")
+
+
+def test_certificate_helper_can_use_an_imported_native_verifier_alias(tmp_path):
+    source = _VERIFIER.replace(
+        "{{ServerCertVerified, ServerCertVerifier}}",
+        "{{ServerCertVerified, ServerCertVerifier as CertVerifier}}",
+    ).replace("impl ServerCertVerifier for", "impl CertVerifier for")
+    arms = """
+fn verdict() -> Result<ServerCertVerified, rustls::Error> {
+    std::result::Result::Ok(ServerCertVerified::assertion())
+}
+"""
+    rows = _rows(_scan(tmp_path, source.format(body="verdict()") + arms), "SKY-D210")
+    assert [line for line, _ in rows] == [5]
+
+
+def test_verifier_helper_must_prove_all_paths_return_acceptance(tmp_path):
+    helper = """
+fn verdict() -> Result<ServerCertVerified, rustls::Error> {
+    if configured() {
+        return Ok(ServerCertVerified::assertion());
+    }
+    Err(rustls::Error::General(String::new()))
+}
+"""
+    rows = _rows(_scan(tmp_path, _VERIFIER.format(body="verdict()") + helper), "SKY-D210")
+    assert not rows
+
+
+def test_verifier_does_not_assume_prelude_ok_when_a_glob_can_shadow_it(tmp_path):
+    helper = """
+mod compat {
+    #[allow(non_snake_case)]
+    pub fn Ok(_: super::ServerCertVerified) -> Result<super::ServerCertVerified, rustls::Error> {
+        Err(rustls::Error::General(String::new()))
+    }
+}
+use compat::*;
+fn verdict() -> Result<ServerCertVerified, rustls::Error> {
+    Ok(ServerCertVerified::assertion())
+}
+"""
+    rows = _rows(_scan(tmp_path, _VERIFIER.format(body="verdict()") + helper), "SKY-D210")
+    assert not rows
 
 
 def test_dangerous_client_switches(tmp_path):

@@ -871,14 +871,18 @@ class ValueFlow:
         widened.displays = widened.displays - written
         return widened
 
+    def _context_value(self, expression, *, is_async):
+        return self.value(expression) | self.top
+
     def _with(self, node) -> bool:
         for item in node.items:
             self._effects(item.context_expr)
             if item.optional_vars is not None:
                 self._target_effects(item.optional_vars)
-                self._assign(
-                    item.optional_vars, self.value(item.context_expr) | self.top
+                labels = self._context_value(
+                    item.context_expr, is_async=isinstance(node, ast.AsyncWith)
                 )
+                self._assign(item.optional_vars, labels)
         suppressed = _Join()
         suppressed.add(self, self.state)
         self._handlers.append(suppressed)

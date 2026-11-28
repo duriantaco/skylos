@@ -49,21 +49,22 @@ _CONTEXT_METHODS = frozenset(
 )
 
 
-def _scope(node):
-    current = getattr(node, "parent", None)
-    while current is not None and not isinstance(current, _SCOPES):
-        current = getattr(current, "parent", None)
-    return current
+def _scope(node, parents=None):
+    while node is not None:
+        node = getattr(node, "parent", None) if parents is None else parents.get(node)
+        if isinstance(node, _SCOPES):
+            return node
+    return None
 
 
 class _Bindings:
-    def __init__(self, tree):
+    def __init__(self, tree, *, parents=None):
         self.tree = tree
+        self._parents = parents
         self.bound = {}
         self.scope_loads = {}
         self.inert_definitions = {}
         for node in ast.walk(tree):
-            scope = _scope(node)
             pairs = []
             if isinstance(node, ast.Import):
                 pairs = [
@@ -91,7 +92,11 @@ class _Bindings:
             elif isinstance(node, ast.Name) and isinstance(
                 node.ctx, (ast.Store, ast.Del)
             ):
-                parent = getattr(node, "parent", None)
+                parent = (
+                    parents.get(node)
+                    if parents is not None
+                    else getattr(node, "parent", None)
+                )
                 value = None
                 if isinstance(parent, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
                     value = parent.value
@@ -100,8 +105,13 @@ class _Bindings:
                 pairs = [(node.id, value)]
             elif isinstance(node, (ast.Global, ast.Nonlocal)):
                 pairs = [(name, None) for name in node.names]
-            for name, value in pairs:
-                self.bound.setdefault((id(scope), name), []).append(value)
+            if pairs:
+                scope = self.scope(node)
+                for name, value in pairs:
+                    self.bound.setdefault((id(scope), name), []).append(value)
+
+    def scope(self, node):
+        return _scope(node, self._parents)
 
     def name(self, node, seen=frozenset()):
         if node is None or id(node) in seen or len(seen) > 32:
@@ -114,7 +124,7 @@ class _Bindings:
             return f"{base}.{node.attr}" if base else None
         if not isinstance(node, ast.Name):
             return None
-        scope = _scope(node)
+        scope = self.scope(node)
         inside_function = False
         while scope is not None:
             if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -130,7 +140,7 @@ class _Bindings:
                     ):
                         return "!local"
                     return value if isinstance(value, str) else self.name(value, seen)
-            scope = _scope(scope)
+            scope = self.scope(scope)
         return None
 
     def value(self, node, seen=frozenset()):
@@ -139,12 +149,12 @@ class _Bindings:
         if not isinstance(node, ast.Name):
             return node
         seen = seen | {id(node)}
-        scope = _scope(node)
+        scope = self.scope(node)
         while scope is not None:
             values = self.bound.get((id(scope), node.id))
             if values is not None:
                 return self.value(values[0], seen) if len(values) == 1 else None
-            scope = _scope(scope)
+            scope = self.scope(scope)
         return None
 
 

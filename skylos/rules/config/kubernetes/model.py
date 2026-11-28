@@ -361,9 +361,10 @@ def load_project(root, *, changed_files=None, scan_paths=None, exclude_folders=N
                     "Kubernetes YAML parser is unavailable",
                 )
             continue
-        loader = _ManifestLoader(text, MAX_DEPTH, MAX_NODES)
+        loader = None
         documents = 0
         try:
+            loader = _ManifestLoader(text, MAX_DEPTH, MAX_NODES)
             while loader.check_node():
                 documents += 1
                 if documents > MAX_DOCUMENTS:
@@ -397,5 +398,6 @@ def load_project(root, *, changed_files=None, scan_paths=None, exclude_folders=N
                     hard=False,
                 )
         finally:
-            loader.dispose()
+            if loader is not None:
+                loader.dispose()
     return project

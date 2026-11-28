@@ -26,6 +26,8 @@ from .pickle_provenance import safe_pickle_loads
 from .yaml_loader_provenance import yaml_loader_classes, yaml_load_call_name
 from .callable_bindings import callable_names
 from .rsa_config_defaults import scan_configured_rsa
+from .ssh_host_keys import scan as scan_ssh_host_keys
+from .tls_protocol_policy import scan as scan_tls_protocol_policy
 from .python_security_gaps import (
     mentions_graph_query,
     scan as scan_python_security_gaps,
@@ -671,6 +673,12 @@ def scan_file_with_tree(
     tree, file_path, findings, *, source: str | None = None, project_root=None
 ):
     """Run taint-flow scanners on an already-parsed AST (no re-read/re-parse)."""
+    if source is None or "set_missing_host_key_policy" in source:
+        scan_ssh_host_keys(tree, file_path, findings, project_root=project_root)
+    if source is None or _has_any(
+        source, ("PROTOCOL_", "TLSVersion", "_METHOD", "set_min_proto_version")
+    ):
+        scan_tls_protocol_policy(tree, file_path, findings, project_root=project_root)
     if source is None or all(token in source for token in ("objects", "get", "save", "-")):
         scan_django_balance_race(tree, file_path, findings, project_root=project_root)
     if (
@@ -686,6 +694,9 @@ def scan_file_with_tree(
             (
                 "jinja",
                 "lxml",
+                "cryptography",
+                "crypto.cipher",
+                "cryptodome.cipher",
                 "xml.sax",
                 "setfeature",
                 "hmac",

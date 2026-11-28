@@ -163,3 +163,68 @@ def test_exposed_text_is_replaced_through_mutable_borrow(tmp_path):
         for r in scan_rust_file(str(path), {})[7]
         if r["rule_id"] in {"SKY-D251", "SKY-D387"}
     ]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            (
+                "use md5::{Digest, Md5};\n"
+                "pub fn new_digest() -> Md5 {\n"
+                "    Md5::new()\n"
+                "}\n"
+            ),
+            [("SKY-D207", 3)],
+        ),
+        (
+            (
+                "use sha1::{Digest as _, Sha1 as HashState};\n"
+                "pub fn new_digest() -> HashState {\n"
+                "    return sha1::Sha1::new();\n"
+                "}\n"
+            ),
+            [("SKY-D208", 3)],
+        ),
+        (
+            (
+                "use sha1::{Digest, Sha1};\n"
+                "pub(crate) fn inner_digest() -> Sha1 { Sha1::new() }\n"
+                "fn private_digest() -> Sha1 { Sha1::new() }\n"
+            ),
+            [],
+        ),
+        (
+            (
+                "use sha1::{Digest, Sha1};\n"
+                "pub fn archive_checksum(bytes: &[u8]) -> String {\n"
+                "    let mut digest = Sha1::new();\n"
+                "    digest.update(bytes);\n"
+                '    format!("{:x}", digest.finalize())\n'
+                "}\n"
+            ),
+            [],
+        ),
+        (
+            (
+                "mod md5 {\n"
+                "    pub struct Md5;\n"
+                "    impl Md5 { pub fn new() -> Md5 { Md5 } }\n"
+                "}\n"
+                "use md5::Md5;\n"
+                "pub fn new_digest() -> Md5 { Md5::new() }\n"
+            ),
+            [],
+        ),
+    ],
+)
+def test_only_public_native_weak_digest_returns_report(tmp_path, source, expected):
+    path = tmp_path / "lib.rs"
+    path.write_text(source, encoding="utf-8")
+    rows = scan_rust_file(str(path), {})[7]
+
+    assert [
+        (row["rule_id"], row["line"])
+        for row in rows
+        if row["rule_id"] in {"SKY-D207", "SKY-D208"}
+    ] == expected

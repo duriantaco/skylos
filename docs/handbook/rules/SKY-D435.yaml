@@ -1,0 +1,60 @@
+id: SKY-D435
+title: Unbounded C library write
+family: security
+severity: MEDIUM
+languages:
+  - C++
+cwe:
+  - CWE-676
+gate:
+  full: counted
+what_it_is: Skylos reports direct C library calls in C++ that write into a buffer without a capacity
+  argument.
+  The scanner resolves recognized calls to the C standard library.
+why_it_matters: An oversized source string can exceed the destination buffer and corrupt nearby
+  memory. The call gives the library no way to enforce the destination capacity.
+flagged_example:
+  language: cpp
+  filename: format.cpp
+  expect_line: 5
+  code: |
+    #include <cstdio>
+
+    void copy_label(const char *label) {
+        char buffer[32];
+        std::sprintf(buffer, "%s", label);
+    }
+not_flagged_example:
+  language: cpp
+  filename: format.cpp
+  code: |
+    #include <cstdio>
+
+    void copy_label(const char *label) {
+        char buffer[32];
+        std::snprintf(buffer, sizeof(buffer), "%s", label);
+    }
+  why: The bounded call supplies the actual capacity of the destination array.
+how_skylos_decides:
+  - Recognizes direct C library calls such as sprintf, strcpy and strcat with visible standard-library
+    identity.
+  - The rule checks for a missing bound in the API. It does not prove the input length or verify
+    a size expression passed to a different API.
+source_refs:
+  - path: skylos/visitors/languages/cpp/danger.py
+    symbol: def scan_memory_calls(
+fix:
+  explanation: Use a managed string or an API that receives the destination capacity. Handle
+    errors and truncation when using a fixed-size buffer.
+false_alarms_and_suppression:
+  misfires:
+    - A caller might already enforce a length bound. Preserve it and prefer an API that checks
+      the destination capacity directly.
+  suppress:
+    - text: >-
+        Mark the reviewed line with a rule-scoped Skylos ignore for SKY-D435.
+        Record the evidence that justifies the exception.
+      check: inline
+related:
+  - SKY-D436
+  - SKY-D437

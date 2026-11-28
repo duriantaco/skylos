@@ -1,0 +1,62 @@
+id: SKY-D436
+title: Repeated free of a local allocation
+family: security
+severity: HIGH
+languages:
+  - C++
+cwe:
+  - CWE-415
+gate:
+  full: counted
+what_it_is: Skylos reports a second free of a known local malloc or calloc allocation in the
+  same straight-line C++ block.
+  The second call can refer to the original pointer or a tracked alias.
+why_it_matters: Freeing the same allocation twice is undefined behavior and can corrupt allocator
+  state.
+flagged_example:
+  language: cpp
+  filename: release.cpp
+  expect_line: 7
+  code: |
+    #include <cstdlib>
+
+    void release() {
+        auto *ptr = static_cast<char *>(std::malloc(8));
+        auto *alias = ptr;
+        std::free(ptr);
+        std::free(alias);
+    }
+not_flagged_example:
+  language: cpp
+  filename: release.cpp
+  code: |
+    #include <cstdlib>
+
+    void release() {
+        auto *ptr = static_cast<char *>(std::malloc(8));
+        std::free(ptr);
+    }
+  why: The allocation has one explicit release.
+how_skylos_decides:
+  - Tracks a source-visible malloc or calloc allocation in a local pointer, including simple
+    aliases within one straight-line block.
+  - Reports a second free of that allocation. A fresh allocation or a null pointer represents
+    a different lifetime state.
+source_refs:
+  - path: skylos/visitors/languages/cpp/danger.py
+    symbol: def scan_memory_calls(
+fix:
+  explanation: Use one owner and release the allocation once. Prefer an RAII object or container
+    that handles lifetime automatically.
+false_alarms_and_suppression:
+  misfires:
+    - The analysis is bounded to straight-line local lifetimes. Verify behavior through ownership
+      transfers, helper functions and control flow separately.
+  suppress:
+    - text: >-
+        Mark the reviewed line with a rule-scoped Skylos ignore for SKY-D436.
+        Record the evidence that justifies the exception.
+      check: inline
+related:
+  - SKY-D435
+  - SKY-D437

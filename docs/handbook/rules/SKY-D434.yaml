@@ -1,0 +1,58 @@
+id: SKY-D434
+title: Sensitive data stored in UserDefaults
+family: security
+severity: HIGH
+languages:
+  - Swift
+cwe:
+  - CWE-922
+gate:
+  full: counted
+what_it_is: Skylos reports writes of token- or password-like values to Foundation UserDefaults,
+  the platform preference store.
+  A supported local alias of the preference store carries the check to later writes.
+why_it_matters: UserDefaults is designed for ordinary preferences. Sensitive values stored there
+  do not receive the access controls of a credential store.
+flagged_example:
+  language: swift
+  filename: Preferences.swift
+  expect_line: 4
+  code: |
+    import Foundation
+
+    func saveSession(value: String) {
+        UserDefaults.standard.set(value, forKey: "auth.refresh_token")
+    }
+not_flagged_example:
+  language: swift
+  filename: Preferences.swift
+  code: |
+    import Foundation
+
+    func savePreferences(value: String) {
+        UserDefaults.standard.set(value, forKey: "displayStyle")
+    }
+  why: The key and value name describe an ordinary display preference.
+how_skylos_decides:
+  - Resolves Foundation UserDefaults receivers and supported aliases, then checks set and setValue
+    writes.
+  - Uses credential-like names in a fixed key or in the value expression as review evidence.
+    Preference keys, literal booleans and deletion writes can stay quiet.
+source_refs:
+  - path: skylos/visitors/languages/swift/danger.py
+    symbol: def scan_foundation_storage(
+fix:
+  explanation: Store credentials in the Keychain or another approved credential store. Reserve
+    UserDefaults for ordinary preferences.
+false_alarms_and_suppression:
+  misfires:
+    - A credential-like key can hold a non-sensitive marker. Verify the value written on this
+      path before accepting a key-based finding.
+  suppress:
+    - text: >-
+        Mark the reviewed line with a rule-scoped Skylos ignore for SKY-D434.
+        Record the evidence that justifies the exception.
+      check: inline
+related:
+  - SKY-D270
+  - SKY-D252

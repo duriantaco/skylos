@@ -4,9 +4,10 @@ family: security
 severity: HIGH
 severity_note: >-
   On the JVM, CRITICAL when request data is parsed, HIGH for other input. Python
-  findings for explicitly enabled external entity processing are HIGH. dom4j
+  findings for explicitly enabled external entity processing and C# XML
+  reader configuration findings are HIGH. dom4j
   `DocumentHelper.parseText()` is MEDIUM, or HIGH with request data.
-languages: [Java, Kotlin, TypeScript/JavaScript, Python]
+languages: [Java, Kotlin, TypeScript/JavaScript, Python, C#]
 gate:
   full: critical_blocks
   note: >-
@@ -21,7 +22,8 @@ what_it_is: >-
   TypeScript/JavaScript libxml parses that turn entity substitution on
   (libxmljs `noent: true`, the libxml2 `XML_PARSE_NOENT` option), and
   Python parse calls using a parser explicitly configured to resolve
-  external entities.
+  external entities. In C#, it reports a `System.Xml.XmlReader` that
+  receives settings enabling DTD parsing and a URL resolver.
 
 why_it_matters: >-
   A visitor who uploads XML with `<!ENTITY x SYSTEM "file:///etc/passwd">`
@@ -179,7 +181,16 @@ how_skylos_decides:
     `XML_PARSE_NOENT` parse option (not `& ~XML_PARSE_NOENT`): HIGH, or
     CRITICAL when request data is parsed in a handler.
 
+  - >-
+    In C#, resolves `System.Xml` names and follows tracked
+    `XmlReaderSettings` to `XmlReader.Create`. Both
+    `DtdProcessing.Parse` and a resolved `XmlUrlResolver` must be
+    effective at the call. Prohibiting DTDs or keeping the resolver null
+    clears this check.
+
 source_refs:
+  - path: skylos/visitors/languages/csharp/danger.py
+    symbol: "def _scan_xml_policies("
   - path: skylos/visitors/languages/java/flow.py
     symbol: "def _process_xml_sinks"
   - path: skylos/visitors/languages/java/flow.py
@@ -195,7 +206,8 @@ fix:
   explanation: >-
     Turn DTDs off on the factory before you create the parser. If you need
     DTDs, at least turn off external general entities, external parameter
-    entities and loading external DTDs.
+    entities and loading external DTDs. In C#, explicitly prohibit DTDs or
+    keep `XmlResolver` null before creating the reader.
   filename: src/main/java/com/example/InvoiceController.java
   code: |
     package com.example;

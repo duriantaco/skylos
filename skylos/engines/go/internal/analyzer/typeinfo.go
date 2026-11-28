@@ -2,7 +2,6 @@ package analyzer
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"strconv"
 	"strings"
@@ -102,14 +101,9 @@ func isMajorVersionSuffix(element string) bool {
 	return err == nil
 }
 
-func collectPackageFacts(paths []string) *pkgFacts {
+func collectPackageFacts(files []*ast.File) *pkgFacts {
 	facts := newPkgFacts()
-	fset := token.NewFileSet()
-	for _, path := range paths {
-		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-		if err != nil {
-			continue
-		}
+	for _, file := range files {
 		imports := fileImports(file)
 		for _, importPath := range imports {
 			facts.importPaths[importPath] = true

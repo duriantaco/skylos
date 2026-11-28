@@ -1,0 +1,56 @@
+id: SKY-D430
+title: Obsolete TLS protocol configured
+family: security
+severity: HIGH
+languages:
+  - Python
+cwe:
+  - CWE-327
+gate:
+  full: counted
+what_it_is: Skylos reports Python TLS contexts that explicitly select TLS 1.0, TLS 1.1 or an
+  older SSL protocol.
+  The minimum-version check is separate from certificate verification.
+why_it_matters: Old TLS and SSL versions lack protections expected by current clients and servers.
+  A compatibility setting can enable an obsolete version on deployments that still support it.
+flagged_example:
+  language: python
+  filename: transport.py
+  expect_line: 4
+  code: |
+    import ssl
+
+    context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_1
+not_flagged_example:
+  language: python
+  filename: transport.py
+  code: |
+    import ssl
+
+    context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+  why: The minimum protocol is TLS 1.2, so this setting excludes earlier versions.
+how_skylos_decides:
+  - Resolves stdlib ssl and pyOpenSSL context APIs and matches explicit obsolete protocol constants,
+    including supported defaults used by the API.
+  - Reports a recognized context's obsolete minimum version. Reads of a version constant outside
+    TLS configuration are quiet.
+source_refs:
+  - path: skylos/rules/danger/tls_protocol_policy.py
+    symbol: def scan(
+fix:
+  explanation: Use the provider's current client or server context and require TLS 1.2 or newer.
+    Keep certificate and hostname verification enabled.
+false_alarms_and_suppression:
+  misfires:
+    - A system TLS policy can block the obsolete version even though the application requests
+      it. Remove the stale setting and check supported deployments.
+  suppress:
+    - text: >-
+        Mark the reviewed line with a rule-scoped Skylos ignore for SKY-D430.
+        Record the evidence that justifies the exception.
+      check: inline
+related:
+  - SKY-D210
+  - SKY-D384

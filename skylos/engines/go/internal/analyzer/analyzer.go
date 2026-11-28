@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"math"
@@ -66,29 +67,28 @@ var defaultSkipDirs = map[string]bool{
 }
 
 type Analyzer struct {
-	fset        *token.FileSet
-	findings    []output.Finding
-	imports     map[string]string
-	seen        map[string]bool
-	callTaint   map[*ast.CallExpr]*funcTaint
-	assignTaint map[*ast.AssignStmt]*funcTaint
+	fset         *token.FileSet
+	findings     []output.Finding
+	imports      map[string]string
+	seen         map[string]bool
+	callTaint    map[*ast.CallExpr]*funcTaint
+	assignTaint  map[*ast.AssignStmt]*funcTaint
+	literalTaint map[*ast.CompositeLit]*funcTaint
 	// the current file is test-support code (see isTestSupportFile)
 	testSupport bool
 	// declarations of the current file's package directory
-	facts      *pkgFacts
-	factsByDir map[string]*pkgFacts
-	dirFiles   map[string][]string
+	facts    *pkgFacts
+	dirFiles map[string][]string
 	// the function whose types resolve numeric values while taint is checked
 	scope *funcTaint
 }
 
 func New() *Analyzer {
 	return &Analyzer{
-		fset:       token.NewFileSet(),
-		imports:    make(map[string]string),
-		seen:       make(map[string]bool),
-		factsByDir: make(map[string]*pkgFacts),
-		dirFiles:   make(map[string][]string),
+		fset:     token.NewFileSet(),
+		imports:  make(map[string]string),
+		seen:     make(map[string]bool),
+		dirFiles: make(map[string][]string),
 	}
 }
 
@@ -139,24 +139,15 @@ func (a *Analyzer) AnalyzeDirScoped(root string, sourceFiles map[string]bool) ([
 		return nil
 	})
 
+	visited := map[string]bool{}
 	for _, path := range files {
-		a.analyzeFile(path)
+		dir := filepath.Dir(path)
+		if !visited[dir] {
+			visited[dir] = true
+			a.analyzePackage(a.dirFiles[dir])
+		}
 	}
 	return a.findings, err
-}
-
-func (a *Analyzer) packageFacts(path string) *pkgFacts {
-	dir := filepath.Dir(path)
-	if facts, ok := a.factsByDir[dir]; ok {
-		return facts
-	}
-	paths := a.dirFiles[dir]
-	if len(paths) == 0 {
-		paths = []string{path}
-	}
-	facts := collectPackageFacts(paths)
-	a.factsByDir[dir] = facts
-	return facts
 }
 
 func isPathWithinRoot(root, path string) bool {
@@ -167,16 +158,58 @@ func isPathWithinRoot(root, path string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
-func (a *Analyzer) analyzeFile(path string) {
-	file, err := parser.ParseFile(a.fset, path, nil, parser.ParseComments)
-	if err != nil {
-		return
+func (a *Analyzer) analyzePackage(paths []string) {
+	packages := map[string][]*ast.File{}
+	var order []string
+	for _, path := range paths {
+		file, err := parser.ParseFile(a.fset, path, nil, parser.ParseComments)
+		if err != nil {
+			continue
+		}
+		name := file.Name.Name
+		if len(packages[name]) == 0 {
+			order = append(order, name)
+		}
+		packages[name] = append(packages[name], file)
 	}
+	for _, name := range order {
+		files := packages[name]
+		active := make(map[*ast.File]bool, len(files))
+		filePaths := make(map[*ast.File]string, len(files))
+		var buildFiles []*ast.File
+		for _, file := range files {
+			path := a.fset.PositionFor(file.Package, false).Filename
+			filePaths[file] = path
+			matches := len(files) == 1
+			if !matches {
+				matches, _ = build.Default.MatchFile(filepath.Dir(path), filepath.Base(path))
+			}
+			if matches {
+				active[file] = true
+				buildFiles = append(buildFiles, file)
+			}
+		}
+		facts := make(map[*ast.File]*pkgFacts, len(files))
+		packageFacts := collectPackageFacts(buildFiles)
+		for _, file := range files {
+			if active[file] {
+				facts[file] = packageFacts
+			} else {
+				// Analyze alternate variants locally without borrowing declarations
+				// from the active build or another inactive variant.
+				facts[file] = collectPackageFacts([]*ast.File{file})
+			}
+		}
+		a.computeTaint(files, active, facts)
+		for _, file := range files {
+			a.facts = facts[file]
+			a.analyzeParsedFile(file, filePaths[file])
+		}
+	}
+}
 
+func (a *Analyzer) analyzeParsedFile(file *ast.File, path string) {
 	a.imports = fileImports(file)
-	a.facts = a.packageFacts(path)
-
-	a.computeTaint(file)
 	a.testSupport = a.isTestSupportFile(file)
 
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -197,6 +230,7 @@ func (a *Analyzer) analyzeFile(path string) {
 			a.checkCallExpr(node, path)
 		case *ast.CompositeLit:
 			a.checkCompositeLit(node, path)
+			a.checkSSHHostKeyConfig(node, path)
 		case *ast.Field:
 			if node.Tag != nil {
 				return false
@@ -205,6 +239,7 @@ func (a *Analyzer) analyzeFile(path string) {
 			a.checkHardcodedSecret(node, path)
 		case *ast.AssignStmt:
 			a.checkTLSFieldAssignment(node, path)
+			a.checkSSHHostKeyAssignment(node, path)
 			if len(node.Lhs) == len(node.Rhs) {
 				for i, lhs := range node.Lhs {
 					a.checkCredentialAssignment(credentialName(lhs), node.Rhs[i], path)
@@ -1046,7 +1081,7 @@ func (a *Analyzer) hasVariablePotentialShellCommandArg(shellName string, args []
 }
 
 func (a *Analyzer) addFinding(node ast.Node, path, ruleID, severity, message, detail string) {
-	pos := a.fset.Position(node.Pos())
+	pos := a.fset.PositionFor(node.Pos(), false)
 	fullMessage := message + " " + detail
 	key := ruleID + "\x00" + path + "\x00" + strconv.Itoa(pos.Line) + "\x00" + fullMessage
 	if a.seen[key] {

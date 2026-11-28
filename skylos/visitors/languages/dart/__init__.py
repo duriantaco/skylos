@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .core import DartCore
 from .danger import scan_danger
+from .tls import scan_bad_certificate_callbacks
 
 
 class DummyVisitor:
@@ -69,6 +70,8 @@ def scan_dart_file(
     findings = (
         scan_danger(core.root_node, str(path), source) if enable_danger_rules else []
     )
+    if enable_danger_rules:
+        findings.extend(scan_bad_certificate_callbacks(core))
 
     return (
         core.defs,

@@ -270,7 +270,7 @@ func (a *Analyzer) guardFileMetadata(file *ast.File) guardFileFacts {
 			// Other source files can write package vars without appearing in
 			// this file's mutation index. Only language-immutable constants may
 			// cross that boundary as safety evidence.
-			if gen.Tok != token.CONST && len(a.dirFiles[filepath.Dir(a.fset.Position(file.Pos()).Filename)]) > 1 {
+			if gen.Tok != token.CONST && len(a.dirFiles[filepath.Dir(a.fset.PositionFor(file.Pos(), false).Filename)]) > 1 {
 				continue
 			}
 			for _, spec := range gen.Specs {
