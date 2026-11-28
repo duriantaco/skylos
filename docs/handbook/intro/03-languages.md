@@ -100,10 +100,53 @@ incomplete blocks leave the file unchecked. A text dump can be up to
 the 4,000,000-byte parser limit. Look at each file's `status`
 in the SQL analysis summary. An `unparsed` entry also gives a `reason`.
 
-All twelve findings are advisory, including in strict mode. A strict coverage
-gate can still fail when a file could not be checked. Schema permissions,
-unused database objects and SQL assembled by application code are outside the
-scope of these standalone SQL checks.
+The eight quality checks stay in the full report. GitHub groups the four
+security checks by rule and keeps individual locations in the report.
+All twelve findings are advisory in the normal findings gate. Strict coverage
+can still fail when a file could not be checked.
+
+### Require checks for production migrations
+
+In the repository's root `pyproject.toml`, name the directories that actually
+ship to production. Use this example only if `db/production` is one of them.
+
+```toml
+[tool.skylos.sql.production]
+directories = ["db/production"]
+forbid_public_writes = true
+```
+
+Run `skylos cicd postgres-check --base "$BASE_SHA" --head "$HEAD_SHA"` from
+the repository root with full Git commit IDs. The base supplies the policy.
+The check reads changed SQL from Git and fails when a protected migration
+cannot be parsed, including when the parser is missing. Omit
+`forbid_public_writes` to require coverage only. When enabled, it also fails
+on a newly introduced PUBLIC table write grant, including a grant on future
+tables. A PUBLIC read grant or an existing write grant shifting lines passes.
+The write check covers explicit INSERT, UPDATE, DELETE, TRUNCATE and ALL
+table grants. Dynamic SQL, role membership and privileges established in a
+different migration can also affect who has access. The check follows explicit
+transactions and savepoints within the file and assumes autocommit between
+them. A write that becomes public at a commit can be blocked even if a later
+transaction revokes it. Unresolved or two-phase transactions involving these
+writes fail the check. Use your migration runner for role tests if it wraps
+or batches SQL.
+
+Splitting or combining ordinary grants passes when the same tables and columns
+keep the same rights. For very large rewrites the check limits this comparison
+and can flag an equivalent change for review.
+
+For an intentional grant, review its file and the fingerprint printed by the
+check. Add one `{ path = "...", fingerprint = "..." }` entry to
+`allow_public_writes` in the same base policy. A PR cannot approve itself.
+For the reusable GitHub Action, use `fetch-depth: 0`, enable
+`postgres-policy: 'true'` in gate or review mode, and pin the action to a
+trusted commit. Require the job in your branch rules to prevent merging on
+failure and require owner review for policy and workflow edits.
+
+Runtime access depends on the deployed schema, grants and row policies. Test
+role access on a disposable database with the intended app roles. A scan
+cannot establish which rows a deployed login can read or write.
 
 ## Checking Rust security
 

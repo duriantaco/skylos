@@ -1,0 +1,107 @@
+{
+  "manifest_sha256": "d6079aea376fd551a103a0a1d27ebadba70490befc15dcaf878b8411aead20f2",
+  "module_sha256": {
+    "skylos/cicd/postgres_check.py": "2c47cccb75825671ab6b9b3a5320d2527c2fe5002d49fa554341c5943f9d5cce",
+    "skylos/visitors/languages/postgresql_grant_policy.py": "57e8978a0fe21d348ceee8733fbee3cbfe3b5e0b5a3643711377100dc998c7b7"
+  },
+  "matches": 16,
+  "total": 16,
+  "cases": [
+    {
+      "id": "same-table-rights-split",
+      "expected": 0,
+      "actual": 0,
+      "matched": true
+    },
+    {
+      "id": "same-table-rights-merge",
+      "expected": 0,
+      "actual": 0,
+      "matched": true
+    },
+    {
+      "id": "same-right-targets-split",
+      "expected": 0,
+      "actual": 0,
+      "matched": true
+    },
+    {
+      "id": "same-right-targets-merge",
+      "expected": 0,
+      "actual": 0,
+      "matched": true
+    },
+    {
+      "id": "rights-on-different-targets-cannot-cross",
+      "expected": 1,
+      "actual": 1,
+      "matched": true
+    },
+    {
+      "id": "duplicate-grant-still-blocks-once",
+      "expected": 1,
+      "actual": 1,
+      "matched": true
+    },
+    {
+      "id": "extra-table-still-blocks",
+      "expected": 1,
+      "actual": 1,
+      "matched": true
+    },
+    {
+      "id": "column-grant-split",
+      "expected": 0,
+      "actual": 0,
+      "matched": true
+    },
+    {
+      "id": "column-grant-merge",
+      "expected": 0,
+      "actual": 0,
+      "matched": true
+    },
+    {
+      "id": "columns-cannot-cover-table",
+      "expected": 1,
+      "actual": 1,
+      "matched": true
+    },
+    {
+      "id": "table-grant-covers-disjoint-column-split",
+      "expected": 0,
+      "actual": 0,
+      "matched": true
+    },
+    {
+      "id": "table-grant-cannot-cover-identical-column-twice",
+      "expected": 1,
+      "actual": 1,
+      "matched": true
+    },
+    {
+      "id": "exact-exception-empty-baseline",
+      "expected": 0,
+      "actual": 0,
+      "matched": true
+    },
+    {
+      "id": "exact-exception-wrong-path",
+      "expected": 1,
+      "actual": 1,
+      "matched": true
+    },
+    {
+      "id": "exact-exception-duplicated",
+      "expected": 1,
+      "actual": 1,
+      "matched": true
+    },
+    {
+      "id": "exception-for-combined-statement-cannot-cover-split",
+      "expected": 2,
+      "actual": 2,
+      "matched": true
+    }
+  ]
+}

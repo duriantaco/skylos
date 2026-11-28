@@ -39,6 +39,10 @@ inputs:
     description: "Minimum confidence threshold (0-100)"
     required: false
     default: "60"
+  postgres-policy:
+    description: "In gate or review mode, check changed production PostgreSQL migrations using the pull request or merge queue base policy. Requires fetch-depth: 0."
+    required: false
+    default: "false"
   token:
     description: "Optional legacy Skylos API token for uploads. Prefer GitHub OIDC with id-token: write when running in GitHub Actions."
     required: false
@@ -73,7 +77,7 @@ outputs:
     value: ${{ steps.scan.outputs.findings_count || steps.image_scan.outputs.findings_count }}
   gate-passed:
     description: "Whether the requested gate passed (true/false)"
-    value: ${{ steps.gate.outputs.passed || steps.image_scan.outputs.passed }}
+    value: ${{ steps.postgres_policy.outcome == 'failure' && 'false' || steps.gate.outputs.passed || steps.image_scan.outputs.passed }}
   report-path:
     description: "Path to the JSON report file"
     value: ${{ steps.scan.outputs.report || steps.image_scan.outputs.report }}
@@ -127,7 +131,9 @@ runs:
 
     - name: Install Skylos
       shell: bash
-      run: python -m pip install "${{ github.action_path }}[dart]"
+      env:
+        SKYLOS_ACTION_PATH: ${{ github.action_path }}
+      run: python -I -m pip install "${SKYLOS_ACTION_PATH}[dart,postgres]"
 
     - name: Run Skylos Image Scan
       id: image_scan
@@ -280,7 +286,7 @@ runs:
 
         # Run scan
         set +e
-        python -m skylos.cli "$SKYLOS_PATH" \
+        python -I -m skylos.cli "$SKYLOS_PATH" \
           --confidence "$SKYLOS_CONFIDENCE" \
           $FLAGS \
           "${SARIF_ARGS[@]}" \
@@ -355,7 +361,7 @@ runs:
           fi
         fi
 
-        python -m skylos.cli "$SKYLOS_PATH" \
+        python -I -m skylos.cli "$SKYLOS_PATH" \
           --confidence "$SKYLOS_CONFIDENCE" \
           $FLAGS \
           --upload || echo "Upload failed (non-fatal)"
@@ -364,7 +370,7 @@ runs:
       if: always() && inputs.image == ''
       shell: bash
       run: |
-        python -m skylos.cli cicd annotate \
+        python -I -m skylos.cli cicd annotate \
           --input skylos-report.json \
           --max 50 || true
 
@@ -380,9 +386,19 @@ runs:
           exit 1
         fi
 
-        python -m skylos.cli cicd review \
+        python -I -m skylos.cli cicd review \
           --input skylos-report.json \
           --max-comments "$SKYLOS_MAX_COMMENTS" || true
+
+    - name: Check changed production PostgreSQL migrations
+      id: postgres_policy
+      if: inputs.image == '' && inputs.postgres-policy == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && (inputs.mode == 'gate' || inputs.mode == 'review')
+      shell: bash
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        HEAD_SHA: ${{ github.sha }}
+      run: |
+        python -I -m skylos.cli cicd postgres-check --base "$BASE_SHA" --head "$HEAD_SHA"
 
     - name: Quality Gate
       id: gate
@@ -397,7 +413,7 @@ runs:
           DIFF_ARGS=("$SKYLOS_PATH" --diff-base "$SKYLOS_DIFF_BASE_REF")
         fi
         set +e
-        python -m skylos.cli cicd gate \
+        python -I -m skylos.cli cicd gate \
           "${DIFF_ARGS[@]}" \
           --input skylos-report.json \
           --summary

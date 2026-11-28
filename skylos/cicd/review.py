@@ -46,7 +46,12 @@ from skylos.reporting.assessment_display import (
     assessment_rows,
     maintainability_rows,
 )
-from skylos.reporting.listing import UNPROVEN_SOURCE_KIND, is_gate_exempt_review
+from skylos.reporting.listing import (
+    POSTGRESQL_SECURITY_REVIEWS,
+    UNPROVEN_SOURCE_KIND,
+    github_feedback_result,
+    is_gate_exempt_review,
+)
 from skylos.rules.quality.regression import detect_security_regressions
 
 console = Console()
@@ -103,6 +108,12 @@ def run_pr_review(
     if grade and previous_grade is None:
         previous_grade = _fetch_previous_grade(diff_base)
 
+    scan = {**results, "grade": grade} if grade else results
+    results = github_feedback_result(scan)
+    has_report_only_quality = results is not scan
+    if grade:
+        grade = results["grade"]
+
     if isinstance(results, dict) and diff_base:
         # Metrics the PR did not introduce or worsen are not review comments.
         from skylos.rules.quality.code_health import (
@@ -139,7 +150,8 @@ def run_pr_review(
             else changed_ranges
         )
         findings = filter_findings_to_diff(
-            all_findings, changed_ranges, project_root=review_root
+            all_findings, changed_ranges, project_root=review_root, postgres_base_ref=diff_base,
+            postgres_prefiltered=bool((results.get("analysis_summary") or {}).get("diff_scoped")),
         )
         findings.extend(regression_findings)
     except ValueError as exc:
@@ -194,6 +206,7 @@ def run_pr_review(
         left_unused=left_unused,
         summary_inputs=summary_inputs,
         coverage_notice=scan_coverage_notice(results),
+        has_report_only_quality=has_report_only_quality,
     )
 
     console.print(
@@ -550,8 +563,11 @@ def filter_findings_to_diff(
     changed_ranges: list[dict],
     *,
     project_root: str | os.PathLike[str] | None = None,
+    postgres_base_ref: str | None = None,
+    include_working_tree: bool = False,
+    postgres_prefiltered: bool = False,
 ) -> list[dict]:
-    if not changed_ranges:
+    if not changed_ranges and not postgres_base_ref:
         return []
 
     ranges_by_file = {}
@@ -563,6 +579,15 @@ def filter_findings_to_diff(
         )
         if file is not None:
             ranges_by_file.setdefault(file, []).append((r["start"], r["end"]))
+
+    postgres_decisions = {}
+    if postgres_base_ref and project_root is not None:
+        from skylos.analysis.sql_diff import postgres_review_diff
+
+        postgres_decisions = postgres_review_diff(
+            findings, project_root, postgres_base_ref, ranges_by_file,
+            working_tree=include_working_tree, prefiltered=postgres_prefiltered,
+        )
 
     checked_python_files = set()
 
@@ -578,6 +603,10 @@ def filter_findings_to_diff(
 
     filtered = []
     for finding in findings:
+        if id(finding) in postgres_decisions:
+            if postgres_decisions[id(finding)]:
+                filtered.append(finding)
+            continue
         if overlaps(
             finding.get("file", ""),
             finding.get("line", 0),
@@ -799,6 +828,9 @@ def _flatten_findings(results: dict) -> list[dict]:
                 finding["related_locations"] = related_locations
             if category == "danger" and is_gate_exempt_review(f):
                 finding["_review_only_kind"] = f["review_item"]["kind"]
+                receipt = f["review_item"].get("diff")
+                if f["rule_id"] in POSTGRESQL_SECURITY_REVIEWS and isinstance(receipt, dict):
+                    finding["_postgres_diff"] = receipt
             _copy_safe_finding_metadata(f, finding)
             findings.append(finding)
 
@@ -1662,12 +1694,13 @@ def _review_comment_location(
     return primary
 
 
-def _review_only_lines(groups: dict[tuple[str, str], list[dict]]) -> list[str]:
+def _review_only_lines(groups: dict[tuple[str, str], list[dict]], *, saved=False) -> list[str]:
     """Show examples from each kind of changed-line review candidate."""
     if not groups:
         return []
 
-    lines = ["", "### Review-only security findings", ""]
+    heading = "PostgreSQL reviews from the saved scan" if saved else "Review-only security findings"
+    lines = ["", f"### {heading}", ""]
     for (rule, kind), rows in sorted(groups.items()):
         reason = (
             "External input could not be established"
@@ -1692,6 +1725,10 @@ def _review_only_lines(groups: dict[tuple[str, str], list[dict]]) -> list[str]:
         count = len(rows)
         noun = "finding" if count == 1 else "findings"
         lines.append(f"- `{safe_rule}` · {count} {noun} · {reason}. " + ", ".join(examples))
+    if any(rule in POSTGRESQL_SECURITY_REVIEWS for rule, _ in groups):
+        lines.append("The full JSON report lists every PostgreSQL security review location.")
+        if saved:
+            lines.append("These locations could not be verified against this revision.")
     return lines
 
 
@@ -1710,6 +1747,7 @@ def _post_summary_comment(
     left_unused: list[tuple[str, str]] | None = None,
     summary_inputs: SummaryInputs | None = None,
     coverage_notice: str = "",
+    has_report_only_quality: bool = False,
 ) -> _CommentOutcome:
     left_unused = left_unused or []
     existing_comments, list_error = _gh_list(
@@ -1760,6 +1798,13 @@ def _post_summary_comment(
         return _publish_summary_comment(
             "\n".join(lines), previous, list_error, pr_number, repo
         )
+    saved_groups = {}
+    for row in diff_findings:
+        if row.get("_postgres_unverified_location"):
+            saved_groups.setdefault((row["rule_id"], row["_review_only_kind"]), []).append(row)
+    if saved_groups:
+        diff_findings = [f for f in diff_findings if not f.get("_postgres_unverified_location")]
+        all_findings = [f for f in all_findings if not f.get("_postgres_unverified_location")]
     changed_now = len(diff_findings)
     partial_report = bool(coverage_notice)
     if summary_inputs is not None:
@@ -1789,7 +1834,7 @@ def _post_summary_comment(
             head.extend([verdict, ""])
     if partial_report:
         head.extend([coverage_notice or PARTIAL_SCAN_NOTICE, ""])
-    elif changed_now == 0 and previous_max > 0:
+    elif changed_now == 0 and previous_max > 0 and not has_report_only_quality and not saved_groups:
         head.extend(
             [
                 "✅ **All issues Skylos reported on this PR's changed lines are "
@@ -1830,6 +1875,10 @@ def _post_summary_comment(
             f"<!-- skylos-review-state: changed={changed_now} "
             f"max={max(previous_max, changed_now)} -->"
         )
+    if saved_groups:
+        count = sum(map(len, saved_groups.values()))
+        noun = "location" if count == 1 else "locations"
+        head.append(f"The saved scan contains **{count}** PostgreSQL review {noun} awaiting verification.")
     if summary_inputs is not None:
         brief = brief_lines(summary_inputs)
         if brief:
@@ -1976,6 +2025,7 @@ def _post_summary_comment(
                     )
 
     lines.extend(_review_only_lines(review_groups))
+    lines.extend(_review_only_lines(saved_groups, saved=True))
 
     if left_unused:
         lines.extend(

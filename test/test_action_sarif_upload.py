@@ -37,7 +37,7 @@ def _run_scan_step(action, tmp_path, upload_sarif):
             import sys
 
             args = sys.argv[1:]
-            if args[:2] == ["-m", "skylos.cli"]:
+            if args[:3] == ["-I", "-m", "skylos.cli"]:
                 with Path(os.environ["SKYLOS_TEST_CALLS"]).open("a") as stream:
                     stream.write(json.dumps(args) + "\\n")
                 print("{}")

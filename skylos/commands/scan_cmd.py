@@ -1503,7 +1503,9 @@ def _run_scan_command(
                 if items:
                     try:
                         diff_findings = filter_findings_to_diff(
-                            items, changed_ranges, project_root=diff_root
+                            items, changed_ranges, project_root=diff_root,
+                            postgres_base_ref=base_ref if category == "danger" else None,
+                            include_working_tree=True,
                         )
                     except ValueError as exc:
                         cli_module._exit_diff_unavailable(args, str(exc))

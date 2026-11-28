@@ -121,6 +121,7 @@ class Settings:
     default_branch: str | None = None
     skylos_version: str | None = None
     dart: bool = True
+    postgres: bool = False
 
 
 @dataclass(frozen=True)
@@ -311,7 +312,7 @@ def _jenkins(settings: Settings, requirement: str) -> Rendered:
             "Multibranch Pipeline pull request builds scan the lines the pull",
             "request changes and fail when the Skylos gate fails.",
             "The agent needs Python 3.11 or newer as python3. To scan Dart",
-            "files, install 'skylos[dart]' instead; it needs a C compiler.",
+            "files, enable the dart extra as well; it needs a C compiler.",
         ),
     )
     full = [
@@ -330,7 +331,7 @@ def _jenkins(settings: Settings, requirement: str) -> Rendered:
         notes=(
             "runs in Multibranch Pipeline pull request builds",
             "the agent needs python3 (3.11 or newer)",
-            "Dart files: install 'skylos[dart]' instead (needs a C compiler)",
+            "Dart files: enable the dart extra as well (needs a C compiler)",
             "private repository and the fetch fails: give the step Git credentials",
         ),
     )
@@ -491,7 +492,7 @@ def _other(settings: Settings, requirement: str) -> Rendered:
         notes=(
             f"compares with origin/{branch}; change {branch} if the pull request targets another branch",
             "the scan exits non-zero when the gate fails, which fails the step",
-            "Dart files: install 'skylos[dart]' instead (needs a C compiler)",
+            "Dart files: enable the dart extra as well (needs a C compiler)",
         ),
     )
 
@@ -513,12 +514,15 @@ def render(platform: Platform, settings: Settings) -> Rendered:
     Image-based templates run on python images that ship a C compiler, so they
     install the Dart grammar like the GitHub workflow when ``settings.dart``
     says the repository has Dart files. Jenkins agents and unknown CIs may
-    have no compiler, so they install plain skylos.
+    have no compiler, so they omit the Dart extra. SQL scans request the
+    PostgreSQL parser on every platform.
     """
     _validate(settings, platform)
     renderer = _RENDERERS.get(platform.key, _other)
     dart = settings.dart and platform.key not in _UNKNOWN_AGENT_KEYS
-    requirement = skylos_requirement(settings.skylos_version, dart=dart)
+    requirement = skylos_requirement(
+        settings.skylos_version, dart=dart, postgres=settings.postgres
+    )
     return renderer(settings, requirement)
 
 

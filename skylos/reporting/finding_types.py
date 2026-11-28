@@ -28,23 +28,28 @@ _CANONICAL_SECTIONS = tuple(
 )
 
 
+def is_custom_finding(finding, category=None) -> bool:
+    if str(category or "").lower() in {"custom", "custom_rules"}:
+        return True
+    return isinstance(finding, Mapping) and (
+        str(finding.get("category") or "").lower() in {"custom", "custom_rules"}
+        or str(finding.get("source") or "").lower() == "custom"
+        or finding.get("custom_rule") is True
+    )
+
+
 def get_finding_type(finding, category=None) -> str:
     """Use the built-in rule classification; custom or unknown checks are Review.
 
     A caller-supplied ``finding_type`` cannot downgrade a built-in risk check.
     Raw dead-code records without a catalog ID also require review.
     """
+    if is_custom_finding(finding, category):
+        return "review"
     if isinstance(finding, Mapping):
-        if str(finding.get("category") or "").lower() in {"custom", "custom_rules"}:
-            return "review"
-        source = str(finding.get("source") or "").lower()
-        if source == "custom" or finding.get("custom_rule") is True:
-            return "review"
         rule_id = finding.get("rule_id") or finding.get("id")
     else:
         rule_id = finding if isinstance(finding, str) else None
-    if str(category or "").lower() in {"custom", "custom_rules"}:
-        return "review"
     return get_rule_finding_type(rule_id)
 
 

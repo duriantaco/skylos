@@ -1,0 +1,208 @@
+{
+  "manifest_sha256": "803138622957edc65d756b46a2156a16169dc22ea70a075060d809a2aec08d2e",
+  "pglast": "v8.9",
+  "policy_command": "gate --advisory",
+  "matches": 14,
+  "total": 24,
+  "cases": [
+    {
+      "id": "clean",
+      "actual": {
+        "quality": 0,
+        "danger": 0,
+        "quality_annotations": 0,
+        "security_notices": 0,
+        "inline": 0
+      },
+      "matched": true,
+      "summary_groups": []
+    },
+    {
+      "id": "quality-only",
+      "actual": {
+        "quality": 1,
+        "danger": 0,
+        "quality_annotations": 1,
+        "security_notices": 0,
+        "inline": 1
+      },
+      "matched": false,
+      "summary_groups": []
+    },
+    {
+      "id": "twelve-public-grants",
+      "actual": {
+        "quality": 0,
+        "danger": 12,
+        "quality_annotations": 0,
+        "security_notices": 1,
+        "inline": 0
+      },
+      "matched": true,
+      "summary_groups": [
+        "SKY-D420"
+      ]
+    },
+    {
+      "id": "backup-role",
+      "actual": {
+        "quality": 0,
+        "danger": 1,
+        "quality_annotations": 0,
+        "security_notices": 1,
+        "inline": 0
+      },
+      "matched": true,
+      "summary_groups": [
+        "SKY-D419"
+      ]
+    },
+    {
+      "id": "quality-and-access",
+      "actual": {
+        "quality": 1,
+        "danger": 1,
+        "quality_annotations": 1,
+        "security_notices": 1,
+        "inline": 1
+      },
+      "matched": false,
+      "summary_groups": [
+        "SKY-D418"
+      ]
+    },
+    {
+      "id": "unrelated-quality",
+      "actual": {
+        "finding_annotations": 1
+      },
+      "matched": true
+    },
+    {
+      "id": "unrelated-security",
+      "actual": {
+        "finding_annotations": 1
+      },
+      "matched": true
+    },
+    {
+      "id": "checked-clean",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true
+    },
+    {
+      "id": "quality-advisory",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true
+    },
+    {
+      "id": "security-review-without-prohibition",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true
+    },
+    {
+      "id": "unparsed-production",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": false
+    },
+    {
+      "id": "missing-parser-production",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": false
+    },
+    {
+      "id": "ignored-production",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": false
+    },
+    {
+      "id": "outside-production",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true
+    },
+    {
+      "id": "deleted-production",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true
+    },
+    {
+      "id": "new-public-write",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": false
+    },
+    {
+      "id": "read-only-public",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true
+    },
+    {
+      "id": "known-grant-in-edited-file",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true
+    },
+    {
+      "id": "existing-grant-expands",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": false
+    },
+    {
+      "id": "same-rule-different-table",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": false
+    },
+    {
+      "id": "approved-exact-grant",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true
+    },
+    {
+      "id": "exception-other-object",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": false
+    },
+    {
+      "id": "exception-other-privilege",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": false
+    },
+    {
+      "id": "out-of-scope-grant",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true
+    }
+  ]
+}

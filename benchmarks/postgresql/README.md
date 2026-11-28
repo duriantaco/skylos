@@ -1,5 +1,9 @@
 # PostgreSQL benchmark
 
+The [CI policy replay](ci-policy/README.md) records which changes should
+stay in the report, produce a PR notice, or fail the migration check. It
+includes the expected outcomes and both versions' results.
+
 The [migration, query and script benchmark](depth/README.md) covers eight additional
 rules, CTE chains and text dumps. It compares the CLI with Squawk on shared
 transaction checks and includes pinned PostgreSQL, DuckDB and Pagila source.

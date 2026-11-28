@@ -294,7 +294,9 @@ expected answers and tool calls, use `skylos agent test`. See
   Eight query and migration checks cover unused CTE chains, unreachable CASE arms,
   NULL filters, conditional counts, concurrent indexes and foreign keys. Four
   security checks review privileged routines, PUBLIC grants and login roles.
-  Skylos can also read plain-text dump scripts. All 12 checks are advisory.
+  All 12 checks are advisory in a regular scan. GitHub groups security findings
+  by rule and keeps query quality in the full report. Teams can require changed
+  production migrations to parse and optionally forbid new PUBLIC table writes.
   See the [PostgreSQL guide](docs/handbook/intro/03-languages.md#checking-postgresql-scripts)
   for setup and the [benchmark](benchmarks/postgresql/README.md) for measured coverage.
 - Dart needs `pip install "skylos[dart]"`.

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import re
+from collections.abc import Mapping
 
-from skylos.reporting.finding_types import get_finding_type
+from skylos.reporting.finding_types import get_finding_type, is_custom_finding
 from skylos.reporting.rollups import FINDING_SECTIONS
 
 LISTING_VERSION = 1
@@ -247,6 +247,55 @@ POSTGRESQL_SECURITY_REVIEWS = {
     "SKY-D419": "postgresql_login_bypassrls",
     "SKY-D420": "postgresql_public_grant",
 }
+
+
+def github_feedback_result(result):
+    """Keep the full SQL quality inventory in the report, outside automatic feedback."""
+    quality = result.get("quality") or []
+    visible = [
+        row for row in quality
+        if not (
+            isinstance(row, Mapping)
+            and isinstance(row.get("rule_id"), str)
+            and row["rule_id"] in POSTGRESQL_QUALITY_ADVISORIES
+            and not is_custom_finding(row)
+        )
+    ]
+    if len(visible) == len(quality):
+        return result
+
+    assessment = result.get("assessment")
+    scope = result.get("analysis_summary")
+    if not isinstance(scope, Mapping):
+        scope = {}
+    view = {**result, "quality": visible, "analysis_summary": dict(scope)}
+    # A display-filtered report can carry an assessment of findings outside
+    # its arrays. Rebuilding that from the subset could erase known risks.
+    if (
+        isinstance(assessment, Mapping)
+        and assessment
+        and not scope.get("assessment_includes_filtered_findings")
+    ):
+        from skylos.reporting.assessment import compute_assessment
+
+        view["assessment"] = compute_assessment(
+            view, scanned_checks=assessment.get("scanned_checks")
+        )
+    grade = result.get("grade")
+    if (
+        not assessment
+        and isinstance(grade, Mapping)
+        and isinstance(grade.get("total_loc"), int)
+        and not scope.get("grade_includes_filtered_findings")
+    ):
+        from skylos.reporting.grader import compute_grade
+
+        view["grade"] = compute_grade(
+            view, grade["total_loc"],
+            included_categories=grade.get("scanned_categories")
+        )
+    return view
+
 
 NONBLOCKING_REVIEW_RULES = frozenset({"SKY-D324", "SKY-D325"})
 

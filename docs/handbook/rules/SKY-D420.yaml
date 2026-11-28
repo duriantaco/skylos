@@ -5,7 +5,7 @@ severity: MEDIUM
 languages: [PostgreSQL]
 gate:
   full: listed
-  note: This PostgreSQL finding is report-only.
+  note: The findings gate lists this advisory. The separate production migration check can block new PUBLIC writes when the target branch forbids them.
 
 what_it_is: >-
   The SQL grants table or column write privileges to PUBLIC. It can grant them on

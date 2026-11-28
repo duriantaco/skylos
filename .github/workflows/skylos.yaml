@@ -77,14 +77,14 @@ jobs:
           fi
           uv venv --python 3.11
           # Skylos from the base branch commit, never from the PR's own code.
-          uv pip install --python .venv/bin/python "skylos @ git+https://github.com/duriantaco/skylos.git@$TRUSTED_BASE_SHA"
+          uv pip install --python .venv/bin/python "skylos[postgres] @ git+https://github.com/duriantaco/skylos.git@$TRUSTED_BASE_SHA"
           .venv/bin/skylos --version
 
       - name: Use repo Skylos on trusted refs
         if: github.event_name != 'pull_request'
         run: |
           uv venv --python 3.11
-          uv pip install --python .venv/bin/python -e .
+          uv pip install --python .venv/bin/python -e ".[postgres]"
           .venv/bin/python -c "import skylos; print('skylos from:', skylos.__file__)"
           .venv/bin/python -c "import skylos.visitors.languages; print('languages OK')"
 
@@ -293,7 +293,7 @@ jobs:
           # Python prevents checked-out modules from replacing it.
           python -I -m venv "$RUNNER_TEMP/skylos-review-venv"
           "$RUNNER_TEMP/skylos-review-venv/bin/python" -I -m pip install \
-            "skylos @ git+https://github.com/duriantaco/skylos.git@$TRUSTED_BASE_SHA"
+            "skylos[postgres] @ git+https://github.com/duriantaco/skylos.git@$TRUSTED_BASE_SHA"
 
       - name: Download the saved scan report
         continue-on-error: true

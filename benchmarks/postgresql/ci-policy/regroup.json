@@ -1,0 +1,114 @@
+[
+  {
+    "id": "same-table-rights-split",
+    "base": "GRANT UPDATE, DELETE ON app.a TO PUBLIC;",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;GRANT DELETE ON app.a TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "same-table-rights-merge",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;GRANT DELETE ON app.a TO PUBLIC;",
+    "head": "GRANT UPDATE, DELETE ON app.a TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "same-right-targets-split",
+    "base": "GRANT UPDATE ON app.a, app.b TO PUBLIC;",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;GRANT UPDATE ON app.b TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "same-right-targets-merge",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;GRANT UPDATE ON app.b TO PUBLIC;",
+    "head": "GRANT UPDATE ON app.a, app.b TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "rights-on-different-targets-cannot-cross",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;GRANT DELETE ON app.b TO PUBLIC;",
+    "head": "GRANT UPDATE, DELETE ON app.a, app.b TO PUBLIC;",
+    "violations": 1
+  },
+  {
+    "id": "duplicate-grant-still-blocks-once",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;GRANT UPDATE ON app.a TO PUBLIC;",
+    "violations": 1
+  },
+  {
+    "id": "extra-table-still-blocks",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "head": "GRANT UPDATE ON app.a, app.b TO PUBLIC;",
+    "violations": 1
+  },
+  {
+    "id": "column-grant-split",
+    "base": "GRANT UPDATE(x,y) ON app.a TO PUBLIC;",
+    "head": "GRANT UPDATE(x) ON app.a TO PUBLIC;GRANT UPDATE(y) ON app.a TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "column-grant-merge",
+    "base": "GRANT UPDATE(x) ON app.a TO PUBLIC;GRANT UPDATE(y) ON app.a TO PUBLIC;",
+    "head": "GRANT UPDATE(x,y) ON app.a TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "columns-cannot-cover-table",
+    "base": "GRANT UPDATE(x,y) ON app.a TO PUBLIC;",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "violations": 1
+  },
+  {
+    "id": "table-grant-covers-disjoint-column-split",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "head": "GRANT UPDATE(x) ON app.a TO PUBLIC;GRANT UPDATE(y) ON app.a TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "table-grant-cannot-cover-identical-column-twice",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "head": "GRANT UPDATE(x) ON app.a TO PUBLIC;GRANT UPDATE(x) ON app.a TO PUBLIC;",
+    "violations": 1
+  },
+  {
+    "id": "exact-exception-empty-baseline",
+    "base": "",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "violations": 0,
+    "exception": {
+      "path": "db/prod/001.sql",
+      "statement": "GRANT UPDATE ON app.a TO PUBLIC;"
+    }
+  },
+  {
+    "id": "exact-exception-wrong-path",
+    "base": "",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "violations": 1,
+    "exception": {
+      "path": "db/prod/elsewhere.sql",
+      "statement": "GRANT UPDATE ON app.a TO PUBLIC;"
+    }
+  },
+  {
+    "id": "exact-exception-duplicated",
+    "base": "",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;GRANT UPDATE ON app.a TO PUBLIC;",
+    "violations": 1,
+    "exception": {
+      "path": "db/prod/001.sql",
+      "statement": "GRANT UPDATE ON app.a TO PUBLIC;"
+    }
+  },
+  {
+    "id": "exception-for-combined-statement-cannot-cover-split",
+    "base": "",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;GRANT DELETE ON app.a TO PUBLIC;",
+    "violations": 2,
+    "exception": {
+      "path": "db/prod/001.sql",
+      "statement": "GRANT UPDATE, DELETE ON app.a TO PUBLIC;"
+    }
+  }
+]

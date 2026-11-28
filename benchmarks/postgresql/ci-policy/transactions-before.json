@@ -1,0 +1,119 @@
+{
+  "manifest_sha256": "ff043f70fdfe21265656fa16ec193c78efa3049d0b2997f3935cef3f669fe993",
+  "module_sha256": {
+    "skylos/cicd/postgres_check.py": "647d85a99f419088fc5cbf93cb2b9d62a6fc383aa86b659ccafae3d1fc5abbde",
+    "skylos/visitors/languages/postgresql_grant_policy.py": "cf6f3dc2c210f10495e100fb05c8e1389597d7399aecf5761a90af4b4c9c6e9e"
+  },
+  "matches": 7,
+  "total": 18,
+  "cases": [
+    {
+      "id": "routine-read-only-transaction",
+      "expected": 0,
+      "actual": 1,
+      "matched": false
+    },
+    {
+      "id": "routine-unrelated-revoke",
+      "expected": 0,
+      "actual": 1,
+      "matched": false
+    },
+    {
+      "id": "commit-previously-rolled-back",
+      "expected": 1,
+      "actual": 0,
+      "matched": false
+    },
+    {
+      "id": "candidate-grant-is-rolled-back",
+      "expected": 0,
+      "actual": 1,
+      "matched": false
+    },
+    {
+      "id": "grant-inside-released-savepoint",
+      "expected": 1,
+      "actual": 1,
+      "matched": true
+    },
+    {
+      "id": "grant-rolled-back-to-savepoint",
+      "expected": 0,
+      "actual": 1,
+      "matched": false
+    },
+    {
+      "id": "later-direct-revocation-removed",
+      "expected": 1,
+      "actual": 0,
+      "matched": false
+    },
+    {
+      "id": "later-committed-revocation-removed",
+      "expected": 1,
+      "actual": 0,
+      "matched": false
+    },
+    {
+      "id": "rolled-back-revocation-removed",
+      "expected": 0,
+      "actual": 0,
+      "matched": true
+    },
+    {
+      "id": "unaffected-delete-retains-credit",
+      "expected": 0,
+      "actual": 0,
+      "matched": true
+    },
+    {
+      "id": "revoked-update-reappears",
+      "expected": 1,
+      "actual": 0,
+      "matched": false
+    },
+    {
+      "id": "unaffected-column-retains-credit",
+      "expected": 0,
+      "actual": 0,
+      "matched": true
+    },
+    {
+      "id": "revoked-column-reappears",
+      "expected": 1,
+      "actual": 0,
+      "matched": false
+    },
+    {
+      "id": "unaffected-table-retains-credit",
+      "expected": 0,
+      "actual": 0,
+      "matched": true
+    },
+    {
+      "id": "revoked-table-reappears",
+      "expected": 1,
+      "actual": 0,
+      "matched": false
+    },
+    {
+      "id": "new-in-committed-txn",
+      "expected": 1,
+      "actual": 1,
+      "matched": true
+    },
+    {
+      "id": "known-grant-inside-new-transaction",
+      "expected": 0,
+      "actual": 1,
+      "matched": false
+    },
+    {
+      "id": "otherwise-identical-grant-to-new-table",
+      "expected": 1,
+      "actual": 1,
+      "matched": true
+    }
+  ]
+}

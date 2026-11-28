@@ -88,7 +88,11 @@ def _installed_skylos_version() -> str | None:
 
 
 def skylos_requirement(
-    version: str | None = None, *, dart: bool = True, llm: bool = False
+    version: str | None = None,
+    *,
+    dart: bool = True,
+    llm: bool = False,
+    postgres: bool = False,
 ) -> str:
     """The shell-quoted pip requirement generated CI configs install.
 
@@ -101,6 +105,8 @@ def skylos_requirement(
         extras.append("dart")
     if llm:
         extras.append("llm")
+    if postgres:
+        extras.append("postgres")
     package = "skylos"
     if extras:
         package = f"skylos[{','.join(extras)}]"
@@ -109,31 +115,34 @@ def skylos_requirement(
     return shlex.quote(package)
 
 
-def has_dart_files(path: str | Path) -> bool:
-    """Whether a scan of ``path`` would read Dart files.
-
-    Uses the scanner's file discovery, so .gitignore and the default excluded
-    folders (build output, node_modules, virtualenvs, ...) apply.
-    """
+def scan_parser_extensions(path: str | Path) -> set[str]:
+    """Find optional parser languages using the scanner's normal file discovery."""
     from skylos.constants import parse_exclude_folders
     from skylos.core.file_discovery import discover_source_files
 
-    return bool(
-        discover_source_files(
-            path,
-            [".dart"],
-            exclude_folders=sorted(parse_exclude_folders(use_defaults=True)),
-        )
+    files = discover_source_files(
+        path,
+        [".dart", ".sql"],
+        exclude_folders=sorted(parse_exclude_folders(use_defaults=True)),
     )
+    return {file.suffix.lower() for file in files}
+
+
+def has_dart_files(path: str | Path) -> bool:
+    return ".dart" in scan_parser_extensions(path)
 
 
 def _skylos_install_command(
-    version: str | None = None, *, dart: bool = True, llm: bool = False
+    version: str | None = None,
+    *,
+    dart: bool = True,
+    llm: bool = False,
+    postgres: bool = False,
 ) -> str:
     # -I keeps a pull request's own files (e.g. a top-level pip/ directory)
-    # off sys.path while pip runs after checkout. [dart] keeps Dart files
-    # scanned; hosted runners have the C compiler its parser builds with.
-    return f"python -I -m pip install {skylos_requirement(version, dart=dart, llm=llm)}"
+    # off sys.path while pip runs after checkout.
+    requirement = skylos_requirement(version, dart=dart, llm=llm, postgres=postgres)
+    return f"python -I -m pip install {requirement}"
 
 
 def _shell_path(path: str | Path | None) -> str:
@@ -659,11 +668,14 @@ def _build_pr_upload_jobs(
     analysis_flags: str,
     project_root: str,
     use_dart: bool = True,
+    use_postgres: bool = False,
 ) -> str:
     root_arg = ""
     if project_root:
         root_arg = f" --project-root {shlex.quote(project_root)}"
-    scan_install = _skylos_install_command(skylos_version, dart=use_dart)
+    scan_install = _skylos_install_command(
+        skylos_version, dart=use_dart, postgres=use_postgres
+    )
     plain_install = _skylos_install_command(skylos_version, dart=False)
     return f"""
   pr-policy:
@@ -797,6 +809,7 @@ def generate_workflow(
     use_risk_review: bool = False,
     use_pr_upload: bool = True,
     use_dart: bool = True,
+    use_postgres: bool = False,
 ) -> str:
     """
     Generate the GitHub Actions workflow YAML for Skylos scans.
@@ -811,7 +824,8 @@ def generate_workflow(
     scans the pull request head as data, and only the jobs that never check
     out pull request files get id-token: write. With use_dart, the jobs that
     scan install the skylos[dart] extra, which builds the Dart parser with a
-    C compiler; leave it off for repositories without Dart files.
+    C compiler; leave it off for repositories without Dart files. SQL scan
+    jobs use the postgres extra when use_postgres is enabled.
 
     Calls: skylos/cicd/workflow.py _build_trigger_block;
         skylos/cicd/workflow.py _skylos_install_command;
@@ -857,9 +871,11 @@ def generate_workflow(
         merge_queue=merge_queue,
         pr_upload=pr_upload_jobs,
     )
-    install_command = _skylos_install_command(skylos_version, dart=use_dart)
+    install_command = _skylos_install_command(
+        skylos_version, dart=use_dart, postgres=use_postgres
+    )
     gate_install_command = _skylos_install_command(
-        skylos_version, dart=use_dart, llm=use_llm
+        skylos_version, dart=use_dart, llm=use_llm, postgres=use_postgres
     )
     scan_target = _shell_path(scan_path)
     analysis_flags = " ".join(
@@ -1135,7 +1151,9 @@ jobs:
             needs.append("risk-review")
         workflow += _build_summary_job(
             python_version=python_version,
-            install_command=_skylos_install_command(skylos_version, dart=False),
+            install_command=_skylos_install_command(
+                skylos_version, dart=False, postgres=use_postgres
+            ),
             scan_target=scan_target,
             needs=needs,
             advisory_gate=advisory_gate,
@@ -1163,6 +1181,7 @@ jobs:
             analysis_flags=analysis_flags + upgrade_flag,
             project_root=project_root,
             use_dart=use_dart,
+            use_postgres=use_postgres,
         )
 
     if use_claude_security:

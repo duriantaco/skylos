@@ -212,18 +212,18 @@ def _cloud_setup_url(repo_root: Path) -> str:
     return f"{base}/dashboard/projects/{quote(project_id, safe='')}/settings#merge-blocking"
 
 
-def _scan_has_dart_files(repo_root: Path, scan_path: str) -> bool:
-    from skylos.cicd.workflow import has_dart_files
+def _scan_parser_extensions(repo_root: Path, scan_path: str) -> set[str]:
+    from skylos.cicd.workflow import has_dart_files, scan_parser_extensions
 
-    target = repo_root
     try:
         candidate = (repo_root / str(scan_path or ".")).resolve()
         candidate.relative_to(repo_root.resolve())
     except (OSError, ValueError):
         candidate = None
     if candidate is not None and candidate.exists():
-        target = candidate
-    return has_dart_files(target)
+        return scan_parser_extensions(candidate)
+    # Retain the Dart fallback when the configured scan path is unavailable.
+    return {".dart"} if has_dart_files(repo_root) else set()
 
 
 def _default_workflow_output() -> str:
@@ -419,6 +419,7 @@ def _run_cicd_init(cicd_args, console, *, cloud_connected: bool | None = None) -
     output_path = cicd_args.output or _default_workflow_output()
     pr_upload = use_upload and _accepts_pr_uploads(output_path)
     try:
+        extensions = _scan_parser_extensions(repo_root, cicd_args.scan_path)
         yaml_content = generate_workflow(
             triggers=cicd_args.triggers,
             analysis_types=cicd_args.analysis,
@@ -436,7 +437,8 @@ def _run_cicd_init(cicd_args, console, *, cloud_connected: bool | None = None) -
             default_branch=default_branch,
             use_risk_review=cicd_args.risk_review,
             use_pr_upload=pr_upload,
-            use_dart=_scan_has_dart_files(repo_root, cicd_args.scan_path),
+            use_dart=".dart" in extensions,
+            use_postgres=".sql" in extensions,
         )
     except ValueError as e:
         console.print(f"[bold red]Invalid workflow option: {e}[/bold red]")
@@ -592,13 +594,15 @@ def _run_platform_init(cicd_args, console, platform, platform_name) -> int:
     from skylos.cicd.platforms import Settings, print_platform_next_steps, render
     from skylos.cicd.workflow import display_path, write_workflow
 
+    extensions = _scan_parser_extensions(_repo_root(), cicd_args.scan_path)
     settings = Settings(
         python_version=cicd_args.python_version,
         analysis_types=tuple(cicd_args.analysis),
         use_baseline=not cicd_args.no_baseline,
         scan_path=cicd_args.scan_path,
         default_branch=cicd_args.default_branch or _detect_default_branch(),
-        dart=_scan_has_dart_files(_repo_root(), cicd_args.scan_path),
+        dart=".dart" in extensions,
+        postgres=".sql" in extensions,
     )
     try:
         rendered = render(platform, settings)
@@ -851,6 +855,14 @@ def run_cicd_command(
         ),
     )
 
+    p_ci_pg = cicd_sub.add_parser(
+        "postgres-check",
+        help="Check changed PostgreSQL migrations using trusted base policy",
+    )
+    p_ci_pg.add_argument("--base", required=True, help="Trusted base commit SHA")
+    p_ci_pg.add_argument("--head", required=True, help="Candidate commit SHA")
+    p_ci_pg.add_argument("--format", choices=["text", "json"], default="text")
+
     p_ci_gate = cicd_sub.add_parser("gate", help="Check quality gate (CI exit code)")
     p_ci_gate.add_argument("path", nargs="?", default=".")
     p_ci_gate.add_argument(
@@ -959,6 +971,11 @@ def run_cicd_command(
 
     if cicd_args.cicd_cmd == "init":
         return _run_cicd_init(cicd_args, console, cloud_connected=cloud_connected)
+
+    if cicd_args.cicd_cmd == "postgres-check":
+        from skylos.cicd.postgres_check import run_postgres_check
+
+        return run_postgres_check(cicd_args)
 
     if cicd_args.cicd_cmd == "agent-review":
         from skylos.cicd.agent_review import run_agent_review_command

@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "baseline": "aa521a20",
+  "description": "Synthetic migrations and expected low-noise CI decisions, labeled before implementation. SQL is never executed.",
+  "reporting": [
+    {"id": "clean", "sql": "SELECT 1;", "quality": 0, "danger": 0, "quality_annotations": 0, "security_notices": 0, "inline": 0},
+    {"id": "quality-only", "sql": "SELECT 1 WHERE 2 NOT IN (1, NULL);", "quality": 1, "danger": 0, "quality_annotations": 0, "security_notices": 0, "inline": 0},
+    {"id": "twelve-public-grants", "repeat": 12, "sql": "GRANT UPDATE ON TABLE app.shared_{i} TO PUBLIC;", "quality": 0, "danger": 12, "quality_annotations": 0, "security_notices": 1, "inline": 0},
+    {"id": "backup-role", "sql": "CREATE ROLE backup LOGIN BYPASSRLS;", "quality": 0, "danger": 1, "quality_annotations": 0, "security_notices": 1, "inline": 0},
+    {"id": "quality-and-access", "sql": "SELECT 1 WHERE 2 = NULL;\nGRANT CREATE ON SCHEMA app TO PUBLIC;", "quality": 1, "danger": 1, "quality_annotations": 0, "security_notices": 1, "inline": 0}
+  ],
+  "policy": [
+    {"id": "checked-clean", "before": null, "after": "SELECT 1;", "outcome": "pass"},
+    {"id": "quality-advisory", "before": null, "after": "SELECT 1 WHERE 2 = NULL;", "outcome": "pass"},
+    {"id": "security-review-without-prohibition", "deny_public_writes": false, "before": null, "after": "GRANT UPDATE ON TABLE app.demo TO PUBLIC;", "outcome": "pass"},
+    {"id": "unparsed-production", "before": null, "after": "SELECT (;", "outcome": "fail"},
+    {"id": "missing-parser-production", "parser": false, "before": null, "after": "SELECT 1;", "outcome": "fail"},
+    {"id": "ignored-production", "head_ignore": true, "before": null, "after": "GRANT UPDATE ON TABLE app.demo TO PUBLIC;", "outcome": "fail"},
+    {"id": "outside-production", "path": "demo/migration.sql", "before": null, "after": "SELECT (;", "outcome": "pass"},
+    {"id": "deleted-production", "before": "SELECT (;", "after": null, "outcome": "pass"},
+    {"id": "new-public-write", "before": null, "after": "GRANT UPDATE ON TABLE app.demo TO PUBLIC;", "outcome": "fail"},
+    {"id": "read-only-public", "before": null, "after": "GRANT SELECT ON TABLE app.demo TO PUBLIC;", "outcome": "pass"},
+    {"id": "known-grant-in-edited-file", "before": "GRANT UPDATE ON TABLE app.demo TO PUBLIC;\nSELECT 1;", "after": "-- migration note\nGRANT UPDATE ON TABLE app.demo TO PUBLIC;\nSELECT 2;", "outcome": "pass"},
+    {"id": "existing-grant-expands", "before": "GRANT UPDATE ON TABLE app.demo TO PUBLIC;", "after": "GRANT UPDATE, DELETE ON TABLE app.demo TO PUBLIC;", "outcome": "fail"},
+    {"id": "same-rule-different-table", "before": "GRANT UPDATE ON TABLE app.first TO PUBLIC;", "after": "GRANT UPDATE ON TABLE app.second TO PUBLIC;", "outcome": "fail"},
+    {"id": "approved-exact-grant", "exception": "GRANT UPDATE ON TABLE app.first TO PUBLIC;", "before": null, "after": "GRANT UPDATE ON TABLE app.first TO PUBLIC;", "outcome": "pass"},
+    {"id": "exception-other-object", "exception": "GRANT UPDATE ON TABLE app.first TO PUBLIC;", "before": null, "after": "GRANT UPDATE ON TABLE app.second TO PUBLIC;", "outcome": "fail"},
+    {"id": "exception-other-privilege", "exception": "GRANT UPDATE ON TABLE app.first TO PUBLIC;", "before": null, "after": "GRANT DELETE ON TABLE app.first TO PUBLIC;", "outcome": "fail"},
+    {"id": "out-of-scope-grant", "path": "demo/migration.sql", "before": null, "after": "GRANT UPDATE ON TABLE app.second TO PUBLIC;", "outcome": "pass"}
+  ],
+  "controls": [
+    {"id": "unrelated-quality", "category": "quality", "rule_id": "SKY-Q301", "finding_annotations": 1},
+    {"id": "unrelated-security", "category": "danger", "rule_id": "SKY-D211", "severity": "HIGH", "finding_annotations": 1}
+  ],
+  "defaults": {"path": "db/production/migration.sql", "production_directory": "db/production", "deny_public_writes": true}
+}

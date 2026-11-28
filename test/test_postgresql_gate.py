@@ -5,7 +5,7 @@ from skylos.cicd.review import _flatten_findings, _review_only_lines
 from skylos.cli import _apply_precommit_gate_policy
 from skylos.core.gatekeeper import check_gate
 from skylos.reporting.github_annotations import _github_annotation_items
-from skylos.reporting.listing import is_gate_exempt_review
+from skylos.reporting.listing import github_feedback_result, is_gate_exempt_review
 
 
 def _rows():
@@ -35,15 +35,17 @@ def test_frozen_postgresql_advisories_stay_visible_and_pass_gate(strict):
     result = _rows()
     config = {"gate": {"max_quality": 0, "rules": ["SKY-Q503", "SKY-Q504", "SKY-Q505"]}}
     assert check_gate(result, config, strict=strict)[0]
-    findings = _flatten_findings(result)
-    assert len(findings) == 4
+    view = github_feedback_result(result)
+    assert len(result["quality"]) == 3
+    findings = _flatten_findings(view)
+    assert len(findings) == 1
     assert findings[0]["_review_only_kind"] == "postgresql_search_path"
     summary = _review_only_lines(
         {("SKY-D417", findings[0]["_review_only_kind"]): findings[:1]}
     )
-    assert "PostgreSQL search path" in summary[-1]
-    annotations = _github_annotation_items(result)
-    assert len(annotations) == 4
+    assert "PostgreSQL search path" in "\n".join(summary)
+    annotations = _github_annotation_items(view)
+    assert len(annotations) == 1
     assert any("review only" in item["title"] for item in annotations)
 
 

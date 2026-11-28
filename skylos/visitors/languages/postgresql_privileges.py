@@ -2,8 +2,10 @@
 
 from pglast import ast, enums
 
+TABLE_WRITES = frozenset({"insert", "update", "delete", "truncate"})
 
-def _public_grant(grant, report):
+
+def public_grant_finding(grant):
     if not grant.is_grant or grant.grant_option:
         # PostgreSQL rejects grant options for PUBLIC.
         return
@@ -26,29 +28,38 @@ def _public_grant(grant, report):
         scope = (
             "new schemas covered by these defaults" if defaults else "the named schemas"
         )
-        report(
+        return (
             public.location,
             "SKY-D418",
             "MEDIUM",
-            f"This grant gives PUBLIC permission to create objects in {scope}. "
-            "Check whether every database role needs that permission.",
+            (
+                f"This grant gives PUBLIC permission to create objects in {scope}. "
+                "Check whether every database role needs that permission."
+            ),
         )
     elif grant.objtype == enums.ObjectType.OBJECT_TABLE and (
-        all_privileges
-        or privileges.intersection({"insert", "update", "delete", "truncate"})
+        all_privileges or privileges.intersection(TABLE_WRITES)
     ):
         scope = (
             "future tables covered by these defaults"
             if defaults
             else "the specified tables or columns"
         )
-        report(
+        return (
             public.location,
             "SKY-D420",
             "MEDIUM",
-            f"This grant gives PUBLIC data modification privileges on {scope}. "
-            "Check the intended writers and any applicable row-level policies.",
+            (
+                f"This grant gives PUBLIC data modification privileges on {scope}. "
+                "Check the intended writers and any applicable row-level policies."
+            ),
         )
+
+
+def _public_grant(grant, report):
+    finding = public_grant_finding(grant)
+    if finding:
+        report(*finding)
 
 
 def check_privileges(stmt, report):
@@ -61,23 +72,8 @@ def check_privileges(stmt, report):
             if isinstance(element, ast.GrantStmt):
                 _public_grant(element, report)
     elif isinstance(stmt, (ast.CreateRoleStmt, ast.AlterRoleStmt)):
-        # CREATE USER defaults to LOGIN. ALTER preserves unknown existing attributes.
-        login = (
-            isinstance(stmt, ast.CreateRoleStmt)
-            and stmt.stmt_type == enums.RoleStmtType.ROLESTMT_USER
-        )
-        bypass = None
-        seen = set()
-        for option in stmt.options or ():
-            if option.defname in {"bypassrls", "canlogin"}:
-                if option.defname in seen:
-                    return  # PostgreSQL rejects redundant or conflicting options.
-                seen.add(option.defname)
-                if option.defname == "canlogin":
-                    login = option.arg.boolval
-                else:
-                    bypass = option
-        if login and bypass is not None and bypass.arg.boolval:
+        bypass = login_bypass_option(stmt)
+        if bypass is not None:
             report(
                 bypass.location,
                 "SKY-D419",
@@ -85,3 +81,25 @@ def check_privileges(stmt, report):
                 "This statement configures a login role with BYPASSRLS. "
                 "Check whether this account should bypass row-level security policies.",
             )
+
+
+def login_bypass_option(stmt):
+    # CREATE USER defaults to LOGIN. ALTER preserves unknown existing attributes.
+    login = (
+        isinstance(stmt, ast.CreateRoleStmt)
+        and stmt.stmt_type == enums.RoleStmtType.ROLESTMT_USER
+    )
+    bypass = None
+    seen = set()
+    for option in stmt.options or ():
+        if option.defname in {"bypassrls", "canlogin"}:
+            if option.defname in seen:
+                return  # PostgreSQL rejects redundant or conflicting options.
+            seen.add(option.defname)
+            if option.defname == "canlogin":
+                login = option.arg.boolval
+            else:
+                bypass = option
+    if login and bypass is not None and bypass.arg.boolval:
+        return bypass
+    return None

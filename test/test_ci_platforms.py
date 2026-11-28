@@ -388,6 +388,16 @@ def test_only_agents_with_a_known_compiler_install_the_dart_grammar(key, require
     assert installs[0].rstrip().endswith(f"pip install {requirement}")
 
 
+@pytest.mark.parametrize(
+    "key", ["gitlab", "bitbucket", "azure", "circleci", "jenkins", "other"]
+)
+def test_sql_parser_extra_on_all_platforms(key):
+    document = _render(key, dart=False, postgres=True)
+    lines = (document.full or document.snippet).splitlines()
+    install = next(line for line in lines if "pip install" in line)
+    assert install.endswith("pip install 'skylos[postgres]==9.9.9'")
+
+
 def _jenkins_shell(full):
     return full.split("sh '''\n", 1)[1].split("'''", 1)[0]
 
@@ -531,6 +541,13 @@ def test_init_image_template_installs_the_dart_extra_only_for_dart_files(
     assert script[0] == "python -I -m pip install " + shlex.quote(
         f"skylos{extra}=={__version__}"
     )
+
+
+def test_init_discovers_sql_for_platform_template(tmp_path, monkeypatch):
+    (tmp_path / "001.sql").write_text("SELECT 1;")
+    exit_code, _ = _init(tmp_path, monkeypatch, "--ci", "gitlab")
+    assert exit_code == 0
+    assert "skylos[postgres]" in (tmp_path / ".gitlab-ci.yml").read_text()
 
 
 def test_init_writes_the_jenkinsfile_it_renders(tmp_path, monkeypatch):

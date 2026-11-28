@@ -1,0 +1,154 @@
+[
+  {
+    "repo": "riverqueue/river",
+    "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+    "path": "riverdriver/riverpgxv5/migration/main/001_create_river_migration.down.sql",
+    "sha256": "3516c1ff62084c7651983f08aaa9f1b5d00212039aaaff9dfd6a103309d1bf6a",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "riverqueue/river",
+    "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+    "path": "riverdriver/riverpgxv5/migration/main/001_create_river_migration.up.sql",
+    "sha256": "fcb947a3fcea4ac977faa0edcef6c2191c7754bd6bc8830a8369d71ec7ba5cc4",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "riverqueue/river",
+    "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+    "path": "riverdriver/riverpgxv5/migration/main/002_initial_schema.down.sql",
+    "sha256": "3b3f0de6aee60e510cd6f316dcbe77f9ccacb781da5a4849d62ef90dba4f1317",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "riverqueue/river",
+    "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+    "path": "riverdriver/riverpgxv5/migration/main/002_initial_schema.up.sql",
+    "sha256": "fb81334f6b49cbfe51a6c774c8e8a73a6b032a638220ad470e08ac4df5bb92e2",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "riverqueue/river",
+    "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+    "path": "riverdriver/riverpgxv5/migration/main/003_river_job_tags_non_null.down.sql",
+    "sha256": "9013e90175d36c2517a63501209c3257edd325786e87808bfc57d5da17a4e944",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "riverqueue/river",
+    "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+    "path": "riverdriver/riverpgxv5/migration/main/003_river_job_tags_non_null.up.sql",
+    "sha256": "4a71b4d7c1df7dbe92f6186c1b0369a69b1f812948fd31c6b1d1e5afb73bb15e",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "riverqueue/river",
+    "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+    "path": "riverdriver/riverpgxv5/migration/main/004_pending_and_more.down.sql",
+    "sha256": "f37c9ed7276a2abe6caac15ddede4e0d6fa946a42778cc9375bf8bd6bab6ee32",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "riverqueue/river",
+    "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+    "path": "riverdriver/riverpgxv5/migration/main/004_pending_and_more.up.sql",
+    "sha256": "8ac3e5cf2745f61f9edc7e6bb0c802e6fcf257718b37f4fd6e255911e147ae62",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "riverqueue/river",
+    "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+    "path": "riverdriver/riverpgxv5/migration/main/005_migration_unique_client.down.sql",
+    "sha256": "3c49c4ac69626ab5b16669ce170dca6ea7b9682d122ef20354cff58e64188b57",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "riverqueue/river",
+    "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+    "path": "riverdriver/riverpgxv5/migration/main/005_migration_unique_client.up.sql",
+    "sha256": "a2d2ca4b3a7c7350841708b6d81dddf5627d53de7503f7e9ebb76c95fb689c2e",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "riverqueue/river",
+    "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+    "path": "riverdriver/riverpgxv5/migration/main/006_bulk_unique.down.sql",
+    "sha256": "51577479de3092789185099c7ffba900932b301888b224454ae9740d3ab57843",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "riverqueue/river",
+    "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+    "path": "riverdriver/riverpgxv5/migration/main/006_bulk_unique.up.sql",
+    "sha256": "3840caf478b8935791f952b92fe74670cb46bc41882a33bab3271895ee155561",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "devrimgunduz/pagila",
+    "commit": "6ea53f812254c91a602f61c0ef62beca3fa676b1",
+    "path": "pagila-schema.sql",
+    "sha256": "071ee940a73c8f4fad2997185788065291607e2c55559e3747959e8275391536",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "devrimgunduz/pagila",
+    "commit": "6ea53f812254c91a602f61c0ef62beca3fa676b1",
+    "path": "pagila-data.sql",
+    "sha256": "a88efa94c7ae8bc9cf55def4efc9f164d064d5b9cd93f11719ba3b5ace1602f7",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "devrimgunduz/pagila",
+    "commit": "6ea53f812254c91a602f61c0ef62beca3fa676b1",
+    "path": "pagila-temporal-setup.sql",
+    "sha256": "fb73ad5e41f0c6a3af0b6548d9f152780029b5a2d5d0f0c22354e617b294a0f4",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "devrimgunduz/pagila",
+    "commit": "6ea53f812254c91a602f61c0ef62beca3fa676b1",
+    "path": "pg_partman-setup.sql",
+    "sha256": "346f86cf32e9544468bafc477c9eeb5fad4164d30dee4b68e59716fe8ce9a210",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "neondatabase/postgres-sample-dbs",
+    "commit": "b54cb67534bf20775803b181b7a1c6f573422161",
+    "path": "lego.sql",
+    "sha256": "3d89b1f0f0bd3d3e41512bc36ec6ff96f5abe18154be53f4a56daefedc6fe7ac",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "lerocha/chinook-database",
+    "commit": "4a944a942426e1f3263fe539155fb7ef92b04b4a",
+    "path": "ChinookDatabase/DataSources/Chinook_PostgreSql.sql",
+    "sha256": "e3fde5c1a5b51a2a91429a702c9ca6e69ba56e6c7f5e112724d70c3d03db695e",
+    "expected_coverage": "checked",
+    "expected_policy": "pass"
+  },
+  {
+    "repo": "postgres/postgres",
+    "commit": "d7ec59a63d745ba74fba0e280bbf85dc6d1caa3e",
+    "path": "src/test/regress/sql/with.sql",
+    "sha256": "8047d9719821121dc8e89a70f71bb3844d58c1e98dc7ef1da3966f67c8a5e2ba",
+    "expected_coverage": "unparsed",
+    "expected_policy": "fail"
+  }
+]
