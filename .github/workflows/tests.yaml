@@ -105,7 +105,7 @@ jobs:
           files: ./coverage.xml
           disable_search: true
           fail_ci_if_error: false
-          flags: ${{ matrix.install_target == '.[llm,dart]' && 'llm-extra' || 'default-install' }}
+          flags: ${{ matrix.install_target == '.' && 'default-install' || 'llm-extra' }}
 
   docker_smoke:
     name: docker-smoke (Python ${{ matrix.python-version }})

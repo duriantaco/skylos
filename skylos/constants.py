@@ -34,6 +34,7 @@ SUPPORTED_LANGUAGES = (
     "Kotlin",
     "Swift",
     "Shell",
+    "PostgreSQL",
 )
 SUPPORTED_LANGUAGES_TEXT = (
     ", ".join(SUPPORTED_LANGUAGES[:-1]) + " and " + SUPPORTED_LANGUAGES[-1]

@@ -20,7 +20,7 @@ from skylos.ui.tour import STEPS
 
 REPO = Path(__file__).resolve().parents[1]
 
-LANGUAGE_PACKAGES = {
+LANGUAGE_ANALYZERS = {
     "TypeScript/JavaScript": "typescript",
     "Java": "java",
     "Go": "go",
@@ -33,6 +33,7 @@ LANGUAGE_PACKAGES = {
     "Kotlin": "kotlin",
     "C++": "cpp",
     "Shell": "shell",
+    "PostgreSQL": "postgresql",
 }
 
 
@@ -244,15 +245,18 @@ def test_tour_does_not_claim_cicd_review_posts_llm_fixes():
 
 
 def test_supported_languages_match_the_language_analyzers():
+    directory = REPO / "skylos" / "visitors" / "languages"
     packages = {
         path.name
-        for path in (REPO / "skylos" / "visitors" / "languages").iterdir()
+        for path in directory.iterdir()
         if path.is_dir() and (path / "__init__.py").exists()
     }
+    modules = {path.stem for path in directory.glob("*.py")}
+    analyzers = set(LANGUAGE_ANALYZERS.values())
 
     assert SUPPORTED_LANGUAGES[0] == "Python"
-    assert set(SUPPORTED_LANGUAGES[1:]) == set(LANGUAGE_PACKAGES)
-    assert set(LANGUAGE_PACKAGES.values()) == packages
+    assert set(SUPPORTED_LANGUAGES[1:]) == set(LANGUAGE_ANALYZERS)
+    assert packages <= analyzers <= packages | modules
 
 
 @pytest.mark.parametrize(

@@ -207,8 +207,10 @@ skylos defend . --format md -o evidence.md   # 含 OWASP LLM Top 10 覆盖情况
 | Kotlin | 部分 | 部分 | 否 |
 | Swift | 部分 | 否 | 否 |
 | Shell | 否 | 部分 | 否 |
+| PostgreSQL | 未使用的 CTE 链和无法执行的 CASE 分支 | 例程搜索路径、权限授予和登录角色 | 查询过滤条件、计数、索引迁移和外键 |
 
 - Python 的覆盖最深。
+- 扫描独立的 PostgreSQL `.sql` 文件需要先运行 `pip install "skylos[postgres]"`。在 SQL 目录中指定方言，或使用 Prisma 的迁移锁文件，然后用 `--quality --danger` 扫描。[PostgreSQL 指南](../handbook/intro/03-languages.md#checking-postgresql-scripts)
 - Go 需要原生引擎 `skylos-go`。Linux、macOS 和 Windows 的 PyPI wheel 已包含它；其他平台上 `skylos doctor` 会打印构建命令。
 - Dart 需要 `pip install "skylos[dart]"`。
 - Rust 死代码默认隐藏；`--confidence 40` 可显示。

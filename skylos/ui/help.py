@@ -414,6 +414,15 @@ COMMANDS = [
         "group": "CI/CD",
     },
     {
+        "name": "skylos cicd postgres-check --base SHA --head SHA",
+        "desc": "Check changed PostgreSQL migrations against the policy in the base commit",
+        "details": [
+            "Use full commit IDs for --base and --head. Add --format json for machine-readable results.",
+            "Fails if a protected migration cannot be checked or introduces a PUBLIC write grant forbidden by the policy.",
+        ],
+        "group": "CI/CD",
+    },
+    {
         "name": "skylos cicd annotate [path]",
         "desc": "Emit GitHub Actions annotations",
         "group": "CI/CD",

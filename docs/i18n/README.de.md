@@ -256,8 +256,12 @@ Siehe [Agent-Verifikation](../agent-verification.md) und
 | Kotlin | Teilweise | Teilweise | Nein |
 | Swift | Teilweise | Nein | Nein |
 | Shell | Nein | Teilweise | Nein |
+| PostgreSQL | Ungenutzte CTE-Ketten und unerreichbare CASE-Zweige | Suchpfade von Routinen, Zugriffsrechte und Login-Rollen | Abfragefilter, Zählungen, Indexmigrationen und Fremdschlüssel |
 
 - Python hat die tiefste Abdeckung.
+- Für PostgreSQL-Dateien (`.sql`) brauchst du `pip install "skylos[postgres]"`.
+  Lege den SQL-Dialekt im SQL-Ordner fest oder verwende die Migrations-Lockdatei von Prisma.
+  Starte den Scan mit `--quality --danger`. [PostgreSQL-Anleitung](../handbook/intro/03-languages.md#checking-postgresql-scripts)
 - Go braucht die native Engine `skylos-go`. Sie ist in den PyPI-Wheels für
   Linux, macOS und Windows enthalten; anderswo gibt `skylos doctor` den
   Build-Befehl aus.
