@@ -390,8 +390,10 @@ class PythonReachabilityReport:
                 proven.add(key)
             if self._needs_conservative_root(key, definition, markers):
                 roots.add(key)
-            if self._is_pytest_hook(key, original) or self._is_cog_import(original):
+            if self._is_cog_import(original):
                 proven.add(key)
+            if self._is_pytest_hook(key, original):
+                roots.add(key)
         return roots | proven, proven
 
     def _is_pytest_hook(self, key: str, definition: Definition) -> bool:
@@ -429,7 +431,7 @@ class PythonReachabilityReport:
             if key not in self.index.nested_parents
             or attr not in {"is_closure", "decorators"}
             if attr != "decorators"
-            or not getattr(definition, "_fastapi_inactive", False)
+            or not getattr(definition, "_registration_decorator_inactive", False)
         )
         class_key = self.index.method_classes.get(key)
         if class_key is not None:
@@ -490,7 +492,11 @@ class PythonReachabilityReport:
         references = self._hit_references(value, name, target)
         return not references or not all(
             ref.target is not None
-            and (ref.target != target or ref.owner in self.unreachable_keys)
+            and (
+                ref.target != target
+                or ref.registration_only
+                or ref.owner in self.unreachable_keys
+            )
             for ref in references
         )
 
@@ -632,7 +638,8 @@ def _bind_function(
     index.add_function(module, node, key, definition)
     module.bindings[node.name] = ("symbol", key)
     if (
-        node.decorator_list and not getattr(definition, "_fastapi_inactive", False)
+        node.decorator_list
+        and not getattr(definition, "_registration_decorator_inactive", False)
     ) or node.name in {"__getattr__", "__dir__"}:
         report.graph.uncertain_roots.add(key)
 
@@ -675,6 +682,7 @@ def analyze_python_reachability(
     project_root: str | Path,
     *,
     module_names: Mapping[str | Path, str] | None = None,
+    ignored_load_sites: Iterable[tuple[Path, int, int]] = (),
 ) -> PythonReachabilityReport:
     """Resolve function groups using analyzer identities or Definition metadata.
 
@@ -707,8 +715,16 @@ def analyze_python_reachability(
         module.bindings = stable_receivers(
             report.index, module, module.tree.body, module.bindings
         )
+    ignored_by_module: dict[Path, set[tuple[int, int]]] = defaultdict(set)
+    for path, line, column in ignored_load_sites:
+        ignored_by_module[path].add((line, column))
     for module in report.index.modules.values():
-        SourceVisitor(report.index, report.graph, module).visit(module.tree)
+        SourceVisitor(
+            report.index,
+            report.graph,
+            module,
+            ignored_load_sites=ignored_by_module.get(module.path, ()),
+        ).visit(module.tree)
     identities = {id(definition): key for key, definition in definitions.items()}
     for target, caller in dispatch_edges:
         target_key, caller_key = identities[id(target)], identities[id(caller)]

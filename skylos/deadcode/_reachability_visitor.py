@@ -126,7 +126,12 @@ _DYNAMIC_ATTRIBUTES = {
 
 class SourceVisitor(ast.NodeVisitor):
     def __init__(
-        self, index: SourceIndex, graph: ReferenceGraph, module: ModuleInfo
+        self,
+        index: SourceIndex,
+        graph: ReferenceGraph,
+        module: ModuleInfo,
+        *,
+        ignored_load_sites=frozenset(),
     ) -> None:
         self.index = index
         self.graph = graph
@@ -135,6 +140,7 @@ class SourceVisitor(ast.NodeVisitor):
         self.owner: str | None = None
         self.proven_context = True
         self.outside_consumer = False
+        self.ignored_load_sites = ignored_load_sites
         self.attribute_names = self._attribute_assignments(module.tree.body, {})
 
     def _protect_binding(
@@ -161,6 +167,10 @@ class SourceVisitor(ast.NodeVisitor):
         pending = [expression]
         while pending:
             part = pending.pop()
+            if isinstance(part, ast.Name) and (
+                part.lineno, part.col_offset
+            ) in self.ignored_load_sites:
+                continue
             binding = self.index.resolve(part, self.module, self.local)
             unbound_method = self._unbound_method(part)
             if unbound_method is not None:
@@ -185,7 +195,9 @@ class SourceVisitor(ast.NodeVisitor):
         return self.index.resolve(ast.Name(id=name), self.module, self.local) is None
 
     def visit_Constant(self, node: ast.Constant) -> None:
-        if not isinstance(node.value, str):
+        if not isinstance(node.value, str) or (
+            node.lineno, node.col_offset
+        ) in self.ignored_load_sites:
             return
         if len(node.value) > 65_536:
             self._opaque()
@@ -205,6 +217,7 @@ class SourceVisitor(ast.NodeVisitor):
 
     def visit_Name(self, node: ast.Name) -> None:
         if isinstance(node.ctx, ast.Load):
+            registration_only = (node.lineno, node.col_offset) in self.ignored_load_sites
             if node.id in _DYNAMIC_NAMES:
                 self._opaque()
             binding = self.index.resolve(node, self.module, self.local)
@@ -215,9 +228,14 @@ class SourceVisitor(ast.NodeVisitor):
                 node.id,
                 binding,
                 owner=self.owner,
+                registration_only=registration_only,
                 proven=self.proven_context,
             )
-            if binding and binding[0] in {MODULE_BINDING, *RECEIVER_BINDINGS}:
+            if (
+                not registration_only
+                and binding
+                and binding[0] in {MODULE_BINDING, *RECEIVER_BINDINGS}
+            ):
                 self._protect_binding(binding)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:

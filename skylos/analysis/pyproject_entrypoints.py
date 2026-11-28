@@ -76,16 +76,18 @@ def _table_values(table):
     return values
 
 
-def _group_values(groups):
+def _group_values(groups, group=None):
     if not isinstance(groups, dict):
         return []
+    if group is not None:
+        return _table_values(groups.get(group))
     values = []
     for table in groups.values():
         values.extend(_table_values(table))
     return values
 
 
-def _pyproject_values(project_root):
+def _pyproject_values(project_root, group=None):
     raw = _read(project_root / "pyproject.toml")
     if not raw:
         return []
@@ -98,16 +100,18 @@ def _pyproject_values(project_root):
     values = []
     project = data.get("project")
     if isinstance(project, dict):
-        for table_name in ("scripts", "gui-scripts"):
-            values.extend(_table_values(project.get(table_name)))
-        values.extend(_group_values(project.get("entry-points")))
+        if group is None:
+            for table_name in ("scripts", "gui-scripts"):
+                values.extend(_table_values(project.get(table_name)))
+        values.extend(_group_values(project.get("entry-points"), group))
     tool = data.get("tool")
     poetry = {}
     if isinstance(tool, dict):
         poetry = tool.get("poetry") or {}
     if isinstance(poetry, dict):
-        values.extend(_table_values(poetry.get("scripts")))
-        values.extend(_group_values(poetry.get("plugins")))
+        if group is None:
+            values.extend(_table_values(poetry.get("scripts")))
+        values.extend(_group_values(poetry.get("plugins"), group))
     return values
 
 
@@ -123,7 +127,7 @@ def _ini_lines(text):
     return values
 
 
-def _setup_cfg_values(project_root):
+def _setup_cfg_values(project_root, group=None):
     raw = _read(project_root / "setup.cfg")
     if not raw:
         return []
@@ -134,8 +138,11 @@ def _setup_cfg_values(project_root):
         return []
     if not parser.has_section("options.entry_points"):
         return []
+    groups = parser["options.entry_points"]
+    if group is not None:
+        return _ini_lines(groups.get(group, ""))
     values = []
-    for group_lines in parser["options.entry_points"].values():
+    for group_lines in groups.values():
         values.extend(_ini_lines(group_lines))
     return values
 
@@ -191,22 +198,33 @@ def _string_items(node, assignments):
     return []
 
 
-def _entry_point_items(node, assignments):
+def _entry_point_items(node, assignments, group=None):
     node = _resolve(node, assignments)
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return _ini_lines(node.value)
+        if group is None:
+            return _ini_lines(node.value)
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        try:
+            parser.read_string(node.value)
+        except configparser.Error:
+            return []
+        return list(parser[group].values()) if parser.has_section(group) else []
     values = []
     if isinstance(node, ast.Dict):
-        for value in node.values:
+        for key, value in zip(node.keys, node.values):
+            if group is not None and not (
+                isinstance(key, ast.Constant) and key.value == group
+            ):
+                continue
             values.extend(_string_items(value, assignments))
     elif isinstance(node, ast.Call) and _call_name(node.func) == "dict":
         for keyword in node.keywords:
-            if keyword.arg is not None:
+            if keyword.arg is not None and (group is None or keyword.arg == group):
                 values.extend(_string_items(keyword.value, assignments))
     return values
 
 
-def _setup_py_values(project_root):
+def _setup_py_values(project_root, group=None):
     raw = _read(project_root / "setup.py")
     if not raw:
         return []
@@ -223,22 +241,23 @@ def _setup_py_values(project_root):
             continue
         for keyword in node.keywords:
             if keyword.arg == "entry_points":
-                values.extend(_entry_point_items(keyword.value, assignments))
+                values.extend(_entry_point_items(keyword.value, assignments, group))
     return values
 
 
-def extract_entrypoint_references(project_root):
+def extract_entrypoint_references(project_root, *, group=None):
     """Static ``(module, attribute)`` targets of every declared entry point.
 
     Reads ``[project.scripts]``, ``[project.gui-scripts]``,
     ``[project.entry-points.<group>]``, Poetry ``scripts`` and ``plugins``,
     ``setup.cfg`` ``[options.entry_points]`` and literal ``entry_points=``
     passed to ``setup()`` in ``setup.py``. ``setup.py`` is parsed, never run.
+    When a group is supplied, only references declared in that group are read.
     """
     values = []
-    values.extend(_pyproject_values(project_root))
-    values.extend(_setup_cfg_values(project_root))
-    values.extend(_setup_py_values(project_root))
+    values.extend(_pyproject_values(project_root, group))
+    values.extend(_setup_cfg_values(project_root, group))
+    values.extend(_setup_py_values(project_root, group))
     references = set()
     for value in values:
         reference = _object_reference(value)

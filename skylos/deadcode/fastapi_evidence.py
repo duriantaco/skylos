@@ -76,10 +76,16 @@ def _opaque_decorator(definition, report):
     )
 
 
-def reconcile_fastapi_evidence(definitions, file_contexts, refs, files, root):
+def reconcile_fastapi_evidence(
+    definitions, file_contexts, refs, files, root, *, closed_world=False
+):
     """Keep declaration hints separate from actual execution and signatures."""
     relevant = any(
-        "fastapi" in getattr(flags, "detected_frameworks", ())
+        bool(
+            {"fastapi", "starlette"}.intersection(
+                getattr(flags, "detected_frameworks", ())
+            )
+        )
         or getattr(flags, "dependency_injected_params", ())
         or getattr(flags, "dependency_alias_names", ())
         or getattr(flags, "framework_decorated_lines", ())
@@ -98,7 +104,12 @@ def reconcile_fastapi_evidence(definitions, file_contexts, refs, files, root):
         Path(file) for file in files if Path(file).suffix in {".py", ".pyi"}
     ]
     parsed = parse_python_files(python_files)
-    report = collect_fastapi_liveness(definitions, parsed, Path(root).resolve())
+    report = collect_fastapi_liveness(
+        definitions,
+        parsed,
+        Path(root).resolve(),
+        closed_world=closed_world and len(parsed) == len(python_files),
+    )
     if not report.complete:
         return report
     try:
@@ -128,16 +139,31 @@ def reconcile_fastapi_evidence(definitions, file_contexts, refs, files, root):
     report.independent_framework_sites = independent
     uncertain.update(opaque)
     report.uncertain.update(opaque)
-    discarded_refs = Counter()
+    discarded_refs = Counter(report.discarded_argument_refs)
     for definition in definitions.values():
-        if definition.type not in {"function", "method", "class"}:
+        if definition.type not in {"function", "method", "class"} and (
+            definition.type != "variable" or not report.launch_bindings
+        ):
             continue
         site = definition_site(definition)
+        if (
+            definition.type in {"function", "method", "class"}
+            and site in report.launch_roots
+        ) or (
+            definition.type == "variable"
+            and (*site, definition.simple_name) in report.launch_bindings
+        ):
+            definition.references = max(1, definition.references)
+            definition.heuristic_refs["framework_root"] = 1.0
+        if definition.type not in {"function", "method", "class"}:
+            continue
         if site not in candidates:
             continue
         if site in independent:
             continue
-        definition._fastapi_inactive = site not in roots and site not in uncertain
+        definition._registration_decorator_inactive = (
+            site not in roots and site not in uncertain
+        )
         if site in uncertain and site not in roots:
             definition.references = max(1, definition.references)
             definition.heuristic_refs["unresolved_callback"] = 1.0

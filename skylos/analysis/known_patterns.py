@@ -373,8 +373,6 @@ PYDANTIC_MODEL_METHODS = {
     "model_validate",
     "model_dump",
 }
-PYDANTIC_MODEL_BASES = {"BaseModel", "BaseSettings"}
-
 PYDANTIC_VALIDATOR_DECORATORS = {
     "validator",
     "field_validator",

@@ -47,8 +47,6 @@ from skylos.analysis.known_patterns import (
     CELERY_TASK_BASES,
     CLICK_COMMAND_METHODS,
     CLICK_COMMAND_BASES,
-    PYDANTIC_MODEL_METHODS,
-    PYDANTIC_MODEL_BASES,
     SOFT_PATTERNS,
     matches_pattern,
     has_base_class,
@@ -1170,17 +1168,6 @@ def _check_web_framework_methods(def_obj, framework):
     return None
 
 
-def _check_pydantic_methods(def_obj, framework):
-    simple_name = def_obj.simple_name
-
-    if simple_name in PYDANTIC_MODEL_METHODS and has_base_class(
-        def_obj, PYDANTIC_MODEL_BASES, framework
-    ):
-        return _suppress(def_obj, "Pydantic model method")
-
-    return None
-
-
 class _AbstractOverrideIndexes(NamedTuple):
     all_defs: dict
     classes_by_file_and_name: dict
@@ -1669,28 +1656,6 @@ def _check_data_model_fields(def_obj, analyzer, framework):
         if simple_name in getattr(framework, "type_alias_names", set()):
             return _suppress(def_obj, "Type alias")
 
-    if def_obj.type == "variable" and "." in def_obj.name:
-        prefix, _ = def_obj.name.rsplit(".", 1)
-        cls_def = analyzer.defs.get(prefix)
-        if cls_def and cls_def.type == "class":
-            cls_simple = cls_def.simple_name
-            if (
-                getattr(framework, "pydantic_models", None)
-                and cls_simple in framework.pydantic_models
-            ):
-                return _suppress(def_obj)
-            cls_node = getattr(framework, "class_defs", {}).get(cls_simple)
-            if isinstance(cls_node, ast.ClassDef):
-                for base in cls_node.bases:
-                    if isinstance(base, ast.Name) and base.id.lower().endswith(
-                        ("schema", "model")
-                    ):
-                        return _suppress(def_obj)
-                    if isinstance(base, ast.Attribute) and base.attr.lower().endswith(
-                        ("schema", "model")
-                    ):
-                        return _suppress(def_obj)
-
     if def_obj.type == "variable":
         fr = getattr(framework, "first_read_lineno", {}).get(def_obj.name)
         if fr is not None and fr >= def_obj.line:
@@ -1915,9 +1880,6 @@ def apply_penalties(
         return
 
     if _check_web_framework_methods(def_obj, framework) is True:
-        return
-
-    if _check_pydantic_methods(def_obj, framework) is True:
         return
 
     result = _check_abstract_overrides(def_obj, analyzer, framework)
