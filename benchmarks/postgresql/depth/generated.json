@@ -1,0 +1,774 @@
+{
+  "purpose": "Generated fixtures fixed before scanning. The selected rules have exhaustive expected findings in each checked file. Label rows are independent, one-based SQL lines. Security inputs are inert DDL text only.",
+  "rules": [
+    "SKY-Q503",
+    "SKY-Q504",
+    "SKY-Q505",
+    "SKY-Q506",
+    "SKY-Q507",
+    "SKY-Q508",
+    "SKY-Q509",
+    "SKY-Q510",
+    "SKY-D418",
+    "SKY-D419",
+    "SKY-D420"
+  ],
+  "sources": [],
+  "cases": [
+    {
+      "name": "cte-orphan.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "WITH leaf AS (VALUES (1)),\nmiddle AS (TABLE leaf),\nouter_cte AS (TABLE middle)\nSELECT 7;\n"
+    },
+    {
+      "name": "cte-branch.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "WITH active AS (SELECT 2),\nunused AS (TABLE active)\nTABLE active;\n"
+    },
+    {
+      "name": "cte-used.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "WITH seed AS (SELECT 1),\nresults AS (TABLE seed)\nTABLE results;\n"
+    },
+    {
+      "name": "cte-effects.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "WITH source AS (SELECT 1),\nw AS (INSERT INTO sink SELECT * FROM source RETURNING id)\nSELECT 1;\n"
+    },
+    {
+      "name": "index-savepoint.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "START TRANSACTION;\nSAVEPOINT checkpoint;\nROLLBACK TO checkpoint;\nCREATE UNIQUE INDEX CONCURRENTLY ix ON demo(k);\nEND;\n"
+    },
+    {
+      "name": "index-chain.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "BEGIN;\nCOMMIT AND CHAIN;\nDROP INDEX CONCURRENTLY old_ix;\nROLLBACK;\n"
+    },
+    {
+      "name": "index-outside.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "BEGIN;\nCREATE INDEX i ON demo(k);\nEND;\nCREATE INDEX CONCURRENTLY j ON demo(k);\n"
+    },
+    {
+      "name": "index-drop.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "DROP INDEX CONCURRENTLY IF EXISTS public.i, public.j CASCADE;\n"
+    },
+    {
+      "name": "index-cascade.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "DROP INDEX CONCURRENTLY old_key CASCADE;\n"
+    },
+    {
+      "name": "index-quiet.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "DROP INDEX CONCURRENTLY \"has,a,comma\" RESTRICT;\nDROP INDEX i, j CASCADE;\n"
+    },
+    {
+      "name": "fk-count.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "CREATE TABLE child (k integer\n REFERENCES parent(a,b));\n"
+    },
+    {
+      "name": "fk-alter.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "ALTER TABLE app.ledger\nADD CONSTRAINT bad FOREIGN KEY (region, n) REFERENCES app.other(n);\n"
+    },
+    {
+      "name": "fk-valid.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "ALTER TABLE app.ledger\n ADD CONSTRAINT ok FOREIGN KEY(region,n) REFERENCES app.other(r,id);\n"
+    },
+    {
+      "name": "fk-implicit.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "CREATE TABLE ref (x int, y int, FOREIGN KEY(x,y) REFERENCES parent);\n"
+    },
+    {
+      "name": "searched-case.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "SELECT CASE\nWHEN TRUE THEN 8\nWHEN age = 30 THEN 5 END FROM people;\n"
+    },
+    {
+      "name": "repeated-null-test.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "SELECT CASE\nWHEN tab.id IS NULL THEN 1\nWHEN tab.id IS NULL THEN 2 END FROM tab;\n"
+    },
+    {
+      "name": "simple-int.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "SELECT CASE 2\nWHEN 1 THEN 1\nWHEN 1 THEN 2 ELSE 3 END;\n"
+    },
+    {
+      "name": "distinct-guards.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "SELECT CASE\nWHEN t.x IS NULL THEN 1\nWHEN t.y IS NULL THEN 2 ELSE 3 END FROM t;\n"
+    },
+    {
+      "name": "unknown-equality.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "SELECT CASE custom_kind\nWHEN 1 THEN 1\nWHEN 1 THEN 2 END FROM events;\n"
+    },
+    {
+      "name": "count-both.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "SELECT\n COUNT(CASE WHEN archived THEN 1 ELSE 0 END) FROM events;\n"
+    },
+    {
+      "name": "count-window.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "SELECT pg_catalog.count(CASE WHEN paid THEN true ELSE false END) OVER () FROM events;\n"
+    },
+    {
+      "name": "count-null.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "SELECT COUNT(CASE WHEN audited THEN 1 END),\n COUNT(CASE WHEN audited THEN 1 ELSE NULL END) FROM events;\n"
+    },
+    {
+      "name": "count-distinct.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "SELECT COUNT(DISTINCT CASE WHEN ok THEN 1 ELSE 0 END) FROM t;\n"
+    },
+    {
+      "name": "other-count.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "SELECT demo.count(CASE WHEN ok THEN 1 ELSE 0 END) FROM t;\n"
+    },
+    {
+      "name": "schema-create.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "GRANT USAGE, CREATE ON SCHEMA reports\n TO PUBLIC;\n"
+    },
+    {
+      "name": "schema-defaults.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "ALTER DEFAULT PRIVILEGES GRANT ALL ON SCHEMAS TO PUBLIC;\n"
+    },
+    {
+      "name": "schema-quiet.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "GRANT USAGE ON SCHEMA reports TO PUBLIC;\nREVOKE CREATE ON SCHEMA reports FROM PUBLIC;\nGRANT CREATE ON SCHEMA reports TO reporting;\n"
+    },
+    {
+      "name": "login-default.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "CREATE USER ledger_reader\n WITH BYPASSRLS;\n"
+    },
+    {
+      "name": "login-explicit.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "ALTER ROLE ledger_reader\n BYPASSRLS LOGIN;\n"
+    },
+    {
+      "name": "login-unknown.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "ALTER ROLE ledger_reader BYPASSRLS;\nCREATE ROLE ledger_reader BYPASSRLS;\nCREATE USER other NOLOGIN BYPASSRLS;\n"
+    },
+    {
+      "name": "tables-write.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "GRANT UPDATE(note) ON public.note\n TO PUBLIC;\n"
+    },
+    {
+      "name": "tables-defaults.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "ALTER DEFAULT PRIVILEGES IN SCHEMA reports GRANT DELETE ON TABLES\n TO PUBLIC;\n"
+    },
+    {
+      "name": "tables-all.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "GRANT ALL ON ALL TABLES IN SCHEMA reports TO PUBLIC;\n"
+    },
+    {
+      "name": "table-quiet.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "GRANT SELECT ON TABLE public.data TO PUBLIC;\nGRANT UPDATE ON TABLE public.data TO analyst;\nREVOKE UPDATE ON TABLE public.data FROM PUBLIC;\nGRANT USAGE ON SEQUENCE public.counter TO PUBLIC;\n"
+    },
+    {
+      "name": "copy-framing.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "COPY demo (k) FROM stdin;\nDROP INDEX CONCURRENTLY i,j;\nSELECT 1 WHERE 1 = NULL;\n\\.\nSELECT 1 WHERE 1 = NULL;\n"
+    },
+    {
+      "name": "guards.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "\\restrict demoKey\nSELECT 1 WHERE 1 = NULL;\n\\unrestrict demoKey\n\\d+ public.demo\nSELECT 2 WHERE 2 = NULL;\n"
+    },
+    {
+      "name": "copy-preserves-begin.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "sql": "BEGIN;\nCOPY demo FROM STDIN;\n\\c this_is_a_row\n\\.\nCREATE INDEX CONCURRENTLY i ON t(id);\nROLLBACK;\n"
+    },
+    {
+      "name": "copy-cutoff.sql",
+      "dialect": "postgresql",
+      "coverage": "unparsed",
+      "sql": "COPY demo FROM STDIN;\nSELECT 7 WHERE 3 = NULL;\n"
+    },
+    {
+      "name": "bad-restriction.sql",
+      "dialect": "postgresql",
+      "coverage": "unparsed",
+      "sql": "\\restrict aaa\nSELECT 1;\n\\unrestrict bbb\n"
+    },
+    {
+      "name": "copy-csv.sql",
+      "dialect": "postgresql",
+      "coverage": "unparsed",
+      "sql": "COPY demo FROM STDIN WITH (FORMAT csv);\na,b\n\\.\n"
+    }
+  ],
+  "labels": [
+    {
+      "name": "cte-orphan.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "cte-orphan.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "cte-orphan.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "cte-branch.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "cte-branch.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "cte-used.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "cte-used.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "cte-effects.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "cte-effects.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "index-savepoint.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        4,
+        4
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "index-chain.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "index-chain.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "index-outside.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "index-outside.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        4,
+        4
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "index-drop.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "index-cascade.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "index-quiet.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "index-quiet.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "fk-count.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "fk-alter.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "fk-valid.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "fk-implicit.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "searched-case.sql",
+      "rule": "SKY-Q509",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "repeated-null-test.sql",
+      "rule": "SKY-Q509",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "repeated-null-test.sql",
+      "rule": "SKY-Q509",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "simple-int.sql",
+      "rule": "SKY-Q509",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "distinct-guards.sql",
+      "rule": "SKY-Q509",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "unknown-equality.sql",
+      "rule": "SKY-Q509",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "count-both.sql",
+      "rule": "SKY-Q510",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "count-window.sql",
+      "rule": "SKY-Q510",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "count-null.sql",
+      "rule": "SKY-Q510",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "count-null.sql",
+      "rule": "SKY-Q510",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "count-distinct.sql",
+      "rule": "SKY-Q510",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "other-count.sql",
+      "rule": "SKY-Q510",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "schema-create.sql",
+      "rule": "SKY-D418",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "schema-defaults.sql",
+      "rule": "SKY-D418",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "schema-quiet.sql",
+      "rule": "SKY-D418",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "schema-quiet.sql",
+      "rule": "SKY-D418",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "schema-quiet.sql",
+      "rule": "SKY-D418",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "login-default.sql",
+      "rule": "SKY-D419",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "login-explicit.sql",
+      "rule": "SKY-D419",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "login-unknown.sql",
+      "rule": "SKY-D419",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "login-unknown.sql",
+      "rule": "SKY-D419",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "login-unknown.sql",
+      "rule": "SKY-D419",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "tables-write.sql",
+      "rule": "SKY-D420",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "tables-defaults.sql",
+      "rule": "SKY-D420",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "tables-all.sql",
+      "rule": "SKY-D420",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "table-quiet.sql",
+      "rule": "SKY-D420",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "table-quiet.sql",
+      "rule": "SKY-D420",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "table-quiet.sql",
+      "rule": "SKY-D420",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "table-quiet.sql",
+      "rule": "SKY-D420",
+      "original_lines": [
+        4,
+        4
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "copy-framing.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        5,
+        5
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "copy-framing.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "copy-framing.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "guards.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "guards.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        5,
+        5
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "copy-preserves-begin.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        5,
+        5
+      ],
+      "expected": "positive"
+    }
+  ]
+}

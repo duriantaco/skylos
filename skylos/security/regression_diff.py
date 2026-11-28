@@ -82,7 +82,7 @@ def _parse_changes(output):
     return changed
 
 
-def changed_sources(context, base):
+def changed_sources(context, base, *, head=None):
     result = context.run(
         "diff",
         "--name-status",
@@ -92,6 +92,7 @@ def changed_sources(context, base):
         "-z",
         "--find-renames",
         base,
+        *([head] if head else []),
         "--",
     )
     if result.returncode:

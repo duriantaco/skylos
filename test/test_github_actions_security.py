@@ -687,17 +687,17 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
     }
     assert '[[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]' in pr_install_step["run"]
     assert (
-        '"skylos @ git+https://github.com/duriantaco/skylos.git@$TRUSTED_BASE_SHA"'
+        '"skylos[postgres] @ git+https://github.com/duriantaco/skylos.git@$TRUSTED_BASE_SHA"'
         in pr_install_step["run"]
     )
     assert "${{" not in pr_install_step["run"]
-    assert "-e ." not in pr_install_step["run"]
+    assert " -e " not in pr_install_step["run"]
 
     local_install_step = next(
         s for s in steps if s.get("name") == "Use repo Skylos on trusted refs"
     )
     assert local_install_step["if"] == "github.event_name != 'pull_request'"
-    assert "-e ." in local_install_step["run"]
+    assert '-e ".[postgres]"' in local_install_step["run"]
 
     scan_step = next(s for s in steps if s.get("name") == "Run Skylos")
     assert "python -m skylos.cli" not in scan_step["run"]

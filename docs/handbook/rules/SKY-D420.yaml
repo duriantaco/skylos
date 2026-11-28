@@ -1,0 +1,66 @@
+id: SKY-D420
+title: PostgreSQL table write privileges granted to PUBLIC
+family: security
+severity: MEDIUM
+languages: [PostgreSQL]
+gate:
+  full: listed
+  note: The findings gate lists this advisory. The separate production migration check can block new PUBLIC writes when the target branch forbids them.
+
+what_it_is: >-
+  The SQL grants table or column write privileges to PUBLIC. It can grant them on
+  existing objects or set defaults for future tables.
+why_it_matters: >-
+  Every database role receives the listed privileges. Schema access and applicable
+  row-level policies still affect the operations each role can perform.
+how_skylos_decides:
+  - >-
+    Skylos checks INSERT, UPDATE, DELETE, TRUNCATE and ALL on tables for the
+    PUBLIC grantee, including default privileges.
+  - >-
+    A read-only grant stays quiet.
+source_refs:
+  - path: skylos/visitors/languages/postgresql_privileges.py
+    symbol: 'def check_privileges('
+
+flagged_example:
+  language: sql
+  files:
+    - filename: migration.sql
+      code: |
+        ALTER DEFAULT PRIVILEGES IN SCHEMA app
+          GRANT UPDATE ON TABLES TO PUBLIC;
+    - &config
+      filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.sql]
+        dialect = "postgresql"
+  expect_file: migration.sql
+  expect_line: 2
+not_flagged_example:
+  language: sql
+  files:
+    - filename: migration.sql
+      code: &fixed |
+        ALTER DEFAULT PRIVILEGES IN SCHEMA app
+          GRANT UPDATE ON TABLES TO app_writers;
+    - *config
+  why: >-
+    Select the role that should write these tables. Review grants already present
+    on existing tables separately.
+fix:
+  explanation: >-
+    Select the role that should write these tables. Review grants already present
+    on existing tables separately.
+  filename: migration.sql
+  language: sql
+  code: *fixed
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Some shared schemas intentionally accept contributions from every database
+      role.
+  suppress:
+    - text: Review the statement in the context of its migration.
+related: [SKY-D418]

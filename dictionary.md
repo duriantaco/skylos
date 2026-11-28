@@ -3508,3 +3508,35 @@ commit only. A pack's rules only add findings; one with a `SKY-*` ID does not
 replace or hide the built-in finding. Packs that are symlinks, over 1 MB,
 invalid YAML, use YAML aliases or have no `rules` list are skipped and named
 in a scan warning.
+
+## Standalone PostgreSQL reviews
+
+Run `skylos . --quality --danger` with the `postgres` extra. Set
+`[tool.skylos.sql] dialect = "postgresql"` in pyproject.toml or use a
+Prisma migration lock in the scanned migrations tree. SQL files with uncertain
+dialects or parse errors appear in `analysis_summary.sql_analysis`.
+
+- `SKY-Q503` flags a read-only SELECT common table expression unused by the statement
+  or by a potentially effectful CTE. It follows references through CTE chains.
+  A data-changing CTE can still execute when its output is unread.
+- `SKY-Q504` flags ordinary equality or inequality against a literal NULL
+  in supported PostgreSQL filters. Use IS NULL or IS NOT NULL.
+- `SKY-Q505` flags a required `NOT IN` filter with a literal NULL in a
+  literal list. With ordinary equality, even unmatched values fail the filter.
+  It skips subquery lists and branches under OR or NOT.
+- `SKY-D417` flags a SECURITY DEFINER function or procedure created without a
+  fixed local search path. It also checks an ALTER that explicitly selects
+  SECURITY DEFINER and removes the path in the same statement. Verify the
+  effective role and schema permissions before changing a routine.
+
+- `SKY-Q506` flags a concurrent index build or drop within an explicit transaction.
+- `SKY-Q507` flags a concurrent index drop that names several indexes or uses CASCADE.
+- `SKY-Q508` flags an explicit foreign key with unequal column counts.
+- `SKY-Q509` flags a CASE arm shadowed by a preceding arm.
+- `SKY-Q510` flags COUNT of a CASE returning a non-null literal for every branch and ELSE.
+- `SKY-D418` flags schema CREATE privileges granted to PUBLIC.
+- `SKY-D419` flags a role configured to log in and bypass row-level security.
+- `SKY-D420` flags table or column write privileges granted to PUBLIC.
+  The PUBLIC grant checks also cover default privileges on future objects.
+
+These are advisory findings for review.

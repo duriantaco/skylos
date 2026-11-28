@@ -1,0 +1,71 @@
+id: SKY-Q509
+title: Unreachable PostgreSQL CASE arm
+family: quality
+severity: LOW
+languages: [PostgreSQL]
+gate:
+  full: listed
+  note: This PostgreSQL check is report-only.
+
+what_it_is: >-
+  PostgreSQL selects the first matching WHEN in a CASE expression. An earlier
+  arm already covers a later arm, so the later result cannot be chosen.
+why_it_matters: >-
+  A repeated condition can hide a missing status or send customers to the wrong
+  reporting group. Check what the later arm was meant to test.
+how_skylos_decides:
+  - >-
+    Run with --quality on PostgreSQL SQL files. In a searched CASE, Skylos
+    reports later WHENs after literal TRUE, and repeated IS NULL or IS NOT NULL
+    tests on the same unqualified column. A dotted name can call a computed-field
+    function whose result changes between evaluations.
+  - >-
+    In a simple CASE, Skylos checks repeated integer or boolean literals when
+    the selector is a matching literal or casts to a known built-in integer or
+    boolean type. It assumes ordinary equality for those types.
+source_refs:
+  - path: skylos/visitors/languages/postgresql_queries.py
+    symbol: 'def _check_case('
+
+flagged_example:
+  language: sql
+  files:
+    - filename: orders.sql
+      code: |
+        SELECT CASE
+          WHEN shipped_at IS NULL THEN 'pending'
+          WHEN shipped_at IS NULL THEN 'in transit'
+          ELSE 'delivered'
+        END FROM orders;
+    - &config
+      filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.sql]
+        dialect = "postgresql"
+  expect_file: orders.sql
+  expect_line: 3
+not_flagged_example:
+  language: sql
+  files:
+    - filename: orders.sql
+      code: &distinct_conditions |
+        SELECT CASE
+          WHEN shipped_at IS NULL THEN 'pending'
+          WHEN delivered_at IS NULL THEN 'in transit'
+          ELSE 'delivered'
+        END FROM orders;
+    - *config
+  why: The second arm covers a shipped order that has not yet arrived.
+fix:
+  explanation: Check the intended condition or remove the repeated arm.
+  filename: orders.sql
+  language: sql
+  code: *distinct_conditions
+false_alarms_and_suppression:
+  misfires:
+    - A template may replace a literal TRUE before the SQL reaches the server.
+    - A custom equality operator can affect simple CASE comparisons.
+  suppress:
+    - text: Review the final SQL and any custom operators used by the query.
+related: [SKY-Q503, SKY-Q510]

@@ -32,7 +32,7 @@ def _run_step(action, step_name, analysis, tmp_path):
             import sys
 
             args = sys.argv[1:]
-            if args[:2] == ["-m", "skylos.cli"]:
+            if args[:3] == ["-I", "-m", "skylos.cli"]:
                 with Path(os.environ["SKYLOS_TEST_CALLS"]).open("a") as stream:
                     stream.write(json.dumps(args) + "\\n")
                 print("{}")
@@ -100,6 +100,7 @@ def test_action_sca_flags(action, step_name, analysis, flags, tmp_path):
     invocation = _run_step(action, step_name, analysis, tmp_path)
     output_flag = "--json" if step_name == "Run Skylos Scan" else "--upload"
     assert invocation == [
+        "-I",
         "-m",
         "skylos.cli",
         "project with spaces",

@@ -1,0 +1,33 @@
+{
+  "dialect": "postgres",
+  "rules": ["unused_cte", "null_comparison", "definer_search_path"],
+  "cases": [
+    {"id": "cte_unused", "sql": "WITH spare AS (SELECT 9 AS n)\nSELECT 1;", "expected": {"unused_cte": [1]}},
+    {"id": "cte_unused_sibling", "sql": "WITH keep AS (SELECT 1 AS n),\nspare AS (SELECT 2 AS n)\nSELECT n FROM keep;", "expected": {"unused_cte": [2]}},
+    {"id": "cte_same_named_schema_table", "sql": "WITH widgets AS (SELECT 1 AS n)\nSELECT id FROM inventory.widgets;", "expected": {"unused_cte": [1]}},
+    {"id": "cte_inner_shadows_outer", "sql": "WITH spare AS (SELECT 1 AS n)\nSELECT x.n FROM (WITH spare AS (SELECT 2 AS n) SELECT n FROM spare) AS x;", "expected": {"unused_cte": [1]}},
+    {"id": "cte_later_use", "sql": "WITH a AS (SELECT 1 AS n),\nb AS (SELECT n FROM a)\nSELECT n FROM b;", "expected": {}},
+    {"id": "cte_recursive", "sql": "WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 3)\nSELECT n FROM seq;", "expected": {}},
+    {"id": "cte_outer_used_in_subquery", "sql": "WITH ids AS (SELECT 8 AS id)\nSELECT 1 WHERE EXISTS (SELECT 1 FROM ids);", "expected": {}},
+    {"id": "cte_update_unread", "sql": "WITH changed AS (UPDATE widgets SET enabled = TRUE RETURNING id)\nSELECT 1;", "expected": {}},
+    {"id": "cte_insert_unread", "sql": "WITH inserted AS (INSERT INTO widgets (id) VALUES (5) RETURNING id)\nSELECT 1;", "expected": {}},
+    {"id": "null_eq_in_where", "sql": "SELECT * FROM widgets\nWHERE expires_at = NULL;", "expected": {"null_comparison": [2]}},
+    {"id": "null_reversed", "sql": "SELECT id FROM widgets\nWHERE NULL = expires_at;", "expected": {"null_comparison": [2]}},
+    {"id": "null_not_equal", "sql": "DELETE FROM widgets\nWHERE expires_at <> NULL;", "expected": {"null_comparison": [2]}},
+    {"id": "null_join_filter", "sql": "SELECT a.id FROM widgets AS a\nJOIN gadgets AS b ON a.id = b.id AND b.expired_at != NULL;", "expected": {"null_comparison": [2]}},
+    {"id": "null_is_null", "sql": "SELECT id FROM widgets WHERE expires_at IS NULL;", "expected": {}},
+    {"id": "null_is_distinct", "sql": "SELECT id FROM widgets WHERE expires_at IS DISTINCT FROM NULL;", "expected": {}},
+    {"id": "null_assignment", "sql": "UPDATE widgets SET expires_at = NULL WHERE id = 4;", "expected": {}},
+    {"id": "null_quoted_comment", "sql": "SELECT 'expires_at = NULL' AS msg;\n-- WHERE expires_at <> NULL", "expected": {}},
+    {"id": "null_utf8_offset", "sql": "-- Málaga 東京\nSELECT id FROM widgets\nWHERE label = NULL;", "expected": {"null_comparison": [3]}},
+    {"id": "definer_no_path", "sql": "CREATE FUNCTION report_number() RETURNS int LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;", "expected": {"definer_search_path": [1]}},
+    {"id": "definer_replace", "sql": "-- constant test function\nCREATE OR REPLACE FUNCTION report_two() RETURNS int SECURITY DEFINER LANGUAGE sql AS $$ SELECT 2 $$;", "expected": {"definer_search_path": [2]}},
+    {"id": "definer_other_setting", "sql": "CREATE FUNCTION report_three() RETURNS int LANGUAGE sql SECURITY DEFINER SET statement_timeout = '1s' AS $$ SELECT 3 $$;", "expected": {"definer_search_path": [1]}},
+    {"id": "definer_fixed_path", "sql": "CREATE FUNCTION report_four() RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ SELECT 4 $$;", "expected": {}},
+    {"id": "definer_empty_path", "sql": "CREATE FUNCTION report_five() RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $$ SELECT 5 $$;", "expected": {}},
+    {"id": "invoker_no_path", "sql": "CREATE FUNCTION report_six() RETURNS int LANGUAGE sql SECURITY INVOKER AS $$ SELECT 6 $$;", "expected": {}},
+    {"id": "invoker_quoted_definer", "sql": "CREATE FUNCTION report_label() RETURNS text LANGUAGE sql AS $$ SELECT 'SECURITY DEFINER' $$;", "expected": {}},
+    {"id": "mixed_statements", "sql": "SELECT 1;\nWITH spare AS (SELECT 42) SELECT 2;\nSELECT id FROM widgets WHERE expires_at = NULL;", "expected": {"unused_cte": [2], "null_comparison": [3]}},
+    {"id": "incomplete_statement", "sql": "SELECT ( ;", "parse_error": true}
+  ]
+}

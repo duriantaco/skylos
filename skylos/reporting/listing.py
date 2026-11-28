@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import re
+from collections.abc import Mapping
 
-from skylos.reporting.finding_types import get_finding_type
+from skylos.reporting.finding_types import get_finding_type, is_custom_finding
 from skylos.reporting.rollups import FINDING_SECTIONS
 
 LISTING_VERSION = 1
@@ -237,6 +237,66 @@ def is_unproven_source_review(finding):
     return False
 
 
+POSTGRESQL_QUALITY_ADVISORIES = frozenset({
+    "SKY-Q503", "SKY-Q504", "SKY-Q505", "SKY-Q506", "SKY-Q507",
+    "SKY-Q508", "SKY-Q509", "SKY-Q510",
+})
+POSTGRESQL_SECURITY_REVIEWS = {
+    "SKY-D417": "postgresql_search_path",
+    "SKY-D418": "postgresql_public_grant",
+    "SKY-D419": "postgresql_login_bypassrls",
+    "SKY-D420": "postgresql_public_grant",
+}
+
+
+def github_feedback_result(result):
+    """Keep the full SQL quality inventory in the report, outside automatic feedback."""
+    quality = result.get("quality") or []
+    visible = [
+        row for row in quality
+        if not (
+            isinstance(row, Mapping)
+            and isinstance(row.get("rule_id"), str)
+            and row["rule_id"] in POSTGRESQL_QUALITY_ADVISORIES
+            and not is_custom_finding(row)
+        )
+    ]
+    if len(visible) == len(quality):
+        return result
+
+    assessment = result.get("assessment")
+    scope = result.get("analysis_summary")
+    if not isinstance(scope, Mapping):
+        scope = {}
+    view = {**result, "quality": visible, "analysis_summary": dict(scope)}
+    # A display-filtered report can carry an assessment of findings outside
+    # its arrays. Rebuilding that from the subset could erase known risks.
+    if (
+        isinstance(assessment, Mapping)
+        and assessment
+        and not scope.get("assessment_includes_filtered_findings")
+    ):
+        from skylos.reporting.assessment import compute_assessment
+
+        view["assessment"] = compute_assessment(
+            view, scanned_checks=assessment.get("scanned_checks")
+        )
+    grade = result.get("grade")
+    if (
+        not assessment
+        and isinstance(grade, Mapping)
+        and isinstance(grade.get("total_loc"), int)
+        and not scope.get("grade_includes_filtered_findings")
+    ):
+        from skylos.reporting.grader import compute_grade
+
+        view["grade"] = compute_grade(
+            view, grade["total_loc"],
+            included_categories=grade.get("scanned_categories")
+        )
+    return view
+
+
 NONBLOCKING_REVIEW_RULES = frozenset({"SKY-D324", "SKY-D325"})
 
 
@@ -275,7 +335,17 @@ def is_nonblocking_review(finding):
 
 def is_gate_exempt_review(finding):
     """Review evidence that stays in the report without failing a gate."""
-    if isinstance(finding, Mapping) and finding.get("rule_id") in ("SKY-D415", "SKY-D416"):
+    if not isinstance(finding, Mapping) or not isinstance(finding.get("rule_id"), str):
+        return False
+    rule_id = finding["rule_id"]
+    if rule_id in POSTGRESQL_SECURITY_REVIEWS:
+        item = finding.get("review_item")
+        return (
+            isinstance(item, Mapping)
+            and item.get("kind") == POSTGRESQL_SECURITY_REVIEWS[rule_id]
+            and item.get("blocking") is False
+        )
+    if rule_id in ("SKY-D415", "SKY-D416"):
         item = finding.get("review_item")
         metadata = finding.get("metadata")
         evidence = metadata.get("security_evidence") if isinstance(metadata, Mapping) else None

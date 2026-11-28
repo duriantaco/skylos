@@ -1,0 +1,653 @@
+{
+  "purpose": "Line labels frozen by source inspection before running any scanner. Only the two quality checks are exercised. Cases without hand labels measure coverage only. Label line numbers refer to the pinned original file.",
+  "sources": [
+    {
+      "name": "001_create_river_migration.down.sql",
+      "repo": "riverqueue/river",
+      "tag": "v0.20.0",
+      "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+      "path": "riverdriver/riverpgxv5/migration/main/001_create_river_migration.down.sql",
+      "blob_sha1": "74c1984b4909d2777df888e7fda02de2e3da231d",
+      "sha256": "3516c1ff62084c7651983f08aaa9f1b5d00212039aaaff9dfd6a103309d1bf6a"
+    },
+    {
+      "name": "001_create_river_migration.up.sql",
+      "repo": "riverqueue/river",
+      "tag": "v0.20.0",
+      "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+      "path": "riverdriver/riverpgxv5/migration/main/001_create_river_migration.up.sql",
+      "blob_sha1": "1e8a2f398bc4c79b223317f41f020b676083b6a2",
+      "sha256": "fcb947a3fcea4ac977faa0edcef6c2191c7754bd6bc8830a8369d71ec7ba5cc4"
+    },
+    {
+      "name": "002_initial_schema.down.sql",
+      "repo": "riverqueue/river",
+      "tag": "v0.20.0",
+      "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+      "path": "riverdriver/riverpgxv5/migration/main/002_initial_schema.down.sql",
+      "blob_sha1": "bafef0ba9e0db5dd005bea2df01baa70458b3992",
+      "sha256": "3b3f0de6aee60e510cd6f316dcbe77f9ccacb781da5a4849d62ef90dba4f1317"
+    },
+    {
+      "name": "002_initial_schema.up.sql",
+      "repo": "riverqueue/river",
+      "tag": "v0.20.0",
+      "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+      "path": "riverdriver/riverpgxv5/migration/main/002_initial_schema.up.sql",
+      "blob_sha1": "57397e310ca9f011b154e759f62b734c7179b486",
+      "sha256": "fb81334f6b49cbfe51a6c774c8e8a73a6b032a638220ad470e08ac4df5bb92e2"
+    },
+    {
+      "name": "003_river_job_tags_non_null.down.sql",
+      "repo": "riverqueue/river",
+      "tag": "v0.20.0",
+      "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+      "path": "riverdriver/riverpgxv5/migration/main/003_river_job_tags_non_null.down.sql",
+      "blob_sha1": "37a092559a526b7e31ae29f3733ba221b3c7dfbd",
+      "sha256": "9013e90175d36c2517a63501209c3257edd325786e87808bfc57d5da17a4e944"
+    },
+    {
+      "name": "003_river_job_tags_non_null.up.sql",
+      "repo": "riverqueue/river",
+      "tag": "v0.20.0",
+      "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+      "path": "riverdriver/riverpgxv5/migration/main/003_river_job_tags_non_null.up.sql",
+      "blob_sha1": "5849bd5592707fd17aa2c343ee2ee789c3201dd5",
+      "sha256": "4a71b4d7c1df7dbe92f6186c1b0369a69b1f812948fd31c6b1d1e5afb73bb15e"
+    },
+    {
+      "name": "004_pending_and_more.down.sql",
+      "repo": "riverqueue/river",
+      "tag": "v0.20.0",
+      "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+      "path": "riverdriver/riverpgxv5/migration/main/004_pending_and_more.down.sql",
+      "blob_sha1": "22d5e99892a293cf29046b16e4085d4c71344039",
+      "sha256": "f37c9ed7276a2abe6caac15ddede4e0d6fa946a42778cc9375bf8bd6bab6ee32"
+    },
+    {
+      "name": "004_pending_and_more.up.sql",
+      "repo": "riverqueue/river",
+      "tag": "v0.20.0",
+      "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+      "path": "riverdriver/riverpgxv5/migration/main/004_pending_and_more.up.sql",
+      "blob_sha1": "b5cf9a91ef9c04f5cbc8ea4d9cce2509114856a0",
+      "sha256": "8ac3e5cf2745f61f9edc7e6bb0c802e6fcf257718b37f4fd6e255911e147ae62"
+    },
+    {
+      "name": "005_migration_unique_client.down.sql",
+      "repo": "riverqueue/river",
+      "tag": "v0.20.0",
+      "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+      "path": "riverdriver/riverpgxv5/migration/main/005_migration_unique_client.down.sql",
+      "blob_sha1": "c3ba58c6ea13b324c81d9b2f3dce1f0ed0dde832",
+      "sha256": "3c49c4ac69626ab5b16669ce170dca6ea7b9682d122ef20354cff58e64188b57"
+    },
+    {
+      "name": "005_migration_unique_client.up.sql",
+      "repo": "riverqueue/river",
+      "tag": "v0.20.0",
+      "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+      "path": "riverdriver/riverpgxv5/migration/main/005_migration_unique_client.up.sql",
+      "blob_sha1": "506016514345d644e673cc59ffdc5e77b9c8f74b",
+      "sha256": "a2d2ca4b3a7c7350841708b6d81dddf5627d53de7503f7e9ebb76c95fb689c2e"
+    },
+    {
+      "name": "006_bulk_unique.down.sql",
+      "repo": "riverqueue/river",
+      "tag": "v0.20.0",
+      "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+      "path": "riverdriver/riverpgxv5/migration/main/006_bulk_unique.down.sql",
+      "blob_sha1": "ae65cfed18731642c764b6f9f6a33b9317437f67",
+      "sha256": "51577479de3092789185099c7ffba900932b301888b224454ae9740d3ab57843"
+    },
+    {
+      "name": "006_bulk_unique.up.sql",
+      "repo": "riverqueue/river",
+      "tag": "v0.20.0",
+      "commit": "5fedf932b27af30c74f5ade32e2fcc616721fc61",
+      "path": "riverdriver/riverpgxv5/migration/main/006_bulk_unique.up.sql",
+      "blob_sha1": "29c1a3cb6f0e6fbd6b0bb6a6d96c056767ba873b",
+      "sha256": "3840caf478b8935791f952b92fe74670cb46bc41882a33bab3271895ee155561"
+    },
+    {
+      "name": "Chinook_MySql.sql",
+      "repo": "lerocha/chinook-database",
+      "tag": "v1.4.5",
+      "commit": "4a944a942426e1f3263fe539155fb7ef92b04b4a",
+      "path": "ChinookDatabase/DataSources/Chinook_MySql.sql",
+      "blob_sha1": "cdbd482f1be7fde54644480ec7c794ff2764b109",
+      "sha256": "02a1835417c3ea19bff64e1d1f22be738ce51b3f88b0473c24eebff9a3ccde4b"
+    },
+    {
+      "name": "Chinook_PostgreSql.sql",
+      "repo": "lerocha/chinook-database",
+      "tag": "v1.4.5",
+      "commit": "4a944a942426e1f3263fe539155fb7ef92b04b4a",
+      "path": "ChinookDatabase/DataSources/Chinook_PostgreSql.sql",
+      "blob_sha1": "d93a20d08239ac6bdd8a56601e148f5d4d048593",
+      "sha256": "e3fde5c1a5b51a2a91429a702c9ca6e69ba56e6c7f5e112724d70c3d03db695e"
+    },
+    {
+      "name": "Chinook_SqlServer.sql",
+      "repo": "lerocha/chinook-database",
+      "tag": "v1.4.5",
+      "commit": "4a944a942426e1f3263fe539155fb7ef92b04b4a",
+      "path": "ChinookDatabase/DataSources/Chinook_SqlServer.sql",
+      "blob_sha1": "ee9c81863f7f782b0a2d1341f8de2c8ed662f6d5",
+      "sha256": "5ea75c9e925ead917d3fabea6ed3cc8c1ff1d036b61e915c94631aafa2b0802b"
+    },
+    {
+      "name": "with.sql",
+      "repo": "postgres/postgres",
+      "tag": "REL_17_0",
+      "commit": "d7ec59a63d745ba74fba0e280bbf85dc6d1caa3e",
+      "path": "src/test/regress/sql/with.sql",
+      "blob_sha1": "8f6e6c0b40567100d1d131d496cc2dfde5aea74a",
+      "sha256": "8047d9719821121dc8e89a70f71bb3844d58c1e98dc7ef1da3966f67c8a5e2ba"
+    }
+  ],
+  "cases": [
+    {
+      "source": "001_create_river_migration.down.sql",
+      "name": "river/001_create_river_migration.down.sql",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "source": "001_create_river_migration.up.sql",
+      "name": "river/001_create_river_migration.up.sql",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "source": "002_initial_schema.down.sql",
+      "name": "river/002_initial_schema.down.sql",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "source": "002_initial_schema.up.sql",
+      "name": "river/002_initial_schema.up.sql",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "source": "003_river_job_tags_non_null.down.sql",
+      "name": "river/003_river_job_tags_non_null.down.sql",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "source": "003_river_job_tags_non_null.up.sql",
+      "name": "river/003_river_job_tags_non_null.up.sql",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "source": "004_pending_and_more.down.sql",
+      "name": "river/004_pending_and_more.down.sql",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "source": "004_pending_and_more.up.sql",
+      "name": "river/004_pending_and_more.up.sql",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "source": "005_migration_unique_client.down.sql",
+      "name": "river/005_migration_unique_client.down.sql",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "source": "005_migration_unique_client.up.sql",
+      "name": "river/005_migration_unique_client.up.sql",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "source": "006_bulk_unique.down.sql",
+      "name": "river/006_bulk_unique.down.sql",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "source": "006_bulk_unique.up.sql",
+      "name": "river/006_bulk_unique.up.sql",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "source": "Chinook_MySql.sql",
+      "name": "chinook/mysql/Chinook_MySql.sql",
+      "dialect": "mysql",
+      "coverage": "unsupported_dialect"
+    },
+    {
+      "source": "Chinook_PostgreSql.sql",
+      "name": "chinook/postgresql/Chinook_PostgreSql.sql",
+      "dialect": "postgresql",
+      "coverage": "psql_script"
+    },
+    {
+      "source": "Chinook_SqlServer.sql",
+      "name": "chinook/tsql/Chinook_SqlServer.sql",
+      "dialect": "tsql",
+      "coverage": "unsupported_dialect"
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/twice.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        6,
+        7
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/set-operation.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        10,
+        15
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/recursive.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        20,
+        25
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/shadowing.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        100,
+        116
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/nested-with.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        1086,
+        1092
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/dependency-chain.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        1125,
+        1129
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/conflict.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        1395,
+        1397
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/merge.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        1436,
+        1439
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/unread-modifying.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        1488,
+        1493
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/forward-modifying.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        1498,
+        1503
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/update-from.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        1589,
+        1590
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/delete-using.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        1599,
+        1600
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/invalid-grammar.sql",
+      "dialect": "postgresql",
+      "coverage": "unparsed",
+      "lines": [
+        1674,
+        1674
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/unread-cte-insert-target.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        1679,
+        1679
+      ]
+    },
+    {
+      "source": "with.sql",
+      "name": "regression/read-cte-insert-target.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        1685,
+        1685
+      ]
+    },
+    {
+      "source": "Chinook_PostgreSql.sql",
+      "name": "chinook/postgresql/album-schema.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        34,
+        40
+      ]
+    }
+  ],
+  "labels": [
+    {
+      "name": "regression/twice.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        6,
+        7
+      ],
+      "expected": "quiet",
+      "rationale": "Two range references to q1."
+    },
+    {
+      "name": "regression/set-operation.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        10,
+        15
+      ],
+      "expected": "quiet",
+      "rationale": "Both UNION operands read q1."
+    },
+    {
+      "name": "regression/recursive.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        20,
+        25
+      ],
+      "expected": "quiet",
+      "rationale": "The final aggregate reads the recursive work table."
+    },
+    {
+      "name": "regression/shadowing.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        100,
+        116
+      ],
+      "expected": "quiet",
+      "rationale": "Nested scopes and duplicate w6 names each have a reader."
+    },
+    {
+      "name": "regression/nested-with.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1086,
+        1092
+      ],
+      "expected": "quiet",
+      "rationale": "The internal set operand reads innermost; the last query reads outermost."
+    },
+    {
+      "name": "regression/dependency-chain.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1125,
+        1129
+      ],
+      "expected": "quiet",
+      "rationale": "The final query reads C through B and A."
+    },
+    {
+      "name": "regression/conflict.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1395,
+        1397
+      ],
+      "expected": "quiet",
+      "rationale": "The ON CONFLICT assignment selects from aa."
+    },
+    {
+      "name": "regression/merge.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1436,
+        1439
+      ],
+      "expected": "quiet",
+      "rationale": "The MERGE arm selects from cte_basic."
+    },
+    {
+      "name": "regression/unread-modifying.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1488,
+        1493
+      ],
+      "expected": "quiet",
+      "rationale": "Both INSERTs run although the final SELECT 1 reads neither result."
+    },
+    {
+      "name": "regression/forward-modifying.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1498,
+        1503
+      ],
+      "expected": "quiet",
+      "rationale": "The forward-referenced CTEs both write data."
+    },
+    {
+      "name": "regression/update-from.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1589,
+        1590
+      ],
+      "expected": "quiet",
+      "rationale": "UPDATE reads rcte through FROM."
+    },
+    {
+      "name": "regression/delete-using.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1599,
+        1600
+      ],
+      "expected": "quiet",
+      "rationale": "DELETE reads rcte through USING."
+    },
+    {
+      "name": "regression/unread-cte-insert-target.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1679,
+        1679
+      ],
+      "expected": "positive",
+      "rationale": "The INSERT destination resolves to a physical table. The SELECT 42 CTE is unread. Upstream intentionally omits the physical table and expects a catalog error after parsing."
+    },
+    {
+      "name": "regression/read-cte-insert-target.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        1685,
+        1685
+      ],
+      "expected": "quiet",
+      "rationale": "The same spelling in FROM reads the CTE while the INSERT target is the physical table."
+    },
+    {
+      "name": "river/003_river_job_tags_non_null.up.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "quiet",
+      "rationale": "IS NULL or IS NOT NULL is an explicit null test."
+    },
+    {
+      "name": "river/004_pending_and_more.up.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        4,
+        4
+      ],
+      "expected": "quiet",
+      "rationale": "IS NULL or IS NOT NULL is an explicit null test."
+    },
+    {
+      "name": "river/004_pending_and_more.up.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        11,
+        11
+      ],
+      "expected": "quiet",
+      "rationale": "IS NULL or IS NOT NULL is an explicit null test."
+    },
+    {
+      "name": "river/004_pending_and_more.down.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        11,
+        11
+      ],
+      "expected": "quiet",
+      "rationale": "IS NULL or IS NOT NULL is an explicit null test."
+    },
+    {
+      "name": "river/002_initial_schema.up.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        43,
+        43
+      ],
+      "expected": "quiet",
+      "rationale": "IS NULL or IS NOT NULL is an explicit null test."
+    },
+    {
+      "name": "river/002_initial_schema.up.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        54,
+        54
+      ],
+      "expected": "quiet",
+      "rationale": "IS NULL or IS NOT NULL is an explicit null test."
+    },
+    {
+      "name": "river/005_migration_unique_client.up.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        45,
+        45
+      ],
+      "expected": "quiet",
+      "rationale": "IS NULL or IS NOT NULL is an explicit null test."
+    },
+    {
+      "name": "river/006_bulk_unique.up.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        32,
+        33
+      ],
+      "expected": "quiet",
+      "rationale": "IS NULL or IS NOT NULL is an explicit null test."
+    },
+    {
+      "name": "river/006_bulk_unique.down.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        11,
+        11
+      ],
+      "expected": "quiet",
+      "rationale": "IS NULL or IS NOT NULL is an explicit null test."
+    },
+    {
+      "name": "chinook/postgresql/album-schema.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        34,
+        40
+      ],
+      "expected": "quiet",
+      "rationale": "NOT NULL column constraints in CREATE TABLE are declarations."
+    },
+    {
+      "name": "chinook/postgresql/album-schema.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        34,
+        40
+      ],
+      "expected": "quiet",
+      "rationale": "CREATE TABLE has no CTE."
+    }
+  ]
+}

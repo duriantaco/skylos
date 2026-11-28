@@ -1,0 +1,110 @@
+[
+  {
+    "id": "routine-read-only-transaction",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "head": "BEGIN; SELECT 1; COMMIT;GRANT UPDATE ON app.a TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "routine-unrelated-revoke",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "head": "REVOKE UPDATE ON app.other FROM ingest;GRANT UPDATE ON app.a TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "commit-previously-rolled-back",
+    "base": "BEGIN;GRANT UPDATE ON app.a TO PUBLIC;ROLLBACK;",
+    "head": "BEGIN;GRANT UPDATE ON app.a TO PUBLIC;COMMIT;",
+    "violations": 1
+  },
+  {
+    "id": "candidate-grant-is-rolled-back",
+    "base": "",
+    "head": "BEGIN;GRANT UPDATE ON app.a TO PUBLIC;ROLLBACK;",
+    "violations": 0
+  },
+  {
+    "id": "grant-inside-released-savepoint",
+    "base": "",
+    "head": "BEGIN;SAVEPOINT one;GRANT UPDATE ON app.a TO PUBLIC;RELEASE SAVEPOINT one;COMMIT;",
+    "violations": 1
+  },
+  {
+    "id": "grant-rolled-back-to-savepoint",
+    "base": "",
+    "head": "BEGIN;SAVEPOINT one;GRANT UPDATE ON app.a TO PUBLIC;ROLLBACK TO SAVEPOINT one;COMMIT;",
+    "violations": 0
+  },
+  {
+    "id": "later-direct-revocation-removed",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;REVOKE UPDATE ON app.a FROM PUBLIC;",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "violations": 1
+  },
+  {
+    "id": "later-committed-revocation-removed",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;BEGIN;REVOKE UPDATE ON app.a FROM PUBLIC;COMMIT;",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "violations": 1
+  },
+  {
+    "id": "rolled-back-revocation-removed",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;BEGIN;REVOKE UPDATE ON app.a FROM PUBLIC;ROLLBACK;",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "unaffected-delete-retains-credit",
+    "base": "GRANT UPDATE, DELETE ON app.a TO PUBLIC;REVOKE UPDATE ON app.a FROM PUBLIC;",
+    "head": "GRANT DELETE ON app.a TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "revoked-update-reappears",
+    "base": "GRANT UPDATE, DELETE ON app.a TO PUBLIC;REVOKE UPDATE ON app.a FROM PUBLIC;",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "violations": 1
+  },
+  {
+    "id": "unaffected-column-retains-credit",
+    "base": "GRANT UPDATE(a,b) ON app.a TO PUBLIC; REVOKE UPDATE(a) ON app.a FROM PUBLIC;",
+    "head": "GRANT UPDATE(b) ON app.a TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "revoked-column-reappears",
+    "base": "GRANT UPDATE(a,b) ON app.a TO PUBLIC; REVOKE UPDATE(a) ON app.a FROM PUBLIC;",
+    "head": "GRANT UPDATE(a) ON app.a TO PUBLIC;",
+    "violations": 1
+  },
+  {
+    "id": "unaffected-table-retains-credit",
+    "base": "GRANT UPDATE ON app.a, app.b TO PUBLIC;REVOKE UPDATE ON app.a FROM PUBLIC;",
+    "head": "GRANT UPDATE ON app.b TO PUBLIC;",
+    "violations": 0
+  },
+  {
+    "id": "revoked-table-reappears",
+    "base": "GRANT UPDATE ON app.a, app.b TO PUBLIC;REVOKE UPDATE ON app.a FROM PUBLIC;",
+    "head": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "violations": 1
+  },
+  {
+    "id": "new-in-committed-txn",
+    "base": "",
+    "head": "BEGIN;GRANT UPDATE ON app.a TO PUBLIC;COMMIT;",
+    "violations": 1
+  },
+  {
+    "id": "known-grant-inside-new-transaction",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "head": "BEGIN;GRANT UPDATE ON app.a TO PUBLIC;COMMIT;",
+    "violations": 0
+  },
+  {
+    "id": "otherwise-identical-grant-to-new-table",
+    "base": "GRANT UPDATE ON app.a TO PUBLIC;",
+    "head": "GRANT UPDATE ON app.b TO PUBLIC;",
+    "violations": 1
+  }
+]

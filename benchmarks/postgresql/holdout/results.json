@@ -1,0 +1,133 @@
+{
+  "manifest_sha256": "a04c1e0542837b8f1c2eee00e89c5d23870c4c85acd7db3acb2128d096b8f11f",
+  "checks": {
+    "SKY-Q503": {
+      "tp": 1,
+      "fp": 0,
+      "tn": 14,
+      "fn": 0,
+      "unscored": 0
+    },
+    "SKY-Q504": {
+      "tp": 0,
+      "fp": 0,
+      "tn": 10,
+      "fn": 0,
+      "unscored": 0
+    }
+  },
+  "unexpected_labeled_results": [],
+  "unscored_labels": [],
+  "findings_outside_labels": [],
+  "coverage_counts": {
+    "checked": 27,
+    "unparsed": 2,
+    "unsupported_dialect": 2
+  },
+  "coverage_expectation_mismatches": {},
+  "coverage_by_case": {
+    "chinook/mysql/Chinook_MySql.sql": "unsupported_dialect",
+    "chinook/postgresql/Chinook_PostgreSql.sql": "unparsed",
+    "chinook/postgresql/album-schema.sql": "checked",
+    "chinook/tsql/Chinook_SqlServer.sql": "unsupported_dialect",
+    "regression/conflict.sql": "checked",
+    "regression/delete-using.sql": "checked",
+    "regression/dependency-chain.sql": "checked",
+    "regression/forward-modifying.sql": "checked",
+    "regression/invalid-grammar.sql": "unparsed",
+    "regression/merge.sql": "checked",
+    "regression/nested-with.sql": "checked",
+    "regression/read-cte-insert-target.sql": "checked",
+    "regression/recursive.sql": "checked",
+    "regression/set-operation.sql": "checked",
+    "regression/shadowing.sql": "checked",
+    "regression/twice.sql": "checked",
+    "regression/unread-cte-insert-target.sql": "checked",
+    "regression/unread-modifying.sql": "checked",
+    "regression/update-from.sql": "checked",
+    "river/001_create_river_migration.down.sql": "checked",
+    "river/001_create_river_migration.up.sql": "checked",
+    "river/002_initial_schema.down.sql": "checked",
+    "river/002_initial_schema.up.sql": "checked",
+    "river/003_river_job_tags_non_null.down.sql": "checked",
+    "river/003_river_job_tags_non_null.up.sql": "checked",
+    "river/004_pending_and_more.down.sql": "checked",
+    "river/004_pending_and_more.up.sql": "checked",
+    "river/005_migration_unique_client.down.sql": "checked",
+    "river/005_migration_unique_client.up.sql": "checked",
+    "river/006_bulk_unique.down.sql": "checked",
+    "river/006_bulk_unique.up.sql": "checked"
+  },
+  "sqlfluff": {
+    "tool": "sqlfluff, version 4.5.0",
+    "checks": {
+      "SKY-Q503": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 13,
+        "fn": 1,
+        "unscored": 1
+      },
+      "SKY-Q504": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 10,
+        "fn": 0,
+        "unscored": 0
+      }
+    },
+    "unexpected_labeled_results": [
+      [
+        "regression/unread-cte-insert-target.sql",
+        "SKY-Q503",
+        1679,
+        1679,
+        "fn"
+      ]
+    ],
+    "unscored_labels": [
+      [
+        "regression/merge.sql",
+        "SKY-Q503",
+        1436,
+        1439,
+        "unparsed"
+      ]
+    ],
+    "findings_outside_labels": [],
+    "coverage_counts": {
+      "checked": 21,
+      "unparsed": 1
+    },
+    "coverage_expectation_mismatches": {
+      "regression/merge.sql": [
+        "checked",
+        "unparsed"
+      ]
+    },
+    "coverage_by_case": {
+      "chinook/postgresql/album-schema.sql": "checked",
+      "regression/conflict.sql": "checked",
+      "regression/delete-using.sql": "checked",
+      "regression/dependency-chain.sql": "checked",
+      "regression/forward-modifying.sql": "checked",
+      "regression/merge.sql": "unparsed",
+      "regression/nested-with.sql": "checked",
+      "regression/read-cte-insert-target.sql": "checked",
+      "regression/recursive.sql": "checked",
+      "regression/set-operation.sql": "checked",
+      "regression/shadowing.sql": "checked",
+      "regression/twice.sql": "checked",
+      "regression/unread-cte-insert-target.sql": "checked",
+      "regression/unread-modifying.sql": "checked",
+      "regression/update-from.sql": "checked",
+      "river/002_initial_schema.up.sql": "checked",
+      "river/003_river_job_tags_non_null.up.sql": "checked",
+      "river/004_pending_and_more.down.sql": "checked",
+      "river/004_pending_and_more.up.sql": "checked",
+      "river/005_migration_unique_client.up.sql": "checked",
+      "river/006_bulk_unique.down.sql": "checked",
+      "river/006_bulk_unique.up.sql": "checked"
+    }
+  }
+}

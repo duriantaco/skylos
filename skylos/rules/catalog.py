@@ -356,6 +356,14 @@ _RULES = (
     ),
     RuleCatalogEntry("SKY-Q501", "God class", "quality", finding_type="advice"),
     RuleCatalogEntry("SKY-Q502", "File too large", "quality", finding_type="advice"),
+    RuleCatalogEntry("SKY-Q503", "Unused PostgreSQL SELECT CTE", "quality", "LOW", finding_type="review"),
+    RuleCatalogEntry("SKY-Q504", "PostgreSQL filter compares with NULL", "quality", "MEDIUM", finding_type="review"),
+    RuleCatalogEntry("SKY-Q505", "Literal NULL in a PostgreSQL NOT IN filter", "quality", "MEDIUM", finding_type="review"),
+    RuleCatalogEntry("SKY-Q506", "Concurrent PostgreSQL index command inside a transaction", "quality", "MEDIUM", finding_type="review"),
+    RuleCatalogEntry("SKY-Q507", "Unsupported concurrent PostgreSQL index drop", "quality", "MEDIUM", finding_type="review"),
+    RuleCatalogEntry("SKY-Q508", "Mismatched PostgreSQL foreign key column counts", "quality", "MEDIUM", finding_type="review"),
+    RuleCatalogEntry("SKY-Q509", "Unreachable PostgreSQL CASE arm", "quality", "LOW", finding_type="review"),
+    RuleCatalogEntry("SKY-Q510", "PostgreSQL COUNT includes every CASE result", "quality", "MEDIUM", finding_type="review"),
     RuleCatalogEntry("SKY-Q701", "High coupling", "quality", finding_type="advice"),
     RuleCatalogEntry("SKY-Q702", "Low cohesion", "quality", finding_type="advice"),
     RuleCatalogEntry(
@@ -1947,6 +1955,13 @@ _RULES = (
         finding_type="review",
         cwe=("CWE-732",),
     ),
+    RuleCatalogEntry(
+        "SKY-D417", "PostgreSQL privileged routine inherits search_path",
+        "security", "MEDIUM", finding_type="review", cwe=("CWE-426",),
+    ),
+    RuleCatalogEntry("SKY-D418", "PostgreSQL schema creation privilege granted to PUBLIC", "security", "MEDIUM", finding_type="review", cwe=("CWE-266",)),
+    RuleCatalogEntry("SKY-D419", "PostgreSQL login role bypasses row-level security", "security", "MEDIUM", finding_type="review", cwe=("CWE-266",)),
+    RuleCatalogEntry("SKY-D420", "PostgreSQL table write privileges granted to PUBLIC", "security", "MEDIUM", finding_type="review", cwe=("CWE-266",)),
     RuleCatalogEntry(
         "SKY-DEP001",
         "Externally deployed route is missing a required auth guard",

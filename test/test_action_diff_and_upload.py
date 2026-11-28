@@ -63,7 +63,7 @@ def _run(action, step_name, cwd, tmp_path, **env_overrides):
             import json, os, sys
             from pathlib import Path
             args = sys.argv[1:]
-            if args[:2] == ["-m", "skylos.cli"]:
+            if args[:3] == ["-I", "-m", "skylos.cli"]:
                 with Path(os.environ["SKYLOS_TEST_CALLS"]).open("a") as stream:
                     stream.write(json.dumps(
                         {"args": args, "policy_base": os.environ.get("SKYLOS_POLICY_BASE")}
@@ -173,7 +173,7 @@ def test_gate_uses_the_scan_base(action, tmp_path):
         SKYLOS_DIFF_BASE_REF="origin/main", SKYLOS_PATH="project dir",
     )
     assert calls[0]["args"] == [
-        "-m", "skylos.cli", "cicd", "gate", "project dir",
+        "-I", "-m", "skylos.cli", "cicd", "gate", "project dir",
         "--diff-base", "origin/main", "--input", "skylos-report.json", "--summary",
     ]
 
@@ -181,7 +181,7 @@ def test_gate_uses_the_scan_base(action, tmp_path):
 def test_gate_without_scan_base_is_unchanged(action, tmp_path):
     calls, _, _ = _run(action, "Quality Gate", tmp_path, tmp_path, SKYLOS_DIFF_BASE_REF="")
     assert calls[0]["args"] == [
-        "-m", "skylos.cli", "cicd", "gate", "--input", "skylos-report.json", "--summary",
+        "-I", "-m", "skylos.cli", "cicd", "gate", "--input", "skylos-report.json", "--summary",
     ]
 
 

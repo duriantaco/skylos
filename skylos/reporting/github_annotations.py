@@ -1,7 +1,11 @@
 import os
 from pathlib import Path
 
-from skylos.reporting.listing import is_gate_exempt_review
+from skylos.reporting.listing import (
+    POSTGRESQL_SECURITY_REVIEWS,
+    github_feedback_result,
+    is_gate_exempt_review,
+)
 
 _GITHUB_ANNOTATION_LEVELS = {
     "CRITICAL": "error",
@@ -48,8 +52,8 @@ def _emit_github_grade_annotation(result):
     assessment = result.get("assessment")
     if isinstance(assessment, dict) and assessment:
         from skylos.reporting.assessment_display import (
-            assessment_notice,
             assessment_coverage_text,
+            assessment_notice,
         )
 
         message = (
@@ -138,6 +142,8 @@ def _github_annotation_items(result):
         example["severity"] = "LOW"
         example["title"] += " (review only)"
         example["msg"] = f"{count} {locations} for review. {example['msg']}"
+        if group[0]["rule_id"] in POSTGRESQL_SECURITY_REVIEWS:
+            example["msg"] += " The full JSON report lists every location."
         annotations.append(example)
     return annotations
 
@@ -221,6 +227,7 @@ def _emit_github_annotation(annotation):
 def _emit_github_annotations(
     result, *, max_annotations=50, severity_filter=None, root_path=None
 ):
+    result = github_feedback_result(result)
     _emit_github_grade_annotation(result)
     from skylos.reporting.assessment_display import dependency_coverage_lines
 

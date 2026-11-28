@@ -1,0 +1,8 @@
+[
+  {"role":"tenant_a","operation":"select","expected":["tenant_a"]},
+  {"role":"tenant_b","operation":"select","expected":["tenant_b"]},
+  {"role":"tenant_a","operation":"insert-own","expected":"42501"},
+  {"role":"tenant_b","operation":"insert-own","expected":"ok"},
+  {"role":"tenant_b","operation":"insert-other","expected":"42501"},
+  {"role":"backup_reader","operation":"select","expected":["tenant_a","tenant_b","tenant_b"]}
+]

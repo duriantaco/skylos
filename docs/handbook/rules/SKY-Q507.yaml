@@ -1,0 +1,64 @@
+id: SKY-Q507
+title: Unsupported concurrent PostgreSQL index drop
+family: quality
+severity: MEDIUM
+languages: [PostgreSQL]
+gate:
+  full: listed
+  note: This PostgreSQL finding is report-only.
+
+what_it_is: >-
+  The script uses DROP INDEX CONCURRENTLY with more than one index or with
+  CASCADE. PostgreSQL accepts a single index with the default RESTRICT behavior.
+why_it_matters: >-
+  A migration that groups indexes or requests automatic dependency removal fails
+  at this statement.
+how_skylos_decides:
+  - >-
+    Skylos checks the index list and drop behavior on the parsed command.
+  - >-
+    It reports one finding when both restrictions apply.
+source_refs:
+  - path: skylos/visitors/languages/postgresql_migrations.py
+    symbol: 'def scan_migrations('
+
+flagged_example:
+  language: sql
+  files:
+    - filename: migration.sql
+      code: |
+        DROP INDEX CONCURRENTLY orders_id, orders_status;
+    - &config
+      filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.sql]
+        dialect = "postgresql"
+  expect_file: migration.sql
+  expect_line: 1
+not_flagged_example:
+  language: sql
+  files:
+    - filename: migration.sql
+      code: &fixed |
+        DROP INDEX CONCURRENTLY orders_id;
+        DROP INDEX CONCURRENTLY orders_status;
+    - *config
+  why: >-
+    Handle each index separately. Inspect its dependencies before planning any
+    removal.
+fix:
+  explanation: >-
+    Handle each index separately. Inspect its dependencies before planning any
+    removal.
+  filename: migration.sql
+  language: sql
+  code: *fixed
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      Ordinary DROP INDEX follows different rules. Database ownership and live
+      dependencies also affect execution.
+  suppress:
+    - text: Review the statement in the context of its migration.
+related: [SKY-Q506]

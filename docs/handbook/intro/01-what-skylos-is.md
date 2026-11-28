@@ -24,9 +24,10 @@ and `--profile` shows where the scan spends its time (see "Type checking"
 and "Analysis profiling").
 
 Skylos reads Python, TypeScript and JavaScript, Java, Go, PHP, Rust, Ruby,
-Dart, C#, C++, Kotlin, Swift and Shell, plus configuration such as GitHub Actions
-workflows, GitLab CI files, Dockerfiles, Kubernetes manifests, Terraform and
-lockfiles. Coverage is deepest in Python, TypeScript/JavaScript and Java
+Dart, C#, C++, Kotlin, Swift and Shell. With the `postgres` extra it also
+checks standalone PostgreSQL files. It reads GitHub Actions workflows,
+GitLab CI files, Dockerfiles, Kubernetes manifests, Terraform and lockfiles.
+Coverage is deepest in Python, TypeScript/JavaScript and Java
 (see "Languages Skylos reads"); a rule page lists the languages that rule
 covers.
 

@@ -1,0 +1,276 @@
+{
+  "purpose": "Fresh source excerpts selected by inspection, before scanning. All are evaluated as PostgreSQL source. The SQLite excerpt uses plain SQL and the upstream suite specifies the expected result. SQL and upstream test suites are never executed.",
+  "rules": [
+    "SKY-Q505"
+  ],
+  "sources": [
+    {
+      "name": "expressions.sql",
+      "repo": "postgres/postgres",
+      "tag": "REL_17_0",
+      "commit": "d7ec59a63d745ba74fba0e280bbf85dc6d1caa3e",
+      "path": "src/test/regress/sql/expressions.sql",
+      "blob_sha1": "e02c21f3368e602a8107e2caf07b0adc0a18f118",
+      "sha256": "f4f71425e663d3ea3494e36c0b03f08a0c54d22711a080303f7fb949ce42687f"
+    },
+    {
+      "name": "in.test",
+      "repo": "sqlite/sqlite",
+      "tag": "version-3.46.0",
+      "commit": "bebe2d8be8acfd02592c4972f4ba32c3b4e4a33f",
+      "path": "test/in.test",
+      "blob_sha1": "601c7e3b4d042b2b7973cd9788ce7fb19035a0bf",
+      "sha256": "4215d5dabfa8fa2c322ab6143650d7421c7dceed580a2784ec9a03e2834651e8"
+    }
+  ],
+  "cases": [
+    {
+      "name": "pg/full-expressions.sql",
+      "source": "expressions.sql",
+      "dialect": "postgresql",
+      "coverage": "unparsed"
+    },
+    {
+      "name": "pg/projections.sql",
+      "source": "expressions.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        126,
+        133
+      ]
+    },
+    {
+      "name": "pg/custom-type.sql",
+      "source": "expressions.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        202,
+        209
+      ]
+    },
+    {
+      "name": "sqlite/projected-case.sql",
+      "source": "in.test",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        675,
+        676
+      ]
+    },
+    {
+      "name": "sqlite/projected-disjunction.sql",
+      "source": "in.test",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        679,
+        680
+      ]
+    },
+    {
+      "name": "sqlite/in-filter.sql",
+      "source": "in.test",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        687,
+        687
+      ]
+    },
+    {
+      "name": "sqlite/not-in-filter.sql",
+      "source": "in.test",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "lines": [
+        690,
+        690
+      ]
+    }
+  ],
+  "labels": [
+    {
+      "name": "pg/projections.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        126,
+        126
+      ],
+      "expected": "negative",
+      "reason": "These deliberate Boolean projections test the value returned by NOT IN."
+    },
+    {
+      "name": "pg/projections.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        127,
+        127
+      ],
+      "expected": "negative",
+      "reason": "These deliberate Boolean projections test the value returned by NOT IN."
+    },
+    {
+      "name": "pg/projections.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        128,
+        128
+      ],
+      "expected": "negative",
+      "reason": "These deliberate Boolean projections test the value returned by NOT IN."
+    },
+    {
+      "name": "pg/projections.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        129,
+        129
+      ],
+      "expected": "negative",
+      "reason": "These deliberate Boolean projections test the value returned by NOT IN."
+    },
+    {
+      "name": "pg/projections.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        130,
+        130
+      ],
+      "expected": "negative",
+      "reason": "These deliberate Boolean projections test the value returned by NOT IN."
+    },
+    {
+      "name": "pg/projections.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        131,
+        131
+      ],
+      "expected": "negative",
+      "reason": "These deliberate Boolean projections test the value returned by NOT IN."
+    },
+    {
+      "name": "pg/projections.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        132,
+        132
+      ],
+      "expected": "negative",
+      "reason": "These deliberate Boolean projections test the value returned by NOT IN."
+    },
+    {
+      "name": "pg/projections.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        133,
+        133
+      ],
+      "expected": "negative",
+      "reason": "These deliberate Boolean projections test the value returned by NOT IN."
+    },
+    {
+      "name": "pg/custom-type.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        203,
+        203
+      ],
+      "expected": "negative",
+      "reason": "The RHS explicitly casts to myint and the test defines its own non-strict comparison."
+    },
+    {
+      "name": "pg/custom-type.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        204,
+        204
+      ],
+      "expected": "negative",
+      "reason": "The RHS explicitly casts to myint and the test defines its own non-strict comparison."
+    },
+    {
+      "name": "pg/custom-type.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        208,
+        208
+      ],
+      "expected": "negative",
+      "reason": "The RHS explicitly casts to myint and the test defines its own non-strict comparison."
+    },
+    {
+      "name": "pg/custom-type.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        209,
+        209
+      ],
+      "expected": "negative",
+      "reason": "The RHS explicitly casts to myint and the test defines its own non-strict comparison."
+    },
+    {
+      "name": "sqlite/projected-case.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        675,
+        675
+      ],
+      "expected": "negative",
+      "reason": "The CASE result is projected as a text value."
+    },
+    {
+      "name": "sqlite/projected-case.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        676,
+        676
+      ],
+      "expected": "negative",
+      "reason": "The CASE result is projected as a text value."
+    },
+    {
+      "name": "sqlite/projected-disjunction.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        679,
+        679
+      ],
+      "expected": "negative",
+      "reason": "The projected CASE includes an OR condition."
+    },
+    {
+      "name": "sqlite/projected-disjunction.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        680,
+        680
+      ],
+      "expected": "negative",
+      "reason": "The projected CASE includes an OR condition."
+    },
+    {
+      "name": "sqlite/in-filter.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        687,
+        687
+      ],
+      "expected": "negative",
+      "reason": "IN admits the matching integer keys. The upstream result contains 103 and 108."
+    },
+    {
+      "name": "sqlite/not-in-filter.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        690,
+        690
+      ],
+      "expected": "positive",
+      "reason": "The integer key cannot satisfy NOT IN (3, null, 8). The upstream expected result is empty."
+    }
+  ]
+}

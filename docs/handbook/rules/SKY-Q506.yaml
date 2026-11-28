@@ -1,0 +1,65 @@
+id: SKY-Q506
+title: Concurrent PostgreSQL index command inside a transaction
+family: quality
+severity: MEDIUM
+languages: [PostgreSQL]
+gate:
+  full: listed
+  note: This PostgreSQL finding is report-only.
+
+what_it_is: >-
+  The script opens an explicit transaction and requests a concurrent index build
+  or drop before it ends. PostgreSQL rejects that command.
+why_it_matters: >-
+  The migration stops before it can build or remove the index. A migration runner
+  can also supply an outer transaction.
+how_skylos_decides:
+  - >-
+    Skylos follows BEGIN, START TRANSACTION, COMMIT, ROLLBACK and transaction
+    chaining within one session.
+  - >-
+    Savepoints keep the outer transaction open.
+source_refs:
+  - path: skylos/visitors/languages/postgresql_migrations.py
+    symbol: 'def scan_migrations('
+
+flagged_example:
+  language: sql
+  files:
+    - filename: migration.sql
+      code: |
+        BEGIN;
+        CREATE INDEX CONCURRENTLY orders_id ON orders(id);
+        COMMIT;
+    - &config
+      filename: pyproject.toml
+      language: toml
+      code: |
+        [tool.skylos.sql]
+        dialect = "postgresql"
+  expect_file: migration.sql
+  expect_line: 2
+not_flagged_example:
+  language: sql
+  files:
+    - filename: migration.sql
+      code: &fixed |
+        CREATE INDEX CONCURRENTLY orders_id ON orders(id);
+    - *config
+  why: >-
+    Run the concurrent command outside the explicit transaction. Check whether the
+    migration runner wraps it in another transaction.
+fix:
+  explanation: >-
+    Run the concurrent command outside the explicit transaction. Check whether the
+    migration runner wraps it in another transaction.
+  filename: migration.sql
+  language: sql
+  code: *fixed
+false_alarms_and_suppression:
+  misfires:
+    - >-
+      A transaction opened by a migration runner is outside the scanned SQL.
+  suppress:
+    - text: Review the statement in the context of its migration.
+related: [SKY-Q507]

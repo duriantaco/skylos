@@ -1,0 +1,259 @@
+{
+  "manifest_sha256": "803138622957edc65d756b46a2156a16169dc22ea70a075060d809a2aec08d2e",
+  "pglast": "v8.9",
+  "policy_command": "postgres-check",
+  "matches": 24,
+  "total": 24,
+  "cases": [
+    {
+      "id": "clean",
+      "actual": {
+        "quality": 0,
+        "danger": 0,
+        "quality_annotations": 0,
+        "security_notices": 0,
+        "inline": 0
+      },
+      "matched": true,
+      "summary_groups": []
+    },
+    {
+      "id": "quality-only",
+      "actual": {
+        "quality": 1,
+        "danger": 0,
+        "quality_annotations": 0,
+        "security_notices": 0,
+        "inline": 0
+      },
+      "matched": true,
+      "summary_groups": []
+    },
+    {
+      "id": "twelve-public-grants",
+      "actual": {
+        "quality": 0,
+        "danger": 12,
+        "quality_annotations": 0,
+        "security_notices": 1,
+        "inline": 0
+      },
+      "matched": true,
+      "summary_groups": [
+        "SKY-D420"
+      ]
+    },
+    {
+      "id": "backup-role",
+      "actual": {
+        "quality": 0,
+        "danger": 1,
+        "quality_annotations": 0,
+        "security_notices": 1,
+        "inline": 0
+      },
+      "matched": true,
+      "summary_groups": [
+        "SKY-D419"
+      ]
+    },
+    {
+      "id": "quality-and-access",
+      "actual": {
+        "quality": 1,
+        "danger": 1,
+        "quality_annotations": 0,
+        "security_notices": 1,
+        "inline": 0
+      },
+      "matched": true,
+      "summary_groups": [
+        "SKY-D418"
+      ]
+    },
+    {
+      "id": "unrelated-quality",
+      "actual": {
+        "finding_annotations": 1
+      },
+      "matched": true
+    },
+    {
+      "id": "unrelated-security",
+      "actual": {
+        "finding_annotations": 1
+      },
+      "matched": true
+    },
+    {
+      "id": "checked-clean",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true,
+      "checked_files": 1,
+      "violations": 0,
+      "unchecked_files": 0
+    },
+    {
+      "id": "quality-advisory",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true,
+      "checked_files": 1,
+      "violations": 0,
+      "unchecked_files": 0
+    },
+    {
+      "id": "security-review-without-prohibition",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true,
+      "checked_files": 1,
+      "violations": 0,
+      "unchecked_files": 0
+    },
+    {
+      "id": "unparsed-production",
+      "actual": {
+        "outcome": "fail"
+      },
+      "matched": true,
+      "checked_files": 0,
+      "violations": 0,
+      "unchecked_files": 1
+    },
+    {
+      "id": "missing-parser-production",
+      "actual": {
+        "outcome": "fail"
+      },
+      "matched": true,
+      "checked_files": 0,
+      "violations": 0,
+      "unchecked_files": 1
+    },
+    {
+      "id": "ignored-production",
+      "actual": {
+        "outcome": "fail"
+      },
+      "matched": true,
+      "checked_files": 1,
+      "violations": 1,
+      "unchecked_files": 0
+    },
+    {
+      "id": "outside-production",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true,
+      "checked_files": 0,
+      "violations": 0,
+      "unchecked_files": 0
+    },
+    {
+      "id": "deleted-production",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true,
+      "checked_files": 0,
+      "violations": 0,
+      "unchecked_files": 0
+    },
+    {
+      "id": "new-public-write",
+      "actual": {
+        "outcome": "fail"
+      },
+      "matched": true,
+      "checked_files": 1,
+      "violations": 1,
+      "unchecked_files": 0
+    },
+    {
+      "id": "read-only-public",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true,
+      "checked_files": 1,
+      "violations": 0,
+      "unchecked_files": 0
+    },
+    {
+      "id": "known-grant-in-edited-file",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true,
+      "checked_files": 1,
+      "violations": 0,
+      "unchecked_files": 0
+    },
+    {
+      "id": "existing-grant-expands",
+      "actual": {
+        "outcome": "fail"
+      },
+      "matched": true,
+      "checked_files": 1,
+      "violations": 1,
+      "unchecked_files": 0
+    },
+    {
+      "id": "same-rule-different-table",
+      "actual": {
+        "outcome": "fail"
+      },
+      "matched": true,
+      "checked_files": 1,
+      "violations": 1,
+      "unchecked_files": 0
+    },
+    {
+      "id": "approved-exact-grant",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true,
+      "checked_files": 1,
+      "violations": 0,
+      "unchecked_files": 0
+    },
+    {
+      "id": "exception-other-object",
+      "actual": {
+        "outcome": "fail"
+      },
+      "matched": true,
+      "checked_files": 1,
+      "violations": 1,
+      "unchecked_files": 0
+    },
+    {
+      "id": "exception-other-privilege",
+      "actual": {
+        "outcome": "fail"
+      },
+      "matched": true,
+      "checked_files": 1,
+      "violations": 1,
+      "unchecked_files": 0
+    },
+    {
+      "id": "out-of-scope-grant",
+      "actual": {
+        "outcome": "pass"
+      },
+      "matched": true,
+      "checked_files": 0,
+      "violations": 0,
+      "unchecked_files": 0
+    }
+  ]
+}

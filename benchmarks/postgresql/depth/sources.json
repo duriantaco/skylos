@@ -1,0 +1,1013 @@
+{
+  "purpose": "Pinned upstream SQL and upstream regression controls, selected and labeled before scanning. No SQL, database or upstream code is executed. Rule scoring counts named sites only; all other emitted lines are listed separately. Full large dump is an explicit limit control.",
+  "rules": [
+    "SKY-Q503",
+    "SKY-Q504",
+    "SKY-Q505",
+    "SKY-Q506",
+    "SKY-Q507",
+    "SKY-Q508",
+    "SKY-Q509",
+    "SKY-Q510"
+  ],
+  "sources": [
+    {
+      "name": "create_index.sql",
+      "repo": "postgres/postgres",
+      "commit": "d7ec59a63d745ba74fba0e280bbf85dc6d1caa3e",
+      "path": "src/test/regress/sql/create_index.sql",
+      "sha256": "d991e99d4b8e1d33c40d656f3eefb349e0bca49f378e8385eae5581ac9047400",
+      "blob_sha1": "e296891cab8064771d46959bc3570da35ceae484"
+    },
+    {
+      "name": "copy.sql",
+      "repo": "postgres/postgres",
+      "commit": "d7ec59a63d745ba74fba0e280bbf85dc6d1caa3e",
+      "path": "src/test/regress/sql/copy.sql",
+      "sha256": "afe6850ba7201af2b95aecdae8ee35a81558886cf05d957d0b55156abb9dbfbb",
+      "blob_sha1": "e2dd24cb3519b61c269f099143ceea036901a648"
+    },
+    {
+      "name": "case.sql",
+      "repo": "postgres/postgres",
+      "commit": "d7ec59a63d745ba74fba0e280bbf85dc6d1caa3e",
+      "path": "src/test/regress/sql/case.sql",
+      "sha256": "323a044e05cb1207b7ace549a97dce49a0a0193610834e139006d252347f1f06",
+      "blob_sha1": "83fe43be6b84f1b96db4285e2e9eeca037ff261f"
+    },
+    {
+      "name": "with.sql",
+      "repo": "postgres/postgres",
+      "commit": "d7ec59a63d745ba74fba0e280bbf85dc6d1caa3e",
+      "path": "src/test/regress/sql/with.sql",
+      "sha256": "8047d9719821121dc8e89a70f71bb3844d58c1e98dc7ef1da3966f67c8a5e2ba",
+      "blob_sha1": "8f6e6c0b40567100d1d131d496cc2dfde5aea74a"
+    },
+    {
+      "name": "test_foreignkey.test",
+      "repo": "duckdb/duckdb",
+      "commit": "0b83e5d2f68bc02dfefde74b846bd039f078affa",
+      "path": "test/sql/constraints/foreignkey/test_foreignkey.test",
+      "sha256": "4226b55bad7731bf010e76cdbd3fd841c4fb59eed1677be59cb982aaa78e23b7",
+      "blob_sha1": "91c14f90de3f712d8b29d1920abe9ae0c40a4bf8"
+    },
+    {
+      "name": "fk_implicit_primary_key.test",
+      "repo": "duckdb/duckdb",
+      "commit": "0b83e5d2f68bc02dfefde74b846bd039f078affa",
+      "path": "test/sql/constraints/foreignkey/fk_implicit_primary_key.test",
+      "sha256": "5a53766e532f367a35073f006e2de2ae43cdc0009c1f37ee1e868fa9cdaa5d37",
+      "blob_sha1": "e95c9c7d7d948bae1b440349d84003c30aa80e2e"
+    },
+    {
+      "name": "pagila-schema.sql",
+      "repo": "devrimgunduz/pagila",
+      "commit": "6ea53f812254c91a602f61c0ef62beca3fa676b1",
+      "path": "pagila-schema.sql",
+      "sha256": "071ee940a73c8f4fad2997185788065291607e2c55559e3747959e8275391536",
+      "blob_sha1": "1336d76c3f834665b4794a5ae725c64337667d9e"
+    },
+    {
+      "name": "pagila-data.sql",
+      "repo": "devrimgunduz/pagila",
+      "commit": "6ea53f812254c91a602f61c0ef62beca3fa676b1",
+      "path": "pagila-data.sql",
+      "sha256": "a88efa94c7ae8bc9cf55def4efc9f164d064d5b9cd93f11719ba3b5ace1602f7",
+      "blob_sha1": "87aa42097e41c74a818f29d0837f255af2edc456"
+    },
+    {
+      "name": "pagila-temporal-setup.sql",
+      "repo": "devrimgunduz/pagila",
+      "commit": "6ea53f812254c91a602f61c0ef62beca3fa676b1",
+      "path": "pagila-temporal-setup.sql",
+      "sha256": "fb73ad5e41f0c6a3af0b6548d9f152780029b5a2d5d0f0c22354e617b294a0f4",
+      "blob_sha1": "4fff1b7b147b2a09c5728ffb69ef0790df615fb1"
+    },
+    {
+      "name": "pg_partman-setup.sql",
+      "repo": "devrimgunduz/pagila",
+      "commit": "6ea53f812254c91a602f61c0ef62beca3fa676b1",
+      "path": "pg_partman-setup.sql",
+      "sha256": "346f86cf32e9544468bafc477c9eeb5fad4164d30dee4b68e59716fe8ce9a210",
+      "blob_sha1": "3c150e2ec0337af2daa1d9872bd414e58419f7f9"
+    }
+  ],
+  "cases": [
+    {
+      "name": "postgres/index.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "create_index.sql",
+      "lines": [
+        483,
+        504
+      ]
+    },
+    {
+      "name": "postgres/temp-index.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "create_index.sql",
+      "lines": [
+        532,
+        555
+      ]
+    },
+    {
+      "name": "postgres/drop-index.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "create_index.sql",
+      "lines": [
+        559,
+        574
+      ]
+    },
+    {
+      "name": "postgres/text-copy.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "copy.sql",
+      "lines": [
+        127,
+        134
+      ]
+    },
+    {
+      "name": "postgres/copy-progress.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "copy.sql",
+      "lines": [
+        185,
+        189
+      ]
+    },
+    {
+      "name": "postgres/case.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "case.sql",
+      "lines": [
+        81,
+        100
+      ]
+    },
+    {
+      "name": "postgres/with.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "with.sql",
+      "lines": [
+        6,
+        15
+      ]
+    },
+    {
+      "name": "postgres/recursive.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "with.sql",
+      "lines": [
+        19,
+        25
+      ]
+    },
+    {
+      "name": "duckdb/foreign-key-13.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "test_foreignkey.test",
+      "lines": [
+        13,
+        13
+      ]
+    },
+    {
+      "name": "duckdb/foreign-key-17.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "test_foreignkey.test",
+      "lines": [
+        17,
+        17
+      ]
+    },
+    {
+      "name": "duckdb/foreign-key-21.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "test_foreignkey.test",
+      "lines": [
+        21,
+        21
+      ]
+    },
+    {
+      "name": "duckdb/foreign-key-25.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "test_foreignkey.test",
+      "lines": [
+        25,
+        25
+      ]
+    },
+    {
+      "name": "duckdb/foreign-key-29.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "test_foreignkey.test",
+      "lines": [
+        29,
+        29
+      ]
+    },
+    {
+      "name": "duckdb/foreign-key-33.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "test_foreignkey.test",
+      "lines": [
+        33,
+        33
+      ]
+    },
+    {
+      "name": "duckdb/implicit-fk.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "fk_implicit_primary_key.test",
+      "lines": [
+        50,
+        50
+      ]
+    },
+    {
+      "name": "pagila/schema.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "pagila-schema.sql"
+    },
+    {
+      "name": "pagila/temporal.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "pagila-temporal-setup.sql"
+    },
+    {
+      "name": "pagila/partman.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "pg_partman-setup.sql"
+    },
+    {
+      "name": "pagila/full-data.sql",
+      "dialect": "postgresql",
+      "coverage": "unparsed",
+      "source": "pagila-data.sql"
+    },
+    {
+      "name": "pagila/actor-copy.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "pagila-data.sql",
+      "lines": [
+        1,
+        225
+      ]
+    },
+    {
+      "name": "pagila/country-copy.sql",
+      "dialect": "postgresql",
+      "coverage": "checked",
+      "source": "pagila-data.sql",
+      "lines": [
+        232,
+        342
+      ]
+    }
+  ],
+  "labels": [
+    {
+      "name": "postgres/index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        503,
+        503
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "postgres/index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        485,
+        485
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        486,
+        486
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        490,
+        490
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        491,
+        491
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        495,
+        495
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        497,
+        497
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        498,
+        498
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        500,
+        500
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/temp-index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        547,
+        547
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "postgres/temp-index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        538,
+        538
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/temp-index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        539,
+        539
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/temp-index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        553,
+        553
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/temp-index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        554,
+        554
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/drop-index.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        564,
+        564
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "postgres/drop-index.sql",
+      "rule": "SKY-Q506",
+      "original_lines": [
+        566,
+        566
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "postgres/drop-index.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        560,
+        560
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/drop-index.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        561,
+        561
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/drop-index.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        566,
+        566
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/drop-index.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        570,
+        570
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/drop-index.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        571,
+        571
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/drop-index.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        572,
+        572
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/drop-index.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        573,
+        573
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/drop-index.sql",
+      "rule": "SKY-Q507",
+      "original_lines": [
+        574,
+        574
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/text-copy.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        133,
+        133
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/text-copy.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        134,
+        134
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/case.sql",
+      "rule": "SKY-Q509",
+      "original_lines": [
+        83,
+        83
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/case.sql",
+      "rule": "SKY-Q509",
+      "original_lines": [
+        88,
+        88
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/case.sql",
+      "rule": "SKY-Q509",
+      "original_lines": [
+        94,
+        94
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/case.sql",
+      "rule": "SKY-Q509",
+      "original_lines": [
+        95,
+        95
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/case.sql",
+      "rule": "SKY-Q509",
+      "original_lines": [
+        96,
+        96
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/case.sql",
+      "rule": "SKY-Q509",
+      "original_lines": [
+        97,
+        97
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/with.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        6,
+        6
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/with.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        11,
+        11
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "postgres/recursive.sql",
+      "rule": "SKY-Q503",
+      "original_lines": [
+        20,
+        20
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "duckdb/foreign-key-13.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        13,
+        13
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "duckdb/foreign-key-17.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        17,
+        17
+      ],
+      "expected": "positive"
+    },
+    {
+      "name": "duckdb/foreign-key-21.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        21,
+        21
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "duckdb/foreign-key-25.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        25,
+        25
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "duckdb/foreign-key-29.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        29,
+        29
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "duckdb/foreign-key-33.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        33,
+        33
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "duckdb/implicit-fk.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        50,
+        50
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2733,
+        2733
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2741,
+        2741
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2749,
+        2749
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2757,
+        2757
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2765,
+        2765
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2773,
+        2773
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2781,
+        2781
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2789,
+        2789
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2797,
+        2797
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2805,
+        2805
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2813,
+        2813
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2821,
+        2821
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2829,
+        2829
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2837,
+        2837
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2845,
+        2845
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2853,
+        2853
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2861,
+        2861
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2869,
+        2869
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2877,
+        2877
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2885,
+        2885
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2893,
+        2893
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2901,
+        2901
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2909,
+        2909
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2917,
+        2917
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2925,
+        2925
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2933,
+        2933
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2941,
+        2941
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2949,
+        2949
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2957,
+        2957
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2965,
+        2965
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2973,
+        2973
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2981,
+        2981
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2989,
+        2989
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        2997,
+        2997
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        3005,
+        3005
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        3013,
+        3013
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/schema.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        3021,
+        3021
+      ],
+      "expected": "quiet"
+    },
+    {
+      "name": "pagila/temporal.sql",
+      "rule": "SKY-Q508",
+      "original_lines": [
+        39,
+        39
+      ],
+      "expected": "quiet"
+    }
+  ]
+}

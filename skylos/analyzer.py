@@ -789,6 +789,7 @@ ANALYZED_SOURCE_SUFFIXES = frozenset(
         *_CSHARP_SOURCE_EXTS,
         *_KOTLIN_SOURCE_EXTS,
         *_SHELL_SOURCE_EXTS,
+        ".sql",
     }
 )
 _PYTHON_SOURCE_ROOT_NAMES = {"src", "lib", "python"}
@@ -2268,6 +2269,7 @@ class Skylos:
         ".zsh": "Shell",
         ".ksh": "Shell",
         ".bats": "Shell",
+        ".sql": "SQL",
     }
 
     def _count_languages(self, files) -> dict[str, int]:
@@ -4744,6 +4746,17 @@ class Skylos:
                     ]
                 )
             )
+        # SQL has no project-wide reference graph. Read only the SQL files for
+        # which this run requested quality or security checks.
+        if not (enable_quality or enable_danger) or changed_files is not None:
+            changed_sql = (
+                {str(Path(f).absolute()) for f in changed_files}
+                if (enable_quality or enable_danger) and changed_files is not None else set()
+            )
+            files = [
+                f for f in files
+                if f.suffix.lower() != ".sql" or str(f.absolute()) in changed_sql
+            ]
         self._generated_file_scope = None
         if skip_generated and files:
             files, self._generated_file_scope = _skip_generated_files(
@@ -5367,6 +5380,7 @@ class Skylos:
         effective_file_configs = {} if include_review_context else None
         configuration_coverage = {}
         ruby_security_coverage = []
+        sql_coverage = []
         swift_reflection_facts = {}
         dart_bindings = {}
         csharp_reference_context = {}
@@ -5521,6 +5535,9 @@ class Skylos:
                     empty_file_finding,
                     cfg,
                 ) = out[:12]
+                sql_file_coverage = getattr(framework_flags, "sql_coverage", None)
+                if sql_file_coverage:
+                    sql_coverage.append(sql_file_coverage)
                 if enable_danger and str(file).endswith(_RUBY_SOURCE_EXTS):
                     coverage = getattr(framework_flags, "security_coverage", None)
                     if isinstance(coverage, dict):
@@ -7695,6 +7712,13 @@ class Skylos:
             result["analysis_summary"]["configuration_coverage"] = (
                 configuration_coverage
             )
+        if sql_coverage:
+            checked = sum(row["status"] == "checked" for row in sql_coverage)
+            result["analysis_summary"]["sql_analysis"] = {
+                "checked_files": checked,
+                "unchecked_files": len(sql_coverage) - checked,
+                "files": sorted(sql_coverage, key=lambda row: row["file"]),
+            }
         if ruby_security_coverage:
             result["analysis_summary"]["ruby_security_coverage"] = (
                 ruby_security_coverage

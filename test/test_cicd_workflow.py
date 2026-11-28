@@ -1191,6 +1191,34 @@ def test_cicd_init_installs_the_dart_extra_only_for_dart_repositories(
     }
 
 
+@pytest.mark.parametrize(
+    "path,scan_extras,gate_extras",
+    [
+        ("app/schema.SQL", "[dart,postgres]", "[dart,llm,postgres]"),
+        ("outside/schema.sql", "[dart]", "[dart,llm]"),
+        ("app/node_modules/pkg/schema.sql", "[dart]", "[dart,llm]"),
+    ],
+)
+def test_init_installs_postgres_for_sql_in_scan_jobs(
+    tmp_path, monkeypatch, path, scan_extras, gate_extras
+):
+    _write(tmp_path / "app/lib/main.dart", "void main() {}\n")
+    _write(tmp_path / path, "SELECT 1;\n")
+    _, workflow, _ = _run_cicd_init(
+        tmp_path, monkeypatch, "--scan-path", "app", "--llm", "--model", "gpt-4.1"
+    )
+    jobs = workflow["jobs"]
+    for job in ("skylos", "pr-scan", "cloud-upload"):
+        installs = _skylos_installs({"jobs": {job: jobs[job]}})
+        expected = gate_extras if job == "skylos" else scan_extras
+        assert any(expected in install for install in installs)
+    summary_installs = _skylos_installs({"jobs": {"summary": jobs["summary"]}})
+    assert any("[postgres]" in install for install in summary_installs) == ("postgres" in scan_extras)
+    for job in ("pr-policy", "pr-publish"):
+        installs = _skylos_installs({"jobs": {job: jobs[job]}})
+        assert all("postgres" not in install for install in installs)
+
+
 def test_cicd_init_uses_origin_head_as_default_branch(tmp_path, monkeypatch):
     git = {
         (

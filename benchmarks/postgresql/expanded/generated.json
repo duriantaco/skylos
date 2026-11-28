@@ -1,0 +1,394 @@
+{
+  "purpose": "Generated SQL and expected results fixed before the first scanner run. Label lines are one-based. Each checked case has exhaustive finding expectations for the selected rules.",
+  "rules": [
+    "SKY-Q503",
+    "SKY-Q504",
+    "SKY-Q505",
+    "SKY-D417"
+  ],
+  "sources": [],
+  "cases": [
+    {
+      "name": "where_literal.sql",
+      "sql": "SELECT 1\nWHERE 3 NOT IN (1, NULL, 4);\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "having_conjunct.sql",
+      "sql": "SELECT count(*) FROM (VALUES (1)) v(n)\nHAVING count(*) > 0 AND 7 NOT IN (NULL, 8);\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "join_column.sql",
+      "sql": "SELECT * FROM (VALUES (1)) l(n)\nJOIN (VALUES (1)) r(k) ON l.n = r.k\n  AND l.n NOT IN (2, NULL);\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "filter_text.sql",
+      "sql": "SELECT count(*) FILTER (\n  WHERE 'a' NOT IN ('b', NULL)\n) FROM (VALUES (1)) v(n);\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "merge_column.sql",
+      "sql": "MERGE INTO totals AS t USING (VALUES (1)) AS s(n)\nON t.n = s.n\nWHEN MATCHED AND s.n NOT IN (NULL, 2) THEN DELETE;\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "projection.sql",
+      "sql": "SELECT 3 NOT IN (1, NULL);\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "disjunction.sql",
+      "sql": "SELECT 1 WHERE 3 NOT IN (1, NULL) OR TRUE;\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "negation.sql",
+      "sql": "SELECT 1 WHERE NOT (1 NOT IN (1, NULL));\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "positive_membership.sql",
+      "sql": "SELECT 1 WHERE 1 IN (1, NULL);\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "nonnull_list.sql",
+      "sql": "SELECT 1 WHERE 3 NOT IN (1, 2);\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "row_membership.sql",
+      "sql": "SELECT 1 WHERE (1, 2) NOT IN ((2, NULL), (3, 4));\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "typed_rhs.sql",
+      "sql": "SELECT 1 WHERE 2 NOT IN (1::int, NULL);\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "function_lhs.sql",
+      "sql": "SELECT 1 WHERE abs(1) NOT IN (2, NULL);\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "subquery.sql",
+      "sql": "SELECT 1 WHERE 1 NOT IN (SELECT n FROM (VALUES (2)) v(n));\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "procedure_definer.sql",
+      "sql": "CREATE PROCEDURE demo()\nLANGUAGE SQL\nSECURITY DEFINER\nAS $$ SELECT 1 $$;\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "procedure_other_option.sql",
+      "sql": "CREATE OR REPLACE PROCEDURE demo()\nSECURITY DEFINER\nSET statement_timeout TO 200\nLANGUAGE SQL AS $$ SELECT 1 $$;\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "fixed_path.sql",
+      "sql": "CREATE PROCEDURE demo()\nSECURITY DEFINER SET search_path TO pg_catalog, pg_temp\nLANGUAGE SQL AS $$ SELECT 1 $$;\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "captured_path.sql",
+      "sql": "CREATE PROCEDURE demo() SECURITY DEFINER\nSET search_path FROM CURRENT\nLANGUAGE SQL AS $$ SELECT 1 $$;\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "invoker.sql",
+      "sql": "CREATE PROCEDURE demo() SECURITY INVOKER\nLANGUAGE SQL AS $$ SELECT 1 $$;\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "connect_boundary.sql",
+      "sql": "SELECT 1;\n\\c warehouse\nSELECT * FROM (VALUES (1)) v(n)\nWHERE n = NULL;\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "connect_first.sql",
+      "sql": "\\connect warehouse\nSELECT 1;\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "quoted_directive.sql",
+      "sql": "SELECT $$line\n\\c warehouse\nmore$$;\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "comment_directive.sql",
+      "sql": "/*\n\\c warehouse\n*/\nSELECT 1;\n",
+      "dialect": "postgresql",
+      "coverage": "checked"
+    },
+    {
+      "name": "unsupported_include.sql",
+      "sql": "\\i external_file\nSELECT 1;\n",
+      "dialect": "postgresql",
+      "coverage": "unparsed"
+    },
+    {
+      "name": "connect_inside_query.sql",
+      "sql": "SELECT\n\\c warehouse\n1;\n",
+      "dialect": "postgresql",
+      "coverage": "unparsed"
+    }
+  ],
+  "labels": [
+    {
+      "name": "where_literal.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive",
+      "reason": "A strict integer inequality with NULL prevents a true result."
+    },
+    {
+      "name": "having_conjunct.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive",
+      "reason": "Every term of HAVING AND must be true."
+    },
+    {
+      "name": "join_column.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "positive",
+      "reason": "A known integer column cannot satisfy the join condition."
+    },
+    {
+      "name": "filter_text.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive",
+      "reason": "This aggregate cannot accept a row."
+    },
+    {
+      "name": "merge_column.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "positive",
+      "reason": "The integer source column prevents the matched action from qualifying."
+    },
+    {
+      "name": "projection.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "negative",
+      "reason": "A projected Boolean may intentionally be unknown."
+    },
+    {
+      "name": "disjunction.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "negative",
+      "reason": "The other branch admits rows."
+    },
+    {
+      "name": "negation.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "negative",
+      "reason": "The enclosing negation can be true."
+    },
+    {
+      "name": "positive_membership.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "negative",
+      "reason": "A matching value makes the positive membership test true."
+    },
+    {
+      "name": "nonnull_list.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "negative",
+      "reason": "The list contains no NULL."
+    },
+    {
+      "name": "row_membership.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "negative",
+      "reason": "Row inequality has different NULL semantics."
+    },
+    {
+      "name": "typed_rhs.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "negative",
+      "reason": "Casts fall outside the literal-list contract."
+    },
+    {
+      "name": "function_lhs.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "negative",
+      "reason": "A function result falls outside the scalar operand contract."
+    },
+    {
+      "name": "subquery.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        1,
+        1
+      ],
+      "expected": "negative",
+      "reason": "The subquery has no literal NULL member."
+    },
+    {
+      "name": "procedure_definer.sql",
+      "rule": "SKY-D417",
+      "original_lines": [
+        3,
+        3
+      ],
+      "expected": "positive",
+      "reason": "A definer procedure with no fixed search path."
+    },
+    {
+      "name": "procedure_other_option.sql",
+      "rule": "SKY-D417",
+      "original_lines": [
+        2,
+        2
+      ],
+      "expected": "positive",
+      "reason": "The procedure only sets an unrelated option."
+    },
+    {
+      "name": "fixed_path.sql",
+      "rule": "SKY-D417",
+      "original_lines": [
+        1,
+        3
+      ],
+      "expected": "negative",
+      "reason": "The procedure sets an explicit path."
+    },
+    {
+      "name": "captured_path.sql",
+      "rule": "SKY-D417",
+      "original_lines": [
+        1,
+        3
+      ],
+      "expected": "negative",
+      "reason": "The path setting captures the current value at creation."
+    },
+    {
+      "name": "invoker.sql",
+      "rule": "SKY-D417",
+      "original_lines": [
+        1,
+        2
+      ],
+      "expected": "negative",
+      "reason": "The procedure runs as invoker."
+    },
+    {
+      "name": "connect_boundary.sql",
+      "rule": "SKY-Q504",
+      "original_lines": [
+        4,
+        4
+      ],
+      "expected": "positive",
+      "reason": "A warning after the connection line retains its original location."
+    },
+    {
+      "name": "connect_first.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        1,
+        2
+      ],
+      "expected": "negative",
+      "reason": "A simple connection directive precedes regular SQL."
+    },
+    {
+      "name": "quoted_directive.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        1,
+        3
+      ],
+      "expected": "negative",
+      "reason": "A string can contain text that looks like a client command."
+    },
+    {
+      "name": "comment_directive.sql",
+      "rule": "SKY-Q505",
+      "original_lines": [
+        1,
+        4
+      ],
+      "expected": "negative",
+      "reason": "A block comment can contain text that looks like a client command."
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+name: PostgreSQL migrations
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  migration-policy:
+    name: PostgreSQL migration policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+      HEAD_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Read production policy from the target branch
+        id: policy
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          ENTRY=$(git ls-tree "$BASE_SHA^{commit}" -- pyproject.toml)
+          if [[ -z "$ENTRY" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "No pyproject.toml on the target branch."
+            exit 0
+          fi
+          [[ "$ENTRY" == "100644 blob "* || "$ENTRY" == "100755 blob "* ]]
+          git show "$BASE_SHA:pyproject.toml" | python -I -c '
+          import os, sys, tomllib
+          sql = tomllib.load(sys.stdin.buffer).get("tool", {}).get("skylos", {}).get("sql", {})
+          if not isinstance(sql, dict):
+              sys.exit("Expected a TOML table for the trusted SQL policy.")
+          configured = "production" in sql
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print(f"configured={str(configured).lower()}", file=output)
+          if not configured:
+              print("No production migration policy is configured on the target branch.")
+          '
+
+      - name: Check changed production migrations
+        if: steps.policy.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          # The proposed merge is input data. Install the scanner from its trusted base.
+          python -I -m venv "$RUNNER_TEMP/skylos-postgres"
+          PYTHON="$RUNNER_TEMP/skylos-postgres/bin/python"
+          "$PYTHON" -I -m pip install "skylos[postgres] @ git+https://github.com/duriantaco/skylos.git@$BASE_SHA"
+          "$PYTHON" -I -m skylos.cli cicd postgres-check --base "$BASE_SHA" --head "$HEAD_SHA"

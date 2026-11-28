@@ -284,10 +284,21 @@ expected answers and tool calls, use `skylos agent test`. See
 | Kotlin | Partial | Partial | No |
 | Swift | Partial | No | No |
 | Shell | No | Partial | No |
+| PostgreSQL | Unused CTE chains and unreachable CASE arms | Routine search paths, grants, login roles | Query filters, counts, index migrations and foreign keys |
 
 - Python has the deepest coverage.
 - Go needs the native `skylos-go` engine. It ships in the PyPI wheels for
   Linux, macOS and Windows; elsewhere `skylos doctor` prints the build command.
+- Standalone PostgreSQL `.sql` files need `pip install "skylos[postgres]"`. Use `--quality --danger`
+  and set the database dialect in the SQL folder or use a Prisma migration lock.
+  Eight query and migration checks cover unused CTE chains, unreachable CASE arms,
+  NULL filters, conditional counts, concurrent indexes and foreign keys. Four
+  security checks review privileged routines, PUBLIC grants and login roles.
+  All 12 checks are advisory in a regular scan. GitHub groups security findings
+  by rule and keeps query quality in the full report. Teams can require changed
+  production migrations to parse and optionally forbid new PUBLIC table writes.
+  See the [PostgreSQL guide](docs/handbook/intro/03-languages.md#checking-postgresql-scripts)
+  for setup and the [benchmark](benchmarks/postgresql/README.md) for measured coverage.
 - Dart needs `pip install "skylos[dart]"`.
 - Rust dead-code checks are experimental. Use `skylos . --confidence 40` to
   see candidates such as unused private functions and enum variants.
